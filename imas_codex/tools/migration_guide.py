@@ -157,6 +157,202 @@ def _get_renames(
     )
 
 
+def _get_rename_lineages(
+    gc: GraphClient,
+    from_version: str,
+    to_version: str,
+    ids_filter: str | None = None,
+) -> list[dict]:
+    """Get multi-hop rename lineages (chains of length >= 2) in the version range.
+
+    A lineage qualifies when:
+    - The start node existed in *from_version*
+      (introduced_in <= from_version AND deprecated_in is NULL or > from_version)
+    - The end node exists in *to_version*
+      (introduced_in <= to_version AND deprecated_in is NULL or > to_version)
+    - The chain length is >= 2 hops (direct renames already covered elsewhere)
+
+    For each hop i → i+1, the rename version is the ``introduced_in`` of the
+    successor node (the most reliable per-hop version indicator available,
+    since RENAMED_TO edges carry no version property).
+
+    Returns:
+        List of dicts, each with keys:
+        - ``ids``: IDS name
+        - ``start_path``: original path (beginning of chain)
+        - ``end_path``: final path (end of chain)
+        - ``hops``: number of rename steps
+        - ``chain``: list of ``{"path": str, "introduced": str | None}``
+    """
+    ids_clause = "AND a.ids = $ids_filter" if ids_filter else ""
+    params: dict = {}
+    if ids_filter:
+        params["ids_filter"] = ids_filter
+
+    try:
+        rows = gc.query(
+            f"""
+            MATCH path_var=(a:IMASNode)-[:RENAMED_TO*2..10]->(z:IMASNode)
+            WHERE true {ids_clause}
+            WITH a, z, [n IN nodes(path_var) | n.id] AS chain_ids, length(path_var) AS hops
+            OPTIONAL MATCH (a)-[:INTRODUCED_IN]->(aiv:DDVersion)
+            OPTIONAL MATCH (a)-[:DEPRECATED_IN]->(adv:DDVersion)
+            OPTIONAL MATCH (z)-[:INTRODUCED_IN]->(ziv:DDVersion)
+            OPTIONAL MATCH (z)-[:DEPRECATED_IN]->(zdv:DDVersion)
+            RETURN a.id AS start_path, z.id AS end_path, a.ids AS ids,
+                   chain_ids, hops,
+                   aiv.id AS start_introduced, adv.id AS start_deprecated,
+                   ziv.id AS end_introduced, zdv.id AS end_deprecated
+            ORDER BY a.ids, a.id
+            """,
+            **params,
+        )
+    except Exception as e:
+        logger.warning("Failed to query rename lineages: %s", e)
+        return []
+
+    from_key = _version_sort_key(from_version)
+    to_key = _version_sort_key(to_version)
+
+    filtered_rows = []
+    all_intermediate_ids: set[str] = set()
+
+    for row in rows or []:
+        start_intro = row.get("start_introduced")
+        start_depr = row.get("start_deprecated")
+        end_intro = row.get("end_introduced")
+        end_depr = row.get("end_deprecated")
+
+        # Start node must have existed at from_version
+        if start_intro and _version_sort_key(start_intro) > from_key:
+            continue  # not introduced yet at from_version
+        if start_depr and _version_sort_key(start_depr) <= from_key:
+            continue  # already deprecated by from_version
+
+        # End node must exist at to_version
+        if end_intro and _version_sort_key(end_intro) > to_key:
+            continue  # not yet introduced by to_version
+        if end_depr and _version_sort_key(end_depr) <= to_key:
+            continue  # deprecated before to_version
+
+        filtered_rows.append(dict(row))
+        for nid in (row.get("chain_ids") or [])[1:]:
+            all_intermediate_ids.add(nid)
+
+    if not filtered_rows:
+        return []
+
+    # Batch-query introduced_in for all intermediate/end nodes
+    node_versions: dict[str, str | None] = {}
+    if all_intermediate_ids:
+        try:
+            version_rows = gc.query(
+                """
+                UNWIND $node_ids AS nid
+                MATCH (n:IMASNode {id: nid})
+                OPTIONAL MATCH (n)-[:INTRODUCED_IN]->(iv:DDVersion)
+                RETURN n.id AS id, iv.id AS introduced_in
+                """,
+                node_ids=list(all_intermediate_ids),
+            )
+            for vr in version_rows or []:
+                node_versions[vr["id"]] = vr.get("introduced_in")
+        except Exception as e:
+            logger.warning("Failed to query intermediate node versions: %s", e)
+
+    results = []
+    for row in filtered_rows:
+        chain_ids: list[str] = row.get("chain_ids") or []
+        chain = []
+        for i, nid in enumerate(chain_ids):
+            if i == 0:
+                chain.append({"path": nid, "introduced": row.get("start_introduced")})
+            else:
+                chain.append({"path": nid, "introduced": node_versions.get(nid)})
+
+        results.append(
+            {
+                "ids": row.get("ids", ""),
+                "start_path": row.get("start_path", ""),
+                "end_path": row.get("end_path", ""),
+                "hops": row.get("hops", len(chain_ids) - 1),
+                "chain": chain,
+            }
+        )
+
+    return results
+
+
+def _render_rename_lineages_section(
+    lineages: list[dict],
+    from_version: str,
+    to_version: str,
+    include_recipes: bool = True,
+) -> str:
+    """Render a Rename Lineages (Multi-Hop) markdown section.
+
+    Produces a table where each row shows the original path, the
+    intermediate chain with version annotations, and the final path.
+
+    Returns an empty string if *lineages* is empty.
+    """
+    if not lineages:
+        return ""
+
+    lines: list[str] = []
+    lines.append(f"### Rename Lineages (Multi-Hop) ({len(lineages)})\n")
+    lines.append(
+        "These paths were renamed more than once between the two versions. "
+        "Update code to the **Final** path in one step (direct jump), "
+        "or follow the chain incrementally."
+    )
+    lines.append("")
+    lines.append(f"| Original ({from_version}) | Chain | Final ({to_version}) |")
+    lines.append("|--------------------|-------|----------------|")
+
+    for entry in lineages:
+        chain = entry.get("chain", [])
+        start_path = entry.get("start_path", "")
+        end_path = entry.get("end_path", "")
+
+        # Build chain column: intermediate nodes with their version annotations
+        chain_parts = []
+        for hop in chain[1:]:
+            ver_label = f"v{hop['introduced']}" if hop.get("introduced") else ""
+            prefix = f"→ {ver_label} " if ver_label else "→ "
+            chain_parts.append(f"{prefix}`{hop['path']}`")
+        chain_str = " ".join(chain_parts)
+
+        lines.append(f"| `{start_path}` | {chain_str} | `{end_path}` |")
+
+    lines.append("")
+
+    if include_recipes and lineages:
+        lines.append("#### Multi-Hop Rename Recipe\n")
+        lines.append("```python")
+        lines.append("# Option A: Direct jump (recommended)")
+        example = lineages[0]
+        ex_chain = example.get("chain", [])
+        if len(ex_chain) >= 2:
+            lines.append(f"# {ex_chain[0]['path']!r}  →  {ex_chain[-1]['path']!r}")
+            lines.append(
+                f'data = ids.get("{ex_chain[-1]["path"]}")  # skip intermediate names'
+            )
+        lines.append("")
+        lines.append(
+            "# Option B: Incremental (mirrors rename history, useful for audits)"
+        )
+        if len(ex_chain) >= 3:
+            for i in range(len(ex_chain) - 1):
+                src = ex_chain[i]["path"]
+                dst = ex_chain[i + 1]["path"]
+                ver = ex_chain[i + 1].get("introduced", "?")
+                lines.append(f"# Step {i + 1} (v{ver}): {src!r} → {dst!r}")
+        lines.append("```\n")
+
+    return "\n".join(lines)
+
+
 def _get_unit_changes(
     gc: GraphClient, version_range: list[str], ids_filter: str | None = None
 ) -> list[dict]:
@@ -356,6 +552,7 @@ def _render_guide(
     to_cocos: int | None,
     ids_filter: str | None,
     include_recipes: bool,
+    rename_lineages: list[dict] | None = None,
 ) -> str:
     """Render the migration guide as structured markdown (legacy format)."""
     lines = [f"# DD Migration Guide: {from_ver} \u2192 {to_ver}\n"]
@@ -501,6 +698,13 @@ def _render_guide(
             if len(renames) > 5:
                 lines.append(f"# ... and {len(renames) - 5} more renames")
             lines.append("```\n")
+
+    if rename_lineages:
+        lines.append("## Rename Lineages\n")
+        lineage_section = _render_rename_lineages_section(
+            rename_lineages, from_ver, to_ver, include_recipes=include_recipes
+        )
+        lines.append(lineage_section)
 
     return "\n".join(lines)
 
@@ -777,6 +981,9 @@ def build_migration_guide(
     for ids_name in search_patterns:
         search_patterns[ids_name] = list(dict.fromkeys(search_patterns[ids_name]))
 
+    # --- Multi-hop rename lineages ---
+    rename_lineages = _get_rename_lineages(gc, from_version, to_version, ids_filter)
+
     return CodeMigrationGuide(
         from_version=from_version,
         to_version=to_version,
@@ -792,6 +999,7 @@ def build_migration_guide(
         cocos_advice=cocos_advice,
         path_update_advice=path_update_advice,
         type_update_advice=type_advice,
+        rename_lineages=rename_lineages,
     )
 
 
@@ -933,6 +1141,17 @@ def format_migration_guide(guide: CodeMigrationGuide) -> str:
         if len(guide.optional_actions) > 20:
             lines.append(f"- ... and {len(guide.optional_actions) - 20} more")
         lines.append("")
+
+    # -- Rename lineages (multi-hop) --
+    if guide.rename_lineages:
+        lines.append("## Rename Lineages\n")
+        lineage_section = _render_rename_lineages_section(
+            guide.rename_lineages,
+            guide.from_version,
+            guide.to_version,
+            include_recipes=guide.include_recipes,
+        )
+        lines.append(lineage_section)
 
     # -- Verification checklist --
     lines.append("## Verification Checklist")

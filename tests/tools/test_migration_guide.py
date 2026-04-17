@@ -14,8 +14,10 @@ from imas_codex.models.migration_models import (
 )
 from imas_codex.tools.migration_guide import (
     _compute_cocos_factors,
+    _get_rename_lineages,
     _get_version_cocos,
     _render_guide,
+    _render_rename_lineages_section,
     _resolve_version_range,
     build_migration_guide,
     format_migration_guide,
@@ -806,3 +808,412 @@ class TestConventionChanges:
         output = format_migration_guide(guide)
         assert "Convention Changes" in output
         assert "advisory" in output
+
+
+# ---------------------------------------------------------------------------
+# Rename Lineages tests
+# ---------------------------------------------------------------------------
+
+
+class TestRenderRenameLineages:
+    """Unit tests for _render_rename_lineages_section (no graph needed)."""
+
+    def _make_lineage(
+        self,
+        chain_ids: list[str],
+        versions: list[str | None],
+        ids_name: str = "summary",
+    ) -> dict:
+        chain = [
+            {"path": path, "introduced": ver}
+            for path, ver in zip(chain_ids, versions, strict=True)
+        ]
+        return {
+            "ids": ids_name,
+            "start_path": chain_ids[0],
+            "end_path": chain_ids[-1],
+            "hops": len(chain_ids) - 1,
+            "chain": chain,
+        }
+
+    def test_empty_returns_empty_string(self):
+        result = _render_rename_lineages_section([], "3.22.0", "4.1.0")
+        assert result == ""
+
+    def test_section_header_present(self):
+        lineage = self._make_lineage(
+            ["summary/a", "summary/b", "summary/c"],
+            [None, "4.0.0", "4.1.0"],
+        )
+        result = _render_rename_lineages_section([lineage], "3.22.0", "4.1.0")
+        assert "Rename Lineages (Multi-Hop)" in result
+
+    def test_version_columns_show_from_to(self):
+        lineage = self._make_lineage(
+            ["summary/a", "summary/b", "summary/c"],
+            [None, "4.0.0", "4.1.0"],
+        )
+        result = _render_rename_lineages_section([lineage], "3.22.0", "4.1.0")
+        assert "3.22.0" in result
+        assert "4.1.0" in result
+
+    def test_original_and_final_paths_present(self):
+        lineage = self._make_lineage(
+            ["summary/a", "summary/b", "summary/c"],
+            [None, "4.0.0", "4.1.0"],
+        )
+        result = _render_rename_lineages_section([lineage], "3.22.0", "4.1.0")
+        assert "summary/a" in result
+        assert "summary/c" in result
+
+    def test_intermediate_path_in_chain_column(self):
+        lineage = self._make_lineage(
+            ["summary/a", "summary/b", "summary/c"],
+            [None, "4.0.0", "4.1.0"],
+        )
+        result = _render_rename_lineages_section([lineage], "3.22.0", "4.1.0")
+        assert "summary/b" in result
+
+    def test_version_annotation_on_hops(self):
+        lineage = self._make_lineage(
+            ["summary/a", "summary/b", "summary/c"],
+            [None, "4.0.0", "4.1.0"],
+        )
+        result = _render_rename_lineages_section([lineage], "3.22.0", "4.1.0")
+        assert "v4.0.0" in result
+
+    def test_recipe_included_when_requested(self):
+        lineage = self._make_lineage(
+            ["summary/a", "summary/b", "summary/c"],
+            [None, "4.0.0", "4.1.0"],
+        )
+        result = _render_rename_lineages_section(
+            [lineage], "3.22.0", "4.1.0", include_recipes=True
+        )
+        assert "Multi-Hop Rename Recipe" in result
+
+    def test_recipe_absent_when_disabled(self):
+        lineage = self._make_lineage(
+            ["summary/a", "summary/b", "summary/c"],
+            [None, "4.0.0", "4.1.0"],
+        )
+        result = _render_rename_lineages_section(
+            [lineage], "3.22.0", "4.1.0", include_recipes=False
+        )
+        assert "Recipe" not in result
+
+    def test_multiple_lineages_all_present(self):
+        l1 = self._make_lineage(
+            ["a/x", "a/y", "a/z"], [None, "4.0.0", "4.1.0"], ids_name="a"
+        )
+        l2 = self._make_lineage(
+            ["b/x", "b/y", "b/z"], [None, "4.0.0", "4.1.0"], ids_name="b"
+        )
+        result = _render_rename_lineages_section([l1, l2], "3.22.0", "4.1.0")
+        assert "Rename Lineages (Multi-Hop) (2)" in result
+        assert "a/z" in result
+        assert "b/z" in result
+
+    def test_hop_without_version_renders_gracefully(self):
+        lineage = self._make_lineage(
+            ["summary/a", "summary/b", "summary/c"],
+            [None, None, None],  # No version info
+        )
+        result = _render_rename_lineages_section([lineage], "3.22.0", "4.1.0")
+        assert "summary/b" in result
+        # Should not error, and chain column should have arrows
+        assert "→" in result
+
+
+class TestGetRenameLineagesFiltering:
+    """Unit tests for _get_rename_lineages version filtering logic."""
+
+    def _make_gc(self, chain_rows: list[dict], version_rows: list[dict]) -> MagicMock:
+        gc = MagicMock()
+        gc.query.side_effect = [chain_rows, version_rows]
+        return gc
+
+    def _chain_row(
+        self,
+        chain_ids: list[str],
+        ids: str = "summary",
+        start_introduced: str | None = "3.22.0",
+        start_deprecated: str | None = None,
+        end_introduced: str | None = "4.1.0",
+        end_deprecated: str | None = None,
+    ) -> dict:
+        return {
+            "start_path": chain_ids[0],
+            "end_path": chain_ids[-1],
+            "ids": ids,
+            "chain_ids": chain_ids,
+            "hops": len(chain_ids) - 1,
+            "start_introduced": start_introduced,
+            "start_deprecated": start_deprecated,
+            "end_introduced": end_introduced,
+            "end_deprecated": end_deprecated,
+        }
+
+    def test_valid_chain_included(self):
+        chain = ["summary/a", "summary/b", "summary/c"]
+        gc = self._make_gc(
+            [self._chain_row(chain)],
+            [{"id": "summary/b", "introduced_in": "4.0.0"}],
+        )
+        result = _get_rename_lineages(gc, "3.22.0", "4.1.0")
+        assert len(result) == 1
+        assert result[0]["start_path"] == "summary/a"
+        assert result[0]["end_path"] == "summary/c"
+        assert result[0]["hops"] == 2
+
+    def test_start_not_introduced_by_from_version_excluded(self):
+        chain = ["summary/a", "summary/b", "summary/c"]
+        gc = self._make_gc(
+            # start introduced AFTER from_version
+            [self._chain_row(chain, start_introduced="4.0.0")],
+            [],
+        )
+        result = _get_rename_lineages(gc, "3.22.0", "4.1.0")
+        assert result == []
+
+    def test_start_deprecated_before_from_version_excluded(self):
+        chain = ["summary/a", "summary/b", "summary/c"]
+        gc = self._make_gc(
+            # start deprecated before or at from_version
+            [self._chain_row(chain, start_deprecated="3.20.0")],
+            [],
+        )
+        result = _get_rename_lineages(gc, "3.22.0", "4.1.0")
+        assert result == []
+
+    def test_end_not_introduced_by_to_version_excluded(self):
+        chain = ["summary/a", "summary/b", "summary/c"]
+        gc = self._make_gc(
+            # end introduced AFTER to_version
+            [self._chain_row(chain, end_introduced="5.0.0")],
+            [],
+        )
+        result = _get_rename_lineages(gc, "3.22.0", "4.1.0")
+        assert result == []
+
+    def test_chain_per_hop_versions_attached(self):
+        chain = ["summary/a", "summary/b", "summary/c"]
+        gc = self._make_gc(
+            [self._chain_row(chain)],
+            [
+                {"id": "summary/b", "introduced_in": "4.0.0"},
+                {"id": "summary/c", "introduced_in": "4.1.0"},
+            ],
+        )
+        result = _get_rename_lineages(gc, "3.22.0", "4.1.0")
+        assert len(result) == 1
+        chain_out = result[0]["chain"]
+        assert chain_out[0]["path"] == "summary/a"
+        assert chain_out[0]["introduced"] == "3.22.0"  # start_introduced
+        # intermediate node should have queried version
+        b_entry = next(h for h in chain_out if h["path"] == "summary/b")
+        assert b_entry["introduced"] == "4.0.0"
+
+    def test_empty_graph_returns_empty_list(self):
+        gc = MagicMock()
+        gc.query.return_value = []
+        result = _get_rename_lineages(gc, "3.22.0", "4.1.0")
+        assert result == []
+
+    def test_ids_filter_passed_to_query(self):
+        gc = MagicMock()
+        gc.query.return_value = []
+        _get_rename_lineages(gc, "3.22.0", "4.1.0", ids_filter="summary")
+        call_args = gc.query.call_args
+        assert "ids_filter" in call_args.kwargs
+
+    def test_query_exception_returns_empty_list(self):
+        gc = MagicMock()
+        gc.query.side_effect = RuntimeError("DB error")
+        result = _get_rename_lineages(gc, "3.22.0", "4.1.0")
+        assert result == []
+
+
+class TestFormatMigrationGuideWithLineages:
+    """Tests for format_migration_guide including rename_lineages section."""
+
+    def test_lineages_section_present_when_populated(self):
+        guide = CodeMigrationGuide(
+            from_version="3.22.0",
+            to_version="4.1.0",
+            rename_lineages=[
+                {
+                    "ids": "summary",
+                    "start_path": "summary/local/magnetic_axis/b_field",
+                    "end_path": "summary/local/magnetic_axis/b_field_phi",
+                    "hops": 2,
+                    "chain": [
+                        {
+                            "path": "summary/local/magnetic_axis/b_field",
+                            "introduced": "3.22.0",
+                        },
+                        {
+                            "path": "summary/local/magnetic_axis/b_field_tor",
+                            "introduced": "4.0.0",
+                        },
+                        {
+                            "path": "summary/local/magnetic_axis/b_field_phi",
+                            "introduced": "4.1.0",
+                        },
+                    ],
+                }
+            ],
+        )
+        result = format_migration_guide(guide)
+        assert "Rename Lineages" in result
+        assert "b_field_phi" in result
+        assert "b_field_tor" in result
+
+    def test_lineages_section_absent_when_empty(self):
+        guide = CodeMigrationGuide(
+            from_version="3.22.0",
+            to_version="4.1.0",
+            rename_lineages=[],
+        )
+        result = format_migration_guide(guide)
+        assert "Rename Lineages" not in result
+
+    def test_lineages_section_absent_when_field_default(self):
+        guide = CodeMigrationGuide(
+            from_version="3.22.0",
+            to_version="4.1.0",
+        )
+        result = format_migration_guide(guide)
+        assert "Rename Lineages" not in result
+
+
+class TestBuildMigrationGuideWithLineages:
+    """Tests for build_migration_guide including rename_lineages field."""
+
+    def _make_gc(self, query_returns: list) -> MagicMock:
+        gc = MagicMock()
+        gc.query.side_effect = query_returns
+        return gc
+
+    def test_lineages_populated_from_graph(self):
+        """build_migration_guide should populate rename_lineages from _get_rename_lineages."""
+        chain = ["summary/a", "summary/b", "summary/c"]
+        gc = self._make_gc(
+            [
+                # _resolve_version_range
+                [{"version": "4.0.0"}, {"version": "4.1.0"}],
+                # _get_version_cocos (from) — None, fallback to 11
+                [{"cocos": None}],
+                # _get_version_cocos (to) — None, fallback to 17
+                [{"cocos": None}],
+                # _get_cocos_table
+                [],
+                # _get_renames
+                [],
+                # _get_removals
+                [],
+                # _get_additions
+                [],
+                # _get_unit_changes
+                [],
+                # _get_type_changes
+                [],
+                # _get_semantic_doc_changes
+                [],
+                # _get_rename_lineages: chain query
+                [
+                    {
+                        "start_path": chain[0],
+                        "end_path": chain[-1],
+                        "ids": "summary",
+                        "chain_ids": chain,
+                        "hops": 2,
+                        "start_introduced": "3.22.0",
+                        "start_deprecated": None,
+                        "end_introduced": "4.1.0",
+                        "end_deprecated": None,
+                    }
+                ],
+                # _get_rename_lineages: intermediate node versions
+                [{"id": "summary/b", "introduced_in": "4.0.0"}],
+            ]
+        )
+        guide = build_migration_guide(gc, "3.22.0", "4.1.0")
+        assert isinstance(guide.rename_lineages, list)
+        assert len(guide.rename_lineages) == 1
+        assert guide.rename_lineages[0]["start_path"] == "summary/a"
+        assert guide.rename_lineages[0]["hops"] == 2
+
+    def test_lineages_empty_when_no_multi_hop(self):
+        gc = self._make_gc(
+            [
+                [{"version": "4.0.0"}],  # _resolve_version_range
+                [{"cocos": None}],  # from cocos
+                [{"cocos": None}],  # to cocos
+                [],  # _get_cocos_table
+                [],  # _get_renames
+                [],  # _get_removals
+                [],  # _get_additions
+                [],  # _get_unit_changes
+                [],  # _get_type_changes
+                [],  # _get_semantic_doc_changes
+                [],  # _get_rename_lineages: chain query (empty)
+            ]
+        )
+        guide = build_migration_guide(gc, "3.39.0", "4.0.0")
+        assert guide.rename_lineages == []
+
+
+class TestRenameLineagesLiveGraph:
+    """Integration tests against the live Neo4j graph.
+
+    Skipped automatically if no multi-hop chains exist in the graph.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _skip_without_neo4j(self):
+        """Skip if the graph client is unavailable."""
+        try:
+            from imas_codex.graph.client import get_graph_client
+
+            gc = get_graph_client()
+            gc.query("RETURN 1 AS ok")
+            self._gc = gc
+        except Exception:
+            pytest.skip("Neo4j graph not available")
+
+    def test_live_lineages_structure(self):
+        """Live query: multi-hop chains returned should have expected structure."""
+        lineages = _get_rename_lineages(self._gc, "3.22.0", "4.1.0")
+        if not lineages:
+            pytest.skip("no multi-hop chains in 3.22.0→4.1.0 range")
+
+        entry = lineages[0]
+        assert "ids" in entry
+        assert "start_path" in entry
+        assert "end_path" in entry
+        assert "hops" in entry
+        assert entry["hops"] >= 2
+        assert "chain" in entry
+        assert len(entry["chain"]) >= 3
+
+    def test_live_known_chain_summary_b_field(self):
+        """summary/local/magnetic_axis/b_field is a known 2-hop chain."""
+        lineages = _get_rename_lineages(self._gc, "3.22.0", "4.1.0")
+        if not lineages:
+            pytest.skip("no multi-hop chains in 3.22.0→4.1.0 range")
+
+        starts = {e["start_path"] for e in lineages}
+        assert "summary/local/magnetic_axis/b_field" in starts, (
+            "Expected the known summary/local/magnetic_axis/b_field→tor→phi chain"
+        )
+
+    def test_live_render_no_crash(self):
+        """Rendering live lineages should not raise."""
+        lineages = _get_rename_lineages(self._gc, "3.22.0", "4.1.0")
+        if not lineages:
+            pytest.skip("no multi-hop chains in 3.22.0→4.1.0 range")
+
+        result = _render_rename_lineages_section(lineages, "3.22.0", "4.1.0")
+        assert "Rename Lineages (Multi-Hop)" in result
+        assert len(result) > 100
