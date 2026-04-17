@@ -119,8 +119,9 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
   ⚠️ This quantity is COCOS-dependent. You MUST include a sign convention paragraph
   in the documentation section of the form:
   `Sign convention: Positive when <concrete physical condition consistent with COCOS {{ cocos_version | default('') }}>.`
-  Write the CONCRETE condition verbatim (e.g. "the current flows counter-clockwise
-  viewed from above"). NEVER output bracketed placeholders like `[condition]`.{% endif %}
+  Write a CONCRETE plain-English condition (e.g. "the current flows counter-clockwise
+  viewed from above"). If you cannot supply a concrete condition, omit that paragraph
+  entirely and write `This quantity has no sign ambiguity.` instead.{% endif %}
 {% if item.identifier_schema %}- **Identifier schema:** {{ item.identifier_schema }}{% if item.identifier_schema_doc %} — {{ item.identifier_schema_doc }}{% endif %}{% endif %}
 {% if item.coord_path %}- **Coordinate:** {{ item.coord_path }}{% if item.coord_unit %} ({{ item.coord_unit }}){% endif %}{% endif %}
 {% if item.parent_path %}- **Parent structure:** {{ item.parent_path }} ({{ item.parent_type or 'STRUCTURE' }}){% endif %}

@@ -1765,6 +1765,7 @@ class AgentsServer:
     read_only: bool = False
     dd_only: bool | None = None
     no_embed: bool = False
+    include_standard_names: bool = False
     mcp: FastMCP = field(init=False, repr=False)
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
     _started_at: float = field(init=False, repr=False)
@@ -3080,90 +3081,95 @@ class AgentsServer:
         # Standard Name tools
         # =====================================================================
 
-        @self.mcp.tool()
-        def search_standard_names(
-            query: str,
-            kind: str | None = None,
-            tags: list[str] | None = None,
-            review_status: str | None = None,
-            k: int = 20,
-            cocos_type: str | None = None,
-        ) -> str:
-            """Search standard names by physics concept.
+        if self.include_standard_names:
 
-            Hybrid search (vector + keyword) over StandardName descriptions
-            and documentation. Enriched with DD path links, unit info, and
-            grammar decomposition.
+            @self.mcp.tool()
+            def search_standard_names(
+                query: str,
+                kind: str | None = None,
+                tags: list[str] | None = None,
+                review_status: str | None = None,
+                k: int = 20,
+                cocos_type: str | None = None,
+            ) -> str:
+                """Search standard names by physics concept.
 
-            Args:
-                query: Natural-language description of the quantity to find
-                    (e.g. "electron temperature", "plasma boundary shape").
-                kind: Filter by kind (e.g. "scalar", "vector", "metadata").
-                tags: Filter by tags (e.g. ["equilibrium", "core_profiles"]).
-                review_status: Filter by review status (e.g. "drafted", "published").
-                k: Maximum results to return (default 20).
-                cocos_type: Filter by COCOS transformation type (e.g. "psi_like",
-                    "ip_like", "b0_like"). Only returns names with that transformation.
+                Hybrid search (vector + keyword) over StandardName descriptions
+                and documentation. Enriched with DD path links, unit info, and
+                grammar decomposition.
 
-            Returns:
-                Formatted text report with matched standard names, descriptions,
-                units, tags, grammar fields, and relevance scores.
-            """
-            from imas_codex.llm.sn_tools import _search_standard_names as _ssn
+                Args:
+                    query: Natural-language description of the quantity to find
+                        (e.g. "electron temperature", "plasma boundary shape").
+                    kind: Filter by kind (e.g. "scalar", "vector", "metadata").
+                    tags: Filter by tags (e.g. ["equilibrium", "core_profiles"]).
+                    review_status: Filter by review status (e.g. "drafted", "published").
+                    k: Maximum results to return (default 20).
+                    cocos_type: Filter by COCOS transformation type (e.g. "psi_like",
+                        "ip_like", "b0_like"). Only returns names with that transformation.
 
-            return _ssn(
-                query,
-                kind=kind,
-                tags=tags,
-                review_status=review_status,
-                k=k,
-                cocos_type=cocos_type,
-            )
+                Returns:
+                    Formatted text report with matched standard names, descriptions,
+                    units, tags, grammar fields, and relevance scores.
+                """
+                from imas_codex.llm.sn_tools import _search_standard_names as _ssn
 
-        @self.mcp.tool()
-        def fetch_standard_names(names: str) -> str:
-            """Fetch full entries for known standard names.
+                return _ssn(
+                    query,
+                    kind=kind,
+                    tags=tags,
+                    review_status=review_status,
+                    k=k,
+                    cocos_type=cocos_type,
+                )
 
-            Returns complete metadata: description, documentation, unit, kind,
-            tags, links, ids_paths, grammar fields, provenance, review status.
+            @self.mcp.tool()
+            def fetch_standard_names(names: str) -> str:
+                """Fetch full entries for known standard names.
 
-            Args:
-                names: Space- or comma-separated standard name IDs
-                    (e.g. "electron_temperature plasma_current").
+                Returns complete metadata: description, documentation, unit, kind,
+                tags, links, ids_paths, grammar fields, provenance, review status.
 
-            Returns:
-                Formatted text report with complete documentation per name.
-            """
-            from imas_codex.llm.sn_tools import _fetch_standard_names as _fsn
+                Args:
+                    names: Space- or comma-separated standard name IDs
+                        (e.g. "electron_temperature plasma_current").
 
-            return _fsn(names)
+                Returns:
+                    Formatted text report with complete documentation per name.
+                """
+                from imas_codex.llm.sn_tools import _fetch_standard_names as _fsn
 
-        @self.mcp.tool()
-        def list_standard_names(
-            tag: str | None = None,
-            kind: str | None = None,
-            review_status: str | None = None,
-            cocos_type: str | None = None,
-        ) -> str:
-            """List standard names with optional filters.
+                return _fsn(names)
 
-            Returns name, description, kind, unit, status for each entry.
+            @self.mcp.tool()
+            def list_standard_names(
+                tag: str | None = None,
+                kind: str | None = None,
+                review_status: str | None = None,
+                cocos_type: str | None = None,
+            ) -> str:
+                """List standard names with optional filters.
 
-            Args:
-                tag: Filter by tag (e.g. "equilibrium", "magnetics").
-                kind: Filter by kind (e.g. "scalar", "vector").
-                review_status: Filter by review status (e.g. "drafted").
-                cocos_type: Filter by COCOS transformation type (e.g. "psi_like",
-                    "ip_like", "b0_like"). Only returns names with that transformation.
+                Returns name, description, kind, unit, status for each entry.
 
-            Returns:
-                Formatted markdown table of standard names.
-            """
-            from imas_codex.llm.sn_tools import _list_standard_names as _lsn
+                Args:
+                    tag: Filter by tag (e.g. "equilibrium", "magnetics").
+                    kind: Filter by kind (e.g. "scalar", "vector").
+                    review_status: Filter by review status (e.g. "drafted").
+                    cocos_type: Filter by COCOS transformation type (e.g. "psi_like",
+                        "ip_like", "b0_like"). Only returns names with that transformation.
 
-            return _lsn(
-                tag=tag, kind=kind, review_status=review_status, cocos_type=cocos_type
-            )
+                Returns:
+                    Formatted markdown table of standard names.
+                """
+                from imas_codex.llm.sn_tools import _list_standard_names as _lsn
+
+                return _lsn(
+                    tag=tag,
+                    kind=kind,
+                    review_status=review_status,
+                    cocos_type=cocos_type,
+                )
 
         if not self.read_only:
             # =====================================================================

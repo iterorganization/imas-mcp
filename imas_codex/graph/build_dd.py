@@ -1000,6 +1000,17 @@ def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict])
             "imas_codex.cocos.transforms not available, skipping sign flip backfill"
         )
 
+    # Filter out any invalid updates (null label) to prevent half-state
+    # where cocos_label_source is set but cocos_label_transformation is null.
+    valid_updates = [u for u in updates if u.get("label")]
+    dropped = len(updates) - len(valid_updates)
+    if dropped:
+        logger.warning(
+            "Dropped %d backfill updates with null label (data integrity guard)",
+            dropped,
+        )
+    updates = valid_updates
+
     # Apply backfilled labels in batches
     if updates:
         for i in range(0, len(updates), 1000):
@@ -1008,6 +1019,7 @@ def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict])
                 """
                 UNWIND $updates AS u
                 MATCH (p:IMASNode {id: u.id})
+                WHERE u.label IS NOT NULL
                 SET p.cocos_label_transformation = u.label,
                     p.cocos_label_source = u.source
                 """,

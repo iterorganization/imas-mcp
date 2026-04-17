@@ -53,6 +53,12 @@ logger = logging.getLogger(__name__)
     default=False,
     help="Allow startup without embedding server. Semantic search tools will error at call time.",
 )
+@click.option(
+    "--include-standard-names",
+    is_flag=True,
+    default=False,
+    help="Expose standard-name MCP tools (off by default; tools under development)",
+)
 def serve(
     transport: str,
     host: str,
@@ -61,6 +67,7 @@ def serve(
     read_only: bool,
     dd_only: bool | None,
     no_embed: bool,
+    include_standard_names: bool,
 ) -> None:
     """Start the IMAS Codex MCP server.
 
@@ -103,7 +110,12 @@ def serve(
 
     from imas_codex.llm.server import AgentsServer
 
-    server = AgentsServer(read_only=read_only, dd_only=dd_only, no_embed=no_embed)
+    server = AgentsServer(
+        read_only=read_only,
+        dd_only=dd_only,
+        no_embed=no_embed,
+        include_standard_names=include_standard_names,
+    )
     server.run(
         transport=cast(Literal["stdio", "sse", "streamable-http"], transport),
         host=host,

@@ -342,6 +342,54 @@ class TestImageScoring:
         )
 
 
+class TestCOCOSLabelIntegrity:
+    """Verify COCOS label consistency on IMASNode nodes."""
+
+    def test_no_cocos_half_state(self, graph_client, label_counts):
+        """No IMASNode should have cocos_label_source set without a label.
+
+        The "half-state" bug writes cocos_label_source (e.g.
+        'inferred_forward') but leaves cocos_label_transformation as null.
+        This makes the node invisible to COCOS-filtered queries.
+        """
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASNode) "
+            "WHERE p.cocos_label_source IS NOT NULL "
+            "AND p.cocos_label_transformation IS NULL "
+            "RETURN count(*) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, (
+            f"{count} IMASNode nodes have cocos_label_source set but "
+            f"cocos_label_transformation is null (half-state bug). "
+            f"Run: imas-codex graph repair cocos-labels"
+        )
+
+    def test_cocos_labels_are_valid(self, graph_client, label_counts):
+        """COCOS transformation labels must be from the known set."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
+
+        valid_labels = {"psi_like", "ip_like", "b0_like", "f_like"}
+        result = graph_client.query(
+            "MATCH (p:IMASNode) "
+            "WHERE p.cocos_label_transformation IS NOT NULL "
+            "RETURN DISTINCT p.cocos_label_transformation AS label"
+        )
+        if not result:
+            pytest.skip("No COCOS-labelled nodes in graph")
+
+        actual = {r["label"] for r in result}
+        invalid = actual - valid_labels
+        assert not invalid, (
+            f"Invalid cocos_label_transformation values: {invalid}. "
+            f"Expected one of: {valid_labels}"
+        )
+
+
 class TestChunkIntegrity:
     """Verify chunk parent references."""
 

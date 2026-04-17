@@ -13,6 +13,16 @@ import pytest
 
 from imas_codex.llm.server import AgentsServer
 
+SN_TOOLS = {"search_standard_names", "fetch_standard_names", "list_standard_names"}
+
+
+def _tool_names(server: AgentsServer) -> set[str]:
+    return {
+        k.removeprefix("tool:").rstrip("@")
+        for k in server.mcp._local_provider._components
+        if k.startswith("tool:")
+    }
+
 
 @pytest.fixture(scope="module")
 def server():
@@ -127,3 +137,34 @@ class TestToolPayloadSize:
         assert total < self.MAX_TOTAL_PAYLOAD_BYTES, (
             f"Total tools payload {total} bytes exceeds {self.MAX_TOTAL_PAYLOAD_BYTES}"
         )
+
+
+class TestIncludeStandardNames:
+    """Standard name tools must only be registered when --include-standard-names is set."""
+
+    def test_sn_tools_absent_by_default(self):
+        """Standard name tools must NOT appear unless include_standard_names=True."""
+        server = AgentsServer(dd_only=True, include_standard_names=False)
+        names = _tool_names(server)
+        present = SN_TOOLS & names
+        assert not present, (
+            f"Standard name tools registered by default (should be opt-in): {present}"
+        )
+
+    def test_sn_tools_absent_in_rw_server(self):
+        """Standard name tools must NOT appear in the default read-write server."""
+        server = AgentsServer(
+            read_only=False, dd_only=False, include_standard_names=False
+        )
+        names = _tool_names(server)
+        present = SN_TOOLS & names
+        assert not present, (
+            f"Standard name tools registered by default (should be opt-in): {present}"
+        )
+
+    def test_sn_tools_present_when_flag_set(self):
+        """All three standard name tools must be registered when include_standard_names=True."""
+        server = AgentsServer(dd_only=True, include_standard_names=True)
+        names = _tool_names(server)
+        missing = SN_TOOLS - names
+        assert not missing, f"Expected standard name tools not registered: {missing}"

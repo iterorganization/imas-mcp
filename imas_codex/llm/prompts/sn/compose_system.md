@@ -232,10 +232,10 @@ include a dedicated paragraph of the form:
 `Sign convention: Positive when <concrete physical statement>.`
 For example: `Sign convention: Positive when the current flows counter-clockwise
 viewed from above.` or `Sign convention: Positive when the flux increases
-outward from the magnetic axis.`
-**Never emit bracketed placeholders** such as `[condition]`, `[specific condition]`,
-or `[quantity]` in the output — write the concrete condition verbatim, or omit the
-sentence entirely. Use plain text (not bold), separate paragraph, not inline.
+outward from the magnetic axis.` If you cannot supply a concrete physical
+statement, OMIT the sign-convention paragraph entirely and instead write a
+single sentence: `This quantity has no sign ambiguity.` Use plain text (not
+bold), separate paragraph, not inline.
 
 {% if cocos_version is defined and cocos_version %}
 ### COCOS {{ cocos_version }} Reference
@@ -383,14 +383,24 @@ Every section listed below MUST appear. Omitting sections degrades review scores
    reconstruction method. Keep method-independent (do not name specific codes unless necessary).
 
 5. **Typical values** — give quantitative ranges from the tokamak parameter data above. Format:
-   "In conventional tokamaks: X-Y [unit]; in spherical tokamaks: A-B [unit]."
+   "In conventional tokamaks: X-Y {unit}; in spherical tokamaks: A-B {unit}." (where
+   {unit} is the actual SI unit, e.g. "MA", "keV").
 
-6. **Sign convention** — include for ALL COCOS-dependent quantities using the pattern:
-   "Sign convention: Positive when <concrete physical condition>."
-   Write a CONCRETE physical condition (e.g. "the plasma current flows counter-clockwise
-   viewed from above", "the flux increases outward"). NEVER emit bracketed placeholders
-   like "[condition]" or "[specific condition]" in the final output.
-   If not COCOS-dependent, state: "This quantity has no sign ambiguity."
+6. **Sign convention** — For COCOS-dependent or sign-ambiguous quantities, write a
+   single sentence beginning exactly with `Sign convention: Positive when` followed by
+   a CONCRETE physical condition. Examples of acceptable text:
+   - `Sign convention: Positive when the plasma current flows counter-clockwise viewed from above.`
+   - `Sign convention: Positive when the poloidal flux increases outward from the magnetic axis.`
+   - `Sign convention: Positive when the toroidal field points in the positive φ direction.`
+
+   If you CANNOT state a concrete condition (e.g. the COCOS guidance does not apply,
+   or the quantity has no sign ambiguity), OMIT the sign-convention sentence entirely
+   and write instead: `This quantity has no sign ambiguity.`
+
+   Absolute rule: the substring `Positive when` must be followed immediately by a
+   plain-English noun phrase describing a physical state. Any bracketed token,
+   angle-bracket placeholder, or the word `condition` used as a standalone noun in
+   place of the physical condition will fail validation and the name will be rejected.
 
 7. **Cross-references** — reference 2-4 related quantities using `[name](#name)` inline link format.
    These must match entries from the `links` field.

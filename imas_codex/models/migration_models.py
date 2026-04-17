@@ -128,6 +128,15 @@ class CodeMigrationGuide(BaseModel):
     path_update_advice: PathUpdateAdvice | None = None
     type_update_advice: TypeUpdateAdvice | None = None
 
+    rename_lineages: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Multi-hop rename chains (2+ hops). Each entry has: "
+            "'ids', 'start_path', 'end_path', 'hops', "
+            "'chain' (list of {path, introduced} dicts)."
+        ),
+    )
+
 
 def generate_search_patterns(path: str, change_type: str) -> list[str]:
     """Generate language-agnostic search patterns to find code accessing a path."""

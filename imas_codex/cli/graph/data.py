@@ -1270,3 +1270,92 @@ def graph_clear(force: bool) -> None:
         click.echo(f"✓ Cleared {deleted} nodes from [{profile.name}]")
     except Exception as e:
         raise click.ClickException(f"Clear failed: {e}") from e
+
+
+# ============================================================================
+# Graph Repair Subcommand Group
+# ============================================================================
+
+
+@click.group()
+def graph_repair_group() -> None:
+    """Repair graph data without a full rebuild.
+
+    \b
+      imas-codex graph repair cocos-labels    Re-run COCOS label backfill
+    """
+    pass
+
+
+@graph_repair_group.command("cocos-labels")
+def repair_cocos_labels() -> None:
+    """Re-run COCOS label backfill against the live graph.
+
+    Fixes IMASNode nodes that have cocos_label_source set but
+    cocos_label_transformation is null (the "half-state" bug).
+
+    This extracts path data from all DD versions, then runs the
+    backfill inference pipeline (forward-port from 3.x, expression
+    parsing, sign-flip detection).
+    """
+    from imas_codex.graph.build_dd import (
+        _backfill_cocos_labels,
+        extract_paths_for_version,
+        get_all_dd_versions,
+    )
+    from imas_codex.graph.client import GraphClient
+
+    gc = GraphClient.from_profile()
+
+    # Check for half-state nodes before repair
+    pre_check = gc.query(
+        "MATCH (p:IMASNode) "
+        "WHERE p.cocos_label_source IS NOT NULL "
+        "AND p.cocos_label_transformation IS NULL "
+        "RETURN count(*) AS n"
+    )
+    half_state = pre_check[0]["n"] if pre_check else 0
+    click.echo(f"Half-state nodes (source set, label null): {half_state}")
+
+    # Build version data from all DD versions
+    versions = get_all_dd_versions()
+    click.echo(f"Extracting path data from {len(versions)} DD versions...")
+
+    version_data: dict[str, dict] = {}
+    with click.progressbar(versions, label="Extracting") as bar:
+        for v in bar:
+            version_data[v] = extract_paths_for_version(v)
+
+    # Run backfill
+    click.echo("Running COCOS label backfill...")
+    count = _backfill_cocos_labels(gc, version_data)
+
+    # Post-repair check
+    post_check = gc.query(
+        "MATCH (p:IMASNode) "
+        "WHERE p.cocos_label_source IS NOT NULL "
+        "AND p.cocos_label_transformation IS NULL "
+        "RETURN count(*) AS n"
+    )
+    remaining = post_check[0]["n"] if post_check else 0
+
+    # Breakdown by source
+    breakdown = gc.query(
+        "MATCH (p:IMASNode) "
+        "WHERE p.cocos_label_source IS NOT NULL "
+        "RETURN p.cocos_label_source AS source, count(*) AS cnt "
+        "ORDER BY cnt DESC"
+    )
+
+    gc.close()
+
+    click.echo(f"\n✓ Backfilled {count} COCOS labels")
+    click.echo(f"  Half-state nodes remaining: {remaining}")
+    if breakdown:
+        click.echo("  Breakdown by source:")
+        for row in breakdown:
+            click.echo(f"    {row['source']}: {row['cnt']}")
+    if remaining > 0:
+        click.echo(
+            "\n⚠ Some half-state nodes remain. These may require manual investigation."
+        )
