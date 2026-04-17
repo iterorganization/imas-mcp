@@ -470,24 +470,72 @@ def _enrich_batch_items(items: list[dict]) -> None:
                     item["version_history"] = valid_changes
 
 
+def _is_attachment_consistent(source_id: str, sn_name: str) -> tuple[bool, str]:
+    """Reject attachments where the DD path tense disagrees with the SN tense.
+
+    E.g. ``change_in_electron_density`` may not be attached to
+    ``core_profiles/.../density`` (a base quantity, not a change). Symmetric:
+    a base-quantity SN may not absorb an ``instant_changes`` path.
+    """
+    change_prefixes = (
+        "change_in_",
+        "tendency_of_",
+        "rate_of_",
+        "rate_of_change_of_",
+        "time_derivative_of_",
+    )
+    change_path_tokens = ("instant_changes", "/change/", "_delta", "tendency_")
+    sn_is_change = any(sn_name.startswith(p) for p in change_prefixes)
+    path_is_change = any(t in source_id for t in change_path_tokens)
+    if sn_is_change and not path_is_change:
+        return False, (
+            f"tense mismatch: SN '{sn_name}' is a change/rate but path "
+            f"'{source_id}' is a base quantity"
+        )
+    if path_is_change and not sn_is_change:
+        return False, (
+            f"tense mismatch: path '{source_id}' is a change/rate but SN "
+            f"'{sn_name}' is a base quantity"
+        )
+    return True, ""
+
+
 def _process_attachments(
     attachments: list, state: StandardNameBuildState, wlog: logging.LoggerAdapter
 ) -> None:
     """Attach DD paths to existing standard names without regeneration.
 
     Creates HAS_STANDARD_NAME relationships in the graph for paths that the
-    compose LLM identified as mapping to existing names.
+    compose LLM identified as mapping to existing names. Rejects attachments
+    that fail deterministic consistency checks (e.g. tense mismatch).
     """
     from imas_codex.graph.client import GraphClient
 
+    rejected: list[tuple[str, str, str]] = []
+    accepted: list = []
+    for a in attachments:
+        ok, reason = _is_attachment_consistent(a.source_id, a.standard_name)
+        if ok:
+            accepted.append(a)
+        else:
+            rejected.append((a.source_id, a.standard_name, reason))
+
+    for src, sn, why in rejected:
+        wlog.warning("Rejected attachment %s → %s: %s", src, sn, why)
+
+    if not accepted:
+        if rejected:
+            state.stats["attachments_rejected"] = state.stats.get(
+                "attachments_rejected", 0
+            ) + len(rejected)
+        return
+
     batch = [
-        {"source_id": a.source_id, "standard_name": a.standard_name}
-        for a in attachments
+        {"source_id": a.source_id, "standard_name": a.standard_name} for a in accepted
     ]
 
     try:
         with GraphClient() as gc:
-            # Also add path to the StandardName's source_paths list (dd: prefixed)
             gc.query(
                 """
                 UNWIND $batch AS b
@@ -501,11 +549,15 @@ def _process_attachments(
                 batch=batch,
             )
 
-        for a in attachments:
+        for a in accepted:
             wlog.info("Attached %s → %s (%s)", a.source_id, a.standard_name, a.reason)
 
         prev = state.stats.get("attachments", 0)
-        state.stats["attachments"] = prev + len(attachments)
+        state.stats["attachments"] = prev + len(accepted)
+        if rejected:
+            state.stats["attachments_rejected"] = state.stats.get(
+                "attachments_rejected", 0
+            ) + len(rejected)
     except Exception:
         wlog.warning("Failed to process attachments", exc_info=True)
 

@@ -478,6 +478,10 @@ is provided as context for your naming decisions.
     - **Never** put a bare adjective after `due_to_` (`ohmic`, `halo`, `runaway`, `neutral_beam`). Spell out the process noun: `due_to_ohmic_dissipation`, `due_to_halo_currents`, `due_to_runaway_electrons`, `due_to_neutral_beam_injection`.
     - **Never combine `due_to_X_at_Y`** — the grammar does not support a position qualifier after `due_to_<process>`. If you need both a process and a position, **move the position to the subject prefix** as a `<position>_<rest>` construction. Example: instead of `electron_radiated_energy_due_to_impurity_radiation_at_halo_region`, use `halo_region_electron_radiated_energy_due_to_impurity_radiation`.
 12. **`field` ambiguity** — the bare token `field` is colloquial and ambiguous. Always qualify: `magnetic_field`, `electric_field`, `radiation_field`, `displacement_field`. The DD often abbreviates `b_field` or `field` for `magnetic_field` — expand it explicitly. Example: ❌ `vacuum_toroidal_field_at_reference_major_radius` → ✅ `vacuum_toroidal_magnetic_field_at_reference_major_radius`.
+13. **`attachments` tense consistency — strict** (recurring quality issue): An attachment from a DD path to an existing standard name is ONLY valid when both refer to the same physical aspect. In particular:
+    - A path under `core_instant_changes/...`, `*/instant_changes/...`, or any path containing `change` / `delta` / `tendency` represents an **incremental change** (event-driven step or rate). It MUST NOT be attached to a base-quantity standard name like `electron_density`. It MUST be attached only to names that begin with `change_in_`, `tendency_of_`, `rate_of_`, `rate_of_change_of_`, or `time_derivative_of_`.
+    - Conversely, a base-quantity path (e.g. `core_profiles/profiles_1d/electrons/density`) MUST NOT be attached to a `change_in_*` / `tendency_of_*` / `rate_of_*` standard name.
+    - When unsure, do not attach — emit a fresh candidate. Wrong attachments corrupt downstream consumers far more than missing attachments.
 
 ## Output Format
 
