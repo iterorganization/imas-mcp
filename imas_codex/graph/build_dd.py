@@ -2674,17 +2674,30 @@ def phase_cluster(
 
 def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
     """Create DDVersion nodes with predecessor chain and COCOS metadata."""
-    sorted_versions = sorted(versions)
+
+    def _ver_key(v: str) -> tuple[int, ...]:
+        try:
+            return tuple(int(x) for x in v.split("."))
+        except (ValueError, AttributeError):
+            return (0,)
+
+    sorted_versions = sorted(versions, key=_ver_key)
 
     # Build version data with predecessors, successors, and COCOS info
     version_data = []
     for i, version in enumerate(sorted_versions):
         cocos_val, cocos_labeled = extract_cocos_for_version(version)
-        major = int(version.split(".")[0])
+        parts = version.split(".")
+        major = int(parts[0]) if len(parts) > 0 else 0
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        patch = int(parts[2]) if len(parts) > 2 else 0
         prev_major = int(sorted_versions[i - 1].split(".")[0]) if i > 0 else major
         version_data.append(
             {
                 "id": version,
+                "major": major,
+                "minor": minor,
+                "patch": patch,
                 "predecessor": sorted_versions[i - 1] if i > 0 else None,
                 "successor": sorted_versions[i + 1]
                 if i < len(sorted_versions) - 1
@@ -2701,7 +2714,10 @@ def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
         """
         UNWIND $versions AS v
         MERGE (ver:DDVersion {id: v.id})
-        SET ver.is_current = v.is_current,
+        SET ver.major = v.major,
+            ver.minor = v.minor,
+            ver.patch = v.patch,
+            ver.is_current = v.is_current,
             ver.is_major_boundary = v.is_major_boundary,
             ver.cocos = v.cocos,
             ver.cocos_labeled_fields = v.cocos_labeled_fields,

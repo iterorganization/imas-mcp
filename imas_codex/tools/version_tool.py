@@ -13,6 +13,18 @@ from imas_codex.search.decorators import mcp_tool
 logger = logging.getLogger(__name__)
 
 
+def _version_sort_key(version_id: str) -> tuple[int, ...]:
+    """Parse a DD version string into a tuple of integers for sorting.
+
+    Handles standard semver (3.39.0, 4.0.0) and gracefully falls back
+    to (0,) for unparseable strings.
+    """
+    try:
+        return tuple(int(x) for x in version_id.split("."))
+    except (ValueError, AttributeError):
+        return (0,)
+
+
 class VersionTool:
     """DD version metadata tool backed by graph DDVersion nodes."""
 
@@ -34,10 +46,7 @@ class VersionTool:
         """
         try:
             results = self.graph_client.query(
-                "MATCH (d:DDVersion) "
-                "RETURN d.id AS id, d.major AS major, d.minor AS minor, "
-                "d.patch AS patch, d.is_current AS is_current "
-                "ORDER BY d.major, d.minor, d.patch"
+                "MATCH (d:DDVersion) RETURN d.id AS id, d.is_current AS is_current"
             )
         except Exception as e:
             return {"error": f"Failed to query DDVersion nodes: {e}"}
@@ -50,7 +59,8 @@ class VersionTool:
                 "versions": [],
             }
 
-        versions = [row["id"] for row in results]
+        # Sort by semver components — never rely on Neo4j property ordering
+        versions = sorted((row["id"] for row in results), key=_version_sort_key)
         current = next(
             (row["id"] for row in results if row.get("is_current")),
             versions[-1],  # fallback to latest by sort order
@@ -82,7 +92,7 @@ class VersionTool:
         ids_filter: str | None = None,
         from_version: str | None = None,
         to_version: str | None = None,
-        follow_rename_chains: bool = False,
+        follow_rename_chains: bool = True,
     ) -> dict[str, Any]:
         """Get version change context for IMAS paths.
 
@@ -155,19 +165,50 @@ class VersionTool:
         except Exception as e:
             return {"error": f"Failed to query version context: {e}", "paths": {}}
 
+        # Query RENAMED_TO edges for all requested paths (separate query
+        # to avoid inflating change_count via cross-product).
+        rename_info: dict[str, dict] = {}
+        try:
+            rename_rows = self.graph_client.query(
+                """
+                UNWIND $path_ids AS pid
+                MATCH (p:IMASNode {id: pid})
+                OPTIONAL MATCH (p)-[:RENAMED_TO]->(successor:IMASNode)
+                OPTIONAL MATCH (predecessor:IMASNode)-[:RENAMED_TO]->(p)
+                WITH p, collect(DISTINCT successor.id) AS successors,
+                     collect(DISTINCT predecessor.id) AS predecessors
+                WHERE size(successors) > 0 OR size(predecessors) > 0
+                RETURN p.id AS id,
+                       [s IN successors WHERE s IS NOT NULL] AS renamed_to,
+                       [pr IN predecessors WHERE pr IS NOT NULL] AS renamed_from
+                """,
+                path_ids=path_list,
+            )
+            for rr in rename_rows or []:
+                rename_info[rr["id"]] = {
+                    "renamed_to": rr.get("renamed_to") or [],
+                    "renamed_from": rr.get("renamed_from") or [],
+                }
+        except Exception as e:
+            logger.warning("Failed to query rename edges: %s", e)
+
         path_ctx: dict[str, Any] = {}
         for r in results or []:
             # Filter out null entries produced when OPTIONAL MATCH finds nothing
             changes = [
                 c for c in (r.get("changes") or []) if c.get("version") is not None
             ]
-            path_ctx[r["id"]] = {
+            entry: dict[str, Any] = {
                 "lifecycle_status": r.get("lifecycle_status"),
                 "introduced_in": r.get("introduced_in"),
                 "deprecated_in": r.get("deprecated_in"),
                 "change_count": len(changes),
                 "changes": changes,
             }
+            # Attach immediate rename links (always included)
+            if r["id"] in rename_info:
+                entry.update(rename_info[r["id"]])
+            path_ctx[r["id"]] = entry
 
         # Report paths not found in graph
         found = set(path_ctx.keys())
@@ -177,7 +218,7 @@ class VersionTool:
         )
         graph_change_nodes_seen = sum(ctx["change_count"] for ctx in path_ctx.values())
 
-        return {
+        result: dict[str, Any] = {
             "paths": path_ctx,
             "total_paths": len(path_list),
             "paths_found": sorted(found),
@@ -189,8 +230,19 @@ class VersionTool:
             "not_found": not_found,
         }
 
+        # Append full rename chains when requested
+        if follow_rename_chains:
+            chain_result = await self._rename_chain_query(
+                ids_filter=ids_filter, path_filter=path_list
+            )
+            result["rename_chains"] = chain_result.get("rename_chains", [])
+
+        return result
+
     async def _rename_chain_query(
-        self, ids_filter: str | None = None
+        self,
+        ids_filter: str | None = None,
+        path_filter: list[str] | None = None,
     ) -> dict[str, Any]:
         """Traverse RENAMED_TO edges to return multi-hop rename lineages.
 
@@ -199,29 +251,28 @@ class VersionTool:
 
         Args:
             ids_filter: Restrict chains to paths belonging to this IDS.
+            path_filter: When provided, only return chains that include
+                at least one of the given paths.
 
         Returns:
             Dict with 'rename_chains' list of {chain, hops} dicts.
         """
+        params: dict[str, Any] = {}
+        where_clauses = ["NOT EXISTS { ()-[:RENAMED_TO]->(old) }"]
+
         if ids_filter:
-            cypher = """
+            where_clauses.append("old.ids = $ids_filter")
+            params["ids_filter"] = ids_filter
+
+        where_str = " AND ".join(where_clauses)
+
+        cypher = f"""
             MATCH chain = (old:IMASNode)-[:RENAMED_TO*1..10]->(current:IMASNode)
-            WHERE old.ids = $ids_filter
-              AND NOT EXISTS { ()-[:RENAMED_TO]->(old) }
+            WHERE {where_str}
             RETURN [n IN nodes(chain) | n.id] AS rename_chain,
                    length(chain) AS hops
             ORDER BY hops DESC
-            """
-            params: dict[str, Any] = {"ids_filter": ids_filter}
-        else:
-            cypher = """
-            MATCH chain = (old:IMASNode)-[:RENAMED_TO*1..10]->(current:IMASNode)
-            WHERE NOT EXISTS { ()-[:RENAMED_TO]->(old) }
-            RETURN [n IN nodes(chain) | n.id] AS rename_chain,
-                   length(chain) AS hops
-            ORDER BY hops DESC
-            """
-            params = {}
+        """
 
         try:
             rows = self.graph_client.query(cypher, **params)
@@ -233,6 +284,12 @@ class VersionTool:
             for r in (rows or [])
             if r.get("rename_chain")
         ]
+
+        # When path_filter is set, only return chains containing a requested path
+        if path_filter:
+            filter_set = set(path_filter)
+            chains = [c for c in chains if filter_set.intersection(c["chain"])]
+
         return {"rename_chains": chains}
 
     @mcp_tool(

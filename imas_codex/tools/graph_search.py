@@ -2089,23 +2089,45 @@ class GraphPathContextTool:
             if ident_links:
                 sections["identifier_links"] = ident_links
 
-        # COCOS kin — peers sharing cocos_label_transformation across IDS.
-        # Only populates when the input path itself has a cocos transformation.
+        # COCOS kin — peers sharing COCOS transformation across IDS.
+        # Combines two sources: cocos_label_transformation property and
+        # cocos_* cluster membership for comprehensive coverage.
         if relationship_types in ("all", "cocos"):
             cocos_kin = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})
+                // Source 1: property match
+                OPTIONAL MATCH (prop_sib:IMASNode)
                 WHERE p.cocos_label_transformation IS NOT NULL
-                MATCH (sibling:IMASNode)
-                WHERE sibling.cocos_label_transformation = p.cocos_label_transformation
-                  AND sibling.ids <> p.ids
-                  AND sibling.id <> p.id
-                  {noise_clause} {dd_clause}
-                RETURN p.cocos_label_transformation AS cocos_type,
-                       sibling.id AS path, sibling.ids AS ids,
-                       coalesce(nullIf(sibling.description, ''), sibling.documentation) AS doc,
-                       sibling.node_category AS node_category
-                ORDER BY sibling.ids, sibling.id
+                  AND prop_sib.cocos_label_transformation = p.cocos_label_transformation
+                  AND prop_sib.ids <> p.ids
+                  AND prop_sib.id <> p.id
+                  {noise_clause.replace("sibling", "prop_sib")} {dd_clause.replace("sibling", "prop_sib")}
+                // Source 2: cluster membership match
+                OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
+                WHERE cl.id STARTS WITH 'cocos_'
+                OPTIONAL MATCH (cl_sib:IMASNode)-[:IN_CLUSTER]->(cl)
+                WHERE cl_sib.ids <> p.ids AND cl_sib.id <> p.id
+                  {noise_clause.replace("sibling", "cl_sib")} {dd_clause.replace("sibling", "cl_sib")}
+                // Union and deduplicate
+                WITH p,
+                     coalesce(p.cocos_label_transformation, substring(cl.id, 6)) AS cocos_type,
+                     collect(DISTINCT {{
+                         path: prop_sib.id, ids: prop_sib.ids,
+                         doc: coalesce(nullIf(prop_sib.description, ''), prop_sib.documentation),
+                         node_category: prop_sib.node_category
+                     }}) + collect(DISTINCT {{
+                         path: cl_sib.id, ids: cl_sib.ids,
+                         doc: coalesce(nullIf(cl_sib.description, ''), cl_sib.documentation),
+                         node_category: cl_sib.node_category
+                     }}) AS all_sibs
+                UNWIND all_sibs AS sib
+                WITH DISTINCT cocos_type, sib
+                WHERE sib.path IS NOT NULL
+                RETURN cocos_type,
+                       sib.path AS path, sib.ids AS ids,
+                       sib.doc AS doc, sib.node_category AS node_category
+                ORDER BY ids, path
                 LIMIT $limit
                 """,
                 **dd_params,
@@ -2205,12 +2227,14 @@ class GraphStructureTool:
             **dd_params,
         )
 
-        # Query 4: COCOS count only (use get_dd_cocos_fields for full listing)
+        # Query 4: COCOS count — union of property and cluster membership
         cocos_count_result = self._gc.query(
             f"""
             MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name
-              AND p.cocos_label_transformation IS NOT NULL {dd_clause}
+            WHERE p.ids = $ids_name {dd_clause}
+              AND (p.cocos_label_transformation IS NOT NULL
+                   OR EXISTS {{ (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
+                               WHERE cl.id STARTS WITH 'cocos_' }})
             RETURN count(p) AS count
             """,
             **dd_params,
@@ -2294,7 +2318,12 @@ class GraphStructureTool:
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Get all COCOS-dependent fields grouped by transformation type."""
+        """Get all COCOS-dependent fields grouped by transformation type.
+
+        Combines two data sources for comprehensive coverage:
+        1. ``cocos_label_transformation`` property on IMASNode (from XML annotations)
+        2. ``cocos_*`` semantic cluster membership (from COCOS metadata inference)
+        """
         dd_params: dict[str, Any] = {}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
@@ -2304,11 +2333,15 @@ class GraphStructureTool:
             dd_params["ids_filter"] = ids_filter
 
         transform_clause = ""
+        cluster_clause = ""
         if transformation_type:
             transform_clause = "AND p.cocos_label_transformation = $transform_type"
+            cluster_clause = "AND cl.id = $cluster_id"
             dd_params["transform_type"] = transformation_type
+            dd_params["cluster_id"] = f"cocos_{transformation_type}"
 
-        rows = self._gc.query(
+        # Source 1: IMASNode property (XML-annotated COCOS labels)
+        property_rows = self._gc.query(
             f"""
             MATCH (p:IMASNode)
             WHERE p.cocos_label_transformation IS NOT NULL
@@ -2317,14 +2350,45 @@ class GraphStructureTool:
                    p.ids AS ids,
                    p.cocos_label_transformation AS transformation_type,
                    p.data_type AS data_type,
-                   p.documentation AS documentation
+                   p.documentation AS documentation,
+                   'property' AS source
             ORDER BY p.cocos_label_transformation, p.id
             """,
             **dd_params,
         )
 
+        # Source 2: COCOS cluster membership (inferred from metadata)
+        cluster_rows = self._gc.query(
+            f"""
+            MATCH (p:IMASNode)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
+            WHERE cl.id STARTS WITH 'cocos_'
+              {ids_clause} {cluster_clause} {dd_clause}
+              AND p.node_category IN $categories
+            RETURN p.id AS path,
+                   p.ids AS ids,
+                   substring(cl.id, 6) AS transformation_type,
+                   p.data_type AS data_type,
+                   p.documentation AS documentation,
+                   'cluster' AS source
+            ORDER BY cl.id, p.id
+            """,
+            **dd_params,
+            categories=list(SEARCHABLE_CATEGORIES),
+        )
+
+        # Union and deduplicate — property source takes priority
+        seen: set[str] = set()
+        all_rows: list[dict] = []
+        for row in property_rows:
+            seen.add(row["path"])
+            all_rows.append(row)
+        for row in cluster_rows:
+            if row["path"] not in seen:
+                seen.add(row["path"])
+                all_rows.append(row)
+
         grouped: dict[str, list[dict]] = {}
-        for row in rows:
+        for row in all_rows:
             tt = row["transformation_type"]
             grouped.setdefault(tt, []).append(
                 {
@@ -2332,6 +2396,7 @@ class GraphStructureTool:
                     "ids": row["ids"],
                     "data_type": row["data_type"],
                     "documentation": row["documentation"],
+                    "source": row["source"],
                 }
             )
 
@@ -2340,7 +2405,7 @@ class GraphStructureTool:
                 tt: {"count": len(fields), "fields": fields}
                 for tt, fields in grouped.items()
             },
-            "total_fields": len(rows),
+            "total_fields": len(all_rows),
             "filters": {
                 "transformation_type": transformation_type,
                 "ids_filter": ids_filter,

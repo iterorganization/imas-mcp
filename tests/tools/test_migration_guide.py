@@ -119,7 +119,7 @@ class TestCodeMigrationModels:
     def test_path_update_advice(self):
         advice = PathUpdateAdvice(
             renamed_paths=[{"old_path": "a/b", "new_path": "a/c"}],
-            removed_paths=[{"path": "a/d", "replacement": None}],
+            removed_paths=[{"path": "a/d"}],
             new_paths=[{"path": "a/e"}],
         )
         assert len(advice.renamed_paths) == 1
@@ -458,12 +458,8 @@ class TestMigrationGuideRendering:
 
     def test_render_with_removals(self):
         removals = [
-            {
-                "ids": "equilibrium",
-                "path": "eq/old_field",
-                "replacement": "eq/new_field",
-            },
-            {"ids": "equilibrium", "path": "eq/dead_field", "replacement": None},
+            {"ids": "equilibrium", "path": "eq/old_field"},
+            {"ids": "equilibrium", "path": "eq/dead_field"},
         ]
         result = _render_guide(
             from_ver="3.39.0",
@@ -482,8 +478,8 @@ class TestMigrationGuideRendering:
             include_recipes=True,
         )
         assert "Removed Paths (2)" in result
-        assert "eq/new_field" in result
-        assert "\u2014" in result
+        assert "eq/old_field" in result
+        assert "eq/dead_field" in result
 
     def test_render_summary_counts(self):
         summary = [

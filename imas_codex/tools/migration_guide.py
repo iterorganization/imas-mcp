@@ -32,19 +32,26 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _version_sort_key(version_id: str) -> tuple[int, ...]:
+    """Parse a DD version string into a tuple of integers for sorting."""
+    try:
+        return tuple(int(x) for x in version_id.split("."))
+    except (ValueError, AttributeError):
+        return (0,)
+
+
 def _resolve_version_range(gc: GraphClient, from_ver: str, to_ver: str) -> list[str]:
     """Get ordered list of all versions between from_ver and to_ver (exclusive of from, inclusive of to)."""
     result = gc.query(
         """
         MATCH (v:DDVersion)
-        WHERE v.id > $from_ver AND v.id <= $to_ver
         RETURN v.id AS version
-        ORDER BY v.id
         """,
-        from_ver=from_ver,
-        to_ver=to_ver,
     )
-    return [r["version"] for r in result]
+    all_versions = sorted((r["version"] for r in result), key=_version_sort_key)
+    from_key = _version_sort_key(from_ver)
+    to_key = _version_sort_key(to_ver)
+    return [v for v in all_versions if from_key < _version_sort_key(v) <= to_key]
 
 
 def _get_change_summary(
@@ -123,20 +130,28 @@ def _get_cocos_table(
 def _get_renames(
     gc: GraphClient, version_range: list[str], ids_filter: str | None = None
 ) -> list[dict]:
-    """Get path renames in the version range."""
+    """Get path renames in the version range.
+
+    Queries RENAMED_TO edges directly (the authoritative rename source).
+    Version-scoped by checking if the old path was deprecated or the new
+    path was introduced within the version range.
+    """
     ids_clause = ""
     params: dict = {"versions": version_range}
     if ids_filter:
-        ids_clause = "AND p.ids = $ids_filter"
+        ids_clause = "AND old.ids = $ids_filter"
         params["ids_filter"] = ids_filter
     return gc.query(
         f"""
-        MATCH (c:IMASNodeChange)-[:IN_VERSION]->(v:DDVersion)
-        WHERE v.id IN $versions AND c.change_type = 'path_renamed'
-        MATCH (c)-[:FOR_IMAS_PATH]->(p:IMASNode)
+        MATCH (old:IMASNode)-[:RENAMED_TO]->(new:IMASNode)
         WHERE true {ids_clause}
-        RETURN p.ids AS ids, c.old_value AS old_path, c.new_value AS new_path
-        ORDER BY p.ids, c.old_value
+        OPTIONAL MATCH (old)-[:DEPRECATED_IN]->(dv:DDVersion)
+        OPTIONAL MATCH (new)-[:INTRODUCED_IN]->(iv:DDVersion)
+        WITH old, new, dv, iv
+        WHERE dv.id IN $versions OR iv.id IN $versions
+           OR (dv IS NULL AND iv IS NULL)
+        RETURN old.ids AS ids, old.id AS old_path, new.id AS new_path
+        ORDER BY old.ids, old.id
         """,
         **params,
     )
@@ -193,7 +208,11 @@ def _get_type_changes(
 def _get_removals(
     gc: GraphClient, version_range: list[str], ids_filter: str | None = None
 ) -> list[dict]:
-    """Get removed paths with potential replacements."""
+    """Get removed paths that are NOT renames.
+
+    Excludes paths that have a RENAMED_TO successor — those are reported
+    by _get_renames() instead. Only returns genuine removals.
+    """
     ids_clause = ""
     params: dict = {"versions": version_range}
     if ids_filter:
@@ -204,10 +223,8 @@ def _get_removals(
         MATCH (c:IMASNodeChange)-[:IN_VERSION]->(v:DDVersion)
         WHERE v.id IN $versions AND c.change_type = 'path_removed'
         MATCH (c)-[:FOR_IMAS_PATH]->(p:IMASNode)
-        WHERE true {ids_clause}
-        OPTIONAL MATCH (p)-[:RENAMED_TO]->(replacement:IMASNode)
-        RETURN p.ids AS ids, p.id AS path,
-               replacement.id AS replacement
+        WHERE NOT EXISTS {{ (p)-[:RENAMED_TO]->() }} {ids_clause}
+        RETURN p.ids AS ids, p.id AS path
         ORDER BY p.ids, p.id
         """,
         **params,
@@ -407,11 +424,10 @@ def _render_guide(
 
     if removals:
         lines.append(f"## Removed Paths ({len(removals)})\n")
-        lines.append("| IDS | Path | Replacement |")
-        lines.append("|-----|------|-------------|")
+        lines.append("| IDS | Path |")
+        lines.append("|-----|------|")
         for r in removals:
-            replacement = r.get("replacement") or "\u2014"
-            lines.append(f"| {r['ids']} | {r['path']} | {replacement} |")
+            lines.append(f"| {r['ids']} | {r['path']} |")
         lines.append("")
 
     if renames:
@@ -605,7 +621,7 @@ def build_migration_guide(
         )
         renamed_list.append({"old_path": old_path, "new_path": new_path_val})
 
-    # --- Removals ---
+    # --- Removals (true removals only — renames excluded by _get_removals) ---
     removals = _get_removals(gc, version_range, ids_filter)
     for rm in removals:
         path = rm.get("path", "")
@@ -613,11 +629,6 @@ def build_migration_guide(
         ids_affected.add(ids_name)
         patterns = generate_search_patterns(path, "path_removed")
         search_patterns.setdefault(ids_name, []).extend(patterns)
-
-        replacement = rm.get("replacement")
-        desc = f"Path removed: {path}"
-        if replacement:
-            desc += f" (replacement: {replacement})"
 
         required_actions.append(
             CodeUpdateAction(
@@ -627,14 +638,13 @@ def build_migration_guide(
                 severity="required",
                 search_patterns=patterns,
                 path_fragments=path.split("/")[1:],
-                description=desc,
+                description=f"Path removed: {path}",
                 before=f"Access {path}",
-                after=f"Use {replacement}" if replacement else "Path no longer exists",
+                after="Path no longer exists",
                 old_path=path,
-                new_path=replacement,
             )
         )
-        removed_list.append({"path": path, "replacement": replacement})
+        removed_list.append({"path": path})
 
     # --- Additions ---
     additions = _get_additions(gc, version_range, ids_filter)
