@@ -173,7 +173,7 @@ class TestVersionFilteringSemantics:
 
     @pytest.mark.asyncio
     async def test_no_dd_version_skips_filter(self):
-        """When dd_version is None, no version filter clause should be in the query."""
+        """When dd_version is None, no version-filter parameters should be passed."""
         gc = MagicMock()
         gc.query.return_value = [
             {
@@ -184,14 +184,16 @@ class TestVersionFilteringSemantics:
                 "units": "",
                 "renamed_from": None,
                 "renamed_to": None,
+                "rename_version": None,
             }
         ]
         tool = GraphPathTool(gc)
         await tool.check_dd_paths("test/path", dd_version=None)
 
-        cypher = gc.query.call_args_list[0][0][0]
-        assert "INTRODUCED_IN" not in cypher
-        assert "DEPRECATED_IN" not in cypher
+        kwargs = gc.query.call_args_list[0][1]
+        # No version filter params should be present
+        assert "dd_major_version" not in kwargs
+        assert "dd_ver_major" not in kwargs
 
 
 # ============================================================================

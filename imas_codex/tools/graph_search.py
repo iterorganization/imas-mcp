@@ -96,6 +96,75 @@ _CONCEPT_IDS_PREFERENCE: dict[str, str] = {
 _LUCENE_SPECIAL = frozenset('+-&&||!(){}[]^"~*?:\\/')
 
 
+def _fetch_rename_lineage(
+    gc: GraphClient,
+    path_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Fetch RENAMED_TO/RENAMED_FROM lineage for a batch of path IDs.
+
+    Traverses up to 10 hops in both directions to capture full multi-hop
+    rename chains (e.g., A → B → C).
+
+    For each matched path returns:
+      - ``renamed_from``: list of predecessor path IDs (old names)
+      - ``renamed_to``:   list of successor path IDs (new names)
+      - ``rename_version``: version string from ``change_nbc_version`` on
+        the current path (non-None when this path was itself renamed to
+        something else, i.e. it has successors)
+
+    Only paths with at least one predecessor or successor are included in
+    the result dict — callers can therefore use ``path_id in result`` as a
+    cheap "has any rename history" guard.
+
+    Args:
+        gc:       Active :class:`~imas_codex.graph.client.GraphClient`.
+        path_ids: IMAS path IDs to query.
+
+    Returns:
+        Dict mapping each path_id (str) to a lineage dict.  Keys in the
+        lineage dict are ``renamed_from`` (list[str]), ``renamed_to``
+        (list[str]), and ``rename_version`` (str | None).
+    """
+    if not path_ids:
+        return {}
+    try:
+        rows = gc.query(
+            """
+            UNWIND $path_ids AS pid
+            MATCH (p:IMASNode {id: pid})
+            OPTIONAL MATCH (pred:IMASNode)-[:RENAMED_TO*1..10]->(p)
+            OPTIONAL MATCH (p)-[:RENAMED_TO*1..10]->(succ:IMASNode)
+            WITH p,
+                 [x IN collect(DISTINCT pred) WHERE x IS NOT NULL] AS preds,
+                 [x IN collect(DISTINCT succ) WHERE x IS NOT NULL] AS succs
+            WHERE size(preds) > 0 OR size(succs) > 0
+            RETURN p.id AS id,
+                   p.change_nbc_version AS rename_version,
+                   [x IN preds | x.id] AS renamed_from,
+                   [x IN succs | x.id] AS renamed_to
+            """,
+            path_ids=path_ids,
+        )
+    except Exception as e:
+        logger.warning("Failed to query rename lineage: %s", e)
+        return {}
+
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows or []:
+        pid = row.get("id")
+        if not pid:
+            continue
+        renamed_from = [p for p in (row.get("renamed_from") or []) if p]
+        renamed_to = [p for p in (row.get("renamed_to") or []) if p]
+        if renamed_from or renamed_to:
+            result[pid] = {
+                "renamed_from": renamed_from,
+                "renamed_to": renamed_to,
+                "rename_version": row.get("rename_version"),
+            }
+    return result
+
+
 def _escape_lucene(term: str) -> str:
     """Escape Lucene special characters in a search term."""
     return "".join(f"\\{c}" if c in _LUCENE_SPECIAL else c for c in term)
@@ -184,34 +253,87 @@ def _resolve_node_categories(node_category: str | None) -> list[str]:
 
 def _dd_version_clause(
     alias: str = "p",
-    dd_version: int | None = None,
+    dd_version: int | str | None = None,
     params: dict[str, Any] | None = None,
 ) -> str:
-    """Return a Cypher WHERE fragment for DD major version filtering.
+    """Return a Cypher WHERE fragment for DD version filtering.
 
     When dd_version is None, returns empty string (no filter).
     Otherwise generates a clause ensuring the path was introduced in
-    DD version N or earlier, and not deprecated in version N or earlier.
-    This returns all paths **active** in the given major version — not
-    only paths newly introduced in that version.
+    the given DD version or earlier, and not deprecated in the given
+    version or earlier.  This returns all paths **active** at the given
+    version — not only paths newly introduced at that version.
 
-    The DDVersion.id is a semver string like "3.42.2" or "4.0.0".
-    Major version is extracted via ``toInteger(split(id, '.')[0])``.
+    Two modes are supported:
 
-    If *params* dict is provided, adds ``dd_major_version`` to it.
+    * ``int`` (e.g. ``4``): major-version comparison only.  Uses
+      ``toInteger(split(id, '.')[0])`` on DDVersion.id and the
+      ``$dd_major_version`` parameter.  This is the legacy behaviour.
+
+    * ``str`` (e.g. ``"3.42.0"``): full semver comparison using the
+      ``major``, ``minor``, and ``patch`` integer properties stored
+      directly on DDVersion nodes.  Adds parameters ``dd_ver_major``,
+      ``dd_ver_minor``, and ``dd_ver_patch``.
+
+    If *params* dict is provided it is updated with the relevant
+    parameters for whichever mode is active.
     """
     if dd_version is None:
         return ""
+
+    if isinstance(dd_version, int):
+        # Legacy major-version comparison (e.g. dd_version=4)
+        if params is not None:
+            params["dd_major_version"] = dd_version
+        return (
+            f"AND EXISTS {{ "
+            f"  MATCH ({alias})-[:INTRODUCED_IN]->(iv:DDVersion) "
+            f"  WHERE toInteger(split(iv.id, '.')[0]) <= $dd_major_version "
+            f"}} "
+            f"AND NOT EXISTS {{ "
+            f"  MATCH ({alias})-[:DEPRECATED_IN]->(dv:DDVersion) "
+            f"  WHERE toInteger(split(dv.id, '.')[0]) <= $dd_major_version "
+            f"}}"
+        )
+
+    # Specific semver string (e.g. "3.42.0") — use stored major/minor/patch
+    try:
+        parts = [int(x) for x in str(dd_version).split(".")]
+        maj = parts[0]
+        mnr = parts[1] if len(parts) > 1 else 0
+        pat = parts[2] if len(parts) > 2 else 0
+    except (ValueError, IndexError):
+        # Unparseable version string — skip filter rather than error
+        logger.warning(
+            "Unparseable dd_version string %r — version filter skipped", dd_version
+        )
+        return ""
+
     if params is not None:
-        params["dd_major_version"] = dd_version
+        params["dd_ver_major"] = maj
+        params["dd_ver_minor"] = mnr
+        params["dd_ver_patch"] = pat
+
+    # A DDVersion V is "<= target" when:
+    #   V.major < target.major
+    #   OR (V.major = target.major AND V.minor < target.minor)
+    #   OR (V.major = target.major AND V.minor = target.minor AND V.patch <= target.patch)
+    def _lte(v: str) -> str:
+        return (
+            f"({v}.major < $dd_ver_major "
+            f"OR ({v}.major = $dd_ver_major AND {v}.minor < $dd_ver_minor) "
+            f"OR ({v}.major = $dd_ver_major AND {v}.minor = $dd_ver_minor "
+            f"AND {v}.patch <= $dd_ver_patch))"
+        )
+
     return (
         f"AND EXISTS {{ "
         f"  MATCH ({alias})-[:INTRODUCED_IN]->(iv:DDVersion) "
-        f"  WHERE toInteger(split(iv.id, '.')[0]) <= $dd_major_version "
+        f"  WHERE {_lte('iv')} "
         f"}} "
         f"AND NOT EXISTS {{ "
         f"  MATCH ({alias})-[:DEPRECATED_IN]->(dv:DDVersion) "
-        f"  WHERE toInteger(split(dv.id, '.')[0]) <= $dd_major_version "
+        f"  WHERE {_lte('dv')} "
         f"}}"
     )
 
@@ -474,7 +596,7 @@ class GraphSearchTool:
                    path.path_doc AS structure_reference,
                    path.coordinate1_same_as AS coordinate1,
                    path.coordinate2_same_as AS coordinate2,
-                   path.cocos_label_transformation AS cocos_label,
+                   path.cocos_transformation_type AS cocos_label,
                    path.cocos_transformation_expression AS cocos_expression,
                    path.description AS description,
                    path.keywords AS keywords,
@@ -494,7 +616,7 @@ class GraphSearchTool:
         # --- COCOS transformation filter (post-enrichment) ---
         # Applied here rather than in Cypher WHERE so both vector and text
         # search paths stay simple. The enriched query already fetches
-        # cocos_label_transformation, so no extra round-trip is needed.
+        # cocos_transformation_type, so no extra round-trip is needed.
         if cocos_transformation_type:
             enriched_by_id = {
                 pid: r
@@ -512,6 +634,9 @@ class GraphSearchTool:
         version_ctx: dict[str, dict[str, Any]] = {}
         if include_version_context and sorted_ids:
             version_ctx = _get_version_context(self._gc, sorted_ids)
+
+        # --- Rename lineage (always fetched) ---
+        rename_lineage_map = _fetch_rename_lineage(self._gc, sorted_ids)
 
         hits = []
         physics_domains = set()
@@ -537,7 +662,7 @@ class GraphSearchTool:
                     structure_reference=r["structure_reference"],
                     coordinate1=r["coordinate1"],
                     coordinate2=r["coordinate2"],
-                    cocos_label_transformation=r["cocos_label"],
+                    cocos_transformation_type=r["cocos_label"],
                     cocos_transformation_expression=r["cocos_expression"],
                     description=r.get("description"),
                     keywords=r.get("keywords"),
@@ -553,6 +678,7 @@ class GraphSearchTool:
                     search_mode=mode,
                     facility_xrefs=xref,
                     version_context=vctx,
+                    rename_lineage=rename_lineage_map.get(pid),
                 )
             )
             if r["physics_domain"]:
@@ -632,7 +758,9 @@ class GraphPathTool:
     def __init__(self, graph_client: GraphClient):
         self._gc = graph_client
 
-    def _get_fuzzy_matcher(self, dd_version: int | None = None) -> PathFuzzyMatcher:
+    def _get_fuzzy_matcher(
+        self, dd_version: int | str | None = None
+    ) -> PathFuzzyMatcher:
         """Lazy-init a version-scoped PathFuzzyMatcher."""
         if dd_version not in self._fuzzy_cache:
             from imas_codex.search.fuzzy_matcher import PathFuzzyMatcher
@@ -663,13 +791,16 @@ class GraphPathTool:
         "Validate exact IMAS paths and check their existence. "
         "paths (required): One or more exact IMAS paths (e.g., 'equilibrium/time_slice/profiles_1d/psi'). "
         "ids: Optional IDS prefix to prepend (e.g., ids='equilibrium' with paths='time_slice/profiles_1d/psi'). "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None checks all versions."
+        "dd_version: DD version to validate against. Accepts a major version integer (e.g., 3 or 4) "
+        "or a specific semver string (e.g., '3.35.0', '4.1.0'). None checks across all versions. "
+        "When a specific version is given, paths not yet introduced or already deprecated are reported "
+        "as not found, and renamed paths include the version when the rename occurred."
     )
     async def check_dd_paths(
         self,
         paths: str | list[str],
         ids: str | None = None,
-        dd_version: int | None = None,
+        dd_version: int | str | None = None,
         ctx: Context | None = None,
     ) -> CheckPathsResult:
         """Validate IMAS paths against graph using batch UNWIND."""
@@ -722,7 +853,9 @@ class GraphPathTool:
         dd_params: dict[str, Any] = {}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
-        # Batch existence + rename check in a single UNWIND query
+        # Batch existence + rename check in a single UNWIND query.
+        # Also fetches the version at which a rename occurred (new path's
+        # INTRODUCED_IN) so we can surface it in the result message.
         rows = self._gc.query(
             f"""
             UNWIND $paths AS check_path
@@ -730,10 +863,12 @@ class GraphPathTool:
             WHERE true {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             OPTIONAL MATCH (old:IMASNode {{id: check_path}})-[:RENAMED_TO]->(new:IMASNode)
+            OPTIONAL MATCH (new)-[:INTRODUCED_IN]->(rename_v:DDVersion)
             RETURN check_path,
                    p.id AS id, p.ids AS ids, p.data_type AS data_type,
                    u.id AS units, p.lifecycle_status AS lifecycle_status,
-                   old.id AS renamed_from, new.id AS renamed_to
+                   old.id AS renamed_from, new.id AS renamed_to,
+                   rename_v.id AS rename_version
             """,
             paths=path_list,
             **dd_params,
@@ -762,15 +897,39 @@ class GraphPathTool:
                 found += 1
             elif r and r["renamed_to"]:
                 new_path = r["renamed_to"]
+                rename_ver = r.get("rename_version")
+                # Build a human-readable suggestion that includes rename version
+                # when one is available (especially useful for version-scoped checks)
+                if dd_version is not None and rename_ver:
+                    version_label = (
+                        dd_version if isinstance(dd_version, str) else f"v{dd_version}"
+                    )
+                    suggestion_text = (
+                        f"{path} does not exist in {version_label} "
+                        f"but was renamed to {new_path} in {rename_ver}"
+                    )
+                else:
+                    suggestion_text = None
                 results.append(
                     CheckPathsResultItem(
                         path=path,
                         exists=False,
                         renamed_from=[
-                            {"old_path": r["renamed_from"], "new_path": new_path}
+                            {
+                                "old_path": r["renamed_from"],
+                                "new_path": new_path,
+                                **(
+                                    {"rename_version": rename_ver} if rename_ver else {}
+                                ),
+                            }
                         ],
-                        migration={"type": "renamed", "target": new_path},
+                        migration={
+                            "type": "renamed",
+                            "target": new_path,
+                            **({"rename_version": rename_ver} if rename_ver else {}),
+                        },
                         suggestion=new_path,
+                        error=suggestion_text,
                     )
                 )
             else:
@@ -881,7 +1040,7 @@ class GraphPathTool:
                        p.path_doc AS structure_path,
                        p.lifecycle_status AS lifecycle_status,
                        p.lifecycle_version AS lifecycle_version,
-                       p.cocos_label_transformation AS cocos_label,
+                       p.cocos_transformation_type AS cocos_label,
                        p.cocos_transformation_expression AS cocos_expression,
                        p.coordinate1_same_as AS coordinate1,
                        p.coordinate2_same_as AS coordinate2,
@@ -955,7 +1114,7 @@ class GraphPathTool:
                     cluster_labels=[cl for cl in r["cluster_labels"] if cl],
                     identifier_schema=ident_schema,
                     version_changes=v_changes,
-                    cocos_label_transformation=r.get("cocos_label"),
+                    cocos_transformation_type=r.get("cocos_label"),
                     cocos_transformation_expression=r.get("cocos_expression"),
                     description=r.get("description"),
                     keywords=r.get("keywords"),
@@ -968,6 +1127,15 @@ class GraphPathTool:
                 nodes.append(node)
             else:
                 not_found.append(NotFoundPathInfo(path=path, reason="not_found"))
+
+        # --- Attach rename lineage to each fetched node (batch query) ---
+        if nodes:
+            fetched_ids = [n.path for n in nodes]
+            rename_lineage_map = _fetch_rename_lineage(self._gc, fetched_ids)
+            for node in nodes:
+                lineage = rename_lineage_map.get(node.path)
+                if lineage:
+                    node.rename_lineage = lineage
 
         return FetchPathsResult(
             nodes=nodes,
@@ -1127,7 +1295,7 @@ class GraphListTool:
                 dd_params["lifecycle_filter"] = lifecycle_filter
             if cocos_transformation_type:
                 extra_filters += (
-                    " AND p.cocos_label_transformation = $cocos_transformation_type"
+                    " AND p.cocos_transformation_type = $cocos_transformation_type"
                 )
                 dd_params["cocos_transformation_type"] = cocos_transformation_type
 
@@ -2090,7 +2258,7 @@ class GraphPathContextTool:
                 sections["identifier_links"] = ident_links
 
         # COCOS kin — peers sharing COCOS transformation across IDS.
-        # Combines two sources: cocos_label_transformation property and
+        # Combines two sources: cocos_transformation_type property and
         # cocos_* cluster membership for comprehensive coverage.
         if relationship_types in ("all", "cocos"):
             cocos_kin = self._gc.query(
@@ -2098,8 +2266,8 @@ class GraphPathContextTool:
                 MATCH (p:IMASNode {{id: $path}})
                 // Source 1: property match
                 OPTIONAL MATCH (prop_sib:IMASNode)
-                WHERE p.cocos_label_transformation IS NOT NULL
-                  AND prop_sib.cocos_label_transformation = p.cocos_label_transformation
+                WHERE p.cocos_transformation_type IS NOT NULL
+                  AND prop_sib.cocos_transformation_type = p.cocos_transformation_type
                   AND prop_sib.ids <> p.ids
                   AND prop_sib.id <> p.id
                   {noise_clause.replace("sibling", "prop_sib")} {dd_clause.replace("sibling", "prop_sib")}
@@ -2111,7 +2279,7 @@ class GraphPathContextTool:
                   {noise_clause.replace("sibling", "cl_sib")} {dd_clause.replace("sibling", "cl_sib")}
                 // Union and deduplicate
                 WITH p,
-                     coalesce(p.cocos_label_transformation, substring(cl.id, 6)) AS cocos_type,
+                     coalesce(p.cocos_transformation_type, substring(cl.id, 6)) AS cocos_type,
                      collect(DISTINCT {{
                          path: prop_sib.id, ids: prop_sib.ids,
                          doc: coalesce(nullIf(prop_sib.description, ''), prop_sib.documentation),
@@ -2232,7 +2400,7 @@ class GraphStructureTool:
             f"""
             MATCH (p:IMASNode)
             WHERE p.ids = $ids_name {dd_clause}
-              AND (p.cocos_label_transformation IS NOT NULL
+              AND (p.cocos_transformation_type IS NOT NULL
                    OR EXISTS {{ (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
                                WHERE cl.id STARTS WITH 'cocos_' }})
             RETURN count(p) AS count
@@ -2321,7 +2489,7 @@ class GraphStructureTool:
         """Get all COCOS-dependent fields grouped by transformation type.
 
         Combines two data sources for comprehensive coverage:
-        1. ``cocos_label_transformation`` property on IMASNode (from XML annotations)
+        1. ``cocos_transformation_type`` property on IMASNode (from XML annotations)
         2. ``cocos_*`` semantic cluster membership (from COCOS metadata inference)
         """
         dd_params: dict[str, Any] = {}
@@ -2335,7 +2503,7 @@ class GraphStructureTool:
         transform_clause = ""
         cluster_clause = ""
         if transformation_type:
-            transform_clause = "AND p.cocos_label_transformation = $transform_type"
+            transform_clause = "AND p.cocos_transformation_type = $transform_type"
             cluster_clause = "AND cl.id = $cluster_id"
             dd_params["transform_type"] = transformation_type
             dd_params["cluster_id"] = f"cocos_{transformation_type}"
@@ -2344,15 +2512,15 @@ class GraphStructureTool:
         property_rows = self._gc.query(
             f"""
             MATCH (p:IMASNode)
-            WHERE p.cocos_label_transformation IS NOT NULL
+            WHERE p.cocos_transformation_type IS NOT NULL
               {ids_clause} {transform_clause} {dd_clause}
             RETURN p.id AS path,
                    p.ids AS ids,
-                   p.cocos_label_transformation AS transformation_type,
+                   p.cocos_transformation_type AS transformation_type,
                    p.data_type AS data_type,
                    p.documentation AS documentation,
                    'property' AS source
-            ORDER BY p.cocos_label_transformation, p.id
+            ORDER BY p.cocos_transformation_type, p.id
             """,
             **dd_params,
         )
@@ -2447,7 +2615,7 @@ class GraphStructureTool:
                    u.id AS unit_id,
                    p.physics_domain AS physics_domain,
                    p.lifecycle_status AS lifecycle_status,
-                   p.cocos_label_transformation AS cocos_label,
+                   p.cocos_transformation_type AS cocos_label,
                    collect(DISTINCT coord.id) AS coordinates,
                    collect(DISTINCT cl.label) AS clusters
             ORDER BY p.id
