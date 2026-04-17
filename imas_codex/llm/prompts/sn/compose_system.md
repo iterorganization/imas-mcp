@@ -284,8 +284,11 @@ Tokens like `1D`, `2D`, `3D` describe storage shape (from DD types such as
 `FLT_1D`), not physics. Describe what the quantity *is* (e.g. "radial
 profile of ...", "flux-surface-averaged ...", "evaluated on a radial grid")
 rather than how it is stored. Never write "1D radial profile", "1D radial
-grid", "as a 1D profile", etc. Drop the `1D` / `2D` / `3D` prefix; the
-coordinate specification already conveys dimensionality.
+grid", "2D grid", "3D spatial grid", "as a 1D profile", "on a 3D mesh",
+etc. Drop the `1D` / `2D` / `3D` prefix entirely; the coordinate
+specification already conveys dimensionality. This is a CRITICAL check —
+any name whose description contains a bare `1D` / `2D` / `3D` token is
+quarantined.
 
 **NC-19 Rate / time-derivative naming.** When the source quantity is a
 time derivative (path typically contains `d_dt`, `ddt`, or the DD unit

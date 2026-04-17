@@ -36,6 +36,7 @@ CRITICAL_CHECKS = frozenset(
         "name_description_consistency_check",
         "american_spelling_check",
         "description_verb_drift_check",
+        "structural_dim_tag_check",
     }
 )
 
@@ -268,6 +269,21 @@ def latex_def_check(candidate: dict[str, Any]) -> list[str]:
         if re.fullmatch(r"1?0?\s*\^\s*\{[-\d]+\}", sym_stripped):
             continue
         if re.fullmatch(r"\d+\^\{?-?\d+\}?", sym_stripped):
+            continue
+
+        # Skip universal physics / math constants that are self-evident:
+        # \pi, 2\pi, \pi/2, \alpha, \beta, \gamma, \mu_0, \epsilon_0,
+        # \hbar, c, e, k_B (optionally with a numeric scalar prefix or
+        # simple rational factor). These need no definition sentence.
+        if re.fullmatch(
+            r"(?:\d+(?:\.\d+)?\s*)?"  # optional numeric coefficient
+            r"(?:\\pi|\\alpha|\\beta|\\gamma|\\delta|\\epsilon|\\mu|"
+            r"\\lambda|\\sigma|\\tau|\\omega|\\Omega|"
+            r"\\mu_0|\\mu_\{0\}|\\epsilon_0|\\epsilon_\{0\}|\\hbar|"
+            r"k_B|k_\{B\})"
+            r"(?:\s*/\s*\d+)?",  # optional /N divisor
+            sym_stripped,
+        ):
             continue
 
         # Find first occurrence sentence index

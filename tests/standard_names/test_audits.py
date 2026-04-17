@@ -34,7 +34,7 @@ class TestLatexDefCheck:
 
         candidate = {
             "documentation": (
-                "The plasma has $\\alpha$ and $\\beta$ parameters. "
+                "The plasma has $T_e$ and $n_e$ parameters. "
                 "These affect confinement significantly. "
                 "Further analysis shows improved stability."
             ),
@@ -42,6 +42,29 @@ class TestLatexDefCheck:
         issues = latex_def_check(candidate)
         assert len(issues) >= 1
         assert any("latex_def_check" in i for i in issues)
+
+    def test_pass_universal_constants_skipped(self):
+        """Universal physics constants (\\pi, \\alpha, \\mu_0, \\hbar,
+        k_B) and numeric factors thereof (``2\\pi``, ``\\pi/2``) do not
+        require a definition sentence."""
+        from imas_codex.standard_names.audits import latex_def_check
+
+        for sym in (
+            r"\pi",
+            r"2\pi",
+            r"\pi/2",
+            r"\alpha",
+            r"\mu_0",
+            r"\hbar",
+            "k_B",
+            r"\epsilon_0",
+        ):
+            candidate = {
+                "documentation": f"Uses ${sym}$ with no explicit definition.",
+            }
+            assert latex_def_check(candidate) == [], (
+                f"Expected no issue for {sym}, got {latex_def_check(candidate)}"
+            )
 
     def test_pass_empty_documentation(self):
         """No documentation produces no issues."""
