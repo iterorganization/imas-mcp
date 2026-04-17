@@ -37,8 +37,36 @@ CRITICAL_CHECKS = frozenset(
         "american_spelling_check",
         "description_verb_drift_check",
         "structural_dim_tag_check",
+        "name_unit_consistency_check",
     }
 )
+
+# Map from head-noun tokens present in a standard name to the unit(s) they
+# imply. Keys are tokens that appear in names; values are sets of acceptable
+# units. When the name contains the token but the declared unit is not in the
+# expected set, the audit raises a critical failure.
+#
+# These rules are deliberately conservative — only unambiguous head nouns are
+# listed. Ambiguous words (``radiation``, ``field``) are left out because they
+# appear across multiple physical dimensions.
+_NAME_TOKEN_UNIT_EXPECTATIONS: dict[str, set[str]] = {
+    # Energy head noun must be in energy units.
+    "energy": {"J", "eV", "keV", "MeV", "GeV"},
+    # Power implies a rate of energy delivery.
+    "power": {"W", "MW", "kW"},
+    # Temperature implies thermal units.
+    "temperature": {"eV", "keV", "K"},
+    # Pressure implies Pa.
+    "pressure": {"Pa", "kPa", "MPa", "bar"},
+    # Voltage implies V.
+    "voltage": {"V", "kV", "mV"},
+    # Angle / rotation implies rad.
+    "angle": {"rad", "deg"},
+    # Mass implies kg or u.
+    "mass": {"kg", "u"},
+    # Frequency implies Hz.
+    "frequency": {"Hz", "kHz", "MHz", "GHz", "rad.s^-1", "s^-1"},
+}
 
 # Single-token names that are too generic to be self-describing standard names.
 # A standard name must convey its meaning without requiring source-path context.
@@ -586,6 +614,69 @@ def unit_dimension_check(candidate: dict[str, Any]) -> list[str]:
     return issues
 
 
+def name_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
+    """Check that head-noun tokens in the *name* match the declared unit.
+
+    Operates on the name alone so it works in name-only mode where the
+    description is empty. Catches cases like ``heating_power_due_to_ohmic``
+    with unit ``J`` (should be ``W``) or ``neutral_beam_injection_unit_energy``
+    with unit ``1`` (should be ``J`` or ``eV``).
+
+    Ignores compound-unit decorations such as ``m^-3.W`` (power density) by
+    also accepting units that *contain* an expected unit as a component. The
+    failure is raised only when the name asserts a head dimension but the
+    declared unit contains no compatible component.
+    """
+    issues: list[str] = []
+    name = (candidate.get("id") or candidate.get("standard_name") or "").lower()
+    unit = (candidate.get("unit") or "").strip()
+    if not name or not unit:
+        return issues
+    if unit in ("1", "dimensionless", "-", "mixed", "none"):
+        dimensionless = True
+    else:
+        dimensionless = False
+
+    name_tokens = set(re.findall(r"[a-z]+", name))
+
+    for token, expected_units in _NAME_TOKEN_UNIT_EXPECTATIONS.items():
+        if token not in name_tokens:
+            continue
+        # Skip if name also contains a qualifier that shifts the head noun
+        # (e.g. ``power_density`` has token ``power`` but density shifts the
+        # unit to ``m^-3.W``).
+        if token == "power" and "density" in name_tokens:
+            continue
+        if token == "energy" and "density" in name_tokens:
+            continue
+        if token == "angle" and ("offset" in name_tokens or "gradient" in name_tokens):
+            continue
+
+        if dimensionless:
+            issues.append(
+                f"audit:name_unit_consistency_check: name contains '{token}' "
+                f"but unit is dimensionless ('{unit}'); expected one of "
+                f"{sorted(expected_units)}"
+            )
+            continue
+
+        if unit in expected_units:
+            continue
+        # Accept compound units that list one expected unit as a factor or
+        # exponentiated component (e.g. ``m^-3.W`` for power density is
+        # already filtered above; ``N.m`` for torque is not a power issue).
+        tokens_in_unit = set(re.findall(r"[A-Za-z]+", unit))
+        if expected_units & tokens_in_unit:
+            continue
+        issues.append(
+            f"audit:name_unit_consistency_check: name contains '{token}' "
+            f"but unit='{unit}' is not in expected set "
+            f"{sorted(expected_units)}"
+        )
+
+    return issues
+
+
 def multi_subject_check(candidate: dict[str, Any]) -> list[str]:
     """Detect names combining two different subject segments.
 
@@ -979,6 +1070,7 @@ def run_audits(
     all_issues.extend(provenance_verb_check(candidate, source_path))
     all_issues.extend(synonym_check(candidate, existing_sns_in_domain or []))
     all_issues.extend(unit_dimension_check(candidate))
+    all_issues.extend(name_unit_consistency_check(candidate))
     all_issues.extend(multi_subject_check(candidate))
     all_issues.extend(cocos_specificity_check(candidate, source_cocos_type))
 
