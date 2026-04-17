@@ -29,6 +29,26 @@ You receive existing standard names with their metadata and all linked Data Dict
 - Kind (scalar, vector, metadata)
 - Unit (authoritative from the Data Dictionary)
 
+## Language: American (US) Spelling — hard constraint
+
+All documentation fields (description, documentation, validity_domain,
+constraints) MUST use American spelling to stay consistent with names and
+the ISN catalog convention. Canonical pairs (US ← prefer, UK ← never):
+
+- `normalized` ← `normalised`; `polarized` ← `polarised`;
+  `magnetized` ← `magnetised`; `ionized` ← `ionised`.
+- `analyze` / `analyzed` ← `analyse` / `analysed`;
+  `organize` / `organized` ← `organise` / `organised`.
+- `behavior` ← `behaviour`; `color` ← `colour`; `flavor` ← `flavour`;
+  `center` ← `centre`; `fiber` ← `fibre`; `meter` ← `metre`
+  (SI symbols like `m` are unaffected).
+- `modeled` ← `modelled`; `labeled` ← `labelled`;
+  `traveled` ← `travelled`; `fueling` ← `fuelling`;
+  `channeling` ← `channelling`; `signaling` ← `signalling`.
+
+This rule applies uniformly to prose and to any embedded cross-reference
+text. Do not use British spelling anywhere in enrichment output.
+
 ## Documentation Guidelines
 
 Write documentation as a rich technical reference. Include:

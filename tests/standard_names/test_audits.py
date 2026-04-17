@@ -567,3 +567,65 @@ class TestNameDescriptionConsistencyCheck:
         )
 
         assert name_description_consistency_check({"id": "x", "description": ""}) == []
+
+
+class TestAmericanSpellingCheck:
+    """Tests for american_spelling_check audit (NC-17)."""
+
+    def test_fail_british_in_name(self):
+        from imas_codex.standard_names.audits import american_spelling_check
+
+        issues = american_spelling_check(
+            {"id": "normalised_poloidal_flux", "description": "A flux."}
+        )
+        assert any("'normalised'" in i and "normalized" in i for i in issues)
+        assert any("field 'name'" in i for i in issues)
+
+    def test_fail_british_in_description(self):
+        from imas_codex.standard_names.audits import american_spelling_check
+
+        issues = american_spelling_check(
+            {
+                "id": "plasma_current",
+                "description": "Current at the centre of the plasma, analysed per shot.",
+            }
+        )
+        fields = {i.split("field '")[1].split("'")[0] for i in issues}
+        assert "description" in fields
+        joined = " ".join(issues)
+        assert "centre" in joined and "analysed" in joined
+
+    def test_fail_british_in_constraints(self):
+        from imas_codex.standard_names.audits import american_spelling_check
+
+        issues = american_spelling_check(
+            {
+                "id": "foo",
+                "description": "ok",
+                "constraints": ["Must be normalised to 1"],
+            }
+        )
+        assert any("constraints[0]" in i for i in issues)
+
+    def test_pass_american_only(self):
+        from imas_codex.standard_names.audits import american_spelling_check
+
+        assert (
+            american_spelling_check(
+                {
+                    "id": "normalized_poloidal_flux",
+                    "description": "The normalized flux at the center of the plasma, analyzed per shot.",
+                    "documentation": "Modeled behavior of labeled channels.",
+                }
+            )
+            == []
+        )
+
+    def test_case_insensitive(self):
+        from imas_codex.standard_names.audits import american_spelling_check
+
+        issues = american_spelling_check(
+            {"id": "x", "description": "The Normalised profile."}
+        )
+        assert len(issues) == 1
+        assert "Normalised" in issues[0]

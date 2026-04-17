@@ -34,6 +34,7 @@ CRITICAL_CHECKS = frozenset(
         "spectral_suffix_check",
         "abbreviation_check",
         "name_description_consistency_check",
+        "american_spelling_check",
     }
 )
 
@@ -701,6 +702,86 @@ _SPECTRAL_NAME_MARKERS = (
 )
 
 
+_UK_TO_US_SPELLING = {
+    "normalised": "normalized",
+    "polarised": "polarized",
+    "magnetised": "magnetized",
+    "ionised": "ionized",
+    "analyse": "analyze",
+    "analysed": "analyzed",
+    "analysing": "analyzing",
+    "organise": "organize",
+    "organised": "organized",
+    "organising": "organizing",
+    "behaviour": "behavior",
+    "colour": "color",
+    "flavour": "flavor",
+    "centre": "center",
+    "fibre": "fiber",
+    "metre": "meter",
+    "metres": "meters",
+    "modelled": "modeled",
+    "modelling": "modeling",
+    "labelled": "labeled",
+    "labelling": "labeling",
+    "travelled": "traveled",
+    "travelling": "traveling",
+    "fuelled": "fueled",
+    "fuelling": "fueling",
+    "channelled": "channeled",
+    "channelling": "channeling",
+    "signalled": "signaled",
+    "signalling": "signaling",
+    "catalogue": "catalog",
+    "programme": "program",
+}
+
+_UK_WORD_RE = re.compile(
+    r"\b(" + "|".join(re.escape(w) for w in _UK_TO_US_SPELLING) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def american_spelling_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag British spellings in the name or any prose field.
+
+    The ISN catalog uses American spelling throughout (``normalized`` not
+    ``normalised``, ``polarized`` not ``polarised``). Names or
+    descriptions containing British variants violate NC-17 and are
+    quarantined so they can be regenerated with the canonical spelling.
+    """
+    issues: list[str] = []
+    name = str(candidate.get("id") or candidate.get("name") or "").strip()
+    fields: list[tuple[str, str]] = []
+    if name:
+        fields.append(("name", name.replace("_", " ")))
+    for fld in ("description", "documentation", "validity_domain"):
+        val = candidate.get(fld)
+        if isinstance(val, str) and val.strip():
+            fields.append((fld, val))
+    constraints = candidate.get("constraints")
+    if isinstance(constraints, list):
+        for i, c in enumerate(constraints):
+            if isinstance(c, str) and c.strip():
+                fields.append((f"constraints[{i}]", c))
+
+    seen: set[tuple[str, str]] = set()
+    for field_name, text in fields:
+        for m in _UK_WORD_RE.finditer(text):
+            uk = m.group(0).lower()
+            us = _UK_TO_US_SPELLING[uk]
+            key = (field_name, uk)
+            if key in seen:
+                continue
+            seen.add(key)
+            issues.append(
+                f"audit:american_spelling_check: field '{field_name}' "
+                f"contains British spelling '{m.group(0)}'; use '{us}' "
+                f"(ISN catalog follows American convention — NC-17)"
+            )
+    return issues
+
+
 def name_description_consistency_check(candidate: dict[str, Any]) -> list[str]:
     """Flag names whose description asserts a different concept than the name.
 
@@ -760,6 +841,7 @@ def run_audits(
     all_issues.extend(tautology_check(candidate))
     all_issues.extend(spectral_suffix_check(candidate))
     all_issues.extend(abbreviation_check(candidate))
+    all_issues.extend(american_spelling_check(candidate))
     all_issues.extend(name_description_consistency_check(candidate))
     all_issues.extend(provenance_verb_check(candidate, source_path))
     all_issues.extend(synonym_check(candidate, existing_sns_in_domain or []))

@@ -165,7 +165,7 @@ entries. If one entry uses `poloidal_magnetic_flux`, all related entries must
 use `magnetic_flux` (not just `flux`).
 
 **NC-5 No abbreviations.** Spell words in full. ❌ `norm_poloidal_flux` →
-✅ `normalised_poloidal_magnetic_flux`; ❌ `sep_dist` → ✅ `separatrix_distance`.
+✅ `normalized_poloidal_magnetic_flux`; ❌ `sep_dist` → ✅ `separatrix_distance`.
 Acronyms (GGD, FOCS, EFIT, COCOS) and inline math shorthand (`dr_dz`, `d_psi`)
 are forbidden in names — spell the concept out.
 
@@ -215,13 +215,13 @@ R-coordinate along the *same* boundary contour that
 **NC-12 Batch-canonical spelling — never emit an abbreviated variant
 alongside its full form.** Within a single batch, and relative to the
 PREFERRED VOCABULARY for the domain, use one canonical spelling per
-concept. If `normalised_poloidal_magnetic_flux` is in vocabulary, do not
+concept. If `normalized_poloidal_magnetic_flux` is in vocabulary, do not
 also emit `norm_poloidal_magnetic_flux` — they are the same quantity.
-Spell concept words out in full: `normalised`, `perpendicular`, `parallel`,
+Spell concept words out in full: `normalized`, `perpendicular`, `parallel`,
 `temperature`, `position`, `maximum`, `minimum`, `separatrix`. The
 truncated forms `norm_`, `perp_`, `par_`, `temp_`, `pos_`, `max_`, `min_`,
 `sep_` are forbidden. ❌ `norm_poloidal_flux` → ✅
-`normalised_poloidal_flux`. ❌ `perp_velocity` → ✅
+`normalized_poloidal_flux`. ❌ `perp_velocity` → ✅
 `perpendicular_velocity_component`.
 
 **NC-13 Never use `outline` as a physical quantity.** An outline is a set
@@ -257,8 +257,25 @@ specific point/location that is not itself a physical entity of the
 configuration. Do not emit both forms for the same quantity within a batch
 — pick one. ✅ `poloidal_magnetic_flux_of_plasma_boundary`; ❌ both
 `..._of_plasma_boundary` and `..._at_plasma_boundary`. Trivial cases (e.g.
-normalised flux = 1 on the boundary by construction) should simply be
+normalized flux = 1 on the boundary by construction) should simply be
 skipped, not named.
+
+**NC-17 American (US) spelling — hard constraint.** The ISN catalog uses
+American spelling throughout. Use US forms in **both names and all
+documentation fields** (description, documentation, validity_domain,
+constraints). Canonical pairs (US ← prefer, UK ← never):
+`normalized` ← `normalised`; `polarized` ← `polarised`;
+`magnetized` ← `magnetised`; `ionized` ← `ionised`;
+`analyze` / `analyzed` ← `analyse` / `analysed`;
+`organize` / `organized` ← `organise` / `organised`;
+`behavior` ← `behaviour`; `color` ← `colour`;
+`meter` ← `metre` (units written in SI symbols are unaffected);
+`center` ← `centre`; `fiber` ← `fibre`; `flavor` ← `flavour`;
+`modeled` ← `modelled`; `labeled` ← `labelled`;
+`traveled` ← `travelled`; `fueling` ← `fuelling`;
+`channeling` ← `channelling`; `signaling` ← `signalling`.
+This applies uniformly — UK spellings in descriptions create inconsistency
+with names derived from the same vocabulary and must be avoided.
 
 ### Physics disambiguation glossary
 
