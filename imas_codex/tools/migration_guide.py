@@ -96,12 +96,12 @@ def _get_cocos_table(
     result = gc.query(
         f"""
         MATCH (p:IMASNode)
-        WHERE (p.cocos_label_transformation IS NOT NULL
+        WHERE (p.cocos_transformation_type IS NOT NULL
                OR p.cocos_transformation_expression IS NOT NULL)
           AND p.node_category IN $categories
           {ids_clause}
         RETURN p.ids AS ids, p.id AS path,
-               p.cocos_label_transformation AS label,
+               p.cocos_transformation_type AS label,
                p.cocos_transformation_expression AS expr,
                coalesce(p.cocos_label_source, 'xml') AS source
         ORDER BY p.ids, p.id

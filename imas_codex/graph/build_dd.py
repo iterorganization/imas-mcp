@@ -109,6 +109,7 @@ FIELD_TO_CHANGE_TYPE = {
     "ndim": "structure_changed",
     "identifier_enum_name": "structure_changed",
     "maxoccur": "maxoccur_changed",
+    "cocos_transformation_type": "cocos_label_transformation",
 }
 
 DATA_FORMAT_KEYWORDS = [
@@ -937,7 +938,7 @@ def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict])
     ref_labels: dict[str, str] = {}
     if last_3x:
         for path, info in version_data[last_3x]["paths"].items():
-            label = info.get("cocos_label_transformation")
+            label = info.get("cocos_transformation_type")
             if label:
                 ref_labels[path] = label
 
@@ -945,7 +946,7 @@ def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict])
     handled: set[str] = set()
 
     for path, info in latest_paths.items():
-        if info.get("cocos_label_transformation"):
+        if info.get("cocos_transformation_type"):
             continue  # Already labelled from XML
 
         # Source 1: Forward-port from 3.x
@@ -985,7 +986,7 @@ def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict])
                     continue
                 if full_path not in latest_paths:
                     continue
-                if latest_paths[full_path].get("cocos_label_transformation"):
+                if latest_paths[full_path].get("cocos_transformation_type"):
                     continue
                 updates.append(
                     {
@@ -1001,7 +1002,7 @@ def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict])
         )
 
     # Filter out any invalid updates (null label) to prevent half-state
-    # where cocos_label_source is set but cocos_label_transformation is null.
+    # where cocos_label_source is set but cocos_transformation_type is null.
     valid_updates = [u for u in updates if u.get("label")]
     dropped = len(updates) - len(valid_updates)
     if dropped:
@@ -1020,7 +1021,7 @@ def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict])
                 UNWIND $updates AS u
                 MATCH (p:IMASNode {id: u.id})
                 WHERE u.label IS NOT NULL
-                SET p.cocos_label_transformation = u.label,
+                SET p.cocos_transformation_type = u.label,
                     p.cocos_label_source = u.source
                 """,
                 updates=batch,
@@ -1037,7 +1038,7 @@ def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict])
     client.query(
         """
         MATCH (p:IMASNode)
-        WHERE p.cocos_label_transformation IS NOT NULL
+        WHERE p.cocos_transformation_type IS NOT NULL
         AND p.cocos_label_source IS NULL
         SET p.cocos_label_source = 'xml'
         """
@@ -1226,7 +1227,7 @@ def _extract_paths_recursive(
         # COCOS label transformation (e.g., psi_like, ip_like, q_like)
         cocos_label = getattr(child, "cocos_label_transformation", None)
         if cocos_label:
-            path_info["cocos_label_transformation"] = str(cocos_label)
+            path_info["cocos_transformation_type"] = str(cocos_label)
 
         # Merge field-level XML metadata (lifecycle, timebasepath, etc.)
         if field_xml_meta:
@@ -1436,7 +1437,7 @@ def compute_version_changes(
             "documentation",
             "data_type",
             "node_type",
-            "cocos_label_transformation",
+            "cocos_transformation_type",
             "lifecycle_status",
             "coordinates",
             "timebasepath",
@@ -1846,17 +1847,17 @@ def phase_build(
         mappings = load_path_mappings(current_dd_version)
         _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
 
-    # Update cocos_label_transformation on existing IMASNode nodes
+    # Update cocos_transformation_type on existing IMASNode nodes
     if not dry_run and version_data:
         latest_version = sorted(version_data.keys())[-1]
         latest_data = version_data[latest_version]
         latest_labeled = set()
         cocos_updates = []
         for path, info in latest_data["paths"].items():
-            label = info.get("cocos_label_transformation")
+            label = info.get("cocos_transformation_type")
             if label:
                 latest_labeled.add(path)
-                cocos_updates.append({"id": path, "cocos_label_transformation": label})
+                cocos_updates.append({"id": path, "cocos_transformation_type": label})
         if cocos_updates:
             for i in range(0, len(cocos_updates), 1000):
                 batch = cocos_updates[i : i + 1000]
@@ -1864,7 +1865,7 @@ def phase_build(
                     """
                     UNWIND $paths AS p
                     MATCH (path:IMASNode {id: p.id})
-                    SET path.cocos_label_transformation = p.cocos_label_transformation
+                    SET path.cocos_transformation_type = p.cocos_transformation_type
                     """,
                     paths=batch,
                 )
@@ -1874,9 +1875,9 @@ def phase_build(
         client.query(
             """
             MATCH (p:IMASNode)
-            WHERE p.cocos_label_transformation IS NOT NULL
+            WHERE p.cocos_transformation_type IS NOT NULL
             AND NOT p.id IN $labeled_paths
-            SET p.cocos_label_transformation = null
+            SET p.cocos_transformation_type = null
             """,
             labeled_paths=list(latest_labeled),
         )
@@ -2258,7 +2259,7 @@ def phase_embed(
     RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
            p.data_type AS data_type, p.ids AS ids, p.units AS units,
            p.description AS description, p.keywords AS keywords,
-           p.cocos_label_transformation AS cocos_label_transformation,
+           p.cocos_transformation_type AS cocos_transformation_type,
            p.physics_domain AS physics_domain,
            p.node_type AS node_type, p.ndim AS ndim
     """
@@ -2397,7 +2398,7 @@ def phase_embed_stale(
     RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
            p.data_type AS data_type, p.ids AS ids, p.units AS units,
            p.description AS description, p.keywords AS keywords,
-           p.cocos_label_transformation AS cocos_label_transformation,
+           p.cocos_transformation_type AS cocos_transformation_type,
            p.physics_domain AS physics_domain,
            p.node_type AS node_type, p.ndim AS ndim,
            p.embedding_hash AS existing_hash
@@ -2493,9 +2494,9 @@ def _create_cocos_clusters(client: GraphClient) -> int:
     labels = client.query(
         """
         MATCH (p:IMASNode)
-        WHERE p.cocos_label_transformation IS NOT NULL
+        WHERE p.cocos_transformation_type IS NOT NULL
           AND p.node_category IN $categories
-        RETURN p.cocos_label_transformation AS label,
+        RETURN p.cocos_transformation_type AS label,
                collect(p.id) AS paths,
                collect(DISTINCT p.ids) AS ids_names,
                count(p) AS cnt
@@ -2553,7 +2554,7 @@ def _create_cocos_clusters(client: GraphClient) -> int:
         client.query(
             """
             MATCH (p:IMASNode)
-            WHERE p.cocos_label_transformation = $label
+            WHERE p.cocos_transformation_type = $label
               AND p.node_category IN $categories
             MATCH (cl:IMASSemanticCluster {id: $cluster_id})
             MERGE (p)-[:IN_CLUSTER]->(cl)
@@ -3181,9 +3182,7 @@ def _batch_create_path_nodes(
                 "parent_path": path_info.get("parent_path"),
                 "unit": path_info.get("units", ""),
                 "coordinates": path_info.get("coordinates", []),
-                "cocos_label_transformation": path_info.get(
-                    "cocos_label_transformation"
-                ),
+                "cocos_transformation_type": path_info.get("cocos_transformation_type"),
                 "lifecycle_status": path_info.get("lifecycle_status")
                 or (
                     ids_info.get(ids_name, {}).get("lifecycle_status")
@@ -3238,7 +3237,7 @@ def _batch_create_path_nodes(
                 path.is_leaf = p.is_leaf,
                 path.path_lower = p.path_lower,
                 path.doc_length = p.doc_length,
-                path.cocos_label_transformation = p.cocos_label_transformation,
+                path.cocos_transformation_type = p.cocos_transformation_type,
                 path.lifecycle_status = p.lifecycle_status,
                 path.lifecycle_version = p.lifecycle_version,
                 path.timebasepath = p.timebasepath,

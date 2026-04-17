@@ -172,7 +172,7 @@ class TestLoadSignalMappings:
         assert "ip_like" in caplog.text
 
     def test_no_cocos_warning_for_non_sensitive_path(self, caplog):
-        """No warning for paths without cocos_label_transformation."""
+        """No warning for paths without cocos_transformation_type."""
         import logging
 
         gc = MagicMock()

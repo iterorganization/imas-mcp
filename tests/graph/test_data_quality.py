@@ -349,7 +349,7 @@ class TestCOCOSLabelIntegrity:
         """No IMASNode should have cocos_label_source set without a label.
 
         The "half-state" bug writes cocos_label_source (e.g.
-        'inferred_forward') but leaves cocos_label_transformation as null.
+        'inferred_forward') but leaves cocos_transformation_type as null.
         This makes the node invisible to COCOS-filtered queries.
         """
         if not label_counts.get("IMASNode"):
@@ -358,13 +358,13 @@ class TestCOCOSLabelIntegrity:
         result = graph_client.query(
             "MATCH (p:IMASNode) "
             "WHERE p.cocos_label_source IS NOT NULL "
-            "AND p.cocos_label_transformation IS NULL "
+            "AND p.cocos_transformation_type IS NULL "
             "RETURN count(*) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
             f"{count} IMASNode nodes have cocos_label_source set but "
-            f"cocos_label_transformation is null (half-state bug). "
+            f"cocos_transformation_type is null (half-state bug). "
             f"Run: imas-codex graph repair cocos-labels"
         )
 
@@ -390,8 +390,8 @@ class TestCOCOSLabelIntegrity:
         }
         result = graph_client.query(
             "MATCH (p:IMASNode) "
-            "WHERE p.cocos_label_transformation IS NOT NULL "
-            "RETURN DISTINCT p.cocos_label_transformation AS label"
+            "WHERE p.cocos_transformation_type IS NOT NULL "
+            "RETURN DISTINCT p.cocos_transformation_type AS label"
         )
         if not result:
             pytest.skip("No COCOS-labelled nodes in graph")
@@ -399,7 +399,7 @@ class TestCOCOSLabelIntegrity:
         actual = {r["label"] for r in result}
         invalid = actual - valid_labels
         assert not invalid, (
-            f"Invalid cocos_label_transformation values: {invalid}. "
+            f"Invalid cocos_transformation_type values: {invalid}. "
             f"Expected one of: {valid_labels}"
         )
 

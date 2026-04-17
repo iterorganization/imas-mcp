@@ -151,7 +151,7 @@ def load_signal_mappings(mapping_id: str, gc: GraphClient) -> list[SignalMapping
                    map.cocos_source AS cocos_source,
                    map.cocos_target AS cocos_target,
                    map.driver AS driver,
-                   ip.cocos_label_transformation AS cocos_label
+                   ip.cocos_transformation_type AS cocos_label
             """,
             mapping_id=mapping_id,
         )

@@ -41,7 +41,7 @@ def cocos_sign(label: str, *, cocos_in: int, cocos_out: int) -> int:
     """Compute the COCOS sign/scale factor for a given label.
 
     Uses the COCOS parameter decomposition from Sauter & Medvedev (2013)
-    to compute the transformation factor for a given cocos_label_transformation.
+    to compute the transformation factor for a given cocos_transformation_type.
 
     Supported labels:
         ip_like:        σ_RφZ_out · σ_Bp_out / (σ_RφZ_in · σ_Bp_in)

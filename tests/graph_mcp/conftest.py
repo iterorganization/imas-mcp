@@ -146,7 +146,7 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
-        "cocos_label_transformation": "psi_like",
+        "cocos_transformation_type": "psi_like",
         "lifecycle_status": "active",
     },
     {
@@ -160,7 +160,7 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
-        "cocos_label_transformation": "psi_like",
+        "cocos_transformation_type": "psi_like",
         "lifecycle_status": "active",
     },
     {
@@ -174,7 +174,7 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
-        "cocos_label_transformation": "psi_like",
+        "cocos_transformation_type": "psi_like",
         "lifecycle_status": "active",
     },
     {
@@ -406,7 +406,7 @@ def _load_fixture_graph(client) -> None:
             "node_type: $node_type, physics_domain: $physics_domain, "
             "node_category: 'data', "
             "lifecycle_status: $lifecycle_status, "
-            "cocos_label_transformation: $cocos_label_transformation})",
+            "cocos_transformation_type: $cocos_transformation_type})",
             id=p["id"],
             path=p["path"],
             ids_name=p["ids_name"],
@@ -417,7 +417,7 @@ def _load_fixture_graph(client) -> None:
             node_type=p["node_type"],
             physics_domain=p["physics_domain"],
             lifecycle_status=p.get("lifecycle_status"),
-            cocos_label_transformation=p.get("cocos_label_transformation"),
+            cocos_transformation_type=p.get("cocos_transformation_type"),
         )
         # Link to IDS
         client.query(

@@ -2,7 +2,7 @@
 
 Validates that _backfill_cocos_labels correctly filters out updates
 with null/empty labels to prevent the "half-state" bug where
-cocos_label_source is set but cocos_label_transformation is null.
+cocos_label_source is set but cocos_transformation_type is null.
 """
 
 import logging
@@ -37,15 +37,15 @@ class TestBackfillNullLabelGuard:
 
     def test_null_label_dropped_from_updates(self, mock_client, caplog):
         """An update with label=None must be filtered out; valid ones pass through."""
-        # Build paths where 4.x has no cocos_label_transformation
+        # Build paths where 4.x has no cocos_transformation_type
         # but 3.x reference does — this triggers forward-port inference.
         paths = {
             "equilibrium/time_slice/profiles_1d/psi": {
-                "cocos_label_transformation": None,
+                "cocos_transformation_type": None,
                 "cocos_transformation_expression": "",
             },
             "equilibrium/time_slice/profiles_1d/phi": {
-                "cocos_label_transformation": None,
+                "cocos_transformation_type": None,
                 "cocos_transformation_expression": "",
             },
         }
@@ -54,10 +54,10 @@ class TestBackfillNullLabelGuard:
             "3.42.2": {
                 "paths": {
                     "equilibrium/time_slice/profiles_1d/psi": {
-                        "cocos_label_transformation": "psi_like",
+                        "cocos_transformation_type": "psi_like",
                     },
                     "equilibrium/time_slice/profiles_1d/phi": {
-                        "cocos_label_transformation": None,
+                        "cocos_transformation_type": None,
                     },
                 },
                 "ids_info": {},
@@ -93,7 +93,7 @@ class TestBackfillNullLabelGuard:
         # Path in 3.x has None label → forward-port produces None label
         paths = {
             "core_profiles/profiles_1d/electrons/temperature": {
-                "cocos_label_transformation": None,
+                "cocos_transformation_type": None,
                 "cocos_transformation_expression": "",
             },
         }
@@ -101,7 +101,7 @@ class TestBackfillNullLabelGuard:
             "3.42.2": {
                 "paths": {
                     "core_profiles/profiles_1d/electrons/temperature": {
-                        "cocos_label_transformation": None,
+                        "cocos_transformation_type": None,
                     },
                 },
                 "ids_info": {},
@@ -128,7 +128,7 @@ class TestBackfillNullLabelGuard:
         """Empty string labels should also be filtered out."""
         paths = {
             "equilibrium/time_slice/profiles_1d/q": {
-                "cocos_label_transformation": None,
+                "cocos_transformation_type": None,
                 "cocos_transformation_expression": "",
             },
         }
@@ -136,7 +136,7 @@ class TestBackfillNullLabelGuard:
             "3.42.2": {
                 "paths": {
                     "equilibrium/time_slice/profiles_1d/q": {
-                        "cocos_label_transformation": "",  # empty string
+                        "cocos_transformation_type": "",  # empty string
                     },
                 },
                 "ids_info": {},
@@ -156,7 +156,7 @@ class TestBackfillNullLabelGuard:
         """Labels inferred from cocos_transformation_expression should pass."""
         paths = {
             "equilibrium/time_slice/profiles_1d/f": {
-                "cocos_label_transformation": None,
+                "cocos_transformation_type": None,
                 "cocos_transformation_expression": "- {b0_like}",
             },
         }
@@ -190,11 +190,11 @@ class TestBackfillNullLabelGuard:
         """When all updates have valid labels, none should be dropped."""
         paths = {
             "equilibrium/time_slice/profiles_1d/psi": {
-                "cocos_label_transformation": None,
+                "cocos_transformation_type": None,
                 "cocos_transformation_expression": "",
             },
             "equilibrium/time_slice/profiles_1d/f": {
-                "cocos_label_transformation": None,
+                "cocos_transformation_type": None,
                 "cocos_transformation_expression": "- {b0_like}",
             },
         }
@@ -202,7 +202,7 @@ class TestBackfillNullLabelGuard:
             "3.42.2": {
                 "paths": {
                     "equilibrium/time_slice/profiles_1d/psi": {
-                        "cocos_label_transformation": "psi_like",
+                        "cocos_transformation_type": "psi_like",
                     },
                 },
                 "ids_info": {},

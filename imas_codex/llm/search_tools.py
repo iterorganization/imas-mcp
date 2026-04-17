@@ -1202,7 +1202,7 @@ def _fetch_imas_path(gc: GraphClient, resource: str) -> str | None:
                p.documentation AS documentation, p.data_type AS data_type,
                p.ndim AS ndim, p.node_type AS node_type,
                p.physics_domain AS physics_domain,
-               p.cocos_label_transformation AS cocos_label,
+               p.cocos_transformation_type AS cocos_label,
                p.lifecycle_status AS lifecycle_status,
                p.lifecycle_version AS lifecycle_version,
                p.path_doc AS structure_reference,

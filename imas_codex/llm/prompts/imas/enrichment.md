@@ -59,7 +59,7 @@ The following are already stored as separate fields on each node. Including them
 - **NO** data type or array shape — already in `data_type`
 - **NO** coordinate axes or grid specifications — already in `coordinates`
 - **NO** error/uncertainty details — separate paths exist for those
-- **NO** COCOS sign convention details — already in `cocos_label_transformation`
+- **NO** COCOS sign convention details — already in `cocos_transformation_type`
   (do NOT mention "COCOS", "ip_like", "psi_like", "sign convention", etc.)
 
 ### Use Context to Understand, Not to Differentiate

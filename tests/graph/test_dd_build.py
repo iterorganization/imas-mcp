@@ -571,15 +571,15 @@ class TestCOCOSCompleteness:
             f"Expected >=17 DDVersions linked to COCOS, got {result[0]['cnt']}"
         )
 
-    def test_cocos_label_transformation_on_paths(self, graph_client):
+    def test_cocos_transformation_type_on_paths(self, graph_client):
         """Current-version paths with COCOS sensitivity should be labeled."""
         result = graph_client.query(
             "MATCH (p:IMASNode) "
-            "WHERE p.cocos_label_transformation IS NOT NULL "
+            "WHERE p.cocos_transformation_type IS NOT NULL "
             "RETURN count(p) AS cnt"
         )
         assert result[0]["cnt"] >= 300, (
-            f"Expected >=300 paths with cocos_label_transformation, "
+            f"Expected >=300 paths with cocos_transformation_type, "
             f"got {result[0]['cnt']}"
         )
 
@@ -616,7 +616,7 @@ class TestCOCOSBackfill:
 
         result = graph_client.query(
             "MATCH (p:IMASNode) "
-            "WHERE p.cocos_label_transformation IS NOT NULL "
+            "WHERE p.cocos_transformation_type IS NOT NULL "
             "AND p.cocos_label_source IS NULL "
             "RETURN count(p) AS cnt"
         )

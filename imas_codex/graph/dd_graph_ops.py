@@ -87,7 +87,7 @@ def claim_paths_for_enrichment(
             MATCH (p:IMASNode {claim_token: $token})
             RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
                    p.data_type AS data_type, p.ids AS ids,
-                   p.cocos_label_transformation AS cocos_label_transformation,
+                   p.cocos_transformation_type AS cocos_transformation_type,
                    p.enrichment_hash AS enrichment_hash
             """,
             token=token,
@@ -371,7 +371,7 @@ def claim_paths_for_embedding(limit: int = 500) -> list[dict]:
             RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
                    p.data_type AS data_type, p.ids AS ids, p.unit AS unit,
                    p.description AS description, p.keywords AS keywords,
-                   p.cocos_label_transformation AS cocos_label_transformation,
+                   p.cocos_transformation_type AS cocos_transformation_type,
                    p.physics_domain AS physics_domain,
                    p.node_type AS node_type, p.ndim AS ndim,
                    p.embedding_hash AS embedding_hash

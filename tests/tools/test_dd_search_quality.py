@@ -100,14 +100,14 @@ async def test_cocos_kin_populated_for_ip(live_tools):
 
 @pytest.mark.asyncio
 async def test_cocos_kin_absent_when_source_has_no_cocos(live_tools):
-    """Paths without cocos_label_transformation should produce an empty
+    """Paths without cocos_transformation_type should produce an empty
     cocos_kin section (not an error)."""
     res = await live_tools.path_context_tool.find_related_dd_paths(
         path="equilibrium/time_slice/profiles_1d/psi",
         relationship_types="cocos",
         max_results=10,
     )
-    # psi itself has no cocos_label_transformation (coordinate), so kin is empty
+    # psi itself has no cocos_transformation_type (coordinate), so kin is empty
     assert res["sections"].get("cocos_kin", []) == []
 
 
@@ -127,7 +127,7 @@ async def test_search_dd_paths_cocos_filter(live_tools):
     assert hasattr(res, "hits"), f"search returned ToolError: {res}"
     assert res.hits, "expected at least one psi_like hit for 'poloidal flux psi'"
     for h in res.hits:
-        assert h.cocos_label_transformation == "psi_like"
+        assert h.cocos_transformation_type == "psi_like"
 
 
 @pytest.mark.asyncio
@@ -144,7 +144,7 @@ async def test_list_dd_paths_cocos_filter(live_tools):
     for container in res.results:
         for p in container.paths:
             # Access the underlying cocos label via raw dict if available
-            cocos = getattr(p, "cocos_label_transformation", None)
+            cocos = getattr(p, "cocos_transformation_type", None)
             if cocos is not None:
                 assert cocos == "psi_like"
 
@@ -156,7 +156,7 @@ async def test_list_dd_paths_cocos_filter(live_tools):
 
 def test_format_search_dd_report_includes_cocos_line():
     """The search report must render a COCOS line when the hit carries a
-    cocos_label_transformation."""
+    cocos_transformation_type."""
     from imas_codex.models.result_models import SearchPathsResult
     from imas_codex.search.search_strategy import SearchHit
 
@@ -167,7 +167,7 @@ def test_format_search_dd_report_includes_cocos_line():
         units="A",
         data_type="FLT_0D",
         physics_domain="magnetics",
-        cocos_label_transformation="ip_like",
+        cocos_transformation_type="ip_like",
         keywords=["plasma current"],
         node_category="quantity",
         score=0.95,
@@ -193,7 +193,7 @@ def test_format_path_context_report_renders_cocos_kin_and_badges():
             "documentation": "Plasma current",
             "units": "A",
             "physics_domain": "magnetics",
-            "cocos_label_transformation": "ip_like",
+            "cocos_transformation_type": "ip_like",
         },
         "sections": {
             "cluster_siblings": [

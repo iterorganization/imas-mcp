@@ -790,7 +790,7 @@ def build_enrichment_messages(
             "unit": ctx.get("unit"),
             "coordinates": ctx.get("coordinates", []),
             "cluster_label": ctx.get("cluster_label"),
-            "cocos_label": ctx.get("cocos_label_transformation"),
+            "cocos_label": ctx.get("cocos_transformation_type"),
             "ids_description": ctx.get("ids_description", ""),
         }
         batch_data.append(entry)
@@ -938,7 +938,7 @@ def enrich_imas_paths(
         WHERE 1=1 {filter_clause}
         RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
                p.data_type AS data_type, p.ids AS ids,
-               p.cocos_label_transformation AS cocos_label_transformation,
+               p.cocos_transformation_type AS cocos_transformation_type,
                p.enrichment_hash AS enrichment_hash
         ORDER BY p.id
         """
@@ -950,7 +950,7 @@ def enrich_imas_paths(
         {filter_clause}
         RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
                p.data_type AS data_type, p.ids AS ids,
-               p.cocos_label_transformation AS cocos_label_transformation,
+               p.cocos_transformation_type AS cocos_transformation_type,
                p.enrichment_hash AS enrichment_hash
         ORDER BY p.id
         """

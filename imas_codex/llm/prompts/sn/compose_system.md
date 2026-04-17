@@ -11,6 +11,8 @@ You are a physics nomenclature expert generating IMAS standard names for fusion 
 
 {% include "sn/_grammar_reference.md" %}
 
+{% include "sn/_exemplars_name_only.md" %}
+
 ### Template Application
 
 {{ template_rules }}

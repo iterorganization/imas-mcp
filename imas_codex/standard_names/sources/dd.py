@@ -54,7 +54,7 @@ RETURN n.id AS path,
        coord.id AS coord_path,
        coord.description AS coord_description,
        cu.id AS coord_unit,
-       n.cocos_label_transformation AS cocos_label,
+       n.cocos_transformation_type AS cocos_label,
        n.cocos_transformation_expression AS cocos_expression
 ORDER BY ids.id, n.id
 """
@@ -259,7 +259,7 @@ RETURN n.id AS path,
        n.node_category AS node_category,
        n.ndim AS ndim,
        n.lifecycle_status AS lifecycle_status,
-       n.cocos_label_transformation AS cocos_label,
+       n.cocos_transformation_type AS cocos_label,
        n.cocos_transformation_expression AS cocos_expression,
        ids.id AS ids_name,
        c.label AS cluster_label,

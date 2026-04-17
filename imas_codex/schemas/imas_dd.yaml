@@ -616,12 +616,13 @@ classes:
       maxoccur:
         description: Maximum occurrences (for struct arrays)
         range: integer
-      cocos_label_transformation:
+      cocos_transformation_type:
         description: >-
-          COCOS transformation label from the DD XML. Identifies which class
-          of COCOS transformation applies to this field (e.g., psi_like fields
-          flip sign between COCOS 11 and 17). Null for fields without COCOS
-          sensitivity. Extracted from the cocos_label_transformation XML attribute.
+          COCOS transformation type. Identifies which class of COCOS
+          transformation applies to this field (e.g., psi_like fields flip
+          sign between COCOS 11 and 17). Null for fields without COCOS
+          sensitivity. Sourced from the cocos_label_transformation XML
+          attribute, with backfill from expression parsing and imas-python.
         range: COCOSLabelTransformation
       cocos_transformation_expression:
         description: >-
@@ -631,7 +632,7 @@ classes:
           COCOS-sensitive quantities. Null for fields without COCOS sensitivity.
       cocos_label_source:
         description: >-
-          Source of the cocos_label_transformation value. 'xml' = from DD XML
+          Source of the cocos_transformation_type value. 'xml' = from DD XML
           directly, 'inferred_forward' = carried from prior version,
           'inferred_backward' = from later version, 'inferred_expression' =
           parsed from cocos_transformation_expression, 'inferred_sign_flip' =

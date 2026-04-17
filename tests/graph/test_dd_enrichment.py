@@ -234,7 +234,7 @@ class TestEnrichImasPaths:
                     "documentation": "Poloidal flux",
                     "data_type": "FLT_1D",
                     "ids": "equilibrium",
-                    "cocos_label_transformation": "psi_like",
+                    "cocos_transformation_type": "psi_like",
                     "enrichment_hash": None,
                 }
             ],

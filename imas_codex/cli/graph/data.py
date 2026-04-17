@@ -1292,7 +1292,7 @@ def repair_cocos_labels() -> None:
     """Re-run COCOS label backfill against the live graph.
 
     Fixes IMASNode nodes that have cocos_label_source set but
-    cocos_label_transformation is null (the "half-state" bug).
+    cocos_transformation_type is null (the "half-state" bug).
 
     This extracts path data from all DD versions, then runs the
     backfill inference pipeline (forward-port from 3.x, expression
@@ -1311,7 +1311,7 @@ def repair_cocos_labels() -> None:
     pre_check = gc.query(
         "MATCH (p:IMASNode) "
         "WHERE p.cocos_label_source IS NOT NULL "
-        "AND p.cocos_label_transformation IS NULL "
+        "AND p.cocos_transformation_type IS NULL "
         "RETURN count(*) AS n"
     )
     half_state = pre_check[0]["n"] if pre_check else 0
@@ -1334,7 +1334,7 @@ def repair_cocos_labels() -> None:
     post_check = gc.query(
         "MATCH (p:IMASNode) "
         "WHERE p.cocos_label_source IS NOT NULL "
-        "AND p.cocos_label_transformation IS NULL "
+        "AND p.cocos_transformation_type IS NULL "
         "RETURN count(*) AS n"
     )
     remaining = post_check[0]["n"] if post_check else 0
