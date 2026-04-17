@@ -22,32 +22,32 @@ classification schemes apply in the DD hierarchy.
 
 ## Design Decisions (from rubber-duck review)
 
-### Split EMBEDDABLE_CATEGORIES — don't overload it
+### Extract CLUSTERABLE_CATEGORIES — clustering is the special case
 
-`EMBEDDABLE_CATEGORIES` is used by clustering code (`preprocessing.py`, `clusters.py`,
-`build_dd.py`) to decide which nodes participate in semantic clustering. Adding `identifier`
-there would pull structural classification nodes into physics clusters — clearly wrong.
+`EMBEDDABLE_CATEGORIES` naturally means "gets vector embeddings." Clustering code
+(`preprocessing.py`, `clusters.py`) currently uses it, but clustering is a narrower
+concern — only physics-quantity nodes should participate in semantic clusters, not
+identifier nodes. The fix is to extract the narrow constant, not widen the wrong one.
 
-**Solution**: New constant `IDENTIFIER_CATEGORIES = frozenset({"identifier"})` in
-`node_categories.py`. Update `SEARCHABLE_CATEGORIES` to include it. Create a new constant
-for embedding eligibility that combines quantity + identifier without affecting clustering:
+**Solution**: New `CLUSTERABLE_CATEGORIES` for clustering code. Expand `EMBEDDABLE_CATEGORIES`
+to include identifier (its natural meaning). New `IDENTIFIER_CATEGORIES` for explicit reference.
 
 ```python
 QUANTITY_CATEGORIES = frozenset({"quantity", "geometry"})
 IDENTIFIER_CATEGORIES = frozenset({"identifier"})
 
-# Clustering — quantity/geometry only (unchanged)
-EMBEDDABLE_CATEGORIES = QUANTITY_CATEGORIES
+# Nodes whose descriptions are embedded into the vector space
+EMBEDDABLE_CATEGORIES = QUANTITY_CATEGORIES | IDENTIFIER_CATEGORIES
+
+# Nodes that participate in semantic clustering (physics quantities only)
+CLUSTERABLE_CATEGORIES = QUANTITY_CATEGORIES
 
 # Vector search — quantity + geometry + coordinate + identifier
 SEARCHABLE_CATEGORIES = QUANTITY_CATEGORIES | {"coordinate"} | IDENTIFIER_CATEGORIES
-
-# Nodes that get vector embeddings (superset of EMBEDDABLE for non-clustering use)
-VECTOR_INDEXED_CATEGORIES = QUANTITY_CATEGORIES | IDENTIFIER_CATEGORIES
 ```
 
-Consumers that embed nodes for vector search use `VECTOR_INDEXED_CATEGORIES`.
-Consumers that prepare clustering input continue using `EMBEDDABLE_CATEGORIES`.
+Clustering consumers switch from `EMBEDDABLE_CATEGORIES` → `CLUSTERABLE_CATEGORIES`.
+All other consumers keep `EMBEDDABLE_CATEGORIES` which now naturally includes identifier.
 
 ### Second lifecycle variant for identifier nodes
 
@@ -93,18 +93,17 @@ hits in the search query.
 File: `imas_codex/core/node_categories.py`
 
 - Add `IDENTIFIER_CATEGORIES = frozenset({"identifier"})`
-- Add `VECTOR_INDEXED_CATEGORIES = QUANTITY_CATEGORIES | IDENTIFIER_CATEGORIES`
+- Add `CLUSTERABLE_CATEGORIES = QUANTITY_CATEGORIES` (new — for clustering code)
+- Expand `EMBEDDABLE_CATEGORIES = QUANTITY_CATEGORIES | IDENTIFIER_CATEGORIES`
 - Update `SEARCHABLE_CATEGORIES = QUANTITY_CATEGORIES | {"coordinate"} | IDENTIFIER_CATEGORIES`
-- Leave `EMBEDDABLE_CATEGORIES` unchanged (clustering use only)
 - Update `__all__`
 
-Audit all consumers of `EMBEDDABLE_CATEGORIES` — confirm none need `VECTOR_INDEXED_CATEGORIES`:
-- `clusters/preprocessing.py:46` — clustering, keep `EMBEDDABLE_CATEGORIES` ✓
-- `core/clusters.py:209` — coverage stats, keep `EMBEDDABLE_CATEGORIES` ✓
-- `graph/build_dd.py:2237,2253` — embed path selection, **switch to `VECTOR_INDEXED_CATEGORIES`**
-- `graph/dd_progress.py` — embed pending, keep `EMBEDDABLE_CATEGORIES` for main worker
-- `graph/dd_workers.py` — embed worker, keep `EMBEDDABLE_CATEGORIES` for main worker
-- `graph/dd_graph_ops.py` — claim embed, keep `EMBEDDABLE_CATEGORIES` for main worker
+Switch clustering consumers from `EMBEDDABLE_CATEGORIES` → `CLUSTERABLE_CATEGORIES`:
+- `clusters/preprocessing.py:46` — `PathFilter`, switch to `CLUSTERABLE_CATEGORIES`
+- `core/clusters.py:209` — coverage stats, switch to `CLUSTERABLE_CATEGORIES`
+- `graph/build_dd.py:2237,2253` — cluster path selection, switch to `CLUSTERABLE_CATEGORIES`
+
+All other consumers keep `EMBEDDABLE_CATEGORIES` (now includes identifier):
 
 ### Phase 2: Enrichment Pipeline
 
@@ -199,11 +198,13 @@ File: `tests/graph/test_dd_progress.py` — add:
 
 | File | Changes |
 |------|---------|
-| `imas_codex/core/node_categories.py` | Add `IDENTIFIER_CATEGORIES`, `VECTOR_INDEXED_CATEGORIES`; update `SEARCHABLE` |
+| `imas_codex/core/node_categories.py` | Add `IDENTIFIER_CATEGORIES`, `CLUSTERABLE_CATEGORIES`; expand `EMBEDDABLE` |
 | `imas_codex/graph/dd_identifier_enrichment.py` | Add `enrich_identifier_nodes()` + `embed_identifier_nodes()` |
 | `imas_codex/llm/prompts/imas/identifier_node_enrichment.md` | New prompt template |
 | `imas_codex/graph/dd_workers.py` | Wire identifier enrichment/embedding into aux steps |
-| `imas_codex/graph/build_dd.py` | Switch embed path selection to `VECTOR_INDEXED_CATEGORIES` |
+| `imas_codex/graph/build_dd.py` | Switch clustering path selection to `CLUSTERABLE_CATEGORIES` |
+| `imas_codex/clusters/preprocessing.py` | Switch to `CLUSTERABLE_CATEGORIES` |
+| `imas_codex/core/clusters.py` | Switch coverage stats to `CLUSTERABLE_CATEGORIES` |
 | `imas_codex/tools/graph_search.py` | Extend search query for identifier schema context; add status guard |
 | `imas_codex/llm/search_formatters.py` | Format identifier hits with schema summary |
 | `tests/core/test_node_categories.py` | Update for new constants |
@@ -214,5 +215,5 @@ File: `tests/graph/test_dd_progress.py` — add:
 
 | Target | Update |
 |--------|--------|
-| `AGENTS.md` | Update node_categories section with `IDENTIFIER_CATEGORIES`, `VECTOR_INDEXED_CATEGORIES` |
+| `AGENTS.md` | Update node_categories section with `IDENTIFIER_CATEGORIES`, `CLUSTERABLE_CATEGORIES` |
 | `plans/README.md` | Add this plan |
