@@ -148,6 +148,11 @@ _UNIT_NOUN_MAP: dict[str, set[str]] = {
         "temperature",
         "energy",
         "thermal",
+        "potential",
+        "ionization",
+        "ionisation",
+        "work function",
+        "binding",
     },
     "K": {
         "temperature",
@@ -248,6 +253,21 @@ def latex_def_check(candidate: dict[str, Any]) -> list[str]:
         # Skip very short fragments like single digits or operators
         sym_stripped = sym.strip()
         if len(sym_stripped) <= 1 and not sym_stripped.isalpha():
+            continue
+
+        # Skip pure numeric LaTeX like 10^{21}, 10^{-19}, 2.5\times10^{19}
+        # — these are numeric magnitudes/exponents, not symbolic variables
+        # requiring definition.
+        if re.fullmatch(
+            r"[\d.\-+]+(?:\s*\\times\s*)?1?0?\^?\{?-?\d+\}?|\d+(?:\.\d+)?|"
+            r"1?0?\^\{?-?\d+\}?|\\times|\\cdot",
+            sym_stripped,
+        ):
+            continue
+        # Also skip if it's just a number followed by an exponent group
+        if re.fullmatch(r"1?0?\s*\^\s*\{[-\d]+\}", sym_stripped):
+            continue
+        if re.fullmatch(r"\d+\^\{?-?\d+\}?", sym_stripped):
             continue
 
         # Find first occurrence sentence index

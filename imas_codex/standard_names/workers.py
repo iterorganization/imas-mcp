@@ -907,6 +907,26 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             cocos_label, batch.cocos_params
                         )
 
+            # --- Rate-quantity detection ---
+            # When DD documentation indicates a rate/time-derivative, inject a
+            # hard constraint so the LLM uses tendency_of_/change_in_ prefix
+            # and writes a consistent description (prevents instant_change_*
+            # names and name/description verb drift).
+            import re as _re
+
+            _RATE_DOC_PATTERNS = _re.compile(
+                r"\b(instantaneous change|signed change|rate of change"
+                r"|time derivative|per unit time|instant change|d/dt"
+                r"|tendency of|time-rate)\b",
+                _re.IGNORECASE,
+            )
+            for item in batch.items:
+                haystack = " ".join(
+                    str(item.get(k, "") or "") for k in ("description", "documentation")
+                )
+                if _RATE_DOC_PATTERNS.search(haystack):
+                    item["rate_hint"] = True
+
             # --- L2: Reference SN few-shot retrieval ---
             # Synthesize query from first 3 path descriptions
             reference_exemplars: list[dict] = []

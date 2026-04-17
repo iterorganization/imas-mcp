@@ -103,6 +103,31 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 
 {% for item in items %}
 ### {{ item.path }}
+{% if item.rate_hint %}
+> ⚠️ **HARD CONSTRAINT — RATE QUANTITY:** The DD documentation for this path
+> indicates a rate / time-derivative quantity (phrases like "instantaneous
+> change", "signed change", "rate of change", "time derivative",
+> "per unit time"). Your name MUST begin with `tendency_of_` (preferred),
+> `change_in_`, or `rate_of_change_of_`. NEVER use `instant_change_*` or
+> `instantaneous_change_*` as a prefix. The description MUST be consistent
+> with the rate-marker prefix (e.g. if the name is `tendency_of_X`, the
+> description should read "Instantaneous signed change in X" or
+> "Time derivative of X"). Do NOT produce a base-quantity name (e.g.
+> `electron_density`) and then describe it as a rate — that is a critical
+> drift error that quarantines the entry.
+>
+> **CRITICAL — rate + component ordering:** If the quantity is a rate of a
+> vector component, the orientation token (`parallel`, `perpendicular`,
+> `poloidal`, `toroidal`, `radial`, `diamagnetic`) MUST be placed OUTSIDE
+> the rate marker, wrapping the rate phrase:
+>   ✅ `parallel_component_of_change_in_fast_electron_pressure`
+>   ✅ `poloidal_component_of_tendency_of_electron_velocity`
+>   ❌ `change_in_parallel_component_of_fast_electron_pressure` (grammar rejects)
+>   ❌ `change_in_poloidal_component_of_electron_velocity` (grammar rejects)
+> The grammar parses `{orientation}_component_of_X` as a unit — the rate
+> marker must modify the base quantity X, not intrude between orientation
+> and `component_of`.
+{% endif %}
 - **Description:** {{ item.description }}
 {% if item.documentation and item.documentation != item.description %}- **DD Documentation:** {{ item.documentation }}{% endif %}
 - **Unit:** {{ item.unit or 'dimensionless' }} *(authoritative from DD — use for naming context only, do NOT output)*
