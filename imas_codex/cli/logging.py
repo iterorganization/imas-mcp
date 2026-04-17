@@ -159,7 +159,7 @@ def configure_cli_logging(
 
     # Remove existing file handlers to avoid duplicates on repeated calls
     for handler in root_logger.handlers[:]:
-        if isinstance(handler, (RotatingFileHandler, logging.FileHandler)):
+        if isinstance(handler, RotatingFileHandler | logging.FileHandler):
             root_logger.removeHandler(handler)
 
     # File handler: captures everything for diagnosis
