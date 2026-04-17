@@ -524,6 +524,7 @@ def _call_llm(
         llm_model,
         messages,
         response_model,
+        service="imas-mapping",
     )
 
     if cost:
@@ -551,6 +552,7 @@ async def _acall_llm(
         llm_model,
         messages,
         response_model,
+        service="imas-mapping",
     )
 
     if cost:

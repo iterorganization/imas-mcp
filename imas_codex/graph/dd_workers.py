@@ -883,6 +883,7 @@ async def _enrich_batch(
                     model=model,
                     messages=messages,
                     response_model=IMASPathEnrichmentBatch,
+                    service="data-dictionary",
                 )
                 result, cost, tokens = llm_out
                 state.enrich_stats.cost += cost
@@ -1043,6 +1044,7 @@ async def _refine_batch(
                     model=model,
                     messages=messages,
                     response_model=IMASPathEnrichmentBatch,
+                    service="data-dictionary",
                 )
                 result, cost, tokens = llm_out
                 state.refine_stats.cost += cost

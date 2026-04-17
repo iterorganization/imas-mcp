@@ -296,6 +296,7 @@ async def triage_worker(
                 ],
                 response_model=FileTriageBatch,
                 temperature=0.1,
+                service="facility-discovery",
             )
             assert isinstance(triage_raw, FileTriageBatch)
             triage_parsed = triage_raw
@@ -465,6 +466,7 @@ async def score_worker(
                 ],
                 response_model=FileScoreBatch,
                 temperature=0.1,
+                service="facility-discovery",
             )
             assert isinstance(parsed_raw, FileScoreBatch)
             parsed = parsed_raw

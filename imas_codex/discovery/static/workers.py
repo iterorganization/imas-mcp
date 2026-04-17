@@ -469,6 +469,7 @@ async def enrich_worker(
                 model=model,
                 messages=messages,
                 response_model=StaticNodeBatch,
+                service="facility-discovery",
             )
             state.enrich_stats.cost += cost
 
@@ -605,6 +606,7 @@ async def enrich_worker(
                 model=model,
                 messages=messages,
                 response_model=StaticNodeBatch,
+                service="facility-discovery",
             )
             state.enrich_stats.cost += cost
 
@@ -721,6 +723,7 @@ async def enrich_worker(
                 model=model,
                 messages=messages,
                 response_model=StaticNodeBatch,
+                service="facility-discovery",
             )
             state.enrich_stats.cost += cost
 

@@ -507,6 +507,7 @@ async def _score_documents_batch(
         timeout=120,
         max_retries=5,
         retry_base_delay=4.0,
+        service="facility-discovery",
     )
 
     llm_results = batch.results
@@ -905,6 +906,7 @@ async def _score_pages_batch(
         ],
         response_model=WikiScoreBatch,
         temperature=0.3,
+        service="facility-discovery",
     )
 
     llm_results = batch.results

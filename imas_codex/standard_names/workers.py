@@ -784,6 +784,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 model=model,
                 messages=messages,
                 response_model=StandardNameComposeBatch,
+                service="standard-names",
             )
 
             state.compose_stats.cost += cost

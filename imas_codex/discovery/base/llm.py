@@ -55,7 +55,7 @@ import re
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import yaml
 
@@ -65,6 +65,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+LLM_SERVICE = Literal[
+    "facility-discovery",
+    "standard-names",
+    "data-dictionary",
+    "imas-mapping",
+    "embedding",
+    "untagged",
+]
+
+_VALID_SERVICES: set[str] = set(LLM_SERVICE.__args__)  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +340,25 @@ def get_api_key() -> str:
     return api_key
 
 
-# Prefixes that indicate a local/non-OpenRouter model provider
+def get_api_key_for_service(service: str) -> str:
+    """Get OpenRouter API key, with per-service override support.
+
+    Checks OPENROUTER_API_KEY_<SERVICE_UPPER> first (hyphens → underscores),
+    then falls back to OPENROUTER_API_KEY_IMAS_CODEX.
+
+    Examples:
+        service="facility-discovery" → checks OPENROUTER_API_KEY_FACILITY_DISCOVERY
+        service="standard-names" → checks OPENROUTER_API_KEY_STANDARD_NAMES
+        service="untagged" → checks OPENROUTER_API_KEY_UNTAGGED (unlikely set)
+    """
+    if service and service != "untagged":
+        env_var = f"OPENROUTER_API_KEY_{service.upper().replace('-', '_')}"
+        per_service_key = os.environ.get(env_var)
+        if per_service_key:
+            return per_service_key
+    return get_api_key()
+
+
 _LOCAL_MODEL_PREFIXES = ("ollama/", "hosted_vllm/", "openai/localhost")
 
 
@@ -708,6 +737,8 @@ def _build_kwargs(
     max_tokens: int | None,
     temperature: float | None,
     timeout: int | None,
+    *,
+    service: str = "untagged",
 ) -> dict[str, Any]:
     """Build litellm completion kwargs with model-aware defaults.
 
@@ -771,11 +802,7 @@ def _build_kwargs(
         model_id = ensure_model_prefix(model)
         # When bypassing the proxy, always use the OpenRouter API key
         # (not the proxy key that might have been passed in).
-        direct_key = (
-            os.getenv("OPENROUTER_API_KEY_IMAS_CODEX") or api_key
-            if bypass_proxy
-            else api_key
-        )
+        direct_key = get_api_key_for_service(service) if bypass_proxy else api_key
 
         kwargs = {
             "model": model_id,
@@ -803,11 +830,17 @@ def _build_kwargs(
     if temperature is not None:
         kwargs["temperature"] = temperature
 
-    # Identify the app on OpenRouter so calls show as "imas-codex"
-    # instead of "Unknown" in the activity dashboard.
+    # Per-service X-Title for OpenRouter dashboard visibility.
+    # Client extra_headers shallow-replaces proxy config extra_headers,
+    # so per-service titles override the proxy fallback "imas-codex".
+    title = f"imas-codex:{service}"
     kwargs["extra_headers"] = {
-        "X-Title": "imas-codex",
+        "X-Title": title,
         "HTTP-Referer": "https://github.com/iterorganization/imas-codex",
+    }
+
+    kwargs["metadata"] = {
+        "service": service,
     }
 
     return kwargs
@@ -828,6 +861,7 @@ def call_llm_structured(
     timeout: int | None = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
     retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY,
+    service: str = "untagged",
 ) -> LLMResult:
     """Call LLM and parse structured output, retrying on both API and parse errors.
 
@@ -870,6 +904,7 @@ def call_llm_structured(
         max_tokens,
         temperature,
         timeout,
+        service=service,
     )
 
     last_error: Exception | None = None
@@ -939,6 +974,7 @@ async def acall_llm_structured(
     timeout: int | None = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
     retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY,
+    service: str = "untagged",
 ) -> LLMResult:
     """Async version of call_llm_structured.
 
@@ -977,6 +1013,7 @@ async def acall_llm_structured(
         max_tokens,
         temperature,
         timeout,
+        service=service,
     )
 
     last_error: Exception | None = None
@@ -1051,6 +1088,7 @@ def call_llm(
     timeout: int | None = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
     retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY,
+    service: str = "untagged",
 ) -> tuple[Any, float]:
     """Call LLM synchronously with retry logic and cost tracking.
 
@@ -1087,6 +1125,7 @@ def call_llm(
         max_tokens,
         temperature,
         timeout,
+        service=service,
     )
 
     last_error: Exception | None = None
@@ -1136,6 +1175,7 @@ async def acall_llm(
     timeout: int | None = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
     retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY,
+    service: str = "untagged",
 ) -> tuple[Any, float]:
     """Call LLM asynchronously with retry logic and cost tracking.
 
@@ -1172,6 +1212,7 @@ async def acall_llm(
         max_tokens,
         temperature,
         timeout,
+        service=service,
     )
 
     last_error: Exception | None = None

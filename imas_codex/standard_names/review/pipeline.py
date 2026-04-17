@@ -822,6 +822,7 @@ async def _review_single_batch(
         model=model,
         messages=messages,
         response_model=StandardNameQualityReviewBatch,
+        service="standard-names",
     )
 
     # --- Match reviews to original entries -----------------------------------

@@ -2054,6 +2054,7 @@ def sn_enrich(
                     response_model=StandardNameEnrichBatch,
                     max_tokens=4096,
                     temperature=0.3,
+                    service="standard-names",
                 )
                 parsed, cost, tokens = result
                 total_cost += cost

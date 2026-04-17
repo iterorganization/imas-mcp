@@ -423,6 +423,7 @@ def populate_metadata(
             model=llm_model,
             messages=messages,
             response_model=MetadataPopulationResponse,
+            service="imas-mapping",
         )
 
         # 7 — Convert LLM response to IMAS path → value dict

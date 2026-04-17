@@ -2569,6 +2569,7 @@ def _score_with_llm(
                 {"role": "user", "content": user_prompt},
             ],
             response_model=ScoreBatch,
+            service="facility-discovery",
         )
     except ValueError:
         # All retries exhausted — mark all as failed so they're skipped
@@ -2749,6 +2750,7 @@ async def _async_score_with_llm(
                 {"role": "user", "content": user_prompt},
             ],
             response_model=ScoreBatch,
+            service="facility-discovery",
         )
     except ValueError:
         # All retries exhausted — mark all as failed so they're skipped

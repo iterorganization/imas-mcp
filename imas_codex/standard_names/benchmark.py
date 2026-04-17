@@ -354,6 +354,7 @@ async def score_with_reviewer(
                 model=reviewer_model,
                 messages=messages,
                 response_model=StandardNameQualityReviewBatch,
+                service="standard-names",
             )
             for r in result.reviews:
                 review_dict = {
@@ -596,6 +597,7 @@ async def _run_model(
                     messages=messages,
                     response_model=StandardNameComposeBatch,
                     temperature=temp,
+                    service="standard-names",
                 )
                 llm_result, cost, tokens = llm_response
                 result.total_cost += cost

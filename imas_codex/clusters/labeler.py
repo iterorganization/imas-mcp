@@ -193,6 +193,7 @@ class ClusterLabeler:
                 response_model=ClusterLabelBatch,
                 max_tokens=65000,
                 temperature=0.3,
+                service="data-dictionary",
             )
 
             batch_labels = self._validate_batch(parsed_batch, batch)

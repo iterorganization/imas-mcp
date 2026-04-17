@@ -418,6 +418,39 @@ For path access (e.g., in tests), import `PROMPTS_DIR` from the same module — 
 - Pydantic schema injection via `get_pydantic_schema_json()` — never hardcode JSON examples in prompts
 - Each prompt declares `schema_needs` in frontmatter to load only required schema context
 
+### Service Tagging
+
+All LLM calls are tagged with a `service` parameter for spend visibility. The tag flows to:
+- **X-Title** header → OpenRouter dashboard (shows as `imas-codex:<service>`)
+- **Langfuse metadata** → trace analytics
+- **Per-service API keys** → optional spend isolation via separate OpenRouter keys
+
+**Service taxonomy:**
+
+| Service Tag | Description | Call Sites |
+|-------------|-------------|------------|
+| `facility-discovery` | Facility path/wiki/signal/code discovery | `discovery/paths/*`, `discovery/wiki/*`, `discovery/signals/*`, `discovery/base/image.py`, `discovery/code/*`, `discovery/static/*` |
+| `standard-names` | Standard name generation, review, enrichment | `standard_names/workers.py`, `benchmark.py`, `review/pipeline.py`, `cli/sn.py` |
+| `data-dictionary` | DD enrichment and cluster labeling | `graph/dd_enrichment.py`, `dd_ids_enrichment.py`, `dd_identifier_enrichment.py`, `dd_workers.py`, `clusters/labeler.py` |
+| `imas-mapping` | IMAS signal-to-path mapping | `ids/mapping.py`, `ids/metadata.py` |
+| `embedding` | Text embedding (direct OpenRouter) | `embeddings/openrouter_embed.py`, `openrouter_client.py` |
+| `untagged` | Default — surfaces missed call sites | Any call without explicit `service=` |
+
+**Usage:**
+```python
+result, cost, tokens = call_llm_structured(
+    model=model, messages=messages, response_model=MyModel,
+    service="facility-discovery",  # Required — AST test enforces this
+)
+```
+
+**Per-service API keys** (optional): Set `OPENROUTER_API_KEY_<SERVICE_UPPER>` to use a separate OpenRouter key for a service pipeline. Hyphens become underscores. Falls back to `OPENROUTER_API_KEY_IMAS_CODEX`.
+
+```bash
+# Example: isolate discovery spend to its own key
+export OPENROUTER_API_KEY_FACILITY_DISCOVERY=sk-or-v1-...
+```
+
 ### Prompt Structure and Caching
 
 All LLM calls route through the LiteLLM proxy → OpenRouter. Use `call_llm_structured()` / `acall_llm_structured()` from `imas_codex.discovery.base.llm` for all structured output calls — never call `litellm.completion()` directly.
@@ -1323,5 +1356,9 @@ export IMAS_CODEX_TUNNEL_BOLT_ITER=17687
 ```bash
 uv run imas-codex graph status          # Graph operations
 uv run imas-codex graph shell           # Interactive Cypher
+uv run imas-codex llm status            # LLM proxy status (lightweight, no API calls)
+uv run imas-codex llm status --deep     # Full model health check (makes real LLM API calls — billable)
 uv run pytest                           # Testing
 ```
+
+Automated health checks (e.g., Azure `/health/readiness`) make no LLM API calls and incur no token cost. Only `imas-codex llm status --deep` exercises the model endpoint and is billable.

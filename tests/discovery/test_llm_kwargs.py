@@ -275,3 +275,58 @@ class TestExtractBalancedJson:
     def test_no_close_returns_to_end(self):
         text = '{"unbalanced'
         assert _extract_balanced_json(text, 0) == '{"unbalanced'
+
+
+class TestBuildKwargsServiceTag:
+    """Tests for service= parameter in _build_kwargs."""
+
+    def _build(self, monkeypatch, service="untagged", **overrides):
+        from imas_codex.discovery.base import llm
+
+        monkeypatch.setattr(llm, "get_llm_location", lambda: "local", raising=False)
+        monkeypatch.setattr(llm, "get_llm_proxy_url", lambda: None, raising=False)
+        defaults = {
+            "model": "anthropic/claude-sonnet-4.6",
+            "api_key": "test-key",
+            "messages": [{"role": "user", "content": "test"}],
+            "response_format": None,
+            "max_tokens": None,
+            "temperature": None,
+            "timeout": None,
+        }
+        defaults.update(overrides)
+        return llm._build_kwargs(**defaults, service=service)
+
+    def test_default_service_is_untagged(self, monkeypatch):
+        kwargs = self._build(monkeypatch)
+        assert kwargs["metadata"]["service"] == "untagged"
+        assert kwargs["extra_headers"]["X-Title"] == "imas-codex:untagged"
+
+    def test_service_sets_metadata(self, monkeypatch):
+        kwargs = self._build(monkeypatch, service="facility-discovery")
+        assert kwargs["metadata"]["service"] == "facility-discovery"
+
+    def test_service_sets_xtitle(self, monkeypatch):
+        kwargs = self._build(monkeypatch, service="data-dictionary")
+        assert kwargs["extra_headers"]["X-Title"] == "imas-codex:data-dictionary"
+
+    @pytest.mark.parametrize(
+        "service",
+        [
+            "facility-discovery",
+            "standard-names",
+            "data-dictionary",
+            "imas-mapping",
+            "embedding",
+            "untagged",
+        ],
+    )
+    def test_all_valid_services_produce_correct_headers(self, monkeypatch, service):
+        kwargs = self._build(monkeypatch, service=service)
+        assert kwargs["extra_headers"]["X-Title"] == f"imas-codex:{service}"
+        assert kwargs["metadata"]["service"] == service
+
+    def test_http_referer_always_present(self, monkeypatch):
+        kwargs = self._build(monkeypatch, service="imas-mapping")
+        assert "HTTP-Referer" in kwargs["extra_headers"]
+        assert "imas-codex" in kwargs["extra_headers"]["HTTP-Referer"]

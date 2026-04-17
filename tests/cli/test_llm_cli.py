@@ -465,3 +465,62 @@ class TestSecurityCommands:
         result = runner.invoke(llm, ["security", "harden"])
         assert result.exit_code == 0
         assert "Security Hardening" in result.output
+
+
+# ── llm status --deep tests ──────────────────────────────────────────────
+
+
+class TestLlmStatusDeep:
+    """Tests for llm status --deep flag."""
+
+    def test_deep_flag_exists(self, runner):
+        """--deep flag is accepted without error."""
+        result = runner.invoke(llm, ["status", "--help"])
+        assert "--deep" in result.output
+
+    @patch("imas_codex.discovery.base.services.llm_deep_health_check")
+    @patch("httpx.get")
+    def test_deep_calls_deep_health_check(self, mock_get, mock_deep, runner, mock_env):
+        """--deep triggers llm_deep_health_check()."""
+        # Mock basic status check
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": []}
+        mock_get.return_value = mock_resp
+
+        mock_deep.return_value = (
+            True,
+            "iter",
+            {"healthy_count": 5, "unhealthy_count": 0},
+        )
+
+        runner.invoke(llm, ["status", "--deep"])
+        mock_deep.assert_called_once()
+
+    @patch("httpx.get")
+    def test_no_deep_does_not_call_health(self, mock_get, runner, mock_env):
+        """Default (no --deep) should NOT trigger /health."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": []}
+        mock_get.return_value = mock_resp
+
+        runner.invoke(llm, ["status"])
+        # Verify no call to /health endpoint (only /health/readiness is OK)
+        for call in mock_get.call_args_list:
+            url = str(call[0][0]) if call[0] else ""
+            assert "/health" not in url or "/health/readiness" in url
+
+    @patch("imas_codex.discovery.base.services.llm_deep_health_check")
+    @patch("httpx.get")
+    def test_deep_shows_billable_warning(self, mock_get, mock_deep, runner, mock_env):
+        """--deep output should include billable warning."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": []}
+        mock_get.return_value = mock_resp
+
+        mock_deep.return_value = (True, "iter", {"healthy_count": 5})
+
+        result = runner.invoke(llm, ["status", "--deep"])
+        assert "billable" in result.output.lower() or "LLM API calls" in result.output

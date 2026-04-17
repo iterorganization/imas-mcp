@@ -72,7 +72,7 @@ class OpenRouterClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "imas-codex",  # Optional: identify your application
-            "X-Title": "IMAS Codex Server",
+            "X-Title": "imas-codex:embedding",
         }
 
     def make_chat_request(

@@ -252,7 +252,12 @@ def _start_llm_deploy() -> None:
     default=None,
     help="Proxy URL (default: from pyproject.toml [llm].port)",
 )
-def llm_status(url: str | None) -> None:
+@click.option(
+    "--deep",
+    is_flag=True,
+    help="Full model health check — sends real LLM API calls to all models (billable)",
+)
+def llm_status(url: str | None, deep: bool) -> None:
     """Check LiteLLM proxy health.
 
     Shows proxy health, systemd service state, process resource usage,
@@ -304,6 +309,36 @@ def llm_status(url: str | None) -> None:
 
             # Database and team/key info
             _show_gateway_info(url)
+
+            # Deep health check (optional — billable)
+            if deep:
+                click.echo()
+                click.echo(
+                    click.style(
+                        "⚠ Deep check: sending real LLM API calls to ALL models (billable)",
+                        fg="yellow",
+                    )
+                )
+                from imas_codex.discovery.base.services import llm_deep_health_check
+
+                healthy, detail, data = llm_deep_health_check()
+                if healthy:
+                    click.echo(f"  ✓ All models healthy ({detail})")
+                else:
+                    click.echo(f"  ✗ Model health: {detail}")
+
+                # Show per-model details from /health response
+                for key in ("healthy_endpoints", "unhealthy_endpoints"):
+                    endpoints = data.get(key, [])
+                    if endpoints:
+                        label = "Healthy" if "healthy" in key else "Unhealthy"
+                        click.echo(f"  {label}:")
+                        for ep in endpoints[:10]:
+                            if isinstance(ep, dict):
+                                model_name = ep.get("model", "unknown")
+                                click.echo(f"    - {model_name}")
+                            else:
+                                click.echo(f"    - {ep}")
         else:
             click.echo(f"  ✗ Unhealthy (HTTP {resp.status_code})")
     except httpx.ConnectError:

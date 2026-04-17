@@ -277,7 +277,7 @@ class OpenRouterEmbeddingClient:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": "https://github.com/iterorganization/imas-codex",
-                    "X-Title": "IMAS Codex",
+                    "X-Title": "imas-codex:embedding",
                 },
             )
         return self._client

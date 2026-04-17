@@ -250,6 +250,7 @@ def enrich_identifier_schemas(
                 model=model,
                 messages=messages,
                 response_model=IdentifierEnrichmentBatch,
+                service="data-dictionary",
             )
             stats["cost"] += cost
             stats["tokens"] += tokens
@@ -585,6 +586,7 @@ def enrich_identifier_nodes(
                 model=model,
                 messages=messages,
                 response_model=IdentifierNodeEnrichmentBatch,
+                service="data-dictionary",
             )
             stats["cost"] += cost
             stats["tokens"] += tokens

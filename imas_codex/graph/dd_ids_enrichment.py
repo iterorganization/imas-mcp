@@ -353,6 +353,7 @@ def enrich_ids_nodes(
                 model=model,
                 messages=messages,
                 response_model=IDSEnrichmentBatch,
+                service="data-dictionary",
             )
             stats["cost"] += cost
             stats["tokens"] += tokens

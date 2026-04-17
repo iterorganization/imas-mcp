@@ -289,11 +289,11 @@ def embed_health_check() -> tuple[bool, str]:
 
 
 def llm_health_check(section: str = "language") -> tuple[bool, str]:
-    """Check LLM provider health via the proxy's ``/health`` endpoint.
+    """Check LLM proxy health via ``/health/readiness`` (no LLM API calls).
 
     When a LiteLLM proxy is configured (``[llm].location`` is set),
-    probes ``GET /health`` with the master key.  This is lightweight
-    (no token cost), fast, and returns healthy/unhealthy model counts.
+    probes ``GET /health/readiness`` which checks proxy process health
+    and DB connection only — no upstream LLM API calls are made.
 
     Falls back to a minimal ``litellm.completion()`` call when no
     proxy is configured (``location=local``).
@@ -310,12 +310,66 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
 
     llm_location = get_llm_location()
 
-    # --- Proxy mode: lightweight HTTP probe ---
+    # --- Proxy mode: lightweight readiness probe (no LLM API calls) ---
     if llm_location != "local" or os.getenv("LITELLM_PROXY_URL"):
-        return _probe_litellm_proxy(llm_location)
+        return _probe_litellm_readiness(llm_location)
 
     # --- Local mode: minimal completion call ---
     return _probe_litellm_local(section)
+
+
+def llm_deep_health_check(section: str = "language") -> tuple[bool, str, dict]:
+    """Full model-level health check via /health — makes real LLM API calls.
+
+    WARNING: Sends completion requests to ALL configured models including cc:*
+    (billed to Claude Code key). Only for manual diagnostics via CLI.
+
+    Returns:
+        (healthy, detail, data) — data includes the raw /health JSON response.
+    """
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+
+    from imas_codex.settings import get_llm_location, get_llm_proxy_url
+
+    llm_location = get_llm_location()
+
+    if llm_location == "local" and not os.getenv("LITELLM_PROXY_URL"):
+        healthy, detail = _probe_litellm_local(section)
+        return healthy, detail, {}
+
+    proxy_url = get_llm_proxy_url()
+    health_url = f"{proxy_url}/health"
+    api_key = os.getenv("LITELLM_MASTER_KEY", "")
+
+    try:
+        req = urllib.request.Request(health_url)
+        if api_key:
+            req.add_header("Authorization", f"Bearer {api_key}")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+            healthy_count = data.get("healthy_count", 0)
+            unhealthy_count = data.get("unhealthy_count", 0)
+            if healthy_count > 0 and unhealthy_count == 0:
+                return True, _format_load_detail(llm_location), data
+            if healthy_count > 0:
+                reason = _classify_unhealthy_reason(data)
+                suffix = (
+                    f" ({unhealthy_count} {reason})"
+                    if reason
+                    else f" ({unhealthy_count} degraded)"
+                )
+                return True, _format_load_detail(llm_location, suffix), data
+            reason = _classify_unhealthy_reason(data)
+            return False, reason or "no healthy models", data
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code}", {}
+    except urllib.error.URLError as e:
+        return False, str(e.reason)[:60], {}
+    except Exception as e:
+        return False, str(e)[:80], {}
 
 
 def _get_host_load() -> tuple[float, int] | None:
@@ -355,7 +409,12 @@ def _format_load_detail(location: str, suffix: str = "") -> str:
 
 
 def _probe_litellm_proxy(location: str) -> tuple[bool, str]:
-    """Probe LiteLLM proxy via its ``/health`` endpoint."""
+    """Full model health check via /health — makes real LLM API calls to EVERY model.
+
+    WARNING: Sends completion requests to all models including cc:* (Claude Code key).
+    Use only for manual diagnostics via llm_deep_health_check().
+    For automated polling, use _probe_litellm_readiness().
+    """
     import json
     import os
     import urllib.error
@@ -402,6 +461,115 @@ def _probe_litellm_proxy(location: str) -> tuple[bool, str]:
         return False, str(e.reason)[:60]
     except Exception as e:
         return False, str(e)[:80]
+
+
+def _probe_litellm_readiness(location: str) -> tuple[bool, str]:
+    """Probe LiteLLM proxy via /health/readiness (no LLM API calls).
+
+    Checks proxy process health and DB connection only.
+    Does NOT verify API key validity or upstream provider reachability.
+    Requires authentication (master key or worker virtual key).
+    """
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+
+    from imas_codex.settings import get_llm_proxy_url
+
+    proxy_url = get_llm_proxy_url()
+    readiness_url = f"{proxy_url}/health/readiness"
+
+    # Use same auth chain as _build_kwargs: prefer worker key, fall back to master
+    api_key = os.getenv("LITELLM_API_KEY") or os.getenv("LITELLM_MASTER_KEY", "")
+
+    try:
+        req = urllib.request.Request(readiness_url)
+        if api_key:
+            req.add_header("Authorization", f"Bearer {api_key}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            status = data.get("status", "")
+            db_status = data.get("db", "")
+
+            if status == "connected" and db_status == "connected":
+                return True, _format_load_detail(location)
+            if status == "connected":
+                return False, f"proxy ready but db {db_status}"
+            return False, f"proxy not ready ({status})"
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return False, "auth error (401)"
+        return False, f"HTTP {e.code}"
+    except urllib.error.URLError as e:
+        reason = str(e.reason).lower()
+        if "refused" in reason:
+            return False, "proxy refused"
+        if "timed out" in reason or "timeout" in reason:
+            return False, "proxy timeout"
+        return False, str(e.reason)[:60]
+    except Exception as e:
+        return False, str(e)[:80]
+
+
+def _canary_check(location: str) -> tuple[bool, str]:
+    """Lightweight model canary — one probe per credential class.
+
+    Tests upstream API key validity and provider reachability by sending
+    a max_tokens=1 request to the cheapest model in each routing class.
+    Only called once at pipeline startup, not on the 60s poll.
+
+    Bypasses _build_kwargs() to avoid producing "untagged" Langfuse entries.
+    """
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+
+    from imas_codex.settings import get_llm_proxy_url
+
+    proxy_url = get_llm_proxy_url()
+    api_key = os.getenv("LITELLM_API_KEY") or os.getenv("LITELLM_MASTER_KEY", "")
+
+    # One cheap model per credential/routing class
+    canary_models = [
+        ("codex", "openrouter/google/gemini-2.0-flash-001"),
+        ("codex-anthropic", "openrouter/anthropic/claude-haiku-4.5"),
+    ]
+
+    results: list[tuple[str, bool, str]] = []
+    for class_name, model_id in canary_models:
+        try:
+            payload = json.dumps(
+                {
+                    "model": model_id,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                }
+            ).encode()
+            req = urllib.request.Request(
+                f"{proxy_url}/v1/chat/completions",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                if resp.status == 200:
+                    results.append((class_name, True, "ok"))
+                else:
+                    results.append((class_name, False, f"HTTP {resp.status}"))
+        except urllib.error.HTTPError as e:
+            results.append((class_name, False, f"HTTP {e.code}"))
+        except Exception as e:
+            results.append((class_name, False, str(e)[:60]))
+
+    failed = [(name, detail) for name, ok, detail in results if not ok]
+    if not failed:
+        return True, f"canary OK ({len(results)} classes)"
+    fail_details = ", ".join(f"{name}: {detail}" for name, detail in failed)
+    return False, f"canary failed: {fail_details}"
 
 
 def _classify_unhealthy_reason(data: dict) -> str | None:

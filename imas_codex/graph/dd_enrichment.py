@@ -1089,6 +1089,7 @@ def enrich_imas_paths(
                         model=model,
                         messages=messages,
                         response_model=IMASPathEnrichmentBatch,
+                        service="data-dictionary",
                     )
                     stats["enrichment_cost"] += cost
                     stats["enrichment_tokens"] += tokens

@@ -3903,6 +3903,7 @@ async def enrich_worker(
                 ],
                 response_model=SignalEnrichmentBatch,
                 temperature=0.3,
+                service="facility-discovery",
             )
         except ProviderBudgetExhausted as e:
             log_worker_error(
@@ -4309,6 +4310,7 @@ async def individualize_source_descriptions(
                 ],
                 response_model=SignalSourceCodeUnwindBatch,
                 temperature=0.3,
+                service="facility-discovery",
             )
         except ProviderBudgetExhausted:
             logger.error("Budget exhausted during individualization")

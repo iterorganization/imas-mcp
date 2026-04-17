@@ -717,6 +717,7 @@ async def score_images_batch(
         timeout=180,
         max_retries=5,
         retry_base_delay=4.0,
+        service="facility-discovery",
     )
 
     llm_results = batch.results

@@ -141,6 +141,7 @@ class DirectoryTriager:
                 {"role": "user", "content": user_prompt},
             ],
             response_model=TriageBatch,
+            service="facility-discovery",
         )
 
         # Calculate cost per path for tracking
@@ -207,6 +208,7 @@ class DirectoryTriager:
                 {"role": "user", "content": user_prompt},
             ],
             response_model=TriageBatch,
+            service="facility-discovery",
         )
         t_llm_end = time_mod.monotonic()
         logger.info(
