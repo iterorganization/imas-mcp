@@ -109,7 +109,7 @@ FIELD_TO_CHANGE_TYPE = {
     "ndim": "structure_changed",
     "identifier_enum_name": "structure_changed",
     "maxoccur": "maxoccur_changed",
-    "cocos_transformation_type": "cocos_label_transformation",
+    "cocos_transformation_type": "cocos_transformation_type",
 }
 
 DATA_FORMAT_KEYWORDS = [
@@ -1343,7 +1343,7 @@ def _classify_breaking_level(change_type: str, change: dict) -> str:
         "path_removed": "breaking",
         "path_renamed": "breaking",  # Non-NBC renames break interfaces
         "data_type": "breaking",
-        "cocos_label_transformation": "breaking",
+        "cocos_transformation_type": "breaking",
         "coordinates_changed": "advisory",
         "lifecycle_status": "advisory",
         "node_type": "advisory",

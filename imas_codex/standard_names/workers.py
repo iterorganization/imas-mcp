@@ -310,7 +310,7 @@ RETURN c.label AS cluster_label,
 _VERSION_HISTORY_QUERY = """
 MATCH (vc:IMASNodeChange)-[:FOR_IMAS_PATH]->(n:IMASNode {id: $path})
 WHERE vc.change_type IN [
-    'path_added', 'cocos_label_transformation', 'sign_convention',
+    'path_added', 'cocos_transformation_type', 'sign_convention',
     'units', 'path_renamed', 'definition_clarification'
 ]
 RETURN vc.id AS change_id, vc.change_type AS change_type

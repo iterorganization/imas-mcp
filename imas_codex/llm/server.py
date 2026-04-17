@@ -2942,13 +2942,13 @@ class AgentsServer:
             Mode 2 (bulk query): Omit paths and set change_type_filter to list all changes of that type.
 
             Tracks change types: sign_convention, coordinate_convention, units, definition_clarification,
-            path_renamed, data_type, cocos_label_transformation, added.
+            path_renamed, data_type, cocos_transformation_type, added.
 
             Args:
                 paths: Space- or comma-separated IMAS paths (e.g. "equilibrium/time_slice/profiles_1d/psi").
                     Optional when change_type_filter is set.
                 change_type_filter: Filter to a specific change type for bulk queries
-                    (e.g. 'path_renamed', 'units', 'cocos_label_transformation', 'added').
+                    (e.g. 'path_renamed', 'units', 'cocos_transformation_type', 'added').
                 ids_filter: Limit results to a specific IDS (e.g. 'equilibrium').
                 from_version: Start of version range filter (exclusive).
                 to_version: End of version range filter (inclusive).

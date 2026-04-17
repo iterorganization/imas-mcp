@@ -494,7 +494,7 @@ class TestIMASNodeChanges:
             "maxoccur",
             "data_type",
             "node_type",
-            "cocos_label_transformation",
+            "cocos_transformation_type",
             "lifecycle_status",
             "timebasepath",
             "path_added",
@@ -590,11 +590,11 @@ class TestCOCOSCompleteness:
 
         result = graph_client.query(
             "MATCH (c:IMASNodeChange) "
-            "WHERE c.change_type = 'cocos_label_transformation' "
+            "WHERE c.change_type = 'cocos_transformation_type' "
             "RETURN count(c) AS cnt"
         )
         assert result[0]["cnt"] > 0, (
-            "Expected IMASNodeChange nodes for cocos_label_transformation"
+            "Expected IMASNodeChange nodes for cocos_transformation_type"
         )
 
 

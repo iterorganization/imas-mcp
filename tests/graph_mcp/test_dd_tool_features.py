@@ -109,12 +109,12 @@ class TestVersionContextBulk:
         """Bulk query mode with change_type_filter returns mode=bulk_query."""
         tool = self._make_tool(graph_client)
         result = await tool.get_dd_version_context(
-            change_type_filter="cocos_label_transformation"
+            change_type_filter="cocos_transformation_type"
         )
         assert result.get("mode") == "bulk_query"
         assert result["change_count"] >= 1
         for c in result["changes"]:
-            assert c["change_type"] == "cocos_label_transformation"
+            assert c["change_type"] == "cocos_transformation_type"
 
     @pytest.mark.asyncio
     @pytest.mark.xfail(

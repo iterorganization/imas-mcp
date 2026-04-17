@@ -307,7 +307,7 @@ PATH_CHANGES = [
         "from_version": "3.42.0",
         "to_version": "4.0.0",
         "version": "4.0.0",
-        "change_type": "cocos_label_transformation",
+        "change_type": "cocos_transformation_type",
         "semantic_change_type": "sign_convention",
         "description": "COCOS convention changed from 11 to 17",
         "summary": "Sign convention change",

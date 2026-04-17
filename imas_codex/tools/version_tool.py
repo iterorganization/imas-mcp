@@ -79,7 +79,7 @@ class VersionTool:
         "Mode 2 (bulk query): Omit paths and set change_type_filter to list all changes of that type. "
         "paths: One or more IMAS paths to check version history. Optional when change_type_filter is set. "
         "change_type_filter: Filter to specific change type when querying without paths "
-        "(e.g., 'path_renamed', 'units', 'data_type', 'cocos_label_transformation', 'added'). "
+        "(e.g., 'path_renamed', 'units', 'data_type', 'cocos_transformation_type', 'added'). "
         "ids_filter: Limit to specific IDS. "
         "from_version: Start version for range filter (exclusive). "
         "to_version: End version for range filter (inclusive). "
