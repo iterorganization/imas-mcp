@@ -428,3 +428,25 @@ Only reference names that exist in the provided `existing_names` list. If fewer 
 - Derived or input quantities (name:electron_pressure ↔ name:electron_temperature + name:electron_density)
 - Sibling or related quantities from the same physics domain
 - Commonly plotted together
+
+{% if domain_vocabulary %}
+## PREFERRED VOCABULARY FOR THIS DOMAIN — reuse unless concept is genuinely different
+
+The following standard names already exist in this physics domain and have been
+validated. **Reuse** these terms and naming patterns unless the concept you are
+naming is genuinely different. Synonymous proliferation within a domain is the
+single most common quality failure.
+
+{{ domain_vocabulary }}
+{% endif %}
+
+{% if reviewer_themes %}
+## RECENT REVIEWER FEEDBACK FOR THIS DOMAIN — address these
+
+Expert reviewers have flagged these recurring issues in this domain's standard names.
+Pay special attention to avoiding these patterns:
+
+{% for theme in reviewer_themes %}
+- {{ theme }}
+{% endfor %}
+{% endif %}

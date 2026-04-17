@@ -214,6 +214,63 @@ def _build_enum_lists() -> dict[str, list[str]]:
     }
 
 
+def build_domain_vocabulary_preseed(domain: str | None) -> str:
+    """Build a vocabulary pre-seed section for compose prompts.
+
+    Queries the graph for all StandardName nodes in *domain* that are
+    ``review_status IN ['drafted', 'published', 'accepted']`` AND
+    ``validation_status = 'valid'``, returning up to 40 canonical
+    ``(name, description-first-sentence)`` pairs.
+
+    Ordered by review_status priority (accepted > published > drafted),
+    then alphabetically by name.
+
+    Returns empty string when *domain* is None or no names are found.
+    """
+    if not domain:
+        return ""
+
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            rows = gc.query(
+                """
+                MATCH (sn:StandardName)
+                WHERE sn.physics_domain = $domain
+                  AND sn.review_status IN ['drafted', 'published', 'accepted']
+                  AND sn.validation_status = 'valid'
+                RETURN sn.id AS name,
+                       sn.description AS description,
+                       sn.review_status AS review_status
+                ORDER BY
+                    CASE sn.review_status
+                        WHEN 'accepted' THEN 0
+                        WHEN 'published' THEN 1
+                        WHEN 'drafted' THEN 2
+                    END,
+                    sn.id
+                LIMIT 40
+                """,
+                domain=domain,
+            )
+            if not rows:
+                return ""
+
+            lines = []
+            for row in rows:
+                name = row.get("name", "")
+                desc = row.get("description", "")
+                # Take first sentence only
+                first_sentence = desc.split(". ")[0].rstrip(".") + "." if desc else ""
+                lines.append(f"- `{name}`: {first_sentence}")
+
+            return "\n".join(lines)
+    except Exception:
+        logger.debug("Domain vocabulary preseed unavailable", exc_info=True)
+        return ""
+
+
 def render_cocos_guidance(label: str, cocos_params: dict) -> str:
     """Render sign guidance for a transformation label using COCOS node properties.
 
