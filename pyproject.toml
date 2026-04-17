@@ -271,6 +271,10 @@ model = "google/gemini-3.1-flash-lite-preview"
 [tool.imas-codex.reasoning]
 model = "anthropic/claude-sonnet-4.6"
 
+[tool.imas-codex.sn-generate]
+model = "anthropic/claude-sonnet-4.6"
+batch-size = 25
+
 [tool.imas-codex.sn.benchmark]
 # Models to evaluate for standard name composition.
 # Each is benchmarked independently; results are compared side-by-side.

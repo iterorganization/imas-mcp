@@ -82,6 +82,7 @@ MODEL_SECTIONS = frozenset(
         "compaction",
         "reasoning",
         "dd-enrichment",
+        "sn-generate",
     }
 )
 
@@ -94,6 +95,7 @@ _MODEL_DEFAULTS: dict[str, str] = {
     "compaction": "anthropic/claude-haiku-4.5",
     "reasoning": "anthropic/claude-sonnet-4.6",
     "dd-enrichment": "anthropic/claude-sonnet-4.6",
+    "sn-generate": "anthropic/claude-sonnet-4.6",
 }
 
 # Environment variable names per section
@@ -105,6 +107,7 @@ _MODEL_ENV_VARS: dict[str, str] = {
     "compaction": "IMAS_CODEX_COMPACTION_MODEL",
     "reasoning": "IMAS_CODEX_REASONING_MODEL",
     "dd-enrichment": "IMAS_CODEX_DD_ENRICHMENT_MODEL",
+    "sn-generate": "IMAS_CODEX_SN_GENERATE_MODEL",
 }
 
 

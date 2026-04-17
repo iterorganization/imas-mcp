@@ -17,7 +17,7 @@ def sn() -> None:
 
     \b
     Generate:
-      imas-codex sn generate --source dd [--ids NAME] [--domain NAME]
+      imas-codex sn generate --source dd [--physics-domain NAME]
       imas-codex sn generate --source signals --facility NAME
 
     \b
@@ -40,18 +40,16 @@ def sn() -> None:
     help="Source to extract candidates from",
 )
 @click.option(
-    "--ids",
-    "ids_filter",
-    type=str,
-    default=None,
-    help="Filter to specific IDS (for DD source)",
-)
-@click.option(
+    "--physics-domain",
     "--domain",
     "domain_filter",
     type=str,
     default=None,
-    help="Filter to physics domain",
+    help=(
+        "Filter to a specific physics domain (e.g. magnetics, equilibrium, "
+        "transport). Applies to both DD and signals sources. Primary scope "
+        "narrower for generation."
+    ),
 )
 @click.option(
     "--facility",
@@ -94,7 +92,7 @@ def sn() -> None:
         "space-separated paths within each flag (e.g., "
         "'--paths eq/.../psi eq/.../q' or '--paths eq/.../psi --paths eq/.../q'). "
         "Bypasses graph query, classifier, and already-named check. "
-        "Overrides --ids, --domain, --limit, and implies --force."
+        "Overrides --physics-domain, --limit, and implies --force."
     ),
 )
 @click.option(
@@ -128,7 +126,6 @@ def sn() -> None:
 )
 def sn_generate(
     source: str,
-    ids_filter: str | None,
     domain_filter: str | None,
     facility: str | None,
     cost_limit: float,
@@ -147,12 +144,16 @@ def sn_generate(
 
     \b
     Examples:
-      imas-codex sn generate --ids equilibrium --dry-run
-      imas-codex sn generate --domain magnetics -c 2
-      imas-codex sn generate --source signals --facility tcv
+      imas-codex sn generate --physics-domain equilibrium --dry-run
+      imas-codex sn generate --physics-domain magnetics -c 2
+      imas-codex sn generate --source signals --facility tcv --physics-domain magnetics
       imas-codex sn generate --paths equilibrium/time_slice/profiles_1d/psi --paths equilibrium/time_slice/profiles_1d/q
       imas-codex sn generate --paths "equilibrium/time_slice/profiles_1d/psi equilibrium/time_slice/profiles_1d/q"
     """
+    # --ids has been removed from this command; scope narrowing is domain-based
+    # so it works uniformly across DD and facility-signals sources.
+    ids_filter: str | None = None
+
     # Validate: signals source requires facility
     if source == "signals" and not facility:
         raise click.UsageError("--facility is required when --source is signals")
@@ -162,7 +163,6 @@ def sn_generate(
     flat_paths = " ".join(paths_list).split() if paths_list else []
     if flat_paths:
         source = "dd"
-        ids_filter = None
         domain_filter = None
         limit = None
         force = True  # Targeted paths always regenerate
@@ -292,8 +292,6 @@ def sn_generate(
     log_print(f"  Source: {source}")
     if resolved_paths_final:
         log_print(f"  Targeted paths: {len(resolved_paths_final)} paths")
-    if ids_filter:
-        log_print(f"  IDS filter: {ids_filter}")
     if domain_filter:
         log_print(f"  Domain filter: {domain_filter}")
     if facility:
@@ -370,7 +368,7 @@ def sn_generate(
         check_ssh=False,
         check_auth=source != "dd",  # signals source might need auth
         check_model=not dry_run,
-        model_section="language",
+        model_section="sn-generate",
         suppress_loggers=[
             "imas_codex.standard_names",
         ],
@@ -1986,7 +1984,7 @@ def sn_enrich(
         from imas_codex.settings import get_model
         from imas_codex.standard_names.models import StandardNameEnrichBatch
 
-        model = get_model("language")
+        model = get_model("sn-generate")
         total_cost = 0.0
         total_enriched = 0
         total_batches = 0

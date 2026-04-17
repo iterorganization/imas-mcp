@@ -664,7 +664,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     from imas_codex.standard_names.context import build_compose_context
     from imas_codex.standard_names.models import StandardNameComposeBatch
 
-    model = state.compose_model or get_model("reasoning")
+    model = state.compose_model or get_model("sn-generate")
     context = build_compose_context()
 
     # Enrich batch items with rich DD context (coordinate specs, COCOS, siblings,
