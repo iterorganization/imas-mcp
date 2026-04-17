@@ -83,6 +83,22 @@ These names already exist in the catalog. Reuse them if they match your source, 
 {% endfor %}
 {% endif %}
 
+{% if reference_exemplars %}
+## REFERENCE EXEMPLARS — match this level of specificity
+
+These validated standard names are semantically similar to items in this batch.
+Use them as quality benchmarks for naming style, documentation depth, and field usage:
+
+{% for ex in reference_exemplars %}
+### `{{ ex.name }}`
+- **Description:** {{ ex.description }}
+- **Unit:** {{ ex.unit }}
+{% if ex.tags %}- **Tags:** {{ ex.tags | join(', ') if ex.tags is iterable and ex.tags is not string else ex.tags }}{% endif %}
+{% if ex.documentation %}- **Documentation (excerpt):** {{ ex.documentation[:500] }}{% endif %}
+
+{% endfor %}
+{% endif %}
+
 ## DD Paths to Name
 
 {% for item in items %}
