@@ -91,8 +91,9 @@ _FIT_PARENT_RE: re.Pattern[str] = re.compile(r"(?:^|/)[A-Za-z0-9_]*_fit$")
 #: independent concepts (e.g. GGD coefficients, finite-element interpolation
 #: coefficients).  They should not receive standard names.
 _REPRESENTATION_RE: re.Pattern[str] = re.compile(
-    r"(?:^|_)(?:coefficients|ggd|finite_element|interpolation|basis|spline|"
-    r"fourier_modes|harmonics_coefficients)(?:_|$)",
+    r"(?:^|_)(?:coefficients?|ggd|finite_element|interpolation|basis|spline|"
+    r"fourier_modes|harmonics_coefficients|grid_object|grid_subset|"
+    r"jacobian|metric)(?:_|$)",
 )
 
 # Type alias for the three-way classification.
