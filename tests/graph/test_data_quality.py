@@ -373,7 +373,21 @@ class TestCOCOSLabelIntegrity:
         if not label_counts.get("IMASNode"):
             pytest.skip("No IMASNode nodes in graph")
 
-        valid_labels = {"psi_like", "ip_like", "b0_like", "f_like"}
+        valid_labels = {
+            "psi_like",
+            "ip_like",
+            "b0_like",
+            "f_like",
+            "q_like",
+            "dodpsi_like",
+            "one_like",
+            "tor_angle_like",
+            "pol_angle_like",
+            "grid_type_dim1_like",
+            "grid_type_dim2_like",
+            "grid_type_tensor_covariant_like",
+            "grid_type_tensor_contravariant_like",
+        }
         result = graph_client.query(
             "MATCH (p:IMASNode) "
             "WHERE p.cocos_label_transformation IS NOT NULL "
