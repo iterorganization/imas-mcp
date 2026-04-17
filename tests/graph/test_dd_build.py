@@ -799,36 +799,41 @@ class TestClusterEmbeddings:
         assert count == total, f"Only {count}/{total} clusters have centroid embeddings"
 
     def test_clusters_have_label_embeddings(self, graph_client, label_counts):
-        """All clusters should have label_embedding for NL search."""
+        """All labeled clusters should have label_embedding for NL search."""
         if not label_counts.get("IMASSemanticCluster"):
             pytest.skip("No IMASSemanticCluster nodes in graph")
 
-        total = label_counts["IMASSemanticCluster"]
+        # Only clusters with a label can have a label embedding; unlabeled
+        # clusters are legitimately excluded from the embedding pass.
         result = graph_client.query(
-            "MATCH (c:IMASSemanticCluster) "
-            "WHERE c.label_embedding IS NOT NULL "
-            "RETURN count(c) AS cnt"
+            "MATCH (c:IMASSemanticCluster) WHERE c.label IS NOT NULL "
+            "RETURN count(c) AS total, "
+            "count(c.label_embedding) AS with_embed"
         )
-        count = result[0]["cnt"] if result else 0
+        row = result[0] if result else {"total": 0, "with_embed": 0}
+        total = row["total"]
+        count = row["with_embed"]
         assert count == total, (
-            f"Only {count}/{total} clusters have label embeddings. "
+            f"Only {count}/{total} labeled clusters have label embeddings. "
             f"Run `imas-codex imas clusters embed` to generate."
         )
 
     def test_clusters_have_description_embeddings(self, graph_client, label_counts):
-        """All clusters should have description_embedding for NL search."""
+        """All clusters with a description should have description_embedding."""
         if not label_counts.get("IMASSemanticCluster"):
             pytest.skip("No IMASSemanticCluster nodes in graph")
 
-        total = label_counts["IMASSemanticCluster"]
+        # Only clusters with a description can have a description embedding.
         result = graph_client.query(
-            "MATCH (c:IMASSemanticCluster) "
-            "WHERE c.description_embedding IS NOT NULL "
-            "RETURN count(c) AS cnt"
+            "MATCH (c:IMASSemanticCluster) WHERE c.description IS NOT NULL "
+            "RETURN count(c) AS total, "
+            "count(c.description_embedding) AS with_embed"
         )
-        count = result[0]["cnt"] if result else 0
+        row = result[0] if result else {"total": 0, "with_embed": 0}
+        total = row["total"]
+        count = row["with_embed"]
         assert count == total, (
-            f"Only {count}/{total} clusters have description embeddings. "
+            f"Only {count}/{total} described clusters have description embeddings. "
             f"Run `imas-codex imas clusters embed` to generate."
         )
 
