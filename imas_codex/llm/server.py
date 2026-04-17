@@ -452,6 +452,8 @@ def _format_version_context_report(result: dict) -> str:
         introduced = ctx.get("introduced_in")
         deprecated = ctx.get("deprecated_in")
         lifecycle = ctx.get("lifecycle_status")
+        renamed_to = ctx.get("renamed_to", [])
+        renamed_from = ctx.get("renamed_from", [])
         lifecycle_parts = []
         if lifecycle and lifecycle != "active":
             lifecycle_parts.append(lifecycle)
@@ -483,6 +485,12 @@ def _format_version_context_report(result: dict) -> str:
         else:
             lines.append(f"**{path_id}**{lifecycle_str}: no metadata changes recorded")
 
+        # Show immediate rename links
+        if renamed_to:
+            lines.append(f"  → Renamed to: {', '.join(renamed_to)}")
+        if renamed_from:
+            lines.append(f"  ← Renamed from: {', '.join(renamed_from)}")
+
     not_found = result.get("not_found", [])
     if not_found:
         lines.append("")
@@ -494,6 +502,12 @@ def _format_version_context_report(result: dict) -> str:
         lines.append(
             f"Paths without notable changes: {', '.join(paths_without_changes)}"
         )
+
+    # Append rename chains if present
+    rename_chains = result.get("rename_chains")
+    if rename_chains:
+        lines.append("")
+        lines.extend(_format_rename_chains_section(rename_chains))
 
     return "\n".join(lines)
 
