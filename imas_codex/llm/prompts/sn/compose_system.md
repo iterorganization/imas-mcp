@@ -330,6 +330,27 @@ per-mode power in W, drop `_density` and use
 `electron_wave_heating_power_spectral_density_per_toroidal_mode` [W] → ✅
 `electron_wave_heating_power_per_toroidal_mode` [W].
 
+**NC-23 Translate DD `_inside` to `_inside_flux_surface`, never to
+`cumulative_`.** When the source-path description indicates the
+quantity is integrated inside the enclosing flux surface (DD leaf
+names ending in `_inside`, `power_inside_...`, `current_tor_inside`,
+etc.), the standard name MUST use the suffix `_inside_flux_surface`
+placed directly after the quantity it integrates. Do not prefix the
+name with `cumulative_`, `integrated_`, `running_`, or `accumulated_`
+— these lose the geometric meaning and are not in the ISN grammar.
+Keep the word order `<subject>_<quantity>_inside_flux_surface[_per_<spectral>]`.
+❌ `electron_cumulative_wave_heating_power_per_toroidal_mode` → ✅
+`electron_wave_heating_power_inside_flux_surface_per_toroidal_mode`.
+
+**NC-24 Use one consistent power-transfer verb across a species/total
+group.** If the total (un-speciated) quantity uses
+`<wave>_absorbed_power`, then species variants MUST be
+`<species>_<wave>_absorbed_power`, not `<species>_<wave>_heating_power`.
+Pick the verb from the DD description and keep it constant within the
+group. The terms `absorbed_power` and `heating_power` are not
+synonyms and MUST NOT alternate across species within the same
+source family.
+
 ### Physics disambiguation glossary
 
 These terms are NOT synonyms. Pick the one supported by the source

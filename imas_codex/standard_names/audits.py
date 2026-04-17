@@ -50,6 +50,7 @@ CRITICAL_CHECKS = frozenset(
         "diamagnetic_component_check",
         "amplitude_of_prefix_check",
         "mode_number_suffix_check",
+        "cumulative_prefix_check",
     }
 )
 
@@ -1529,6 +1530,30 @@ def mode_number_suffix_check(candidate: dict[str, Any]) -> list[str]:
     return []
 
 
+def cumulative_prefix_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag ``cumulative_``/``integrated_``/``running_``/``accumulated_`` prefixes.
+
+    DD leaf names ending in ``_inside`` (e.g. ``power_inside_thermal_n_tor``,
+    ``current_tor_inside``) denote a quantity integrated inside the enclosing
+    flux surface. The canonical ISN suffix for this is ``_inside_flux_surface``
+    placed directly after the quantity; ``cumulative_`` (and synonyms) lose
+    the geometric meaning and are not part of the ISN grammar vocabulary.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    bad_tokens = ("cumulative_", "integrated_", "running_", "accumulated_")
+    tokens = name.split("_")
+    for bad in bad_tokens:
+        stem = bad.rstrip("_")
+        if stem in tokens:
+            return [
+                f"audit:cumulative_prefix_check: name '{name}' contains "
+                f"'{stem}_' — for DD `_inside`-style quantities use the "
+                f"suffix `_inside_flux_surface` placed after the quantity "
+                f"instead of prefixing with `{stem}_`."
+            ]
+    return []
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -1582,6 +1607,7 @@ def run_audits(
     all_issues.extend(diamagnetic_component_check(candidate))
     all_issues.extend(amplitude_of_prefix_check(candidate))
     all_issues.extend(mode_number_suffix_check(candidate))
+    all_issues.extend(cumulative_prefix_check(candidate))
 
     return all_issues
 
