@@ -630,8 +630,8 @@ def unit_dimension_check(candidate: dict[str, Any]) -> list[str]:
 def name_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
     """Check that head-noun tokens in the *name* match the declared unit.
 
-    Operates on the name alone so it works in name-only mode where the
-    description is empty. Catches cases like ``heating_power_due_to_ohmic``
+    Operates on the name alone (compose is always name-only per ADR-1).
+    Catches cases like ``heating_power_due_to_ohmic``
     with unit ``J`` (should be ``W``) or ``neutral_beam_injection_unit_energy``
     with unit ``1`` (should be ``J`` or ``eV``).
 
@@ -1297,8 +1297,8 @@ def position_coordinate_check(candidate: dict[str, Any]) -> list[str]:
 
     The check fires unconditionally on the colloquial name pattern (it does not
     require a confirming description) because the canonical vocabulary already
-    covers every R/Z/φ-coordinate use case in IMAS. ``--name-only`` runs would
-    otherwise leak both forms into the catalog as unintended synonyms.
+    covers every R/Z/φ-coordinate use case in IMAS. Without this check,
+    both forms would leak into the catalog as unintended synonyms.
     """
     name = candidate.get("id", "")
     if not name:

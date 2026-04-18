@@ -1059,12 +1059,6 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 # Inject COCOS metadata from DD (authoritative, like unit)
                 cocos_type = source_item.get("cocos_label") if source_item else None
 
-                # Post-process links: ensure name: prefix for internal refs
-                links = _normalize_links(c.links)
-
-                # Post-process tags: strip primary tags, keep only secondary
-                tags = _filter_secondary_tags(c.tags)
-
                 # Normalize name via grammar round-trip BEFORE persist
                 # to avoid duplicate nodes if validate would rename
                 name_id = c.standard_name
@@ -1114,11 +1108,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         "id": name_id,
                         "source_types": ["dd"] if state.source == "dd" else ["signals"],
                         "source_id": c.source_id,
-                        "description": c.description,
-                        "documentation": c.documentation,
                         "kind": c.kind,
-                        "tags": tags,
-                        "links": links,
                         "source_paths": [
                             encode_source_path(
                                 "dd" if state.source == "dd" else "signals", p
@@ -1128,8 +1118,6 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         "fields": c.grammar_fields,
                         "confidence": c.confidence,
                         "reason": c.reason,
-                        "validity_domain": c.validity_domain,
-                        "constraints": c.constraints,
                         "unit": unit,
                         "physics_domain": physics_domain,
                         "cocos_transformation_type": cocos_type,
@@ -1141,23 +1129,6 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         ),
                     }
                 )
-
-                # In name-only mode, null out documentation fields so the
-                # coalesce write semantics in write_standard_names() preserve
-                # existing graph values.  Also clear review_input_hash to
-                # invalidate stale reviews.
-                if state.name_only:
-                    entry = candidates[-1]
-                    for doc_field in (
-                        "description",
-                        "documentation",
-                        "tags",
-                        "links",
-                        "validity_domain",
-                        "constraints",
-                    ):
-                        entry.pop(doc_field, None)
-                    entry["review_input_hash"] = None
 
             # Collect vocab gaps and persist immediately
             if result.vocab_gaps:
@@ -1324,14 +1295,15 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
 
 
 def _validate_via_isn(
-    entry: dict, *, name_only: bool = False
+    entry: dict,
 ) -> tuple[list[str], dict]:
     """Construct ISN Pydantic model and collect ALL validation issues.
 
     Returns:
         (issues: list[str], layer_summary: dict)
 
-    This function is purely an annotator — it never rejects entries.
+    Compose is always name-only (ADR-1): validation uses ISN's name-only
+    model. This function is purely an annotator — it never rejects entries.
     Parseability is checked upstream by the grammar round-trip in
     validate_worker. This function attaches quality annotations.
     """
@@ -1355,11 +1327,6 @@ def _validate_via_isn(
         "kind": entry.get("kind", "scalar"),
         "dd_paths": isn_dd_paths,
     }
-    if not name_only:
-        isn_dict["description"] = entry.get("description", "")
-        isn_dict["documentation"] = entry.get("documentation", "")
-        isn_dict["tags"] = entry.get("tags", [])
-        isn_dict["links"] = entry.get("links", [])
     # ISN requires physics_domain — fall back to "general" when DD has no domain
     isn_dict["physics_domain"] = entry.get("physics_domain") or "general"
     # ISN metadata kind forbids unit field entirely
@@ -1372,7 +1339,7 @@ def _validate_via_isn(
     try:
         from imas_standard_names.models import create_standard_name_entry
 
-        model = create_standard_name_entry(isn_dict, name_only=name_only)
+        model = create_standard_name_entry(isn_dict, name_only=True)
     except ValidationError as e:
         summary["pydantic"]["passed"] = False
         summary["pydantic"]["error_count"] = len(e.errors())
@@ -1543,9 +1510,7 @@ async def validate_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             pass
 
                     # ISN three-layer validation (annotate, never reject)
-                    issues, layer_summary = _validate_via_isn(
-                        entry, name_only=state.name_only
-                    )
+                    issues, layer_summary = _validate_via_isn(entry)
 
                     # --- L3: Post-gen audits ---
                     try:
@@ -1868,7 +1833,7 @@ async def persist_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     """
                     MATCH (sn:StandardName)
                     WHERE sn.embedded_at IS NOT NULL
-                      AND sn.review_status = 'drafted'
+                      AND sn.review_status IN ['named', 'drafted']
                     RETURN sn.id AS id, sn.source_paths AS source_paths
                     """
                 )
@@ -1891,7 +1856,7 @@ async def persist_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             UNWIND $paths AS path
                             MATCH (n:IMASNode {id: path})-[r:HAS_STANDARD_NAME]->(sn:StandardName)
                             WHERE NOT (sn.id IN $keep_names)
-                              AND sn.review_status IN ['drafted', null]
+                              AND sn.review_status IN ['named', 'drafted', null]
                             DELETE r
                             RETURN count(r) AS detached
                             """,

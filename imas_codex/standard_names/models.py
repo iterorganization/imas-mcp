@@ -9,19 +9,17 @@ from pydantic import BaseModel, Field
 
 
 class StandardNameCandidate(BaseModel):
-    """A single standard name candidate from LLM composition."""
+    """A single standard name candidate from LLM composition.
+
+    Name-only: compose produces naming and grammar fields only.
+    Documentation (description, tags, links, etc.) is added by ``sn enrich``.
+    """
 
     source_id: str = Field(description="Source entity ID (DD path or signal ID)")
     standard_name: str = Field(description="Composed standard name in snake_case")
-    description: str = Field(default="", description="One sentence, <120 chars")
-    documentation: str = Field(
-        default="", description="Rich docs with LaTeX, links, typical values"
-    )
     kind: Literal["scalar", "vector", "metadata"] = Field(
         default="scalar", description="Entry kind"
     )
-    tags: list[str] = Field(default_factory=list, description="Classification tags")
-    links: list[str] = Field(default_factory=list, description="Related standard names")
     dd_paths: list[str] = Field(
         default_factory=list, description="Mapped IMAS DD paths"
     )
@@ -30,12 +28,6 @@ class StandardNameCandidate(BaseModel):
     )
     confidence: float = Field(ge=0, le=1, description="Naming confidence")
     reason: str = Field(description="Brief justification")
-    validity_domain: str | None = Field(
-        default=None, description="Physical region where quantity is valid"
-    )
-    constraints: list[str] = Field(
-        default_factory=list, description="Physical constraints"
-    )
 
 
 class StandardNameVocabGap(BaseModel):

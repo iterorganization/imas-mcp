@@ -44,9 +44,6 @@ class StandardNameBuildState(DiscoveryStateBase):
     # Model overrides (None = use defaults from pyproject.toml)
     compose_model: str | None = None  # Override for compose step (default: reasoning)
 
-    # Name-only mode: compose focuses on naming/grammar, preserves doc fields
-    name_only: bool = False
-
     # COCOS provenance (resolved once at extract start)
     dd_version: str | None = None
     cocos_version: int | None = None

@@ -80,7 +80,7 @@ class TestPersistComposedBatch:
         written = mock_write.call_args[0][0]
         for entry in written:
             assert entry["model"] == "claude-test"
-            assert entry["review_status"] == "drafted"
+            assert entry["review_status"] == "named"
             assert "generated_at" in entry
 
     @patch("imas_codex.standard_names.graph_ops.write_standard_names")

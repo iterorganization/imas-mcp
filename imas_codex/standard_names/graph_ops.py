@@ -467,9 +467,110 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 batch=cocos_batch,
             )
 
+        # Create HAS_SEGMENT relationships: StandardName → GrammarToken
+        _write_segment_edges(gc, [n["id"] for n in names])
+
     written = len(names)
     logger.info("Wrote %d StandardName nodes", written)
     return written
+
+
+def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> None:
+    """Write HAS_SEGMENT edges from StandardName nodes to GrammarToken nodes.
+
+    For each name, parses via ISN grammar, resolves segment tokens, and
+    MERGEs ``(sn:StandardName)-[:HAS_SEGMENT {position, segment}]->(t:GrammarToken)``.
+
+    Idempotent: existing HAS_SEGMENT edges are deleted before re-writing.
+    Parse failures are logged and skipped — the SN node remains intact.
+    Token-miss (vocabulary drift) is detected and warned.
+
+    Args:
+        gc: Open GraphClient session (caller manages the context manager).
+        name_ids: List of StandardName.id values to process.
+    """
+    try:
+        from imas_standard_names import __version__ as isn_version
+        from imas_standard_names.grammar import parse_standard_name
+        from imas_standard_names.graph.spec import segment_edge_specs
+    except ImportError:
+        logger.debug("ISN grammar not available — skipping HAS_SEGMENT edges")
+        return
+
+    for sn_id in name_ids:
+        try:
+            parsed = parse_standard_name(sn_id)
+            edge_specs = segment_edge_specs(parsed)
+        except Exception:
+            logger.warning(
+                "Grammar parse failed for '%s' — skipping HAS_SEGMENT edges",
+                sn_id,
+                exc_info=True,
+            )
+            continue
+
+        if not edge_specs:
+            continue
+
+        # Idempotent: delete old HAS_SEGMENT edges before re-writing
+        gc.query(
+            """
+            MATCH (sn:StandardName {id: $sn_id})-[r:HAS_SEGMENT]->(:GrammarToken)
+            DELETE r
+            """,
+            sn_id=sn_id,
+        )
+
+        # Write new HAS_SEGMENT edges via OPTIONAL MATCH to detect token-miss
+        edges_param = [
+            {
+                "position": s.position,
+                "segment": s.segment,
+                "token": s.token,
+            }
+            for s in edge_specs
+        ]
+
+        results = list(
+            gc.query(
+                """
+                MATCH (sn:StandardName {id: $sn_id})
+                UNWIND $edges AS edge
+                OPTIONAL MATCH (t:GrammarToken {
+                    value: edge.token,
+                    segment: edge.segment,
+                    version: $isn_version
+                })
+                WITH sn, edge, t
+                FOREACH (_ IN CASE WHEN t IS NOT NULL THEN [1] ELSE [] END |
+                    MERGE (sn)-[r:HAS_SEGMENT]->(t)
+                    SET r.position = edge.position,
+                        r.segment = edge.segment
+                )
+                RETURN edge.token AS token,
+                       edge.segment AS segment,
+                       t IS NOT NULL AS matched
+                """,
+                sn_id=sn_id,
+                edges=edges_param,
+                isn_version=isn_version,
+            )
+            or []
+        )
+
+        # Detect token-miss (vocabulary gaps)
+        missing = [
+            f"{r['segment']}:{r['token']}"
+            for r in results
+            if not r.get("matched", True)
+        ]
+        if missing:
+            logger.warning(
+                "Token-miss for '%s': %s (ISN %s) — vocab gap",
+                sn_id,
+                ", ".join(missing),
+                isn_version,
+            )
 
 
 # =============================================================================
@@ -511,7 +612,7 @@ def persist_composed_batch(
     now = datetime.now(UTC).isoformat()
     for entry in candidates:
         entry.setdefault("model", compose_model)
-        entry.setdefault("review_status", "drafted")
+        entry.setdefault("review_status", "named")
         entry.setdefault("validation_status", "pending")
         entry.setdefault("generated_at", now)
         # Extract grammar fields into top-level properties for graph
@@ -648,7 +749,7 @@ def claim_names_for_validation(limit: int = 50) -> tuple[str, list[dict[str, Any
         gc.query(
             """
             MATCH (sn:StandardName)
-            WHERE sn.review_status = 'drafted'
+            WHERE sn.review_status IN ['named', 'drafted']
               AND sn.generated_at IS NOT NULL
               AND sn.validated_at IS NULL
               AND (sn.claimed_at IS NULL
@@ -755,7 +856,7 @@ def claim_names_for_embedding(limit: int = 100) -> tuple[str, list[dict[str, Any
         gc.query(
             """
             MATCH (sn:StandardName)
-            WHERE sn.review_status IN ['drafted', 'published', 'accepted']
+            WHERE sn.review_status IN ['named', 'drafted', 'published', 'accepted']
               AND sn.validated_at IS NOT NULL
               AND sn.embedding IS NULL
               AND sn.description IS NOT NULL
@@ -834,7 +935,7 @@ def get_validated_names(
     ``validation_status`` = ``'valid'``.
     """
     where_parts = [
-        "sn.review_status = 'drafted'",
+        "sn.review_status IN ['named', 'drafted']",
         "sn.validated_at IS NOT NULL",
         "sn.validation_status = 'valid'",
     ]

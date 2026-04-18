@@ -106,15 +106,6 @@ def sn() -> None:
     ),
 )
 @click.option(
-    "--name-only",
-    is_flag=True,
-    help=(
-        "Focus composition on naming and grammar only. "
-        "Documentation fields are preserved from existing graph data. "
-        "Invalidates stale reviews (clears review_input_hash)."
-    ),
-)
-@click.option(
     "--from-model",
     type=str,
     default=None,
@@ -137,7 +128,6 @@ def sn_generate(
     quiet: bool,
     paths_list: tuple[str, ...],
     reset_to: str | None,
-    name_only: bool,
     from_model: str | None,
 ) -> None:
     """Generate standard names from a source.
@@ -306,8 +296,6 @@ def sn_generate(
         log_print(f"  Limit: {limit} paths")
     if compose_model:
         log_print(f"  Compose model: {compose_model}")
-    if name_only:
-        log_print("  Mode: name-only (preserving existing documentation)")
     log_print(f"  Cost limit: ${cost_limit:.2f}")
     log_print("")
 
@@ -341,7 +329,6 @@ def sn_generate(
         force=force,
         limit=limit,
         compose_model=compose_model,
-        name_only=name_only,
         from_model=from_model,
     )
 
