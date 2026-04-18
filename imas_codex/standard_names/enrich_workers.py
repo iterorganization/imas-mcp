@@ -1199,15 +1199,65 @@ def _validate_item_description(item: dict[str, Any]) -> list[str]:
         return []
 
 
+def _check_empty_documentation(item: dict[str, Any]) -> list[str]:
+    """Check that description and documentation are not empty/whitespace.
+
+    Returns quarantine-level issues if either is blank (D5/P0.1).
+    """
+    issues: list[str] = []
+    desc = (item.get("enriched_description") or "").strip()
+    doc = (item.get("enriched_documentation") or "").strip()
+    if not desc:
+        issues.append("[empty_documentation] description is empty or whitespace")
+    if not doc:
+        issues.append("[empty_documentation] documentation is empty or whitespace")
+    return issues
+
+
+def _check_unit_sanity(item: dict[str, Any]) -> list[str]:
+    """Run dimensional-sanity checks on item name vs unit (D5/P0.2).
+
+    Delegates to :func:`unit_audit.check_unit_sanity` and wraps results.
+    """
+    from imas_codex.standard_names.unit_audit import check_unit_sanity
+
+    name = item.get("id") or ""
+    unit = item.get("unit") or ""
+    raw_issues = check_unit_sanity(name, unit)
+    return [f"[{tag}]" for tag in raw_issues]
+
+
+def _apply_kind_derivation(item: dict[str, Any]) -> None:
+    """Override the LLM's ``kind`` field using name-based derivation (D5/P0.3).
+
+    Mutates *item* in place — sets ``kind`` to the derived value.
+    """
+    from imas_codex.standard_names.kind_derivation import derive_kind
+
+    name = item.get("id") or ""
+    derived = derive_kind(name)
+    if derived != (item.get("kind") or "scalar"):
+        logger.debug(
+            "Kind override for %s: %s → %s",
+            name,
+            item.get("kind"),
+            derived,
+        )
+    item["kind"] = derived
+
+
 async def enrich_validate_worker(state: StandardNameEnrichState, **_kwargs) -> None:
     """Validate enriched names: spelling, link integrity, description quality.
 
     For each item with ``enriched_description`` present, runs:
     1. British spelling check (warning only).
-    2. ISN Pydantic construction — failure quarantines.
-    3. Description semantic checks — warnings.
-    4. Link integrity — unknown links produce warnings.
-    5. LaTeX/math syntax — warnings.
+    2. Empty-doc check — quarantines items with blank description/documentation.
+    3. ISN Pydantic construction — failure quarantines.
+    4. Dimensional-sanity unit audit — quarantines on mismatch.
+    5. Auto-derive kind from name (overrides LLM default).
+    6. Description semantic checks — warnings.
+    7. Link integrity — unknown links produce warnings.
+    8. LaTeX/math syntax — warnings.
 
     Sets ``validation_status`` ('valid' or 'quarantined') and
     ``validation_issues`` (list of tagged strings) on each item.
@@ -1257,8 +1307,8 @@ async def enrich_validate_worker(state: StandardNameEnrichState, **_kwargs) -> N
             sid = item["id"]
             enriched_desc = item.get("enriched_description")
 
-            if not enriched_desc:
-                # No enriched description — skip validation, mark pending.
+            if enriched_desc is None:
+                # No enriched description at all — skip validation, mark pending.
                 item["validation_status"] = "pending"
                 item["validation_issues"] = []
                 skipped += 1
@@ -1271,20 +1321,35 @@ async def enrich_validate_worker(state: StandardNameEnrichState, **_kwargs) -> N
             issues.extend(_check_british_spelling(enriched_desc))
             issues.extend(_check_british_spelling(item.get("enriched_documentation")))
 
-            # 2. ISN Pydantic construction
+            # 2. Empty-doc check (P0.1 — hard quarantine)
+            empty_doc_issues = _check_empty_documentation(item)
+            if empty_doc_issues:
+                issues.extend(empty_doc_issues)
+                is_quarantined = True
+
+            # 3. ISN Pydantic construction
             pydantic_issues = _validate_item_pydantic(item)
             if pydantic_issues:
                 issues.extend(pydantic_issues)
                 is_quarantined = True
 
-            # 3. Description semantic checks (warning only)
+            # 4. Dimensional-sanity unit audit (P0.2)
+            unit_issues = _check_unit_sanity(item)
+            if unit_issues:
+                issues.extend(unit_issues)
+                is_quarantined = True
+
+            # 5. Auto-derive kind from name (P0.3 — override LLM default)
+            _apply_kind_derivation(item)
+
+            # 6. Description semantic checks (warning only)
             desc_issues = _validate_item_description(item)
             issues.extend(desc_issues)
 
-            # 4. Link integrity (from batch query)
+            # 7. Link integrity (from batch query)
             issues.extend(link_issues.get(sid, []))
 
-            # 5. LaTeX syntax (warning only)
+            # 8. LaTeX syntax (warning only)
             issues.extend(_check_latex_syntax(enriched_desc))
             issues.extend(_check_latex_syntax(item.get("enriched_documentation")))
 
