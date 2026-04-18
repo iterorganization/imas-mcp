@@ -44,10 +44,10 @@ Return a JSON object with an `items` array. Each item conforms to:
 ```json
 {
   "standard_name": "exact_input_name",
-  "description": "≤2 sentence definition, physics-meaningful",
-  "documentation": "≥3 sentence rich documentation with LaTeX, typical values, cross-refs",
-  "tags": ["physics-domain-tag", "diagnostic-tag"],
-  "links": ["related_standard_name_1", "related_standard_name_2"],
+  "description": "≤180 chars, ≤2 sentences, physics-meaningful",
+  "documentation": "≥3 sentence rich documentation with $LaTeX$, typical values, cross-refs",
+  "tags": ["secondary-tag-1", "secondary-tag-2"],
+  "links": ["name:related_standard_name_1", "name:related_standard_name_2"],
   "validity_domain": "physical region or regime (e.g. core plasma, SOL)",
   "constraints": ["physical constraint 1"],
   "cross_reference_rationale": "Brief explanation of why each link was chosen",
@@ -58,13 +58,13 @@ Return a JSON object with an `items` array. Each item conforms to:
 ### Field constraints
 
 - `standard_name` — MUST exactly match the input name (hard requirement for result matching).
-- `description` — ≤ 2 sentences. Must add information beyond what the name tokens encode.
-- `documentation` — ≥ 3 sentences. Must cover physical meaning, measurement context, and related quantities.
-- `tags` — lowercase, hyphen-separated. MUST come from the controlled vocabularies below. At least one **primary** tag (physics-domain) is required.
-- `links` — MUST use the `name:foo_bar` prefix (e.g., `name:electron_temperature`). Each link must name an existing standard name. URLs (https://…) are permitted for external references.
+- `description` — **≤180 characters**, ≤2 sentences. Must add information beyond what the name tokens encode. Use American spelling (e.g., "ionization", "behavior").
+- `documentation` — ≥3 sentences. Must cover physical meaning, measurement context, and related quantities. American spelling throughout.
+- `tags` — lowercase, hyphen-separated. **SECONDARY tags only** (see controlled vocabulary below). Physics domain goes in a separate `physics_domain` field handled by the pipeline — never include primary tags like `edge-physics`, `transport`, `mhd` in `tags`.
+- `links` — MUST use the `name:foo_bar` prefix (e.g., `name:electron_temperature`). Each link must name an existing standard name (will be validated; non-existent links cause rejection). URLs (https://…) are permitted for external references.
 - `validity_domain` — optional but encouraged. Physical region or regime where the quantity is meaningful.
 - `constraints` — optional. Physical constraints on the quantity.
 - `cross_reference_rationale` — optional. Brief note explaining why the linked names were chosen.
-- `documentation_excerpt` — ≤ 160 characters. One-line summary suitable for tables and list views.
+- `documentation_excerpt` — ≤160 characters. One-line summary suitable for tables and list views.
 
 {% include "sn/_controlled_tags.md" %}

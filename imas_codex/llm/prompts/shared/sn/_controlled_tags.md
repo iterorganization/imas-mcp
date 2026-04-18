@@ -1,21 +1,12 @@
-## Controlled Tag Vocabularies
+## Controlled Tag Vocabulary (`tags` field — SECONDARY ONLY)
 
-`tags` entries MUST come from the following lists. Use at least one **primary**
-tag (physics-domain). Add **secondary** tags only when they materially describe
-the quantity (measurement nature, regime, analysis purpose). Do not invent tags.
-Non-conforming tags are dropped silently by the pipeline.
+The `tags` field accepts **secondary tags only**. Physics domain (``edge-physics``,
+``transport``, ``mhd``, ``equilibrium``, ``magnetics``, ``core-physics``, etc.)
+belongs in the separate `physics_domain` field, **never** in `tags`.
 
-### Primary tags (domain / diagnostic family)
+Do not invent tags. Non-conforming tags are dropped silently by the pipeline.
 
-`coils-and-control`, `core-physics`, `data-products`, `ec-heating`,
-`edge-physics`, `equilibrium`, `fast-particles`, `fueling`, `fundamental`,
-`ic-heating`, `imaging`, `interferometry`, `lh-heating`, `magnetics`, `mhd`,
-`nbi`, `neutronics`, `plasma-initiation`, `pulse-management`,
-`radiation-diagnostics`, `reflectometry`, `runaway-electrons`, `spectroscopy`,
-`thomson-scattering`, `transport`, `turbulence`, `utilities`,
-`wall-and-structures`, `waves`.
-
-### Secondary tags (cross-cutting descriptors)
+### Allowed `tags` values (secondary — cross-cutting descriptors)
 
 `auxiliary-heated`, `benchmark-quantity`, `broadband-fluctuation`, `calibrated`,
 `cartesian-coordinates`, `coherent-mode`, `current-drive-efficiency`,
@@ -34,3 +25,11 @@ Non-conforming tags are dropped silently by the pipeline.
 `steady-state`, `synthetic-diagnostic`, `time-dependent`, `transient`,
 `transport-modeling`, `uncertainty-quantification`, `validated`,
 `volume-average`.
+
+### Common mistakes (rejected by validator)
+
+- `tags: ["edge-physics", "measured"]` — WRONG: `edge-physics` is a primary tag.
+  Put it in `physics_domain`. Tags become `["measured"]`.
+- `tags: ["equilibrium", "spatial-profile"]` — WRONG: use
+  `physics_domain: equilibrium` and `tags: ["spatial-profile"]`.
+
