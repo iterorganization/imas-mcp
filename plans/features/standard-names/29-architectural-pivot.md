@@ -22,7 +22,7 @@ Research sources (all citations below reference these):
 - **Pivot B — ISN grammar upgrade.** Fix the `Transformation` enum
   desync (R1 F1, zero-rename), add Fourier/mode-number decomposition
   segment (R1 F3), and introduce `over_` for region-scoped integrals
-  (R1 F4). Released from `~/Code/iter-standard-names` as an rc bump.
+  (R1 F4). Released from `~/Code/imas-standard-names` as an rc bump.
 - **Blocker — embedding backfill.** `n.embedding` is NULL on all 141
   StandardName nodes; `standard_name_desc_embedding` index is empty
   (R2 Blocker #1). PERSIST phase MUST embed descriptions; generate's
@@ -134,46 +134,73 @@ Research sources (all citations below reference these):
   `link_retry_count` + `failed` state handle the
   `links → REFERENCES` inconsistency window (R3 §H.4).
 
-### ADR-8 — Materialise ISN grammar as graph (ISN owns schema; codex imports)
+### ADR-8 — Materialise ISN grammar as graph (ISN exports Python spec; codex owns LinkML)
 - **Context.** Users want to filter/search SNs by grammar structure
   (e.g. "all SNs with substance=electron", "co-occurrence of transformations").
   Current state: SNs carry flat string slots (`substance`, `transformation`, …)
   that support `WHERE` but not traversal; vocabulary tokens have no graph
   identity; ISN YAML is the only place grammar structure exists.
+- **Boundary correction (R&D review).** An earlier draft of this ADR proposed
+  that ISN own a LinkML schema. **Rejected.** ISN is today a pure
+  Pydantic/JSON-Schema project (`pyproject.toml` pins only `pydantic` +
+  `ruamel-yaml`; `schemas/generate.py` emits JSON Schema via `TypeAdapter`).
+  Adding LinkML to a grammar-only library is non-trivial scope creep and
+  replaces the drift problem with a worse one (two schema systems inside
+  ISN). LinkML stays where LinkML already lives — in imas-codex.
 - **Decision.** Add a read-only graph mirror of the ISN grammar, versioned
-  per ISN release and refreshed only by a dedicated sync CLI. The LinkML
-  schema describing Grammar\* nodes **lives in the ISN package** next to
-  `entry_schema.json` (ISN already owns `schemas/generate.py`,
-  `schemas/validate.py`, and `grammar_codegen/`). imas-codex `imports:`
-  that schema via package-resource URI and extends `StandardName` with
-  a `HAS_SEGMENT` relationship to the imported `GrammarToken` class.
-  - ISN adds `imas_standard_names/schemas/grammar_graph.yaml` +
-    `imas_standard_names/graph/sync.py` (driver-agnostic). Optional
-    extra `imas-standard-names[graph]` pulls the `neo4j` driver.
-  - imas-codex `standard_name.yaml` uses LinkML `imports:` to pull in
-    Grammar\* classes; `uv run build-models --force` resolves both.
-  - CLI: `imas-codex graph sync-isn-grammar` wraps
-    `isn.graph.sync.sync_grammar(graph_client)`. Auto-invoked in the
-    release-CLI dep-bump step whenever `imas-standard-names` changes.
-  - `persist_worker` uses `isn.graph.sync.segment_edge_specs(parsed)`
+  per ISN release, refreshed only by a dedicated sync CLI.
+  - **ISN exports a pure-Python API** (no LinkML, no Neo4j in core):
+    - `imas_standard_names.graph.spec.get_grammar_graph_spec() -> dict` —
+      returns the full vocab as a serialisable mapping
+      `{version, segments:[{name, canonical_order, tokens:[{id, deprecated, description?}]}], templates:[…]}`.
+    - `imas_standard_names.graph.spec.segment_edge_specs(parsed) -> list[SegmentEdgeSpec]` —
+      frozen dataclass `(segment, token_id, position)`.
+    - `imas_standard_names.graph.sync.sync_grammar(client, *, active_version) -> SyncResult` —
+      driver-agnostic (duck-typed `query(cypher, **params)` Protocol).
+      Ships behind optional extra `imas-standard-names[graph]` with the
+      `neo4j` pin. Core install unchanged.
+  - **imas-codex authors the LinkML schema** that describes Grammar\*
+    node classes (`imas_codex/schemas/grammar_graph.yaml`) — LinkML is
+    already a codex concern and the codex build hook already resolves
+    `standard_name.yaml` imports. The sync CLI uses the ISN spec dict
+    as the authoritative vocabulary payload; the LinkML schema
+    describes only node shapes (required for `build-models` to emit
+    Pydantic models for `GrammarSegment`, `GrammarToken`, etc.).
+  - CLI: `imas-codex graph sync-isn-grammar` reads
+    `get_grammar_graph_spec()` from ISN and writes via
+    `isn.graph.sync.sync_grammar`. Hard-fails on Neo4j unreachable
+    unless `--skip-grammar-sync` is passed explicitly (see M3).
+  - `persist_worker` uses `isn.graph.spec.segment_edge_specs(parsed)`
     to MERGE `HAS_SEGMENT` edges after name embedding.
-  - Drift is eliminated structurally: the schema ships with the YAML
-    it describes. ISN CI validates schema ↔ YAML at release time;
-    imas-codex CI validates installed ISN version vs active
-    `ISNGrammarVersion` in graph.
+  - **Drift is enforced structurally:** ISN CI validates spec dict ↔
+    grammar YAML at release. imas-codex CI validates installed ISN
+    version vs active `ISNGrammarVersion` node in graph. Schema drift
+    (new segment class) surfaces at `build-models` on dep bump, not
+    at runtime.
+- **Schema ownership map** (S6).
+
+  | Element | Owner repo |
+  |---|---|
+  | `GrammarSegment`, `GrammarToken`, `GrammarTemplate`, `ISNGrammarVersion` classes + `DEFINES`, `HAS_TOKEN`, `NEXT`, `USES_TEMPLATE` rels | imas-codex (`grammar_graph.yaml`) |
+  | `StandardName.HAS_SEGMENT {position, segment}` edge slot | imas-codex (`standard_name.yaml`) |
+  | Vocab payload (token ids, segment order, template strings) | ISN (`grammar/*.yml` → `get_grammar_graph_spec()`) |
+  | `segment_edge_specs(parsed)` parser→edge mapping | ISN (knows its own grammar) |
+  | `sync_grammar(client, …)` write logic | ISN (sits next to spec) |
+
 - **Consequences.**
   - Single source of truth by construction — no mirrored vocab lists.
+  - **ISN dep surface unchanged** for non-graph consumers.
   - CONTEXTUALISE worker (PHASE C.2) replaces regex-based sibling
     lookup with graph traversal `(sn)-[:HAS_SEGMENT]->(gt)<-[:HAS_SEGMENT]-(sibling)`;
     higher-signal LLM prompts.
   - Analytics (vocab coverage, co-occurrence, orphan tokens) become
     2-line Cypher aggregations.
-  - Releases become coupled: ISN grammar changes that alter the graph
-    schema force an imas-codex rebuild — correct behaviour (breaking
-    schema change = breaking dep).
+  - Releases become coupled: ISN grammar changes that rename a segment
+    or token force a codex rebuild + graph resync — correct behaviour
+    (breaking grammar change = breaking dep).
   - Additive only; zero impact on existing 141 SNs. PHASE E gated to
-    land after PHASE B (needs schema 0.6.0 plus stable ISN rc from
-    PHASE A).
+    land after PHASE B (needs schema 0.6.0) and pinned to the *exact*
+    ISN rc tag that B.1 locked against (S1).
 
 ### ADR-7 — Embedding backfill policy
 - **Context.** R2 Blocker #1: all 141 SNs have NULL embedding;
@@ -198,7 +225,7 @@ Research sources (all citations below reference these):
 Phases are dependency-ordered. `model` column is the owning model for
 primary execution; review uses opus-4.7 unless noted.
 
-### PHASE A — ISN grammar fixes (repo: `~/Code/iter-standard-names`, model: `opus-4.7`)
+### PHASE A — ISN grammar fixes (repo: `~/Code/imas-standard-names`, model: `opus-4.7`)
 
 Exit criterion: ISN releases an rc tag; imas-codex `uv sync` pulls
 it; `parse/compose` round-trip tests pass on 141 existing SNs.
@@ -256,36 +283,37 @@ Transformation-enum quarantines; reviewer sign-off A/B vs prior 141.
 | D.5 | **Final review (opus-4.7)**: quality assessment, link density (≥3 REFERENCES/SN avg), cross-name coherence, US-spelling compliance, LaTeX rendering sanity. | Sign-off gate |
 | D.6 | Documentation updates per §9. Move plan 28 to `plans/features/standard-names/completed/` with an archival header noting supersession by plan 29. | — |
 
-### PHASE E — ISN grammar as graph (ISN owns schema; imas-codex imports)
+### PHASE E — ISN grammar as graph (ISN exports Python spec; codex owns LinkML)
 
 Exit criterion: `imas-codex graph sync-isn-grammar` idempotent; full
 grammar graph present; every `named|enriched|reviewable` SN has
 `HAS_SEGMENT` edges matching `parse_standard_name(sn.id)`; drift CI
-green in BOTH repos.
+green in BOTH repos. Phase E ships against the **same** ISN rc tag
+that B.1 pins against — no intermediate rc bumps between B.1 and E.4
+(S1).
 
-**Ownership boundary** (revised per follow-up): ISN owns the LinkML
-schema for Grammar\* node types, the sync logic, and the parser→edge
-mapping. imas-codex's schema `imports:` the ISN schema and wires
-`StandardName.HAS_SEGMENT` to the imported `GrammarToken` class. This
-eliminates scope drift structurally — the schema ships with the
-grammar YAML it describes.
+**Ownership boundary** (revised per R&D review, M1 + S6): ISN stays a
+pure Pydantic library and exports a Python spec API (`get_grammar_graph_spec()`,
+`segment_edge_specs()`, `sync_grammar()`). imas-codex owns the LinkML
+schema describing Grammar\* node classes and the `HAS_SEGMENT` edge slot.
+No LinkML in ISN; no vocab duplication in codex.
 
 | # | Scope | Repo |
 |---|---|---|
-| E.1 | Design spike (opus-4.7): finalise cross-repo schema import mechanics, sync CLI contract, drift semantics, failure modes when a parsed SN token is missing from graph. Write to `files/E-grammar-graph-design.md`. | session |
-| E.2 | ISN: add `imas_standard_names/schemas/grammar_graph.yaml` (LinkML) declaring `ISNGrammarVersion`, `GrammarSegment`, `GrammarToken`, `GrammarTemplate` classes + `DEFINES`, `HAS_TOKEN`, `NEXT`, `USES_TEMPLATE` relationships. Register as `package_data`. Extend `schemas/generate.py` + `schemas/validate.py` to emit+check this schema alongside `entry_schema.json`. CI test asserts YAML vocab tokens ↔ schema-derived Pydantic models stay in sync. | ISN |
-| E.3 | ISN: add `imas_standard_names/graph/sync.py` exposing `sync_grammar(graph_client, *, active_version)` and `segment_edge_specs(parsed)→list[(segment, token_id, position)]`. Driver-agnostic (duck-typed `query(cypher, **params)` interface). Unit tests. Ship behind optional extra `imas-standard-names[graph]` with `neo4j` driver pin. | ISN |
-| E.4 | ISN: release rc (release CLI) bundling E.2 + E.3. | ISN |
-| E.5 | imas-codex: bump `imas-standard-names[graph]` dep. Extend `imas_codex/schemas/standard_name.yaml` with `imports:` of the ISN schema via package-resource URI; add `HAS_SEGMENT` relationship on `StandardName` with `range: GrammarToken`. Run `uv run build-models --force`; verify cross-schema resolution works. | imas-codex |
-| E.6 | imas-codex: CLI verb `imas-codex graph sync-isn-grammar` — thin wrapper around `isn.graph.sync.sync_grammar`. Release-CLI hook auto-runs on any `imas-standard-names` version change. | imas-codex |
-| E.7 | imas-codex: extend PHASE B `persist_worker` (B.3) to call `isn.graph.sync.segment_edge_specs` and MERGE `HAS_SEGMENT {position}` edges after name embed. Fail fast with "run graph sync-isn-grammar" error if any target token missing (drift check at write time). | imas-codex |
-| E.8 | imas-codex: `tests/graph/test_grammar_sync.py` (drift: installed ISN version == `ISNGrammarVersion{active:true}`), `test_grammar_segment_edges.py` (every `named\|enriched\|reviewable` SN has edges matching `parse_standard_name`). | imas-codex |
+| E.1 | Design spike (opus-4.7): finalise cross-repo boundary, sync CLI contract, drift semantics, schema-compliance contract for dynamic sub-labels (M4), failure modes when a parsed SN token is missing from graph. Write to `files/E-grammar-graph-design.md`. | session |
+| E.2 | ISN: add `imas_standard_names/graph/spec.py` with `get_grammar_graph_spec() -> dict` + `SegmentEdgeSpec` dataclass + `segment_edge_specs(parsed)`. Pure Python (stdlib + existing Pydantic). CI test asserts spec dict ↔ grammar YAML stay in sync. Pin against the *exact* rc tag B.1 will consume (S1). | ISN |
+| E.3 | ISN: add `imas_standard_names/graph/sync.py` exposing `sync_grammar(client, *, active_version) -> SyncResult`. Driver-agnostic Protocol (`query(cypher, **params)`). Optional extra `imas-standard-names[graph]` pulls `neo4j` driver. Unit tests with in-memory fake client. | ISN |
+| E.4 | ISN: release rc bundling E.2 + E.3 via ISN release CLI; tail CI. **Serialised after A.4** to avoid repo-write races (S4). | ISN |
+| E.5 | imas-codex: bump `imas-standard-names[graph]` dep to the E.4 tag. Add `imas_codex/schemas/grammar_graph.yaml` (LinkML) declaring `ISNGrammarVersion`, `GrammarSegment`, `GrammarToken`, `GrammarTemplate` + `DEFINES`, `HAS_TOKEN`, `NEXT`, `USES_TEMPLATE` rels. Extend `imas_codex/schemas/standard_name.yaml` with `imports: [grammar_graph]` and `HAS_SEGMENT {position, segment}` slot on `StandardName`. Run `uv run build-models --force`. | imas-codex |
+| E.6 | imas-codex: CLI verb `imas-codex graph sync-isn-grammar` — reads ISN spec via `get_grammar_graph_spec()`, writes via `isn.graph.sync.sync_grammar`. Release-CLI hook runs on every `imas-standard-names` version bump and **hard-fails** on Neo4j unreachable unless `--skip-grammar-sync` is passed (M3). | imas-codex |
+| E.7 | imas-codex: extend PHASE B `persist_worker` (B.3) to call `isn.graph.spec.segment_edge_specs` and MERGE `HAS_SEGMENT {position, segment}` edges after name embed. Fail fast with `GrammarDriftError` if any target token missing — the error message includes the missing token and "run `imas-codex graph sync-isn-grammar`". No separate backfill CLI — D.1 wipes SNs and all subsequent SNs write edges through this path (S5). | imas-codex |
+| E.8 | imas-codex: `tests/graph/test_grammar_sync.py` (drift: installed ISN version == `ISNGrammarVersion{active:true}`), `test_grammar_segment_edges.py` (every `named\|enriched\|reviewable` SN has edges matching `parse_standard_name`). Schema-compliance allowlist reads `SEGMENT_ORDER` from ISN at test time to admit dynamic `:Substance`, `:Transformation` labels (M4). | imas-codex |
 
 ---
 
 ## 5. Todos (SQL-ready)
 
-### Phase A — ISN grammar (iter-standard-names repo)
+### Phase A — ISN grammar (imas-standard-names repo)
 
 | id | title | model | deps |
 |---|---|---|---|
@@ -302,7 +330,11 @@ grammar YAML it describes.
 | `b2-remove-name-only-flag` | Remove `--name-only` flag + all branches; compose writes review_status='named' | opus-4.6 | b1-schema-bump-0-6 |
 | `b3-embed-names-in-persist` | persist_worker embeds SN name; VALIDATE precondition on non-NULL name embedding | opus-4.6 | b2-remove-name-only-flag |
 | `b4-migrate-drafted-to-named` | scripts/migrate_review_status_0_6.py; idempotent; run once | opus-4.6 | b1-schema-bump-0-6 |
-| `b5-corpus-repair-v1` | scripts/sn_corpus_repair_v1.py: extractor bugs, DD-path collisions, misdomained SNs, tautological renames | opus-4.6 | b1-schema-bump-0-6 |
+<!-- b5-corpus-repair-v1 DELETED (M2): D.1 DETACH DELETE wipes the 141 SN
+corpus wholesale; a repair script for soon-to-be-deleted nodes is dead
+work. The *extractor bugs* that produced bad sources are addressed in
+plan 28's audit tasks already landed; any residual extractor bugs
+surface during D.2 regeneration, not retroactively. -->
 
 ### Phase C — standalone sn enrich (imas-codex)
 
@@ -313,7 +345,7 @@ grammar YAML it describes.
 | `c3-document-worker-llm` | DOCUMENT: batched acall_llm_structured with sn-enrich model, budget tracking | opus-4.6 | c2-contextualise-worker, c5-enrich-prompts |
 | `c4-validate-and-persist-worker` | VALIDATE (ISN parse + US-spelling + link-format) + PERSIST (REFERENCES edges + description embed) | opus-4.6 | c3-document-worker-llm |
 | `c5-enrich-prompts` | Rewrite enrich_system.md + enrich_user.md; new _enrich_style_guide.md; extend StandardNameEnrichItem model | opus-4.6 | b1-schema-bump-0-6 |
-| `c6-replace-enrich-prototype` | Delete inline asyncio enrich in cli/sn.py; wire run_sn_enrich_engine | opus-4.6 | c4-validate-and-persist-worker |
+| `c6-replace-enrich-prototype` | Capture pre-deletion behaviour diff of existing inline asyncio enrich (partial-failure cost reporting, idempotent re-run, `--from-model` semantics) as a commit message artefact; then delete the prototype and wire `run_sn_enrich_engine` (S7). | opus-4.6 | c4-validate-and-persist-worker |
 | `c7-enrich-cli-flags` | CLI options per R3 §E.1; add sn-enrich model key in pyproject.toml | opus-4.6 | c6-replace-enrich-prototype |
 | `c8-enrich-tests` | Unit, integration, roundtrip, claim-safety tests per R3 §G | opus-4.6 | c7-enrich-cli-flags |
 
@@ -321,7 +353,7 @@ grammar YAML it describes.
 
 | id | title | model | deps |
 |---|---|---|---|
-| `d1-clear-sn-graph` | DETACH DELETE StandardName + StandardNameSource; verify embed index empty | sonnet-4.6 | c8-enrich-tests, b4-migrate-drafted-to-named, b5-corpus-repair-v1 |
+| `d1-clear-sn-graph` | DETACH DELETE StandardName + StandardNameSource; verify embed index empty | sonnet-4.6 | c8-enrich-tests, b4-migrate-drafted-to-named |
 | `d2-generate-rotation-7-domains` | `sn generate` across 7 physics_domains at $2 cap each | sonnet-4.6 | d1-clear-sn-graph |
 | `d3-senior-review-names` | opus-4.7 A/B review of generated names vs prior 141; gate | opus-4.7 | d2-generate-rotation-7-domains |
 | `d4-enrich-rotation-7-domains` | `sn enrich` across 7 physics_domains at $2 cap each | sonnet-4.6 | d3-senior-review-names |
@@ -333,13 +365,13 @@ grammar YAML it describes.
 | id | title | model | repo | deps |
 |---|---|---|---|---|
 | `e1-design-spike` | Opus-4.7 design spike: cross-repo schema import mechanics, sync contract, drift semantics; output `files/E-grammar-graph-design.md` | opus-4.7 | session | — |
-| `e2-isn-grammar-graph-schema` | ISN: add `schemas/grammar_graph.yaml` (LinkML); extend `schemas/generate.py`+`validate.py`; CI test YAML↔schema | opus-4.6 | ISN | e1-design-spike |
-| `e3-isn-graph-sync-module` | ISN: add `graph/sync.py` (`sync_grammar`, `segment_edge_specs`); optional extra `[graph]`; unit tests | opus-4.6 | ISN | e2-isn-grammar-graph-schema |
-| `e4-isn-release-rc` | ISN: release rc bundling E.2+E.3 via ISN release CLI; tail CI | sonnet-4.6 | ISN | e3-isn-graph-sync-module |
-| `e5-codex-schema-import` | imas-codex: bump ISN dep, `imports:` ISN schema in `standard_name.yaml`, add `HAS_SEGMENT` rel, rebuild models | opus-4.6 | imas-codex | e4-isn-release-rc, b1-schema-bump-0-6 |
-| `e6-codex-sync-cli` | imas-codex: `graph sync-isn-grammar` CLI + release-CLI hook | opus-4.6 | imas-codex | e5-codex-schema-import |
-| `e7-codex-persist-segment-edges` | imas-codex: extend `persist_worker` to MERGE `HAS_SEGMENT` via ISN helper; fail-fast on drift | opus-4.6 | imas-codex | e6-codex-sync-cli, b3-persist-worker-status-machine |
-| `e8-codex-grammar-tests` | imas-codex: drift test + segment-edge integration test | opus-4.6 | imas-codex | e7-codex-persist-segment-edges |
+| `e2-isn-grammar-spec-api` | ISN: add `graph/spec.py` with `get_grammar_graph_spec()` + `segment_edge_specs()`; pure Python; CI test spec↔YAML. Pin against same rc tag B.1 will consume (S1). | opus-4.6 | ISN | e1-design-spike |
+| `e3-isn-graph-sync-module` | ISN: add `graph/sync.py` (`sync_grammar`, driver-agnostic Protocol); optional extra `[graph]`; unit tests | opus-4.6 | ISN | e2-isn-grammar-spec-api |
+| `e4-isn-release-rc` | ISN: release rc bundling E.2+E.3 via ISN release CLI; tail CI. Serialised after A.4 (S4). | sonnet-4.6 | ISN | e3-isn-graph-sync-module, a4-release-isn-rc |
+| `e5-codex-linkml-authorship` | imas-codex: bump ISN dep, author `schemas/grammar_graph.yaml` (LinkML) in codex, `imports:` into `standard_name.yaml`, add `HAS_SEGMENT` rel, rebuild models | opus-4.6 | imas-codex | e4-isn-release-rc, b1-schema-bump-0-6 |
+| `e6-codex-sync-cli` | imas-codex: `graph sync-isn-grammar` CLI + release-CLI hook (hard-fail unless `--skip-grammar-sync`, M3) | opus-4.6 | imas-codex | e5-codex-linkml-authorship |
+| `e7-codex-persist-segment-edges` | imas-codex: extend `persist_worker` to MERGE `HAS_SEGMENT` via ISN helper; fail-fast `GrammarDriftError` on missing token (no separate backfill CLI, S5) | opus-4.6 | imas-codex | e6-codex-sync-cli, b3-embed-names-in-persist |
+| `e8-codex-grammar-tests` | imas-codex: drift test + segment-edge integration test + schema-compliance allowlist imports `SEGMENT_ORDER` from ISN (M4) | opus-4.6 | imas-codex | e7-codex-persist-segment-edges |
 
 ---
 
@@ -348,7 +380,7 @@ grammar YAML it describes.
 | # | Risk | Source | Mitigation |
 |---|---|---|---|
 | R1 | Embedding-NULL blocker breaks CONTEXTUALISE nearby-SN surface | R2 Blocker #1 | ADR-7: PERSIST embeds descriptions inline; b3 task embeds names; VALIDATE precondition enforces non-NULL |
-| R2 | ISN grammar changes force rename of existing 141 SNs | R1 F4 (~5–15 renames for `at_*_region`) | PHASE D deletes all existing SNs anyway; grammar changes land *before* D.2 rotation so new corpus starts clean |
+| R2 | ISN grammar changes force rename of existing 141 SNs | R1 F4 (~5–15 renames for `at_*_region`) | PHASE D deletes all existing SNs wholesale (D.1 DETACH DELETE) so no repair script is needed; B.5 was dropped per R&D review (M2). Grammar changes land *before* D.2 rotation so new corpus starts clean |
 | R3 | Live-graph schema migration on 0.5 → 0.6 | R3 §H.1 | `scripts/migrate_review_status_0_6.py` idempotent; run once; `drafted` alias kept for one release |
 | R4 | Prompt cache hit rate degrades from per-batch siblings/nearby context | R3 §H.3 | Static-first: siblings/nearby go in **user** prompt; system prompt (style guide + schema + role) is invariant and fully cached |
 | R5 | Inter-repo release cycle (ISN rc) adds ~15–20min latency | PHASE A.4 | A.1 can ship independently (zero-rename) and unblock B/C while A.2/A.3 bake; sequence task deps so B.1 depends on a4 but c1 only needs b1 |
@@ -367,8 +399,11 @@ grammar YAML it describes.
 | 7.d | physics_domain coverage | all 7 domains populated | `MATCH (sn:StandardName {review_status:'reviewable'}) RETURN sn.physics_domain, count(*) ORDER BY 1` |
 | 7.e | SN name embeddings populated | 100% of `named` SNs | `MATCH (sn:StandardName) WHERE sn.review_status IN ['named','enriched','reviewable'] AND sn.embedding IS NULL RETURN count(sn)` = 0 |
 | 7.f | ISN grammar round-trip on new corpus | 100% parse+compose round-trip | `tests/test_grammar_round_trip.py` green on full post-D.4 corpus |
-| 7.g | Cost | ≤ $30 end-to-end for PHASE D | Sum of `state.total_cost` across 14 runs (7 gen + 7 enrich) |
+| 7.g.1 | Generation cost | ≤ $15 for 7 domain rotation | Sum of `state.total_cost` across 7 `sn generate` runs |
+| 7.g.2 | Review cost | ≤ $20 for opus-4.7 D.3 + D.5 reviews | Explicit budget cap on reviewer LLM calls |
+| 7.g.3 | Enrich cost | ≤ $15 for 7 domain rotation | Sum of `state.total_cost` across 7 `sn enrich` runs |
 | 7.h | COCOS coverage | ≥35 SNs with non-null `cocos_transformation_type` | R2 F.3 target; enrich prompt instructs to populate |
+| 7.i | Reviewer rubric score | ≥0.75 aggregate mean across all domains (6-dim rubric, 0–1 normalised) | `MATCH (sn:StandardName {review_status:'reviewable'}) RETURN avg(sn.reviewer_score)` — must clear current rotation's ~0.68 baseline |
 
 ## 8. Out-of-scope / future work
 
