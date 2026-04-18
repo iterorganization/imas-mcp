@@ -102,6 +102,18 @@ enums:
         description: Scalar quantity
       vector:
         description: Vector quantity (R,Z or multi-component)
+      vector_component:
+        description: Single component of a vector quantity
+      tensor:
+        description: Tensor quantity (stress tensor, metric tensor, etc.)
+      tensor_component:
+        description: Single component of a tensor quantity
+      eigenfunction:
+        description: Eigenfunction of a linear operator (MHD, wave, etc.)
+      spectrum:
+        description: Spectral quantity (per-mode or per-frequency decomposition)
+      complex_part:
+        description: Real or imaginary part of a complex-valued quantity
       metadata:
         description: Non-measurable concept or classification
 
