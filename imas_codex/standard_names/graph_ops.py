@@ -1420,24 +1420,29 @@ def clear_standard_names(
     -------
     Number of nodes deleted (or that would be deleted in dry-run mode).
     """
-    if status_filter is None:
-        status_filter = ["drafted"]
-
-    effective_statuses = list(status_filter)
-    if include_accepted and "accepted" not in effective_statuses:
-        effective_statuses.append("accepted")
-    elif not include_accepted and "accepted" in effective_statuses:
-        effective_statuses.remove("accepted")
+    all_statuses = status_filter is None
+    effective_statuses = list(status_filter) if status_filter else []
+    if status_filter is not None:
+        if include_accepted and "accepted" not in effective_statuses:
+            effective_statuses.append("accepted")
+        elif not include_accepted and "accepted" in effective_statuses:
+            effective_statuses.remove("accepted")
 
     with GraphClient() as gc:
-        params: dict[str, Any] = {"statuses": effective_statuses}
-        sn_where_clauses = ["sn.review_status IN $statuses"]
+        params: dict[str, Any] = {}
+        sn_where_clauses: list[str] = []
+        if all_statuses:
+            if not include_accepted:
+                sn_where_clauses.append("sn.review_status <> 'accepted'")
+        else:
+            params["statuses"] = effective_statuses
+            sn_where_clauses.append("sn.review_status IN $statuses")
 
         if source_filter:
             sn_where_clauses.append("$source_filter IN sn.source_types")
             params["source_filter"] = source_filter
 
-        sn_where = " AND ".join(sn_where_clauses)
+        sn_where = " AND ".join(sn_where_clauses) if sn_where_clauses else "true"
 
         if ids_filter:
             params["ids_prefix"] = ids_filter + "/"

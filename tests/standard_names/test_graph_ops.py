@@ -471,16 +471,18 @@ class TestClearStandardNames:
         all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
         assert "DELETE" not in all_cypher
 
-    def test_default_status_filter_is_drafted(self) -> None:
-        """Without status_filter, should only target 'drafted' nodes."""
+    def test_default_status_filter_means_all_statuses(self) -> None:
+        """status_filter=None should mean 'no filter' (all statuses, excl accepted)."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[{"n": 0}])
 
         self._call_clear(mock_gc)
 
-        all_kwargs = [call[1] for call in mock_gc.query.call_args_list]
-        statuses_lists = [kw.get("statuses") for kw in all_kwargs if "statuses" in kw]
-        assert any("drafted" in sl for sl in statuses_lists)
+        all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
+        # Should not constrain to specific status IN list
+        assert "IN $statuses" not in all_cypher
+        # Should still exclude accepted by default
+        assert "<> 'accepted'" in all_cypher
 
     def test_accepted_not_deleted_without_flag(self) -> None:
         """Without include_accepted, 'accepted' should not be in statuses list."""
