@@ -190,7 +190,16 @@ class TestMarkNamesValidated:
 class TestPersistComposedBatch:
     """Verify persist_composed_batch sets validation_status=pending."""
 
-    def test_sets_pending_default(self) -> None:
+    @patch("imas_codex.embeddings.description.embed_descriptions_batch")
+    def test_sets_pending_default(self, mock_embed) -> None:
+        # Simulate successful embedding so validation_status stays "pending"
+        def _embed_ok(items, text_field="description", embedding_field="embedding"):
+            for item in items:
+                item[embedding_field] = [0.1, 0.2]
+            return items
+
+        mock_embed.side_effect = _embed_ok
+
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 

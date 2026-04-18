@@ -70,9 +70,19 @@ class TestPersistComposedBatch:
         assert result == 0
 
     @patch("imas_codex.standard_names.graph_ops.write_standard_names")
-    def test_enriches_with_provenance(self, mock_write, sample_candidates):
+    @patch("imas_codex.embeddings.description.embed_descriptions_batch")
+    def test_enriches_with_provenance(self, mock_embed, mock_write, sample_candidates):
         from imas_codex.standard_names.graph_ops import persist_composed_batch
 
+        # Simulate successful embedding for each candidate
+        def _embed_side_effect(
+            items, text_field="description", embedding_field="embedding"
+        ):
+            for item in items:
+                item[embedding_field] = [0.1, 0.2, 0.3]
+            return items
+
+        mock_embed.side_effect = _embed_side_effect
         mock_write.return_value = 2
         result = persist_composed_batch(sample_candidates, compose_model="claude-test")
         assert result == 2
@@ -84,9 +94,18 @@ class TestPersistComposedBatch:
             assert "generated_at" in entry
 
     @patch("imas_codex.standard_names.graph_ops.write_standard_names")
-    def test_extracts_grammar_fields(self, mock_write, sample_candidates):
+    @patch("imas_codex.embeddings.description.embed_descriptions_batch")
+    def test_extracts_grammar_fields(self, mock_embed, mock_write, sample_candidates):
         from imas_codex.standard_names.graph_ops import persist_composed_batch
 
+        def _embed_side_effect(
+            items, text_field="description", embedding_field="embedding"
+        ):
+            for item in items:
+                item[embedding_field] = [0.1, 0.2, 0.3]
+            return items
+
+        mock_embed.side_effect = _embed_side_effect
         mock_write.return_value = 2
         persist_composed_batch(sample_candidates, compose_model="test")
 
@@ -94,6 +113,142 @@ class TestPersistComposedBatch:
         assert written[0]["physical_base"] == "temperature"
         assert written[0]["subject"] == "electron"
         assert written[1]["physical_base"] == "density"
+
+    @patch("imas_codex.standard_names.graph_ops.write_standard_names")
+    @patch("imas_codex.embeddings.description.embed_descriptions_batch")
+    def test_embeds_name_string(self, mock_embed, mock_write, sample_candidates):
+        """persist_composed_batch embeds the name (id) field, not description."""
+        from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+        def _embed_side_effect(
+            items, text_field="description", embedding_field="embedding"
+        ):
+            for item in items:
+                item[embedding_field] = [0.1, 0.2, 0.3]
+            return items
+
+        mock_embed.side_effect = _embed_side_effect
+        mock_write.return_value = 2
+        persist_composed_batch(sample_candidates, compose_model="test")
+
+        # Must embed using text_field="id" (the standard-name string)
+        mock_embed.assert_called_once()
+        call_kwargs = mock_embed.call_args
+        assert (
+            call_kwargs[1].get("text_field") == "id"
+            or call_kwargs[0][0] is sample_candidates
+        )
+        # Verify text_field kwarg is "id"
+        _, kwargs = mock_embed.call_args
+        assert kwargs.get("text_field") == "id"
+
+    @patch("imas_codex.standard_names.graph_ops.write_standard_names")
+    @patch("imas_codex.embeddings.description.embed_descriptions_batch")
+    def test_writes_embedding_and_embedded_at(
+        self, mock_embed, mock_write, sample_candidates
+    ):
+        """Each persisted SN has embedding + embedded_at when embedding succeeds."""
+        from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+        def _embed_side_effect(
+            items, text_field="description", embedding_field="embedding"
+        ):
+            for item in items:
+                item[embedding_field] = [0.4, 0.5, 0.6]
+            return items
+
+        mock_embed.side_effect = _embed_side_effect
+        mock_write.return_value = 2
+        persist_composed_batch(sample_candidates, compose_model="test")
+
+        written = mock_write.call_args[0][0]
+        for entry in written:
+            assert entry["embedding"] == [0.4, 0.5, 0.6]
+            assert entry["embedded_at"] is not None
+            assert entry["review_status"] == "named"
+            assert entry["validation_status"] != "quarantined"
+
+    @patch("imas_codex.standard_names.graph_ops.write_standard_names")
+    @patch("imas_codex.embeddings.description.embed_descriptions_batch")
+    def test_quarantines_on_embedding_failure(
+        self, mock_embed, mock_write, sample_candidates
+    ):
+        """Candidates with failed embeddings get quarantined."""
+        from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+        # Simulate partial failure — first succeeds, second fails
+        def _embed_side_effect(
+            items, text_field="description", embedding_field="embedding"
+        ):
+            items[0][embedding_field] = [0.1, 0.2]
+            items[1][embedding_field] = None  # failed
+            return items
+
+        mock_embed.side_effect = _embed_side_effect
+        mock_write.return_value = 2
+        persist_composed_batch(sample_candidates, compose_model="test")
+
+        written = mock_write.call_args[0][0]
+        # First candidate: embedded successfully
+        assert written[0]["embedding"] == [0.1, 0.2]
+        assert written[0]["validation_status"] != "quarantined"
+        # Second candidate: quarantined
+        assert written[1]["embedding"] is None
+        assert written[1]["validation_status"] == "quarantined"
+        assert "embedding_failed" in written[1]["validation_issues"]
+
+    @patch("imas_codex.standard_names.graph_ops.write_standard_names")
+    @patch(
+        "imas_codex.embeddings.description.embed_descriptions_batch",
+        side_effect=ConnectionError("embed server down"),
+    )
+    def test_quarantines_all_on_total_embed_failure(
+        self, mock_embed, mock_write, sample_candidates
+    ):
+        """When embed server is down, all candidates are quarantined."""
+        from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+        mock_write.return_value = 2
+        persist_composed_batch(sample_candidates, compose_model="test")
+
+        written = mock_write.call_args[0][0]
+        for entry in written:
+            assert entry["validation_status"] == "quarantined"
+            assert "embedding_failed" in entry["validation_issues"]
+            assert entry.get("embedding") is None
+
+    @patch("imas_codex.standard_names.graph_ops.write_standard_names")
+    @patch("imas_codex.embeddings.description.embed_descriptions_batch")
+    def test_idempotent_rerun(self, mock_embed, mock_write, sample_candidates):
+        """Re-running persist on the same batch produces same result."""
+        from copy import deepcopy
+
+        from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+        def _embed_side_effect(
+            items, text_field="description", embedding_field="embedding"
+        ):
+            for item in items:
+                item[embedding_field] = [0.1, 0.2, 0.3]
+            return items
+
+        mock_embed.side_effect = _embed_side_effect
+        mock_write.return_value = 2
+
+        batch1 = deepcopy(sample_candidates)
+        batch2 = deepcopy(sample_candidates)
+
+        persist_composed_batch(batch1, compose_model="test")
+        first_written = mock_write.call_args[0][0]
+
+        persist_composed_batch(batch2, compose_model="test")
+        second_written = mock_write.call_args[0][0]
+
+        # Same embeddings, same review_status, same structure
+        for a, b in zip(first_written, second_written, strict=True):
+            assert a["embedding"] == b["embedding"]
+            assert a["review_status"] == b["review_status"]
+            assert a["validation_status"] == b["validation_status"]
 
 
 # ---------------------------------------------------------------------------

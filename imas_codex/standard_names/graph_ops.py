@@ -352,6 +352,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.validation_status = coalesce(b.validation_status, sn.validation_status),
                 sn.link_status = coalesce(b.link_status, sn.link_status),
                 sn.review_input_hash = b.review_input_hash,
+                sn.embedding = coalesce(b.embedding, sn.embedding),
+                sn.embedded_at = coalesce(b.embedded_at, sn.embedded_at),
                 sn.created_at = coalesce(sn.created_at, datetime())
             """,
             batch=[
@@ -395,6 +397,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "validation_status": n.get("validation_status"),
                     "link_status": _compute_link_status(n.get("links")),
                     "review_input_hash": n.get("review_input_hash"),
+                    "embedding": n.get("embedding"),
+                    "embedded_at": n.get("embedded_at"),
                 }
                 for n in names
             ],
@@ -599,8 +603,14 @@ def persist_composed_batch(
     """Persist a single compose batch immediately to graph.
 
     Called from within ``_compose_batch`` after LLM success.
-    Enriches candidates with provenance metadata and extracts grammar
-    fields before writing, matching what ``persist_worker`` previously did.
+    Enriches candidates with provenance metadata, embeds the standard-name
+    string, and extracts grammar fields before writing.
+
+    Embedding uses the standard-name string (``id``) — not the description,
+    which is added later by the enrich pipeline.  If embedding fails for a
+    candidate, it is quarantined (``validation_status='quarantined'``,
+    ``validation_issues=['embedding_failed']``) so downstream consumers
+    know the vector is missing.
 
     Returns the number of nodes written.
     """
@@ -620,6 +630,34 @@ def persist_composed_batch(
         for field_name in _GRAMMAR_FIELDS:
             if field_name in fields and field_name not in entry:
                 entry[field_name] = fields[field_name]
+
+    # --- Batch-embed standard-name strings ---
+    # Embed the name (id) field in a single batch call for efficiency.
+    # The id IS the standard-name string (e.g. "electron_temperature").
+    try:
+        from imas_codex.embeddings.description import embed_descriptions_batch
+
+        embed_descriptions_batch(candidates, text_field="id")
+    except Exception:
+        logger.warning(
+            "Embedding server unavailable — all %d candidates quarantined",
+            len(candidates),
+            exc_info=True,
+        )
+        # Total failure — mark all as quarantined
+        for entry in candidates:
+            entry["embedding"] = None
+
+    # Set embedded_at for successful embeddings; quarantine failures
+    for entry in candidates:
+        if entry.get("embedding"):
+            entry["embedded_at"] = now
+        else:
+            entry["validation_status"] = "quarantined"
+            existing = entry.get("validation_issues") or []
+            if "embedding_failed" not in existing:
+                existing = list(existing) + ["embedding_failed"]
+            entry["validation_issues"] = existing
 
     return write_standard_names(candidates)
 
