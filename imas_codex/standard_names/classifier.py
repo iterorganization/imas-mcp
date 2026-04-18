@@ -1,108 +1,33 @@
 """Naming-scope classifier for DD paths.
 
-Classifies IMAS Data Dictionary paths into three categories for standard
-name generation:
+Classifies IMAS Data Dictionary paths for standard name generation.
 
-- **quantity**: Independent physics concept → gets a StandardName
-- **metadata**: Storage artifact (data, time, validity) → modifier of
-  parent concept
-- **skip**: Not a nameable concept (container, identifier, string field, etc.)
+After Plan 30, the DD graph's ``node_category`` owns all semantic
+classification (fit_artifact, representation, coordinate, structural,
+error, metadata, identifier).  The SN extractor's ``SN_SOURCE_CATEGORIES``
+filter ({quantity, geometry}) pre-excludes those categories, so this
+classifier only handles two SN-level policies that DD cannot express:
 
-The classifier is purely rule-based, deterministic, and operates on a single
-dict of enriched DD node attributes (as returned by the enriched extraction
-query in ``imas_codex.standard_names.sources.dd``).
+- **S0 string type defensive**: skip ``STR_*`` data types (name,
+  description, etc.) in case they reach the pipeline.
+- **S1 core_instant_changes**: IDS-level dedup — leaves ARE quantity,
+  but peer IDSs expose the same concept at better granularity.
+- **S2 error defensive**: catch ``_error_*`` suffixes in case the
+  extractor's DD-level filter missed one.
+
+Returns ``"quantity"`` (proceed to SN extraction) or ``"skip"``
+(do not extract).
 """
 
 from __future__ import annotations
 
-import re
 from typing import Literal
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-#: Leaf data types that can carry physics content.
-PHYSICS_LEAF_TYPES: frozenset[str] = frozenset(
-    {
-        "FLT_0D",
-        "FLT_1D",
-        "FLT_2D",
-        "FLT_3D",
-        "FLT_4D",
-        "FLT_5D",
-        "FLT_6D",
-        "INT_0D",
-        "INT_1D",
-        "INT_2D",
-        "CPX_0D",
-        "CPX_1D",
-        "CPX_2D",
-    }
-)
-
-#: Structure types that may own physics concepts.
-STRUCTURE_TYPES: frozenset[str] = frozenset({"STRUCTURE", "STRUCT_ARRAY"})
+# Type alias for the binary classification.
+Scope = Literal["quantity", "skip"]
 
 #: Suffixes in path segments that indicate error companion fields.
 ERROR_SUFFIXES: tuple[str, ...] = ("_error_upper", "_error_lower", "_error_index")
-
-#: Regex for descriptions that indicate an index, flag, or counter —
-#: i.e. INT_0D fields that are *not* physics quantities.
-_INDEX_FLAG_RE: re.Pattern[str] = re.compile(
-    r"\b(?:index|flag|identifier|number[\s_]of|count[\s_]of)\b",
-    re.IGNORECASE,
-)
-
-#: Regex for structural keywords in the last path segment — gates INT_0D/INT_1D
-#: fields that are storage artifacts (indices, flags, type selectors, etc.).
-_STRUCTURAL_SEGMENT_RE: re.Pattern[str] = re.compile(
-    r"(?:^|_)(?:index|flag|status|count|identifier|type"
-    r"|grid_subset|object_space|descriptor)(?:_|$)",
-)
-
-#: Regex for structural keywords in descriptions — extends the segment check
-#: to catch INT fields whose segment name is opaque (e.g. ``z_n``).
-_STRUCTURAL_DESC_RE: re.Pattern[str] = re.compile(
-    r"\b(?:index|flag|status|count|identifier|type"
-    r"|grid[\s_]subset|object[\s_]space|descriptor)\b",
-    re.IGNORECASE,
-)
-
-#: Regex for fit-diagnostic path segments — fitting-process artifacts that
-#: should not receive standard names (chi-squared, residuals, etc.).
-_FIT_DIAGNOSTIC_RE: re.Pattern[str] = re.compile(
-    r"(?:^|_)(?:chi_squared|residual|covariance|fitting_weight|fit_type)(?:_|$)",
-)
-
-#: Regex for child segments under a ``*_fit`` parent that are per-fit
-#: provenance artefacts rather than independent physics concepts.  These
-#: paths live under e.g. ``equilibrium_fit/reconstructed`` or
-#: ``q_profile_fit/weight`` and should be skipped.
-_FIT_CHILD_RE: re.Pattern[str] = re.compile(
-    r"^(?:reconstructed|measured|weight|time_measurement(?:_.*)?|rho_tor_norm)$",
-)
-
-#: Regex matching a parent path segment ending in ``_fit``.
-_FIT_PARENT_RE: re.Pattern[str] = re.compile(r"(?:^|/)[A-Za-z0-9_]*_fit$")
-
-#: Regex matching basis-function / discretisation storage artifacts in a path
-#: segment.  These are representations of an underlying physics quantity, not
-#: independent concepts (e.g. GGD coefficients, finite-element interpolation
-#: coefficients).  They should not receive standard names.
-_REPRESENTATION_RE: re.Pattern[str] = re.compile(
-    r"(?:^|_)(?:coefficients?|ggd|finite_element|interpolation|basis|spline|"
-    r"fourier_modes|harmonics_coefficients|grid_object|grid_subset|"
-    r"jacobian|metric)(?:_|$)",
-)
-
-# Type alias for the three-way classification.
-Scope = Literal["quantity", "metadata", "skip"]
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 
 def classify_path(node: dict) -> Scope:
@@ -112,158 +37,43 @@ def classify_path(node: dict) -> Scope:
         node: Dict with keys from the enriched DD query:
 
             - **path** (*str*): Full DD path
-            - **description** (*str*): Node description
-            - **data_type** (*str*): e.g. FLT_0D, FLT_1D, STRUCTURE, …
-            - **unit** (*str | None*): Authoritative unit from HAS_UNIT
-            - **node_category** (*str | None*): Node category from DD
-            - **parent_path** (*str | None*): Parent node path
-            - **parent_type** (*str | None*): Parent data type
-            - **cluster_label** (*str | None*): Semantic cluster label
+            - **data_type** (*str*): DD data type (e.g. ``STR_0D``)
+            - (other keys are accepted but not used)
 
     Returns:
-        ``"quantity"`` – independent physics concept that gets a StandardName.
-        ``"metadata"`` – storage artifact; modifier of parent concept.
-        ``"skip"`` – not a nameable concept.
+        ``"quantity"`` – proceed to StandardName extraction.
+        ``"skip"`` – do not extract.
     """
     path: str = node.get("path", "")
     data_type: str = node.get("data_type", "")
-    unit: str | None = node.get("unit") or None  # normalise "" → None
-    parent_type: str | None = node.get("parent_type") or None
-    description: str = node.get("description", "") or ""
-
-    # Derive the last path segment once.
-    last_segment = path.rsplit("/", 1)[-1] if path else ""
 
     # ------------------------------------------------------------------
-    # Rule 0: Entire event-delta IDSs are skipped.
+    # S0: String-typed leaves → skip (defensive — names can never be
+    #     standard names; normally pre-filtered by DD node_category).
+    # ------------------------------------------------------------------
+    if data_type and data_type.startswith("STR"):
+        return "skip"
+
+    # ------------------------------------------------------------------
+    # S1: Entire event-delta IDS → skip (dedup policy, not DD fact).
     #
     # ``core_instant_changes`` records before/after snapshots during
     # transient events (ELM, pellet, sawtooth, MHD).  Its leaves are
     # copies of ``core_profiles`` quantities prefixed with "change in X".
     # Minting ``change_in_*`` StandardNames duplicates the core_profiles
-    # vocabulary and forces contrived grammar ("change_in_parallel" not
-    # in Component prefix vocab).  Codes consuming this IDS reuse the
-    # underlying core_profiles StandardNames via path linkage.
+    # vocabulary and forces contrived grammar.  Codes consuming this IDS
+    # reuse the underlying core_profiles StandardNames via path linkage.
     # ------------------------------------------------------------------
     if path.startswith("core_instant_changes/") or path == "core_instant_changes":
         return "skip"
 
     # ------------------------------------------------------------------
-    # Rule 1: /data under STRUCTURE parent with unit → metadata
-    # ------------------------------------------------------------------
-    if last_segment == "data" and parent_type in STRUCTURE_TYPES and unit is not None:
-        return "metadata"
-
-    # ------------------------------------------------------------------
-    # Rule 2: /time leaf → metadata (coordinate, not concept)
-    # ------------------------------------------------------------------
-    if last_segment == "time":
-        return "metadata"
-
-    # ------------------------------------------------------------------
-    # Rule 3: /validity and /validity_timed → metadata (quality flag)
-    # ------------------------------------------------------------------
-    if last_segment in ("validity", "validity_timed"):
-        return "metadata"
-
-    # ------------------------------------------------------------------
-    # Rule 4: Error fields → skip (defensive — normally pre-filtered)
+    # S2: Error fields → skip (defensive — normally pre-filtered by DD).
     # ------------------------------------------------------------------
     if _is_error_field(path):
         return "skip"
 
-    # ------------------------------------------------------------------
-    # Rule 5: STR_0D (string fields) → skip
-    # ------------------------------------------------------------------
-    if data_type == "STR_0D":
-        return "skip"
-
-    # ------------------------------------------------------------------
-    # Rule 11a: Structural keywords + INT_0D/INT_1D → skip
-    # Catches structural metadata (indices, type selectors, flags, etc.)
-    # that earlier rules miss — e.g. INT_0D with unit, or INT_1D.
-    # Checks the last path segment AND the description.
-    # ------------------------------------------------------------------
-    if data_type in ("INT_0D", "INT_1D"):
-        if _STRUCTURAL_SEGMENT_RE.search(last_segment) or _STRUCTURAL_DESC_RE.search(
-            description
-        ):
-            return "skip"
-
-    # ------------------------------------------------------------------
-    # Rule 11b: Fit-diagnostic segments → skip
-    # Fitting-process artifacts (chi², residuals, covariance, …) are not
-    # independent physics concepts.  _measured / _reconstructed are NOT
-    # matched — those are valid provenance qualifiers.
-    # ------------------------------------------------------------------
-    if _FIT_DIAGNOSTIC_RE.search(last_segment):
-        return "skip"
-
-    # ------------------------------------------------------------------
-    # Rule 11d: Representation / basis-function storage artifacts → skip
-    # GGD coefficients, finite-element interpolation coefficients, spline
-    # bases, Fourier-mode harmonics — these store a representation of an
-    # underlying physical field, not an independent concept.  The physical
-    # field already has a standard name on a sibling path.
-    # ------------------------------------------------------------------
-    if _REPRESENTATION_RE.search(last_segment):
-        return "skip"
-    parent_segment = (node.get("parent_path") or "").split("/")[-1]
-    if parent_segment and _REPRESENTATION_RE.search(parent_segment):
-        return "skip"
-    # Path-anywhere check: GGD subtrees nest physics-shaped leaves several
-    # levels under ``grids_ggd/grid/...``.  The leaf segments alone (e.g.
-    # ``geometry``, ``measure``, ``space``) are too generic to filter, but
-    # the ancestor path is a reliable marker.  Caught from equilibrium iter:
-    # ``grid_object_geometry``, ``grid_object_measure``, ``grid_object_space_index``.
-    full_path = node.get("path") or node.get("id") or ""
-    if "grids_ggd/" in full_path or "/grid_subset/" in full_path:
-        return "skip"
-
-    # ------------------------------------------------------------------
-    # Rule 11c: Children of ``*_fit`` containers that represent per-fit
-    # provenance (reconstructed/measured/weight/time_measurement*/rho_tor_norm)
-    # are not independent physics concepts.  The underlying physical
-    # quantity already has a standard name on the non-fit path; these
-    # paths merely record the fit artefact.
-    # ------------------------------------------------------------------
-    parent_path: str | None = node.get("parent_path") or None
-    if (
-        parent_path
-        and _FIT_PARENT_RE.search(parent_path)
-        and _FIT_CHILD_RE.match(last_segment)
-    ):
-        return "skip"
-
-    # ------------------------------------------------------------------
-    # Rules 6–7: INT_0D without unit — disambiguate index/flag vs physics
-    # ------------------------------------------------------------------
-    if data_type == "INT_0D" and unit is None:
-        if _INDEX_FLAG_RE.search(description):
-            return "skip"  # Rule 6
-        return "quantity"  # Rule 7 — genuinely dimensionless integer
-
-    # ------------------------------------------------------------------
-    # Rules 8–9: Physics leaf types
-    # ------------------------------------------------------------------
-    if data_type in PHYSICS_LEAF_TYPES:
-        return "quantity"  # with or without unit
-
-    # ------------------------------------------------------------------
-    # Rule 10: STRUCTURE/STRUCT_ARRAY with unit → quantity
-    # ------------------------------------------------------------------
-    if data_type in STRUCTURE_TYPES and unit is not None:
-        return "quantity"
-
-    # ------------------------------------------------------------------
-    # Rule 11: Everything else → skip
-    # ------------------------------------------------------------------
-    return "skip"
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+    return "quantity"
 
 
 def _is_error_field(path: str) -> bool:

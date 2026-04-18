@@ -166,7 +166,8 @@ class TestEnrichPaths:
         assert result == []
 
     def test_filters_out_metadata_paths(self):
-        """'time' leaf paths are metadata and should be excluded."""
+        """'time' leaf is DD-filtered (time_reference); if it reaches the SN
+        pipeline, the SN classifier now trusts the DD and lets it through."""
         rows = [
             _make_row(
                 path="core_profiles/profiles_1d/time",
@@ -175,7 +176,9 @@ class TestEnrichPaths:
             )
         ]
         result = enrich_paths(rows)
-        assert result == []
+        # Post Plan-30: SN classifier no longer filters metadata —
+        # that responsibility moved to the DD node_category extractor.
+        assert len(result) == 1
 
     def test_quantity_path_passes_through(self):
         rows = [_make_row()]

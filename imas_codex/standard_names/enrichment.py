@@ -164,8 +164,7 @@ def enrich_paths(paths: list[dict]) -> list[dict]:
 
     1. Deduplicates rows to one entry per unique path.
     2. Collects all cluster memberships for each path.
-    3. Classifies each path via :func:`classify_path` (quantity / metadata /
-       skip).
+    3. Classifies each path via :func:`classify_path` (quantity / skip).
     4. Selects primary cluster from multi-cluster memberships.
     5. Attaches enrichment metadata.
 
@@ -209,16 +208,12 @@ def enrich_paths(paths: list[dict]) -> list[dict]:
     # --- Step 3+4+5: classify, select primary cluster, attach enrichment ----
     enriched: list[dict] = []
     skip_count = 0
-    meta_count = 0
 
     for path, base_row in path_base.items():
         scope = classify_path(base_row)
 
         if scope == "skip":
             skip_count += 1
-            continue
-        if scope == "metadata":
-            meta_count += 1
             continue
 
         # Reclassify magnetics-IDS paths to magnetic_field_diagnostics
@@ -247,10 +242,9 @@ def enrich_paths(paths: list[dict]) -> list[dict]:
         enriched.append(base_row)
 
     logger.info(
-        "Enriched %d quantity paths (skipped %d, metadata %d) from %d raw rows",
+        "Enriched %d quantity paths (skipped %d) from %d raw rows",
         len(enriched),
         skip_count,
-        meta_count,
         len(paths),
     )
     return enriched
