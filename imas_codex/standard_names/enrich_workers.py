@@ -9,8 +9,9 @@ Five-phase enrich pipeline:
   prevent parallel workers from double-processing.
 - **contextualise**: gathers DD path descriptions, vector-similar
   neighbours, and domain siblings to build per-item context bundles.
-- **document**: (stub) LLM call with enrich system/user prompts to generate
-  descriptions and documentation.  C.3 will implement.
+- **document**: LLM call with enrich system/user prompts to generate
+  descriptions and documentation.  Preserves DD-authoritative fields
+  (unit, physics_domain).  Tracks cost, tokens, and respects budget limits.
 - **validate**: (stub) spelling, link integrity checks.  C.4 will implement.
 - **persist**: (stub) writes enriched data + REFERENCES rels to graph.
   C.4 will implement.
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -611,14 +613,24 @@ async def enrich_contextualise_worker(
 
 
 # =============================================================================
-# DOCUMENT phase (stub — C.3)
+# DOCUMENT phase (C.3)
 # =============================================================================
+
+# Read-only fields: these come from the Data Dictionary and must never be
+# overwritten by LLM output.
+_READONLY_FIELDS = {"unit", "physics_domain"}
 
 
 async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> None:
     """LLM call to generate descriptions and documentation for enrichment.
 
-    .. note:: Stub — C.3 will implement.
+    For each batch of contextualised StandardName items:
+
+    1. Render system/user prompts from ``sn/enrich_system`` and ``sn/enrich_user``.
+    2. Call ``acall_llm_structured`` to produce ``StandardNameEnrichBatch``.
+    3. Merge enriched fields back onto items, preserving read-only DD fields
+       (``unit``, ``physics_domain``).
+    4. Track cost/tokens on ``state`` and respect budget + stop signals.
     """
     from imas_codex.cli.logging import WorkerLogAdapter
 
@@ -630,26 +642,383 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
         state.document_phase.mark_done()
         return
 
+    if state.dry_run:
+        total = sum(len(b["items"]) for b in state.batches)
+        wlog.info("Dry run — skipping document for %d items", total)
+        state.document_stats.total = total
+        state.document_stats.processed = total
+        state.document_stats.freeze_rate()
+        state.document_phase.mark_done()
+        return
+
+    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.settings import get_model
+    from imas_codex.standard_names.models import StandardNameEnrichBatch
+
+    model = get_model("sn-enrich")
+
+    total_items = sum(len(b["items"]) for b in state.batches)
+    state.document_stats.total = total_items
+
     wlog.info(
-        "TODO: C.3 document worker not implemented — passing %d batches through",
+        "Documenting %d items in %d batches (model=%s)",
+        total_items,
         len(state.batches),
+        model,
     )
 
-    state.document_stats.total = sum(len(b["items"]) for b in state.batches)
-    state.document_stats.processed = state.document_stats.total
+    # Render system prompt once (identical across batches → prompt-cacheable)
+    system_prompt = render_prompt("sn/enrich_system")
+
+    processed = 0
+    errors = 0
+
+    for batch in state.batches:
+        # --- Stop signals ---
+        if state.stop_requested:
+            wlog.info("Stop requested — aborting document phase")
+            break
+
+        if state.budget_exhausted:
+            wlog.info("Document phase stopped: budget exhausted")
+            break
+
+        items = batch["items"]
+        if not items:
+            continue
+
+        # Inject ``name`` alias for template compatibility (template uses
+        # ``item.name``; items use ``id`` as their primary key).
+        for item in items:
+            item.setdefault("name", item["id"])
+
+        # Render per-batch user prompt
+        user_prompt = render_prompt(
+            "sn/enrich_user",
+            {"batch": batch, "items": items},
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        try:
+            result, cost, tokens = await acall_llm_structured(
+                model=model,
+                messages=messages,
+                response_model=StandardNameEnrichBatch,
+                service="standard-names",
+            )
+
+            # Accumulate cost/tokens on state
+            state.cost += cost
+            state.tokens_in += tokens  # total tokens (in + out combined)
+            state.document_stats.cost += cost
+
+            # Build lookup from LLM response by standard_name
+            response_map: dict[str, Any] = {}
+            for enriched_item in result.items:
+                response_map[enriched_item.standard_name] = enriched_item
+
+            # Merge enriched fields onto batch items
+            for item in items:
+                name = item["id"]
+                enriched = response_map.get(name)
+                if not enriched:
+                    wlog.debug(
+                        "LLM response missing item %s — skipping enrichment", name
+                    )
+                    continue
+
+                item["enriched_description"] = enriched.description
+                item["enriched_documentation"] = enriched.documentation
+                item["enriched_links"] = enriched.links
+                item["enriched_tags"] = enriched.tags
+
+                # Optional enrichment fields (validity_domain, constraints)
+                if enriched.validity_domain is not None:
+                    item["enriched_validity_domain"] = enriched.validity_domain
+                if enriched.constraints:
+                    item["enriched_constraints"] = enriched.constraints
+
+            processed += len(items)
+            state.document_stats.record_batch(len(items))
+
+        except (ValueError, Exception) as exc:
+            wlog.warning(
+                "LLM error for batch %d: %s — marking failed",
+                batch.get("batch_index", 0),
+                str(exc)[:200],
+            )
+            batch["failed"] = True
+            errors += len(items)
+            state.document_stats.errors += len(items)
+
+    state.document_stats.processed = processed
+    state.stats["document_processed"] = processed
+    state.stats["document_errors"] = errors
+
+    wlog.info(
+        "Document complete: %d processed, %d errors, cost=$%.4f",
+        processed,
+        errors,
+        state.cost,
+    )
+
     state.document_stats.freeze_rate()
     state.document_phase.mark_done()
 
 
 # =============================================================================
-# VALIDATE phase (stub — C.4)
+# VALIDATE phase (C.4)
 # =============================================================================
+
+# British → American spelling substitutions (warning only).
+_BRITISH_SPELLING: dict[str, str] = {
+    "colour": "color",
+    "colours": "colors",
+    "behaviour": "behavior",
+    "behaviours": "behaviors",
+    "characterise": "characterize",
+    "characterised": "characterized",
+    "characterises": "characterizes",
+    "characterising": "characterizing",
+    "optimise": "optimize",
+    "optimised": "optimized",
+    "optimises": "optimizes",
+    "optimising": "optimizing",
+    "analyse": "analyze",
+    "analysed": "analyzed",
+    "analyses": "analyzes",
+    "analysing": "analyzing",
+    "centre": "center",
+    "centres": "centers",
+    "modelled": "modeled",
+    "modelling": "modeling",
+    "ionisation": "ionization",
+    "magnetised": "magnetized",
+    "normalise": "normalize",
+    "normalised": "normalized",
+    "normalises": "normalizes",
+    "normalising": "normalizing",
+    "minimise": "minimize",
+    "minimised": "minimized",
+    "minimises": "minimizes",
+    "minimising": "minimizing",
+    "maximise": "maximize",
+    "maximised": "maximized",
+    "maximises": "maximizes",
+    "maximising": "maximizing",
+    "utilise": "utilize",
+    "utilised": "utilized",
+    "utilises": "utilizes",
+    "utilising": "utilizing",
+    "polarise": "polarize",
+    "polarised": "polarized",
+    "parameterise": "parameterize",
+    "parameterised": "parameterized",
+    "symmetrise": "symmetrize",
+    "symmetrised": "symmetrized",
+    "discretise": "discretize",
+    "discretised": "discretized",
+    "linearise": "linearize",
+    "linearised": "linearized",
+    "stabilise": "stabilize",
+    "stabilised": "stabilized",
+    "equalise": "equalize",
+    "equalised": "equalized",
+    "generalise": "generalize",
+    "generalised": "generalized",
+    "specialise": "specialize",
+    "specialised": "specialized",
+    "idealise": "idealize",
+    "idealised": "idealized",
+    "realise": "realize",
+    "realised": "realized",
+    "recognise": "recognize",
+    "recognised": "recognized",
+    "organisation": "organization",
+    "organisations": "organizations",
+    "localise": "localize",
+    "localised": "localized",
+    "harmonise": "harmonize",
+    "harmonised": "harmonized",
+    "vapour": "vapor",
+    "vapours": "vapors",
+    "fibre": "fiber",
+    "fibres": "fibers",
+    "metre": "meter",
+    "metres": "meters",
+    "litre": "liter",
+    "litres": "liters",
+    "calibre": "caliber",
+}
+
+# Compile a single regex from all British keys (word-boundary match).
+_BRITISH_RE = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in _BRITISH_SPELLING) + r")\b",
+    re.IGNORECASE,
+)
+
+# Statuses that indicate an existing valid link target.
+_VALID_LINK_STATUSES = frozenset({"named", "enriched", "published", "accepted"})
+
+
+def _check_british_spelling(text: str | None) -> list[str]:
+    """Return warning strings for British spellings found in *text*."""
+    if not text:
+        return []
+    issues: list[str] = []
+    for match in _BRITISH_RE.finditer(text):
+        word = match.group(0).lower()
+        american = _BRITISH_SPELLING.get(word)
+        if american:
+            issues.append(f"british_spelling:{word}→{american}")
+    return issues
+
+
+def _check_latex_syntax(text: str | None) -> list[str]:
+    """Return warning strings for unbalanced LaTeX in *text*."""
+    if not text:
+        return []
+    issues: list[str] = []
+    # Unbalanced dollar signs (inline math)
+    dollar_count = text.count("$")
+    # Subtract escaped dollars
+    escaped_count = text.count("\\$")
+    effective = dollar_count - escaped_count
+    if effective % 2 != 0:
+        issues.append("latex_syntax_warning:unbalanced $ delimiters")
+    # \frac missing braces
+    frac_pattern = re.compile(r"\\frac(?!\s*\{)")
+    if frac_pattern.search(text):
+        issues.append("latex_syntax_warning:\\frac missing braces")
+    return issues
+
+
+def _check_links_batch(
+    items: list[dict[str, Any]],
+    batch_ids: set[str],
+) -> dict[str, list[str]]:
+    """Check link integrity for a batch of items.
+
+    Links that reference a name present in *batch_ids* are valid
+    (they'll resolve once persisted).  Links referencing existing
+    StandardName nodes with valid review_status are also valid.
+    Everything else gets a ``link_not_found`` warning.
+
+    Returns ``{item_id: [issue_strings]}``.
+    """
+    # Collect all unique link targets across the batch
+    all_links: set[str] = set()
+    per_item: dict[str, list[str]] = {}
+    for item in items:
+        links = item.get("enriched_links") or []
+        per_item[item["id"]] = list(links)
+        for link in links:
+            if link not in batch_ids:
+                all_links.add(link)
+
+    # Query graph for existing targets (single batch query)
+    existing_links: set[str] = set()
+    if all_links:
+        try:
+            from imas_codex.graph.client import GraphClient
+
+            with GraphClient() as gc:
+                rows = gc.query(
+                    """
+                    UNWIND $link_ids AS lid
+                    MATCH (sn:StandardName {id: lid})
+                    WHERE sn.review_status IN $statuses
+                    RETURN sn.id AS id
+                    """,
+                    link_ids=list(all_links),
+                    statuses=list(_VALID_LINK_STATUSES),
+                )
+                existing_links = {r["id"] for r in rows}
+        except Exception:
+            logger.warning(
+                "Graph query for link targets failed — all unknown links will warn"
+            )
+
+    # Build per-item issues
+    result: dict[str, list[str]] = {}
+    for item in items:
+        item_id = item["id"]
+        issues: list[str] = []
+        for link in per_item.get(item_id, []):
+            if link in batch_ids or link in existing_links:
+                continue
+            issues.append(f"link_not_found:{link}")
+        result[item_id] = issues
+
+    return result
+
+
+def _validate_item_pydantic(item: dict[str, Any]) -> list[str]:
+    """Run ISN Pydantic construction for a single item.
+
+    Returns list of tagged issue strings. Empty list means success.
+    """
+    try:
+        from imas_standard_names.models import create_standard_name_entry
+
+        data = {
+            "name": item["id"],
+            "kind": item.get("kind") or "scalar",
+            "unit": item.get("unit") or "",
+            "description": item.get("enriched_description") or "",
+            "documentation": item.get("enriched_documentation") or "",
+            "physics_domain": item.get("physics_domain") or "generic",
+        }
+        # Include optional fields if present
+        if item.get("tags") or item.get("enriched_tags"):
+            tags = list(item.get("enriched_tags") or item.get("tags") or [])
+            data["tags"] = tags
+        if item.get("enriched_links"):
+            data["links"] = list(item["enriched_links"])
+
+        create_standard_name_entry(data)
+        return []
+    except Exception as exc:
+        return [f"[pydantic] {exc}"]
+
+
+def _validate_item_description(item: dict[str, Any]) -> list[str]:
+    """Run ISN description quality checks for a single item.
+
+    Returns list of tagged issue strings.
+    """
+    try:
+        from imas_standard_names.validation import validate_description
+
+        entry = {
+            "description": item.get("enriched_description") or "",
+            "tags": list(item.get("enriched_tags") or item.get("tags") or []),
+            "kind": item.get("kind") or "scalar",
+        }
+        issues = validate_description(entry)
+        return [f"[description] {iss.get('message', str(iss))}" for iss in issues]
+    except Exception as exc:
+        logger.debug("validate_description error for %s: %s", item.get("id"), exc)
+        return []
 
 
 async def enrich_validate_worker(state: StandardNameEnrichState, **_kwargs) -> None:
     """Validate enriched names: spelling, link integrity, description quality.
 
-    .. note:: Stub — C.4 will implement.
+    For each item with ``enriched_description`` present, runs:
+    1. British spelling check (warning only).
+    2. ISN Pydantic construction — failure quarantines.
+    3. Description semantic checks — warnings.
+    4. Link integrity — unknown links produce warnings.
+    5. LaTeX/math syntax — warnings.
+
+    Sets ``validation_status`` ('valid' or 'quarantined') and
+    ``validation_issues`` (list of tagged strings) on each item.
     """
     from imas_codex.cli.logging import WorkerLogAdapter
 
@@ -661,26 +1030,115 @@ async def enrich_validate_worker(state: StandardNameEnrichState, **_kwargs) -> N
         state.validate_phase.mark_done()
         return
 
+    total_items = sum(len(b["items"]) for b in state.batches)
+    state.validate_stats.total = total_items
+
     wlog.info(
-        "TODO: C.4 validate worker not implemented — passing %d batches through",
+        "Validating %d items across %d batches",
+        total_items,
         len(state.batches),
     )
 
-    state.validate_stats.total = sum(len(b["items"]) for b in state.batches)
-    state.validate_stats.processed = state.validate_stats.total
+    processed = 0
+    quarantined = 0
+    skipped = 0
+
+    for batch in state.batches:
+        if state.stop_requested:
+            wlog.info("Stop requested — aborting validate")
+            break
+
+        items = batch["items"]
+        if not items:
+            continue
+
+        # Build set of all item IDs in this batch for in-batch link resolution.
+        batch_ids = {it["id"] for it in items}
+
+        # --- Link integrity (batch query) ---
+        link_issues = await asyncio.to_thread(_check_links_batch, items, batch_ids)
+
+        for item in items:
+            if state.stop_requested:
+                break
+
+            sid = item["id"]
+            enriched_desc = item.get("enriched_description")
+
+            if not enriched_desc:
+                # No enriched description — skip validation, mark pending.
+                item["validation_status"] = "pending"
+                item["validation_issues"] = []
+                skipped += 1
+                continue
+
+            issues: list[str] = []
+            is_quarantined = False
+
+            # 1. British spelling check (warning only)
+            issues.extend(_check_british_spelling(enriched_desc))
+            issues.extend(_check_british_spelling(item.get("enriched_documentation")))
+
+            # 2. ISN Pydantic construction
+            pydantic_issues = _validate_item_pydantic(item)
+            if pydantic_issues:
+                issues.extend(pydantic_issues)
+                is_quarantined = True
+
+            # 3. Description semantic checks (warning only)
+            desc_issues = _validate_item_description(item)
+            issues.extend(desc_issues)
+
+            # 4. Link integrity (from batch query)
+            issues.extend(link_issues.get(sid, []))
+
+            # 5. LaTeX syntax (warning only)
+            issues.extend(_check_latex_syntax(enriched_desc))
+            issues.extend(_check_latex_syntax(item.get("enriched_documentation")))
+
+            # Set status
+            item["validation_status"] = "quarantined" if is_quarantined else "valid"
+            item["validation_issues"] = issues
+
+            if is_quarantined:
+                quarantined += 1
+                wlog.debug("Quarantined %s: %s", sid, issues)
+
+            processed += 1
+
+    state.validate_stats.processed = processed
+    state.validate_stats.errors = quarantined
+    state.stats["validate_processed"] = processed
+    state.stats["validate_quarantined"] = quarantined
+    state.stats["validate_skipped"] = skipped
+
+    wlog.info(
+        "Validate complete: %d processed, %d quarantined, %d skipped",
+        processed,
+        quarantined,
+        skipped,
+    )
+
     state.validate_stats.freeze_rate()
     state.validate_phase.mark_done()
 
 
 # =============================================================================
-# PERSIST phase (stub — C.4)
+# PERSIST phase (C.4)
 # =============================================================================
 
 
 async def enrich_persist_worker(state: StandardNameEnrichState, **_kwargs) -> None:
     """Write enriched data and REFERENCES relationships to graph.
 
-    .. note:: Stub — C.4 will implement.
+    For each item marked ``valid`` (not quarantined) with ``enriched_description``
+    present:
+    1. Embeds enriched_description via ``embed_descriptions_batch``.
+    2. Persists to graph via ``persist_enriched_batch`` (graph_ops).
+    3. Releases enrichment claims.
+
+    Quarantined items are skipped.  Items without ``enriched_description``
+    are skipped.  Embedding failures quarantine the affected item.
     """
     from imas_codex.cli.logging import WorkerLogAdapter
 
@@ -698,21 +1156,114 @@ async def enrich_persist_worker(state: StandardNameEnrichState, **_kwargs) -> No
         state.persist_phase.mark_done()
         return
 
+    total_items = sum(len(b["items"]) for b in state.batches)
+    state.persist_stats.total = total_items
+
     wlog.info(
-        "TODO: C.4 persist worker not implemented — passing %d batches through",
+        "Persisting %d items across %d batches",
+        total_items,
         len(state.batches),
     )
 
-    # Release enrichment claims since we're not actually persisting
+    persisted = 0
+    skipped = 0
+    errors = 0
+
     for batch in state.batches:
+        if state.stop_requested:
+            wlog.info("Stop requested — aborting persist")
+            break
+
+        items = batch["items"]
         token = batch.get("claim_token")
+
+        if not items:
+            continue
+
+        # Filter to valid items with enriched descriptions.
+        candidates = [
+            it
+            for it in items
+            if it.get("validation_status") == "valid" and it.get("enriched_description")
+        ]
+        skip_count = len(items) - len(candidates)
+        skipped += skip_count
+
+        if not candidates:
+            # Release claims if nothing to persist.
+            if token:
+                try:
+                    await asyncio.to_thread(release_enrichment_claims, token)
+                except Exception as e:
+                    wlog.warning("Failed to release claims: %s", e)
+            continue
+
+        # 1. Embed enriched descriptions.
+        try:
+            from imas_codex.embeddings.description import embed_descriptions_batch
+
+            await asyncio.to_thread(
+                embed_descriptions_batch,
+                candidates,
+                "enriched_description",
+                "embedding",
+            )
+        except Exception:
+            wlog.warning(
+                "Embedding server unavailable — all %d candidates quarantined",
+                len(candidates),
+                exc_info=True,
+            )
+            for item in candidates:
+                item["embedding"] = None
+
+        # Check per-item embedding success; quarantine failures.
+        embeddable: list[dict[str, Any]] = []
+        for item in candidates:
+            if item.get("embedding"):
+                embeddable.append(item)
+            else:
+                item["validation_status"] = "quarantined"
+                existing_issues = list(item.get("validation_issues") or [])
+                if "embedding_failed" not in existing_issues:
+                    existing_issues.append("embedding_failed")
+                item["validation_issues"] = existing_issues
+                errors += 1
+
+        # 2. Persist to graph.
+        if embeddable:
+            try:
+                from imas_codex.standard_names.graph_ops import persist_enriched_batch
+
+                written = await asyncio.to_thread(persist_enriched_batch, embeddable)
+                persisted += written
+            except Exception:
+                wlog.warning(
+                    "Graph persist failed for batch %d",
+                    batch.get("batch_index", 0),
+                    exc_info=True,
+                )
+                errors += len(embeddable)
+
+        # 3. Release enrichment claims.
         if token:
             try:
                 await asyncio.to_thread(release_enrichment_claims, token)
             except Exception as e:
                 wlog.warning("Failed to release enrichment claims: %s", e)
 
-    state.persist_stats.total = sum(len(b["items"]) for b in state.batches)
-    state.persist_stats.processed = state.persist_stats.total
+    state.persist_stats.processed = persisted
+    state.persist_stats.errors = errors
+    state.stats["persist_written"] = persisted
+    state.stats["persist_skipped"] = skipped
+    state.stats["persist_errors"] = errors
+
+    wlog.info(
+        "Persist complete: %d written, %d skipped, %d errors",
+        persisted,
+        skipped,
+        errors,
+    )
+
     state.persist_stats.freeze_rate()
     state.persist_phase.mark_done()

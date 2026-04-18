@@ -662,6 +662,111 @@ def persist_composed_batch(
     return write_standard_names(candidates)
 
 
+@retry_on_deadlock()
+def persist_enriched_batch(items: list[dict[str, Any]]) -> int:
+    """Persist enriched StandardName data and REFERENCES relationships.
+
+    Called by the enrich pipeline PERSIST worker after validation and
+    embedding.  Each item dict must have at minimum ``id`` and
+    ``enriched_description``.  Optional: ``enriched_documentation``,
+    ``enriched_links``, ``enriched_tags``, ``embedding``, ``enrich_model``,
+    ``enrich_cost_usd``, ``enrich_tokens``, ``validation_status``,
+    ``validation_issues``.
+
+    The Cypher MERGE preserves existing values for identity fields
+    (``unit``, ``physics_domain``, ``cocos``, ``cocos_transformation_type``,
+    ``kind``, ``source_paths``) via ``coalesce(b.field, sn.field)``
+    semantics.  Tags are extended (union, deduplicated).
+
+    After node updates, REFERENCES relationships are created for each
+    link in ``enriched_links`` whose target StandardName exists.
+
+    Enrichment claims (``enrich_claimed_at``, ``enrich_claim_token``)
+    are released on all processed nodes.
+
+    Returns the number of nodes written.
+    """
+    if not items:
+        return 0
+
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).isoformat()
+
+    # --- Build UNWIND batch with safe types ---
+    batch = []
+    for item in items:
+        enriched_tags = list(item.get("enriched_tags") or [])
+        existing_tags = list(item.get("tags") or [])
+        # Union of existing + enriched tags (deduplicated, order-preserved)
+        merged_tags = list(dict.fromkeys(existing_tags + enriched_tags)) or None
+
+        batch.append(
+            {
+                "id": item["id"],
+                "description": item.get("enriched_description"),
+                "documentation": item.get("enriched_documentation"),
+                "embedding": item.get("embedding"),
+                "tags": merged_tags,
+                "review_status": "enriched",
+                "enriched_at": now,
+                "enrich_model": item.get("enrich_model"),
+                "enrich_cost_usd": item.get("enrich_cost_usd"),
+                "enrich_tokens": item.get("enrich_tokens"),
+                "validation_status": item.get("validation_status"),
+                "validation_issues": item.get("validation_issues") or None,
+            }
+        )
+
+    with GraphClient() as gc:
+        # MERGE StandardName nodes — overwrite enrichment fields,
+        # preserve identity fields via coalesce.
+        gc.query(
+            """
+            UNWIND $batch AS b
+            MERGE (sn:StandardName {id: b.id})
+            SET sn.description = coalesce(b.description, sn.description),
+                sn.documentation = coalesce(b.documentation, sn.documentation),
+                sn.embedding = coalesce(b.embedding, sn.embedding),
+                sn.embedded_at = CASE WHEN b.embedding IS NOT NULL
+                                      THEN datetime() ELSE sn.embedded_at END,
+                sn.tags = coalesce(b.tags, sn.tags),
+                sn.review_status = b.review_status,
+                sn.enriched_at = datetime(b.enriched_at),
+                sn.enrich_model = coalesce(b.enrich_model, sn.enrich_model),
+                sn.enrich_cost_usd = coalesce(b.enrich_cost_usd, sn.enrich_cost_usd),
+                sn.enrich_tokens = coalesce(b.enrich_tokens, sn.enrich_tokens),
+                sn.validation_status = coalesce(b.validation_status, sn.validation_status),
+                sn.validation_issues = coalesce(b.validation_issues, sn.validation_issues),
+                sn.enrich_claimed_at = null,
+                sn.enrich_claim_token = null
+            """,
+            batch=batch,
+        )
+
+        # --- REFERENCES relationships for enriched links ---
+        link_batch = []
+        for item in items:
+            links = item.get("enriched_links") or []
+            for link in links:
+                link_batch.append({"source_id": item["id"], "target_id": link})
+
+        if link_batch:
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (source:StandardName {id: b.source_id})
+                MATCH (target:StandardName {id: b.target_id})
+                MERGE (source)-[:REFERENCES]->(target)
+                """,
+                batch=link_batch,
+            )
+
+    written = len(batch)
+    logger.info("Persisted %d enriched StandardNames", written)
+    return written
+
+
 def write_vocab_gaps(
     gaps: list[dict[str, str]],
     source_type: str = "dd",
