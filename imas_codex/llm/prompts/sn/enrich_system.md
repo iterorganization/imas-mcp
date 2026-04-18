@@ -19,6 +19,8 @@ grammar fields, kind, or unit.
 
 {% include "sn/_enrich_style_guide.md" %}
 
+{% include "sn/_exemplars_enrich.md" %}
+
 ## Documentation Template
 
 For each name, the documentation field should cover (where applicable):

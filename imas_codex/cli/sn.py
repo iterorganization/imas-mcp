@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import click
 from rich.console import Console
@@ -69,6 +70,16 @@ def sn() -> None:
     "--force", is_flag=True, help="Re-generate names for already-named sources"
 )
 @click.option(
+    "--revalidate",
+    is_flag=True,
+    help=(
+        "Before extraction, sweep StandardName nodes with validation_status='pending' "
+        "in the current scope (source/domain/ids filters) and clear validated_at so "
+        "validate_worker re-runs ISN checks against the current grammar. Use after "
+        "an ISN vocab/grammar update to clear legacy quarantines without a full regen."
+    ),
+)
+@click.option(
     "--limit",
     type=int,
     default=None,
@@ -129,6 +140,7 @@ def sn_generate(
     paths_list: tuple[str, ...],
     reset_to: str | None,
     from_model: str | None,
+    revalidate: bool,
 ) -> None:
     """Generate standard names from a source.
 
@@ -254,6 +266,41 @@ def sn_generate(
                 ids_filter=ids_filter,
             )
             console.print(f"[yellow]--reset-to drafted:[/yellow] reset {n} SN nodes")
+
+    # Handle --revalidate: clear validated_at on pending SNs in current scope so
+    # validate_worker re-runs ISN checks without a full regen. Safe with any source.
+    if revalidate and not dry_run:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            where_clauses = [
+                "sn.validation_status = 'pending'",
+                "sn.validated_at IS NOT NULL",
+            ]
+            params: dict[str, Any] = {}
+            if domain_filter:
+                where_clauses.append("sn.physics_domain = $domain")
+                params["domain"] = domain_filter
+            if source == "dd":
+                where_clauses.append(
+                    "EXISTS { MATCH (sn)<-[:HAS_STANDARD_NAME]-(:IMASNode) }"
+                )
+            elif source == "signals":
+                where_clauses.append(
+                    "EXISTS { MATCH (sn)<-[:HAS_STANDARD_NAME]-(:FacilitySignal) }"
+                )
+            q = f"""
+                MATCH (sn:StandardName)
+                WHERE {" AND ".join(where_clauses)}
+                WITH sn, sn.id AS id
+                SET sn.validated_at = NULL, sn.claimed_at = NULL, sn.claim_token = NULL
+                RETURN count(sn) AS n
+            """
+            rows = list(gc.query(q, **params))
+            n = rows[0]["n"] if rows else 0
+            console.print(
+                f"[yellow]--revalidate:[/yellow] cleared validated_at on {n} pending SN node(s)"
+            )
 
     from imas_codex.discovery.base.llm import set_litellm_offline_env
 
