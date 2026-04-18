@@ -268,6 +268,19 @@ enums:
           Typed descriptor with HAS_IDENTIFIER_SCHEMA relationship
           (coordinate_identifier, grid_type, etc.). Neither enriched, embedded,
           nor SN-extracted.
+      fit_artifact:
+        description: >-
+          Artefact of a fitting or reconstruction process — not an independent
+          physics concept. Includes fit diagnostics (chi_squared, residual,
+          covariance, fitting_weight, fit_type) and per-fit provenance children
+          under *_fit parents (reconstructed, measured, weight, time_measurement,
+          rho_tor_norm). Neither enriched, embedded, nor SN-extracted.
+      representation:
+        description: >-
+          Discretisation / basis-function storage that encodes a physical field
+          rather than the field itself. GGD subtrees, grid_subset nodes, spline
+          coefficients, Fourier-mode harmonics, finite-element interpolation
+          coefficients. Neither enriched, embedded, nor SN-extracted.
       error:
         description: Uncertainty bound fields (_error_upper, _error_lower, _error_index)
       metadata:

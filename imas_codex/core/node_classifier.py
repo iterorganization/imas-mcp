@@ -15,6 +15,8 @@ Two-pass architecture:
 
 from __future__ import annotations
 
+import re
+
 # ──────────────────────────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────────────────────────
@@ -110,6 +112,50 @@ _METADATA_SUBTREES: frozenset[str] = frozenset({"ids_properties", "code"})
 # Generic metadata leaf names (depth ≥ 3)
 _METADATA_LEAVES: frozenset[str] = frozenset(
     {"description", "name", "comment", "source", "provider"}
+)
+
+# ──────────────────────────────────────────────────────────────────
+# Fit-artifact constants
+# ──────────────────────────────────────────────────────────────────
+
+#: Leaf segments that are fitting-process diagnostics — chi², residual,
+#: covariance, fitting_weight, fit_type.
+FIT_DIAGNOSTIC_SEGMENTS: frozenset[str] = frozenset(
+    {"chi_squared", "residual", "covariance", "fitting_weight", "fit_type"}
+)
+
+#: Regex for fit-diagnostic segments (including compound names like
+#: ``pressure_chi_squared``).
+_FIT_DIAGNOSTIC_RE: re.Pattern[str] = re.compile(
+    r"(?:^|_)(?:chi_squared|residual|covariance|fitting_weight|fit_type)(?:_|$)",
+)
+
+#: Children of ``*_fit`` containers that are per-fit provenance rather
+#: than independent physics concepts.
+FIT_CHILD_SEGMENTS: frozenset[str] = frozenset(
+    {"reconstructed", "measured", "weight", "time_measurement", "rho_tor_norm"}
+)
+
+#: Regex matching ``*_fit`` parent segment.
+_FIT_PARENT_RE: re.Pattern[str] = re.compile(r"[A-Za-z0-9_]*_fit$")
+
+# ──────────────────────────────────────────────────────────────────
+# Representation constants
+# ──────────────────────────────────────────────────────────────────
+
+#: Path fragments indicating GGD / basis-function representation storage.
+_REPRESENTATION_PATH_MARKERS: tuple[str, ...] = (
+    "grids_ggd/",
+    "/ggd_fast/",
+    "/grid_subset/",
+)
+
+#: Regex for representation leaf/parent segments — spline coefficients,
+#: Fourier modes, finite-element interpolation, GGD grid infrastructure.
+_REPRESENTATION_SEGMENT_RE: re.Pattern[str] = re.compile(
+    r"(?:^|_)(?:coefficients?|ggd|finite_element|interpolation|basis|spline|"
+    r"fourier_modes?|harmonics_coefficients|grid_object|grid_subset|"
+    r"jacobian|metric)(?:_|$)",
 )
 
 # Path segments indicating machine / diagnostic hardware geometry.
@@ -281,6 +327,35 @@ def classify_node_pass1(
             if kw in last_lower:
                 return "structural"
 
+    # ── Fit-artifact rules (before quantity/geometry fallthrough) ──
+
+    # Rule F1: Fit-diagnostic segments → fit_artifact
+    if last_seg in FIT_DIAGNOSTIC_SEGMENTS or _FIT_DIAGNOSTIC_RE.search(last_seg):
+        return "fit_artifact"
+
+    # Rule F2: Known fit-child segment under *_fit parent → fit_artifact
+    # Uses path-only heuristic (parent segment ends in _fit).
+    if last_seg in FIT_CHILD_SEGMENTS or _FIT_PARENT_RE.search(
+        parts[-2] if len(parts) >= 2 else ""
+    ):
+        parent_seg = parts[-2] if len(parts) >= 2 else ""
+        if _FIT_PARENT_RE.search(parent_seg) and (
+            last_seg in FIT_CHILD_SEGMENTS or last_seg.startswith("time_measurement")
+        ):
+            return "fit_artifact"
+
+    # ── Representation rules (before quantity/geometry fallthrough) ──
+
+    # Rule R1: GGD / grid_subset subtrees → representation
+    if any(marker in path for marker in _REPRESENTATION_PATH_MARKERS):
+        return "representation"
+
+    # Rule R2: Representation-related leaf or parent segment
+    if _REPRESENTATION_SEGMENT_RE.search(last_seg):
+        return "representation"
+    if len(parts) >= 2 and _REPRESENTATION_SEGMENT_RE.search(parts[-2]):
+        return "representation"
+
     # Rule 9a: Physics leaf type + spatial unit + geometry ancestor → geometry
     if dt in PHYSICS_LEAF_TYPES and unit_str and unit_str not in _NO_UNIT:
         if _is_geometry_path(path, unit_str):
@@ -339,6 +414,7 @@ def classify_node_pass2(
     data_type: str | None = None,
     unit: str | None = None,
     name: str | None = None,
+    parent_name: str | None = None,
 ) -> str | None:
     """Refine classification using graph relationships.
 
@@ -365,6 +441,9 @@ def classify_node_pass2(
         Leaf segment of the path (e.g. ``"psi"``).  When provided,
         enables the R2 name+unit guard that prevents physics data
         with meaningful units from being reclassified as coordinates.
+    parent_name:
+        Name (last segment) of the parent node, if available.
+        Used by R4 to detect ``*_fit`` parents for fit-child promotion.
     """
     dt = (data_type or "").upper()
 
@@ -399,11 +478,24 @@ def classify_node_pass2(
             # No children evidence — demote to structural
             return "structural"
 
+    # R4: Fit-child promotion — quantity leaf under *_fit parent → fit_artifact
+    # Pass 1 catches most fit children via path-pattern, but some leaves
+    # (e.g. those with physics units) fall through to quantity.  When the
+    # parent's name ends in ``_fit``, they are provenance artifacts.
+    if (
+        current_category == "quantity"
+        and parent_name
+        and _FIT_PARENT_RE.search(parent_name)
+    ):
+        return "fit_artifact"
+
     return None
 
 
 __all__ = [
     "COORDINATE_SEGMENTS",
+    "FIT_CHILD_SEGMENTS",
+    "FIT_DIAGNOSTIC_SEGMENTS",
     "GEOMETRY_EXCLUSION_PATTERNS",
     "GEOMETRY_PATH_PATTERNS",
     "INTEGER_TYPES",

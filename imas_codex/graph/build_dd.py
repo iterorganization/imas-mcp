@@ -2119,6 +2119,31 @@ def _reclassify_relational(client: GraphClient) -> int:
         if new_cat and new_cat != row["current"]:
             updates[node_id] = new_cat
 
+    # R4: Fit-child promotion — quantity leaves under *_fit parents
+    fit_rows = client.query(
+        """
+        MATCH (n:IMASNode)-[:HAS_PARENT]->(parent:IMASNode)
+        WHERE n.node_category = 'quantity'
+          AND parent.name ENDS WITH '_fit'
+        RETURN n.id AS id, n.node_category AS current,
+               n.data_type AS data_type, n.unit AS unit,
+               n.name AS name, parent.name AS parent_name
+        """,
+    )
+    for row in fit_rows:
+        node_id = row["id"]
+        if node_id in updates:
+            continue
+        new_cat = classify_node_pass2(
+            row["current"],
+            data_type=row.get("data_type"),
+            unit=row.get("unit"),
+            name=row.get("name"),
+            parent_name=row.get("parent_name"),
+        )
+        if new_cat and new_cat != row["current"]:
+            updates[node_id] = new_cat
+
     # Apply updates in batch
     if updates:
         update_list = [{"id": k, "category": v} for k, v in updates.items()]

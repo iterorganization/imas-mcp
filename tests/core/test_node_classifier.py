@@ -459,3 +459,312 @@ class TestConstants:
 
     def test_coordinate_segments_frozen(self):
         assert isinstance(COORDINATE_SEGMENTS, frozenset)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Fit-artifact classification (Pass 1 rules F1, F2)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestFitArtifactPass1:
+    """Tests for fit_artifact classification in Pass 1."""
+
+    # --- Positive cases: fit diagnostics (Rule F1) ---
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            (
+                "core_profiles/profiles_1d/electrons/density_fit/chi_squared",
+                "chi_squared",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/density_fit/residual",
+                "residual",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/density_fit/covariance",
+                "covariance",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/density_fit/fitting_weight",
+                "fitting_weight",
+            ),
+            (
+                "equilibrium/time_slice/profiles_1d/q_fit/fit_type",
+                "fit_type",
+            ),
+            (
+                "core_profiles/profiles_1d/ion/temperature_fit/chi_squared",
+                "chi_squared",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/pressure_fit/residual",
+                "residual",
+            ),
+            (
+                "edge_profiles/ggd/electrons/density_fit/fitting_weight",
+                "fitting_weight",
+            ),
+        ],
+    )
+    def test_fit_diagnostics(self, path, name):
+        assert classify_node_pass1(path, name, data_type="FLT_0D") == "fit_artifact"
+
+    # --- Positive cases: fit children under *_fit parent (Rule F2) ---
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            (
+                "core_profiles/profiles_1d/electrons/density_fit/measured",
+                "measured",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/density_fit/reconstructed",
+                "reconstructed",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/density_fit/weight",
+                "weight",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/density_fit/time_measurement",
+                "time_measurement",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/density_fit/rho_tor_norm",
+                "rho_tor_norm",
+            ),
+            (
+                "equilibrium/time_slice/profiles_1d/q_fit/measured",
+                "measured",
+            ),
+            (
+                "core_profiles/profiles_1d/ion/temperature_fit/reconstructed",
+                "reconstructed",
+            ),
+        ],
+    )
+    def test_fit_children(self, path, name):
+        result = classify_node_pass1(path, name, data_type="FLT_1D", unit="m^-3")
+        assert result == "fit_artifact"
+
+    # --- Negative cases: /measured, /reconstructed NOT under *_fit ---
+
+    @pytest.mark.parametrize(
+        "path,name,expected",
+        [
+            # magnetics/flux_loop/flux/data is structural only when parent_data_type
+            # is STRUCTURE — here without parent info, Rule 7 doesn't fire
+            (
+                "magnetics/flux_loop/flux/data",
+                "data",
+                "quantity",
+            ),
+            # 'measured' under a non-fit parent → quantity
+            (
+                "interferometer/channel/n_e_line/measured",
+                "measured",
+                "quantity",
+            ),
+            # 'reconstructed' under a non-fit parent → quantity
+            (
+                "mse/channel/faraday_angle/reconstructed",
+                "reconstructed",
+                "quantity",
+            ),
+            # 'weight' under a non-fit parent → quantity
+            (
+                "core_transport/model/profiles_1d/weight",
+                "weight",
+                "quantity",
+            ),
+            # 'rho_tor_norm' is coordinate in non-fit context
+            (
+                "core_profiles/profiles_1d/grid/rho_tor_norm",
+                "rho_tor_norm",
+                "coordinate",
+            ),
+            # Plain physics quantity should not be affected
+            (
+                "core_profiles/profiles_1d/electrons/temperature",
+                "temperature",
+                "quantity",
+            ),
+        ],
+    )
+    def test_non_fit_paths_unaffected(self, path, name, expected):
+        result = classify_node_pass1(
+            path,
+            name,
+            data_type="FLT_1D",
+            unit="m^-3" if expected == "quantity" else None,
+        )
+        assert result == expected
+
+
+# ──────────────────────────────────────────────────────────────────
+# Representation classification (Pass 1 rules R1, R2)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestRepresentationPass1:
+    """Tests for representation classification in Pass 1."""
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            # GGD subtree markers
+            (
+                "equilibrium/grids_ggd/grid/space/objects_per_dimension/object/geometry",
+                "geometry",
+            ),
+            (
+                "equilibrium/grids_ggd/grid/space/objects_per_dimension/object/measure",
+                "measure",
+            ),
+            (
+                "edge_profiles/ggd_fast/electrons/density/coefficients",
+                "coefficients",
+            ),
+            # grid_subset subtree
+            (
+                "edge_sources/source/ggd/grid_subset/element/object/space",
+                "space",
+            ),
+            (
+                "edge_profiles/grids_ggd/grid_subset/element/object/geometry",
+                "geometry",
+            ),
+            # Representation segment matches
+            (
+                "core_profiles/profiles_1d/electrons/density_fit/coefficients",
+                "coefficients",
+            ),
+            (
+                "equilibrium/time_slice/profiles_2d/grid/jacobian",
+                "jacobian",
+            ),
+            (
+                "equilibrium/time_slice/profiles_2d/grid/metric",
+                "metric",
+            ),
+            (
+                "waves/coherent_wave/profiles_1d/grid_object",
+                "grid_object",
+            ),
+            (
+                "edge_profiles/ggd/electrons/density/coefficient",
+                "coefficient",
+            ),
+            # Parent segment match
+            (
+                "edge_profiles/ggd/grid_subset/dimension",
+                "dimension",
+            ),
+        ],
+    )
+    def test_representation_paths(self, path, name):
+        result = classify_node_pass1(path, name, data_type="FLT_1D", unit="m")
+        assert result == "representation"
+
+    # --- Negative cases: physics quantity paths that should NOT be representation ---
+
+    @pytest.mark.parametrize(
+        "path,name,unit,expected",
+        [
+            # Boundary outline — exclusion in geometry path, but boundary
+            # is in GEOMETRY_EXCLUSION_PATTERNS → quantity (not geometry)
+            (
+                "equilibrium/time_slice/boundary/outline/r",
+                "r",
+                "m",
+                "quantity",
+            ),
+            # Plain physics quantity
+            (
+                "core_profiles/profiles_1d/electrons/temperature",
+                "temperature",
+                "eV",
+                "quantity",
+            ),
+            # Regular grid quantity
+            (
+                "equilibrium/time_slice/profiles_1d/pressure",
+                "pressure",
+                "Pa",
+                "quantity",
+            ),
+        ],
+    )
+    def test_non_representation_paths(self, path, name, unit, expected):
+        result = classify_node_pass1(path, name, data_type="FLT_1D", unit=unit)
+        assert result == expected
+
+
+# ──────────────────────────────────────────────────────────────────
+# Pass 2 — fit-child promotion (R4)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestFitChildPromotionPass2:
+    """Tests for R4 fit-child promotion in Pass 2."""
+
+    def test_quantity_under_fit_parent_promoted(self):
+        """quantity leaf under *_fit parent → fit_artifact via R4."""
+        result = classify_node_pass2(
+            "quantity",
+            parent_name="density_fit",
+            name="some_leaf",
+            data_type="FLT_1D",
+            unit="m^-3",
+        )
+        assert result == "fit_artifact"
+
+    def test_quantity_under_non_fit_parent_unchanged(self):
+        """quantity leaf under non-fit parent → None (keep quantity)."""
+        result = classify_node_pass2(
+            "quantity",
+            parent_name="electrons",
+            name="temperature",
+            data_type="FLT_1D",
+            unit="eV",
+        )
+        assert result is None
+
+    def test_structural_under_fit_parent_unchanged(self):
+        """structural node under *_fit parent → None (R4 only applies to quantity)."""
+        result = classify_node_pass2(
+            "structural",
+            parent_name="density_fit",
+            name="data",
+        )
+        assert result is None
+
+    def test_fit_parent_various_names(self):
+        """Various *_fit parent names trigger R4."""
+        for parent in [
+            "density_fit",
+            "q_profile_fit",
+            "temperature_fit",
+            "pressure_fit",
+        ]:
+            result = classify_node_pass2(
+                "quantity",
+                parent_name=parent,
+                name="measured",
+                data_type="FLT_1D",
+                unit="m^-3",
+            )
+            assert result == "fit_artifact", f"Failed for parent_name={parent}"
+
+    def test_r4_does_not_override_identifier(self):
+        """R1 identifier overrides R4 — identifier_schema takes priority."""
+        result = classify_node_pass2(
+            "quantity",
+            has_identifier_schema=True,
+            parent_name="density_fit",
+            name="some_field",
+        )
+        assert result == "identifier"
