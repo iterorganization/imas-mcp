@@ -1,38 +1,53 @@
 ---
 name: sn/enrich_user
-description: Dynamic user prompt for standard name documentation enrichment
-used_by: imas_codex.cli.sn.sn_enrich
+description: Per-batch user prompt for standard name documentation enrichment
+used_by: imas_codex.standard_names.workers.enrich_worker
 task: enrichment
 dynamic: true
 schema_needs: []
 ---
 
-Enrich the documentation for the following {{ names | length }} standard name(s).
+# Names to enrich
 
-For each name, improve the description, documentation, tags, links, validity_domain, and constraints fields. Use ALL the linked DD path context to write comprehensive, physics-accurate documentation.
+{% for item in items %}
+## {{ item.name }}
 
-Do NOT change the standard name itself — return it exactly as given.
+**Unit:** {{ item.unit or "—" }}  **COCOS:** {{ item.cocos or "—" }}
+**Kind:** {{ item.kind or "scalar" }}
+**Physics domain:** {{ item.physics_domain or "—" }}
 
-{% for item in names %}
----
-
-### {{ loop.index }}. `{{ item.name }}`
-
-- **Kind**: {{ item.kind or "scalar" }}
-- **Unit**: {{ item.unit or "dimensionless" }}
-{% if item.description %}- **Current description**: {{ item.description }}{% endif %}
-{% if item.documentation %}- **Current documentation**: {{ item.documentation }}{% endif %}
-{% if item.tags %}- **Current tags**: {{ item.tags | join(", ") }}{% endif %}
-{% if item.links %}- **Current links**: {{ item.links | join(", ") }}{% endif %}
-{% if item.validity_domain %}- **Current validity_domain**: {{ item.validity_domain }}{% endif %}
-{% if item.constraints %}- **Current constraints**: {{ item.constraints | join(", ") }}{% endif %}
-
-{% if item.grammar %}**Grammar decomposition**:
+{% if item.grammar %}**Grammar decomposition:**
 {% for seg, val in item.grammar.items() %}- {{ seg }}: `{{ val }}`
 {% endfor %}{% endif %}
 
-{% if item.dd_paths %}**Linked DD paths** ({{ item.dd_paths | length }}):
-{% for p in item.dd_paths %}- `{{ p.path }}`{% if p.description %} — {{ p.description }}{% endif %}{% if p.documentation %} | Docs: {{ p.documentation[:200] }}{% endif %}
-{% endfor %}{% endif %}
+### DD path documentation
+{% if item.dd_paths %}{% for path in item.dd_paths %}
+- `{{ path.path }}`: {{ path.documentation or path.description or "(no documentation)" }}{% endfor %}
+{% else %}
+_(no linked DD paths)_
+{% endif %}
+
+### Nearby standard names (vector similarity)
+{% if item.nearby %}{% for n in item.nearby %}
+- `{{ n.name }}` — {{ n.description or "(no description)" }}{% endfor %}
+{% else %}
+_(none available)_
+{% endif %}
+
+### Sibling names in {{ item.physics_domain or "same domain" }}
+{% if item.siblings %}{% for s in item.siblings %}
+- `{{ s.name }}` — {{ s.description or "(no description)" }}{% endfor %}
+{% else %}
+_(none available)_
+{% endif %}
+
+{% if item.current and (item.current.description or item.current.documentation) %}### Current enrichment (improve upon this)
+{% if item.current.description %}- **Description:** {{ item.current.description }}{% endif %}
+{% if item.current.documentation %}- **Documentation:** {{ item.current.documentation }}{% endif %}
+{% if item.current.tags %}- **Tags:** {{ item.current.tags | join(", ") }}{% endif %}
+{% if item.current.links %}- **Links:** {{ item.current.links | join(", ") }}{% endif %}
+{% endif %}
 
 {% endfor %}
+
+Return a JSON object matching the output schema with one entry per name above.
