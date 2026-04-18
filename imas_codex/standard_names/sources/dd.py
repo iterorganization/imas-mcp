@@ -136,6 +136,11 @@ def extract_dd_candidates(
             "n.node_category IN $sn_categories",
             "n.description IS NOT NULL",
             "n.description <> ''",
+            # S1 equivalent at query level: core_instant_changes is a whole-IDS
+            # dedup policy (duplicates core_profiles with "change in X" prefix).
+            # Push into Cypher so LIMIT/ORDER BY pagination doesn't fill a batch
+            # entirely with paths the classifier will reject.
+            "ids.id <> 'core_instant_changes'",
         ]
         if ids_filter:
             where_parts.append("ids.id = $ids_filter")
