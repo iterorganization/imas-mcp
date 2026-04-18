@@ -1167,7 +1167,7 @@ dev = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "hdbscan", specifier = ">=0.8.41" },
     { name = "imas-python", specifier = ">=2.0.1" },
-    { name = "imas-standard-names", specifier = ">=0.7.0rc11" },
+    { name = "imas-standard-names", specifier = ">=0.7.0rc12" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "ipython", specifier = ">=9.2.0" },
     { name = "jellyfish", specifier = ">=1.2.1" },
@@ -1246,7 +1246,7 @@ wheels = [
 
 [[package]]
 name = "imas-standard-names"
-version = "0.7.0rc11"
+version = "0.7.0rc12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1257,9 +1257,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "strictyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/46/2654fc2bc5a42035ab8a3c45d6a03b1d8feefc3ba3eab5456c8f0c7623fe/imas_standard_names-0.7.0rc11.tar.gz", hash = "sha256:a1c2af0ee01acc9f1a6eca2096b2525be33db4e238c1b7d11ef0c1d5a9f82295", size = 630485, upload-time = "2026-04-18T09:55:02.84Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/1a/a6f171aef0530b50e69a8074d3d8369dc6508331bdc06378381ba58df2a4/imas_standard_names-0.7.0rc12.tar.gz", hash = "sha256:b47ddcd87f2e2d60da1df6d172624ce5bd913d34051257949c2feb7d70392e92", size = 633505, upload-time = "2026-04-18T12:16:09.633Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/01/6c/eb1f30190c9c0b42ec35c0257268462418fb860fc28e095816decf2afc02/imas_standard_names-0.7.0rc11-py3-none-any.whl", hash = "sha256:d28a718f1a6bd3e541c3b87640abd7d942a2bce2fe01a7b5ca5097dbc01a805c", size = 282402, upload-time = "2026-04-18T09:55:00.912Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/3d/21c9942d860944c71833c8c08e189e4a2c5d00ca37c411d2a5c69ce117f7/imas_standard_names-0.7.0rc12-py3-none-any.whl", hash = "sha256:fcc15849170c3e843011457a6e694f24d94f8c04ef68c03a5075828860c1c44b", size = 283834, upload-time = "2026-04-18T12:16:08.162Z" },
 ]
 
 [[package]]
