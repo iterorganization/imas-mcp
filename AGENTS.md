@@ -90,6 +90,8 @@ All graph node types, relationships, and properties are defined in LinkML schema
 
 **PhysicsDomain enum**: Imported from the `imas-standard-names` PyPI package and re-exported from `imas_codex.core.physics_domain`. The canonical vocabulary is maintained in the imas-standard-names project. Contains 32 physics domain values. `imas_codex/core/physics_domain.py` is a hand-written one-line re-export — it IS committed and should NOT be treated as auto-generated.
 
+**NodeCategory enum** (`imas_dd.yaml`): DD node classification — 9 values: `quantity`, `geometry`, `coordinate`, `metadata`, `error`, `structural`, `identifier`, `fit_artifact`, `representation`. Classifier lives in `imas_codex/core/node_classifier.py` (two-pass: Pass 1 attribute-only, Pass 2 graph-relational). Category sets for pipeline participation in `imas_codex/core/node_categories.py`.
+
 Always import enums and classes from generated models. Never hardcode status values:
 
 ```python
@@ -750,7 +752,7 @@ Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
 
 | Phase | Worker | Key Operation |
 |-------|--------|---------------|
-| EXTRACT | `extract_worker` | Query DD paths, classify (quantity/metadata/skip), enrich with clusters, group into batches. Writes `StandardNameSource` nodes to graph for crash resilience |
+| EXTRACT | `extract_worker` | Query DD paths (filtered by `SN_SOURCE_CATEGORIES`: quantity + geometry), classify (quantity/skip), enrich with clusters, group into batches. Writes `StandardNameSource` nodes to graph for crash resilience |
 | COMPOSE | `compose_worker` | LLM generates names per batch; unit injected from DD (never from LLM output). Auto-attaches DD paths to existing matching standard names without regeneration. Updates `StandardNameSource` status (composed/attached/vocab_gap) |
 | VALIDATE | `validate_worker` | ISN 3-layer validation (Pydantic → semantic → description) + grammar round-trip |
 | CONSOLIDATE | `consolidate_worker` | Cross-batch dedup, conflict detection (unit/kind/source), coverage accounting |
@@ -760,7 +762,7 @@ Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
 
 | Module | Purpose |
 |--------|---------|
-| `imas_codex/standard_names/classifier.py` | 13-rule path classifier: quantity (→ name), metadata (→ skip), skip (→ discard). Rules 11a/11b added: structural keywords in description → skip, fit diagnostic paths → skip |
+| `imas_codex/standard_names/classifier.py` | SN-level scope classifier: S0 (STR_* skip), S1 (core_instant_changes dedup skip), S2 (error fields defensive skip). All other classification (fit_artifact, representation, coordinate, structural, metadata, identifier) owned by DD `node_category` and pre-filtered by `SN_SOURCE_CATEGORIES` |
 | `imas_codex/standard_names/enrichment.py` | Primary cluster selection (IDS > domain > global scope), grouping cluster selection (global > domain > IDS), global grouping by (cluster × unit) |
 | `imas_codex/standard_names/consolidation.py` | Cross-batch dedup, 5 conflict checks, coverage gap accounting |
 | `imas_codex/standard_names/graph_ops.py` | Neo4j read/write with unit conflict detection + StandardNameSource CRUD (merge, claim, mark, reconcile) |

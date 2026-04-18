@@ -27,6 +27,7 @@ Plans validated against 62 existing standard names, current scoring architecture
 | **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Careful ranking fixes (accessor de-ranking, IDS preference), evaluation alignment | 2 agents |
 | **P4** | [features/docs-refresh.md](features/docs-refresh.md) | Fix 7 stale docs, rewrite docs/README.md (17+ missing entries) | 1 agent |
 | **P5** | ~~features/sn-extraction-coverage-gaps.md~~ | ✅ **Completed** — StandardNameSource graph-primary architecture, naming standardization, extraction coverage gap fixes | — |
+| **P6** | ~~[features/standard-names/30-dd-semantic-categories.md](features/standard-names/30-dd-semantic-categories.md)~~ | ✅ **Completed** — `fit_artifact` & `representation` NodeCategory enums, DD classifier rules (F1/F2/R1/R2/R4), SN classifier simplified to S0+S1+S2, graph migration (269 fit_artifact, 2209 representation) | 1 agent |
 
 ### Wave Implementation Order
 
