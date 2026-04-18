@@ -335,6 +335,9 @@ corpus wholesale; a repair script for soon-to-be-deleted nodes is dead
 work. The *extractor bugs* that produced bad sources are addressed in
 plan 28's audit tasks already landed; any residual extractor bugs
 surface during D.2 regeneration, not retroactively. -->
+<!-- b4-migrate-drafted-to-named EXECUTED INLINE (not a committed script) per AGENTS.md
+migration policy. On 2026-04-18 migrated 182 'drafted' SNs → 'named' via graph
+shell one-liner. D.1 DETACH DELETE will wipe all SNs anyway. -->
 
 ### Phase C — standalone sn enrich (imas-codex)
 
