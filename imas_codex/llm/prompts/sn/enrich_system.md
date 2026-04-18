@@ -67,4 +67,32 @@ Return a JSON object with an `items` array. Each item conforms to:
 - `cross_reference_rationale` — optional. Brief note explaining why the linked names were chosen.
 - `documentation_excerpt` — ≤160 characters. One-line summary suitable for tables and list views.
 
+## Documentation Quality Rules (D5 review)
+
+### Spectrum unit rule
+If the name ends in `_spectrum`, the documentation MUST state which
+integration variable closes the budget (e.g. "integrating over toroidal
+mode number $n_\phi$ recovers the total power in W"). If the unit lacks
+a spectral denominator, note the inconsistency explicitly.
+
+### Boilerplate suppression
+- For χ² constraint weights: do NOT re-derive the generic inverse-problem
+  role. Use a one-line reference: "Standard χ² weight controlling the
+  relative importance of this measurement in the equilibrium reconstruction."
+- For Maxwellian-pressure variants: do NOT repeat the ideal-gas-law
+  derivation (`p = nkT`) for every pressure name. Reference the defining
+  relation from the base name (e.g. "see `thermal_electron_pressure`").
+
+### Constraint role documentation
+If the name originates from a DD constraint path (weight, measurement_time,
+measured_value, reconstructed_value), the documentation should describe the
+*base physical quantity* — not the solver role. The inverse-problem context
+is metadata, not physics.
+
+### Forbidden-pattern awareness
+Do NOT rationalise known-bad units in prose. If the DD unit appears wrong
+for the physics (e.g. `m^-1.V` on a wave magnetic-field phase), state the
+inconsistency plainly rather than constructing a Fourier-representation
+defence. The pipeline will quarantine such names for upstream correction.
+
 {% include "sn/_controlled_tags.md" %}

@@ -43,6 +43,78 @@ Forbidden tokens:
 When a DD path would produce one of these, SKIP and record as vocab_gap rather
 than composing.
 
+### FORBIDDEN PATTERNS (D5 review)
+
+The following name patterns produce synonym families or encode orthogonal axes
+that belong in structured annotations. NEVER emit these patterns:
+
+1. **`_of_plasma` suffix** — when the `physics_domain` already implies a plasma
+   quantity (e.g. `equilibrium`, `transport`, `edge_plasma_physics`,
+   `magnetohydrodynamics`), `_of_plasma` is redundant. Drop it. Use
+   `_of_plasma_boundary` only when the *boundary contour* is the geometric
+   subject — for shape parameters of the LCFS, use the bare name
+   (`upper_triangularity`, not `upper_triangularity_of_plasma_boundary`).
+2. **`_per_toroidal_mode_number`** — use `_per_toroidal_mode`. The mode *index*
+   is implicit; appending `_number` creates physics-identical synonym pairs.
+3. **`_over_*` prepositions** — use `_per_*` for all ratio quantities. `_over_`
+   is a colloquial synonym that splits the catalog. ❌ `velocity_over_magnetic_field_strength`
+   → ✅ `velocity_per_magnetic_field_strength`.
+4. **`electron_thermal_*`** — population precedes species in the canonical form.
+   Use `thermal_electron_*` (e.g. `thermal_electron_pressure`, not
+   `electron_thermal_pressure`). Same for `ion_thermal_*` → `thermal_ion_*`.
+
+### COLLAPSE-OR-JUSTIFY RULE
+
+Before emitting a qualified name `<base>_<qualifier>`, check whether `<base>`
+already exists in the provided existing-SN context with the same unit and
+physics domain. If so, you MUST do one of:
+
+- **Merge**: attach the DD path to the existing `<base>` name (use
+  `attachments`). This is preferred when the qualifier adds no new physics.
+- **Justify**: keep the qualified name but write an explicit justification in
+  `documentation` explaining why `<base>` is insufficient (e.g. different
+  sign convention, different coordinate system, different integration surface).
+
+Never silently emit a qualifier variant alongside an existing unqualified name.
+
+### CONSTRAINT ROLE ABSTRACTION (inverse-problem metadata)
+
+The tokens `_constraint_weight`, `_constraint_measurement_time`,
+`_constraint_measured_value`, and `_constraint_reconstructed_value` encode
+roles in an inverse-problem solver, NOT properties of the physical quantity.
+**NEVER** encode these as separate standard names. Instead:
+
+- Emit only the **base physical quantity** (e.g. `flux_loop_voltage`,
+  `mse_polarization_angle`, `poloidal_magnetic_field_probe_voltage`).
+- SKIP any DD path that is purely an inverse-problem role wrapper
+  (e.g. `equilibrium/time_slice/constraints/flux_loop/*/weight`).
+- A future `inverse_problem_role` annotation will carry the role metadata
+  structurally — do not anticipate it in the name.
+
+### SPECTRUM UNIT RULE
+
+If the subject ends in `_spectrum`, the unit MUST be a per-quantity form
+(`X.Hz^-1`, `X.s`, `X` per integer mode-number, etc.). A bare extensive
+unit (e.g. plain `W` for a power spectrum, plain `A` for a current spectrum)
+is dimensionally wrong — the spectral coordinate is missing.
+
+When composing a `_spectrum` name:
+- The documentation MUST state which integration variable closes the budget
+  (e.g. "integrating over toroidal mode number $n_\phi$ recovers the total
+  power in W").
+- If the DD-supplied unit lacks the spectral denominator, note the
+  inconsistency in `documentation` and set `confidence < 0.5`.
+
+### BOILERPLATE SUPPRESSION
+
+For χ² weights and Maxwellian-pressure definitions:
+- Do NOT re-derive the generic inverse-problem role definition per name.
+  Use a one-line reference: "Standard χ² weight controlling the relative
+  importance of this measurement in the equilibrium reconstruction."
+- Do NOT repeat the ideal-gas-law derivation (`p = nkT`) for every
+  pressure variant. Reference: "Thermal pressure of the electron
+  population; see `thermal_electron_pressure` for the defining relation."
+
 ### Template Application
 
 {{ template_rules }}
