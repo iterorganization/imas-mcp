@@ -36,6 +36,7 @@ def graph() -> None:
     Maintenance:
       imas-codex graph clear               Clear all graph data
       imas-codex graph secure              Rotate Neo4j password
+      imas-codex graph sync-isn-grammar    Sync ISN grammar spec to Neo4j
     """
     pass
 
@@ -67,6 +68,7 @@ def _register_graph_commands() -> None:
         graph_status,
         graph_stop,
     )
+    from imas_codex.cli.graph.sync import sync_isn_grammar
 
     # Server
     graph.add_command(graph_start, "start")
@@ -92,6 +94,9 @@ def _register_graph_commands() -> None:
     graph.add_command(graph_pull, "pull")
     graph.add_command(graph_tags, "tags")
     graph.add_command(graph_prune, "prune")
+
+    # Sync (external specs)
+    graph.add_command(sync_isn_grammar, "sync-isn-grammar")
 
 
 _register_graph_commands()
