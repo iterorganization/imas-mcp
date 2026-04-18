@@ -1308,10 +1308,22 @@ async def enrich_validate_worker(state: StandardNameEnrichState, **_kwargs) -> N
             enriched_desc = item.get("enriched_description")
 
             if enriched_desc is None:
-                # No enriched description at all — skip validation, mark pending.
-                item["validation_status"] = "pending"
-                item["validation_issues"] = []
-                skipped += 1
+                # No new enriched description from this run. Check whether
+                # the item already has a description persisted from a prior
+                # enrich pass — if not, it is structurally incomplete and
+                # must be quarantined (P0.1 — prevents empty-doc leaks).
+                existing_desc = item.get("description")
+                existing_doc = item.get("documentation")
+                if not (existing_desc and str(existing_desc).strip()) and not (
+                    existing_doc and str(existing_doc).strip()
+                ):
+                    item["validation_status"] = "quarantined"
+                    item["validation_issues"] = ["empty_documentation"]
+                    quarantined += 1
+                else:
+                    item["validation_status"] = "pending"
+                    item["validation_issues"] = []
+                    skipped += 1
                 continue
 
             issues: list[str] = []

@@ -642,6 +642,8 @@ def persist_composed_batch(
         return 0
 
     now = datetime.now(UTC).isoformat()
+    from imas_codex.standard_names.kind_derivation import derive_kind
+
     for entry in candidates:
         entry.setdefault("model", compose_model)
         entry.setdefault("review_status", "named")
@@ -652,6 +654,11 @@ def persist_composed_batch(
         for field_name in _GRAMMAR_FIELDS:
             if field_name in fields and field_name not in entry:
                 entry[field_name] = fields[field_name]
+
+        # D5/P0.3: derive kind from name structure (overrides LLM default).
+        name = entry.get("id") or ""
+        if name:
+            entry["kind"] = derive_kind(name)
 
         # Default cocos_transformation_type to "one_like" for safe scalars
         # when the extractor / DD node did not already annotate one.
@@ -746,6 +753,7 @@ def persist_enriched_batch(items: list[dict[str, Any]]) -> int:
                 "enrich_tokens": item.get("enrich_tokens"),
                 "validation_status": item.get("validation_status"),
                 "validation_issues": item.get("validation_issues") or None,
+                "kind": item.get("kind"),
             }
         )
 
@@ -769,6 +777,7 @@ def persist_enriched_batch(items: list[dict[str, Any]]) -> int:
                 sn.enrich_tokens = coalesce(b.enrich_tokens, sn.enrich_tokens),
                 sn.validation_status = coalesce(b.validation_status, sn.validation_status),
                 sn.validation_issues = coalesce(b.validation_issues, sn.validation_issues),
+                sn.kind = coalesce(b.kind, sn.kind),
                 sn.enrich_claimed_at = null,
                 sn.enrich_claim_token = null
             """,

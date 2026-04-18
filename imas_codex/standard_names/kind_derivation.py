@@ -20,29 +20,35 @@ _VALID_KINDS: frozenset[str] | None = None
 
 
 def _load_valid_kinds() -> frozenset[str]:
-    """Load the StandardNameKind enum values from generated models."""
+    """Load the StandardNameKind enum values from generated models.
+
+    Always unions with the full fallback set so a stale/partial enum load
+    (e.g. a long-running process holding an old ``models.py``) cannot
+    silently disable pattern rules.
+    """
     global _VALID_KINDS
     if _VALID_KINDS is not None:
         return _VALID_KINDS
+    fallback = frozenset(
+        {
+            "scalar",
+            "vector",
+            "vector_component",
+            "tensor",
+            "tensor_component",
+            "eigenfunction",
+            "spectrum",
+            "complex_part",
+            "metadata",
+        }
+    )
     try:
         from imas_codex.graph.models import StandardNameKind
 
-        _VALID_KINDS = frozenset(e.value for e in StandardNameKind)
+        loaded = frozenset(e.value for e in StandardNameKind)
+        _VALID_KINDS = loaded | fallback
     except Exception:
-        # Fallback if models not yet generated
-        _VALID_KINDS = frozenset(
-            {
-                "scalar",
-                "vector",
-                "vector_component",
-                "tensor",
-                "tensor_component",
-                "eigenfunction",
-                "spectrum",
-                "complex_part",
-                "metadata",
-            }
-        )
+        _VALID_KINDS = fallback
     return _VALID_KINDS
 
 
