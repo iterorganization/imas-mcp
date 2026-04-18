@@ -23,7 +23,7 @@ description: >-
   shared vocabulary of physics concepts.
 
 license: MIT
-version: 0.5.0
+version: 0.6.0
 
 prefixes:
   linkml: https://w3id.org/linkml/
@@ -35,6 +35,7 @@ default_range: string
 imports:
   - linkml:types
   - common
+  - grammar_graph
 
 # =============================================================================
 # Enums
@@ -54,10 +55,28 @@ enums:
         description: Seeded from ISN reference library
 
   StandardNameReviewStatus:
-    description: Review lifecycle for standard names
+    description: >-
+      Review lifecycle for standard names.
+      Split-pipeline lifecycle (v0.6.0):
+        named → enriched → reviewable → published → accepted
+      Legacy alias: drafted (equivalent to named, kept for back-compat).
     permissible_values:
+      named:
+        description: >-
+          Post-generate: name, kind, unit, tags assigned but no
+          documentation or description yet. Entry point for sn enrich.
+      enriched:
+        description: >-
+          Post-enrich: documentation, description, links populated by
+          LLM enrichment pipeline. Awaiting validation.
+      reviewable:
+        description: >-
+          Passed VALIDATE gate in enrich pipeline. Ready for sn review
+          or direct publish.
       drafted:
-        description: LLM-generated, awaiting review
+        description: >-
+          LLM-generated, awaiting review (legacy alias for named;
+          kept for one-release back-compat)
       published:
         description: Exported to catalog PR for review
       accepted:
@@ -363,6 +382,79 @@ classes:
           Null means consolidation has not processed this name yet.
           Names with conflicts are not marked consolidated.
         range: datetime
+      grammar_tokens:
+        description: >-
+          GrammarToken nodes that make up this standard name, parsed
+          against the active ISN grammar. Emitted as HAS_SEGMENT edges.
+
+          Edge properties (written by persist_worker via
+          imas_standard_names.graph.spec.segment_edge_specs):
+            - position: integer — zero-based index of this token within
+              the parsed name (order of appearance).
+            - segment: string   — grammar segment name this token
+              occupied (e.g. "subject", "transformation").
+
+          LinkML does not natively model edge properties, so those two
+          attributes live on the Cypher edge rather than as StandardName
+          properties. See plan 29 §E.5 / §E.7 for details.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_SEGMENT
+      # --- Qualifier fields (R2 A.1 — wave_absorbed_power collapse) ---
+      species:
+        description: >-
+          Particle species qualifier (e.g., "electron", "deuterium",
+          "tritium"). Used to collapse species-specific variants into
+          a single parameterised standard name.
+      population:
+        description: >-
+          Population qualifier (e.g., "thermal", "fast", "runaway").
+          Distinguishes kinetic sub-populations of the same species.
+      toroidal_mode:
+        description: >-
+          Toroidal mode number qualifier. Used for Fourier-decomposed
+          quantities (e.g., n=0 axisymmetric component).
+        range: integer
+      flux_surface_average:
+        description: >-
+          Whether this quantity is a flux-surface average. Default false.
+          Distinguishes local vs. averaged representations of the same
+          physical quantity.
+        range: boolean
+      # --- Enrichment provenance ---
+      enrich_model:
+        description: >-
+          LLM model used by sn enrich to generate documentation,
+          description, and links (e.g., "openrouter/anthropic/claude-sonnet-4.6").
+      enriched_at:
+        description: ISO 8601 timestamp when enrichment completed
+        range: datetime
+      enrich_cost_usd:
+        description: >-
+          USD cost of the LLM enrichment call for this name.
+          Tracked for per-name budget accounting.
+        range: float
+      enrich_tokens:
+        description: >-
+          Total token count (prompt + completion) of the enrichment call.
+        range: integer
+      enrich_batch_id:
+        description: >-
+          Batch identifier grouping names enriched in the same run.
+          Format: "enrich-{timestamp}" or user-supplied tag.
+      # --- REFERENCES relationship (enrich link graph) ---
+      references:
+        description: >-
+          Other StandardName nodes this name references via name:x
+          markers in its documentation. Created by enrich PERSIST
+          to build a cross-reference graph between related concepts.
+        multivalued: true
+        range: StandardName
+        inlined: false
+        annotations:
+          relationship_type: REFERENCES
 
   VocabGap:
     description: >-
