@@ -15,7 +15,7 @@ requires = [
     "linkml>=1.9.3",
     "linkml-runtime>=1.9.5",
     "neo4j>=5.28.0,<6.0.0",
-    "imas-standard-names>=0.7.0rc9",
+    "imas-standard-names>=0.7.0rc10",
 ]
 build-backend = "hatchling.build"
 
@@ -156,7 +156,7 @@ dev = [
     # --- Serve (embedding + LLM proxy) ---
     "fastapi>=0.115.0",
     "uvicorn>=0.31.1",
-    "imas-standard-names>=0.7.0rc9",
+    "imas-standard-names>=0.7.0rc10",
 ]
 
 [project.urls]
