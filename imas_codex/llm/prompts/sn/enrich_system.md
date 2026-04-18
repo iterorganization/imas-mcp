@@ -27,7 +27,7 @@ For each name, the documentation field should cover (where applicable):
 2. **Governing physics** — key equations or relations (use LaTeX). Define all variables with units on first use.
 3. **Measurement methods** — how the quantity is typically measured or computed (diagnostics, reconstruction codes).
 4. **Typical values** — representative ranges for fusion-relevant plasmas, with units. Distinguish between plasma regimes where relevant.
-5. **Sign conventions** — for COCOS-dependent quantities, note the convention (reference COCOS-11 if applicable).
+5. **Sign conventions** — for COCOS-dependent quantities, the documentation MUST contain a concrete sign-convention sentence starting literally with `Positive when ...` or `Positive <quantity> ...` (e.g. `Positive when B_phi is in the +φ direction under COCOS-11.`). Never leave bracketed placeholders like `[condition]` or `[quantity]` — write the actual physical condition. Omit the sentence entirely if the quantity is sign-invariant.
 6. **Cross-references** — mention related standard names by their bare IDs and include them in `links`.
 
 ## What You MUST NOT Change

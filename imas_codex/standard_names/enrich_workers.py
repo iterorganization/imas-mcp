@@ -92,8 +92,15 @@ def _sanitize_tags(raw: list[str] | None) -> list[str]:
     return out
 
 
-def _sanitize_links(raw: list[str] | None) -> list[str]:
-    """Coerce LLM link strings to the required ``name:xxx`` / URL format."""
+def _sanitize_links(
+    raw: list[str] | None, *, valid_names: set[str] | None = None
+) -> list[str]:
+    """Coerce LLM link strings to ``name:xxx`` / URL format and drop unknowns.
+
+    If ``valid_names`` is provided, ``name:foo_bar`` links whose target is not
+    in that set are silently dropped (prevents ``link_not_found`` quarantine).
+    URLs and other prefixes pass through unchanged.
+    """
     if not raw:
         return []
     out: list[str] = []
@@ -104,19 +111,45 @@ def _sanitize_links(raw: list[str] | None) -> list[str]:
         if not s:
             continue
         if s.startswith(_LINK_PREFIXES):
+            if s.startswith("name:") and valid_names is not None:
+                target = s[len("name:") :].strip()
+                if target not in valid_names:
+                    continue
             out.append(s)
             continue
-        # Strip common hallucinated prefixes (``dd:``, ``standard_name:``).
         for junk in ("dd:", "standard_name:", "sn:", "#"):
             if s.lower().startswith(junk):
                 s = s[len(junk) :].strip()
                 break
-        # Bare id — coerce to name: prefix if it looks like an SN id.
         if _SN_ID_RE.match(s):
+            if valid_names is not None and s not in valid_names:
+                continue
             candidate = f"name:{s}"
             if candidate not in out:
                 out.append(candidate)
     return out
+
+
+_SIGN_CONV_PLACEHOLDER_RE = re.compile(
+    r"sign convention\s*:\s*positive when\s*\[", re.IGNORECASE
+)
+
+
+def _sanitize_documentation(doc: str | None) -> str | None:
+    """Strip LLM placeholder sign-convention sentences.
+
+    ISN validator requires documentation (for COCOS quantities) to literally
+    start with ``Positive when`` or ``Positive <quantity>``. If the LLM left a
+    literal ``Positive when [condition]`` placeholder we drop that whole
+    sentence — better to fail validation cleanly than ship a bracketed stub.
+    """
+    if not isinstance(doc, str) or not doc:
+        return doc
+    if not _SIGN_CONV_PLACEHOLDER_RE.search(doc):
+        return doc
+    sentences = re.split(r"(?<=[.!?])\s+", doc)
+    cleaned = [s for s in sentences if not _SIGN_CONV_PLACEHOLDER_RE.search(s)]
+    return " ".join(cleaned).strip() or doc
 
 
 def _is_echoed_name(returned: str | None, expected: str) -> bool:
@@ -128,6 +161,24 @@ def _is_echoed_name(returned: str | None, expected: str) -> bool:
 
 # Claim timeout for enrichment claims (ISO 8601 duration string).
 _CLAIM_TIMEOUT = "PT300S"  # 5 minutes
+
+
+def _fetch_existing_sn_names() -> set[str]:
+    """Return the set of all StandardName ids currently in the graph.
+
+    Used by the enrich document worker to validate ``name:xxx`` cross-links
+    before they reach the ISN validator (which would quarantine on unknown
+    targets).
+    """
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            rows = gc.query("MATCH (s:StandardName) RETURN s.id AS id")
+            return {r["id"] for r in rows if r.get("id")}
+    except Exception as exc:  # graph unavailable — skip validation
+        logger.debug("Could not fetch existing SN names: %s", exc)
+        return set()
 
 
 # =============================================================================
@@ -778,6 +829,13 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
     # Render system prompt once (identical across batches → prompt-cacheable)
     system_prompt = render_prompt("sn/enrich_system")
 
+    # Fetch set of existing SN ids once for link-validation in the sanitizer.
+    valid_names = _fetch_existing_sn_names()
+    if valid_names:
+        wlog.info(
+            "Link validation active: %d existing SN names known", len(valid_names)
+        )
+
     processed = 0
     errors = 0
 
@@ -851,8 +909,12 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
                     continue
 
                 item["enriched_description"] = enriched.description
-                item["enriched_documentation"] = enriched.documentation
-                item["enriched_links"] = _sanitize_links(enriched.links)
+                item["enriched_documentation"] = _sanitize_documentation(
+                    enriched.documentation
+                )
+                item["enriched_links"] = _sanitize_links(
+                    enriched.links, valid_names=valid_names
+                )
                 item["enriched_tags"] = _sanitize_tags(enriched.tags)
 
                 # Optional enrichment fields (validity_domain, constraints)
