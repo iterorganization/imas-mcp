@@ -83,6 +83,7 @@ MODEL_SECTIONS = frozenset(
         "reasoning",
         "dd-enrichment",
         "sn-generate",
+        "sn-enrich",
     }
 )
 
@@ -96,6 +97,7 @@ _MODEL_DEFAULTS: dict[str, str] = {
     "reasoning": "anthropic/claude-sonnet-4.6",
     "dd-enrichment": "anthropic/claude-sonnet-4.6",
     "sn-generate": "anthropic/claude-sonnet-4.6",
+    "sn-enrich": "openrouter/anthropic/claude-opus-4.6",
 }
 
 # Environment variable names per section
@@ -108,6 +110,7 @@ _MODEL_ENV_VARS: dict[str, str] = {
     "reasoning": "IMAS_CODEX_REASONING_MODEL",
     "dd-enrichment": "IMAS_CODEX_DD_ENRICHMENT_MODEL",
     "sn-generate": "IMAS_CODEX_SN_GENERATE_MODEL",
+    "sn-enrich": "IMAS_CODEX_SN_ENRICH_MODEL",
 }
 
 

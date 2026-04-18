@@ -275,6 +275,9 @@ model = "anthropic/claude-sonnet-4.6"
 model = "anthropic/claude-sonnet-4.6"
 batch-size = 25
 
+[tool.imas-codex.sn-enrich]
+model = "openrouter/anthropic/claude-opus-4.6"
+
 [tool.imas-codex.sn.benchmark]
 # Models to evaluate for standard name composition.
 # Each is benchmarked independently; results are compared side-by-side.
