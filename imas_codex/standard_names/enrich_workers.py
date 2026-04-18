@@ -130,25 +130,37 @@ def _sanitize_links(
     return out
 
 
-_SIGN_CONV_PLACEHOLDER_RE = re.compile(
-    r"sign convention\s*:\s*positive when\s*\[", re.IGNORECASE
-)
+_SIGN_CONV_MENTION_RE = re.compile(r"\bsign\s+convention\b", re.IGNORECASE)
+_SIGN_CONV_VALID_RE = re.compile(r"Sign convention:\s+Positive\s+")
+_BRACKET_PLACEHOLDER_RE = re.compile(r"\[[a-z][a-z_ ]*\]")
 
 
 def _sanitize_documentation(doc: str | None) -> str | None:
-    """Strip LLM placeholder sign-convention sentences.
+    """Strip malformed sign-convention sentences from documentation.
 
-    ISN validator requires documentation (for COCOS quantities) to literally
-    start with ``Positive when`` or ``Positive <quantity>``. If the LLM left a
-    literal ``Positive when [condition]`` placeholder we drop that whole
-    sentence — better to fail validation cleanly than ship a bracketed stub.
+    ISN's validator rejects any documentation that mentions "sign convention"
+    unless it contains the exact phrase ``Sign convention: Positive when ...``
+    or ``Sign convention: Positive <quantity> ...`` (no bracketed placeholders).
+    LLMs frequently emit placeholder variants like ``Sign convention: Positive
+    when [condition].`` or lowercase/bold variants. Rather than quarantine the
+    entire entry, we strip any sentence mentioning "sign convention" that does
+    not match the valid form — ISN then accepts the docs without a sign-
+    convention statement (which is acceptable for non-COCOS paths and graceful
+    for COCOS paths where the LLM failed to produce one).
     """
     if not isinstance(doc, str) or not doc:
         return doc
-    if not _SIGN_CONV_PLACEHOLDER_RE.search(doc):
+    if not _SIGN_CONV_MENTION_RE.search(doc):
         return doc
     sentences = re.split(r"(?<=[.!?])\s+", doc)
-    cleaned = [s for s in sentences if not _SIGN_CONV_PLACEHOLDER_RE.search(s)]
+    cleaned: list[str] = []
+    for s in sentences:
+        if _SIGN_CONV_MENTION_RE.search(s):
+            if not _SIGN_CONV_VALID_RE.search(s):
+                continue
+            if _BRACKET_PLACEHOLDER_RE.search(s):
+                continue
+        cleaned.append(s)
     return " ".join(cleaned).strip() or doc
 
 
