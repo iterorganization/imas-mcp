@@ -1,0 +1,260 @@
+# ISN Grammar Graph Schema
+#
+# First-class graph representation of the IMAS Standard Names (ISN) grammar.
+# Mirrors the spec returned by imas_standard_names.graph.spec.get_grammar_graph_spec().
+#
+# Each grammar entity (segment, token, template) is keyed on `version` so
+# that multiple ISN grammar releases can coexist in the graph. The active
+# version is marked on ISNGrammarVersion.active.
+#
+# Node labels (produced by build-models):
+#   - ISNGrammarVersion
+#   - GrammarSegment
+#   - GrammarToken
+#   - GrammarTemplate
+#
+# Relationships:
+#   - ISNGrammarVersion -[:DEFINES]-> GrammarSegment
+#   - ISNGrammarVersion -[:DEFINES]-> GrammarTemplate (also available via USES_TEMPLATE)
+#   - ISNGrammarVersion -[:USES_TEMPLATE]-> GrammarTemplate
+#   - GrammarSegment    -[:HAS_TOKEN]-> GrammarToken
+#   - GrammarSegment    -[:NEXT]-> GrammarSegment   (segment ordering graph)
+#
+# HAS_SEGMENT edges from StandardName -> GrammarToken are declared in
+# standard_name.yaml; they additionally carry a {position, segment} property
+# map written at persist time (see plan 29 §E.7 and isn.graph.spec
+# segment_edge_specs). LinkML does not natively model edge properties, so
+# that map lives on the Cypher edge, not on any node class here.
+#
+# Generated models: imas_codex/graph/models.py
+# To regenerate: uv run build-models --force
+
+id: https://imas.iter.org/schemas/grammar_graph
+name: grammar_graph
+title: ISN Grammar Graph Schema
+description: >-
+  First-class graph nodes and relationships representing the IMAS Standard
+  Names grammar (segments, tokens, templates) as released by the
+  imas_standard_names package. All entities are keyed on grammar `version`
+  so multiple ISN releases can coexist in the graph.
+
+license: MIT
+version: 0.1.0
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  gg: https://imas.iter.org/schemas/grammar_graph/
+
+default_prefix: gg
+default_range: string
+
+imports:
+  - linkml:types
+
+# =============================================================================
+# Classes
+# =============================================================================
+
+classes:
+  ISNGrammarVersion:
+    description: >-
+      A released version of the ISN grammar specification. Acts as the root
+      node for all grammar entities (segments, tokens, templates) belonging
+      to that release. Exactly one ISNGrammarVersion should have
+      ``active=true`` at any time — this is the grammar used by the current
+      composition pipeline.
+
+      Relationships:
+        - DEFINES -> GrammarSegment    (all segments for this version)
+        - DEFINES -> GrammarTemplate   (all templates for this version)
+        - USES_TEMPLATE -> GrammarTemplate (alias of DEFINES for templates)
+
+      Example Cypher:
+        MATCH (gv:ISNGrammarVersion {active: true}) RETURN gv.version
+        MATCH (gv:ISNGrammarVersion)-[:DEFINES]->(s:GrammarSegment)
+        RETURN gv.version, s.name, s.position
+    class_uri: gg:ISNGrammarVersion
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Identifier for this grammar release. Equal to the `version`
+          string (e.g. "v0.7.0rc10"). Keeping id == version keeps joins
+          simple across GrammarSegment / GrammarToken / GrammarTemplate.
+        required: true
+      version:
+        description: >-
+          ISN grammar version string (e.g. "v0.7.0rc10"). All child
+          grammar entities (segments, tokens, templates) reference this
+          version so multiple releases can coexist.
+        required: true
+      description:
+        description: Human-readable description of this grammar version
+      active:
+        description: >-
+          True if this is the currently active grammar version used by
+          the composition pipeline. At most one ISNGrammarVersion should
+          have active=true at any time.
+        range: boolean
+      released_at:
+        description: ISO 8601 timestamp when this grammar version was released
+        range: datetime
+      segments:
+        description: Segments defined by this grammar version
+        multivalued: true
+        range: GrammarSegment
+        inlined: false
+        annotations:
+          relationship_type: DEFINES
+      templates:
+        description: >-
+          Templates defined by this grammar version. Emitted as
+          USES_TEMPLATE edges to match the plan 29 §E.5 relationship
+          vocabulary; a parallel DEFINES edge is written by the sync
+          pipeline for consistency with segments.
+        multivalued: true
+        range: GrammarTemplate
+        inlined: false
+        annotations:
+          relationship_type: USES_TEMPLATE
+
+  GrammarSegment:
+    description: >-
+      A named position in the ISN grammar (e.g. subject, transformation,
+      component, coordinate). Segments are ordered via the NEXT relationship
+      and aggregate their allowed tokens via HAS_TOKEN.
+
+      Relationships:
+        - HAS_TOKEN -> GrammarToken  (allowed tokens at this segment)
+        - NEXT      -> GrammarSegment (following segment in grammar order)
+
+      Example Cypher:
+        MATCH (s:GrammarSegment {version: "v0.7.0rc10"})
+        RETURN s.name, s.position, s.required
+        MATCH (s:GrammarSegment)-[:HAS_TOKEN]->(t:GrammarToken)
+        RETURN s.name, collect(t.value) AS tokens
+    class_uri: gg:GrammarSegment
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Composite key formatted as ``{version}:{name}``.
+          Example: "v0.7.0rc10:subject".
+        required: true
+      name:
+        description: >-
+          Segment name (e.g. "subject", "transformation", "component",
+          "coordinate").
+        required: true
+      version:
+        description: ISN grammar version this segment belongs to
+        required: true
+      description:
+        description: Human-readable description of this segment's role
+      position:
+        description: >-
+          Zero-based ordering of this segment within the grammar. Used
+          to materialise the NEXT chain at sync time.
+        range: integer
+      required:
+        description: True if this segment is mandatory in a well-formed name
+        range: boolean
+      tokens:
+        description: Allowed tokens at this segment
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_TOKEN
+      next_segment:
+        description: The segment that follows this one in grammar order
+        range: GrammarSegment
+        inlined: false
+        annotations:
+          relationship_type: NEXT
+
+  GrammarToken:
+    description: >-
+      A vocabulary term allowed at a specific grammar segment (e.g. the
+      token "plasma" at the subject segment). Tokens are the leaves of
+      the grammar graph and are referenced by StandardName nodes through
+      HAS_SEGMENT edges (see standard_name.yaml).
+
+      Note: HAS_SEGMENT edges carry a ``{position, segment}`` property
+      map written by persist_worker using
+      ``imas_standard_names.graph.spec.segment_edge_specs``. LinkML does
+      not model edge properties, so that metadata lives on the Cypher
+      edge rather than on the GrammarToken node.
+
+      Example Cypher:
+        MATCH (t:GrammarToken {version: "v0.7.0rc10", kind: "substance"})
+        RETURN t.value, t.segment
+        MATCH (sn:StandardName)-[r:HAS_SEGMENT]->(t:GrammarToken)
+        RETURN sn.id, r.position, t.value
+    class_uri: gg:GrammarToken
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Composite key formatted as ``{version}:{segment}:{value}``.
+          Example: "v0.7.0rc10:subject:plasma".
+        required: true
+      value:
+        description: Token string as it appears in a standard name
+        required: true
+      segment:
+        description: >-
+          Name of the grammar segment this token belongs to (e.g.
+          "subject"). Stored as a string for convenient filtering in
+          addition to the graph edge from GrammarSegment.
+        required: true
+      version:
+        description: ISN grammar version this token belongs to
+        required: true
+      description:
+        description: Human-readable description of this token
+      kind:
+        description: >-
+          Classification of this token within its segment (e.g.
+          "transformation", "substance", "region", "process"). Populated
+          from the ISN spec when available; free-form string.
+
+  GrammarTemplate:
+    description: >-
+      A name-construction template declared by the ISN grammar (e.g.
+      ``{token}_component_of`` for the component segment). Templates
+      describe how tokens are combined into standard names.
+
+      Relationships (inbound):
+        - ISNGrammarVersion -[:DEFINES]-> GrammarTemplate
+        - ISNGrammarVersion -[:USES_TEMPLATE]-> GrammarTemplate
+
+      Example Cypher:
+        MATCH (gv:ISNGrammarVersion)-[:USES_TEMPLATE]->(tpl:GrammarTemplate)
+        RETURN gv.version, tpl.name, tpl.pattern
+    class_uri: gg:GrammarTemplate
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Composite key formatted as ``{version}:template:{name}``.
+          Example: "v0.7.0rc10:template:component_template".
+        required: true
+      name:
+        description: Template name (e.g. "component_template")
+        required: true
+      pattern:
+        description: >-
+          Template pattern string (e.g. "{token}_component_of"). Tokens
+          are substituted into ``{token}`` placeholders during name
+          construction.
+        required: true
+      version:
+        description: ISN grammar version this template belongs to
+        required: true
+      description:
+        description: Human-readable description of this template
+      segment:
+        description: >-
+          Segment this template applies to, when the template is
+          segment-scoped (e.g. "component"). Null for generic templates.
