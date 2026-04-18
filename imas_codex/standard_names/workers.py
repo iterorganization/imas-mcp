@@ -1322,9 +1322,11 @@ def _validate_via_isn(
     isn_dd_paths = [
         strip_dd_prefix(p) for p in raw_paths if parse_source_path(p)[0] == "dd"
     ]
+    from imas_codex.standard_names.kind_derivation import to_isn_kind
+
     isn_dict: dict[str, Any] = {
         "name": entry.get("id", ""),
-        "kind": entry.get("kind", "scalar"),
+        "kind": to_isn_kind(entry.get("kind", "scalar")),
         "dd_paths": isn_dd_paths,
     }
     # ISN requires physics_domain — fall back to "general" when DD has no domain

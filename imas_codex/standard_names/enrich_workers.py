@@ -1158,9 +1158,11 @@ def _validate_item_pydantic(item: dict[str, Any]) -> list[str]:
     try:
         from imas_standard_names.models import create_standard_name_entry
 
+        from imas_codex.standard_names.kind_derivation import to_isn_kind
+
         data = {
             "name": item["id"],
-            "kind": item.get("kind") or "scalar",
+            "kind": to_isn_kind(item.get("kind") or "scalar"),
             "unit": item.get("unit") or "",
             "description": item.get("enriched_description") or "",
             "documentation": item.get("enriched_documentation") or "",

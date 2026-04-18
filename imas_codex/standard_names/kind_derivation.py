@@ -106,3 +106,32 @@ def derive_kind(name: str) -> str:
 
     # 6. Default
     return "scalar"
+
+
+# Mapping from extended local kinds → ISN's 3-kind discriminator.
+# The ISN library (imas_standard_names) currently only validates
+# {scalar, vector, metadata}.  We retain the richer taxonomy in our
+# graph for filtering/search but collapse to ISN's vocabulary when
+# constructing the validation model via ``create_standard_name_entry``.
+_ISN_KIND_MAP: dict[str, str] = {
+    "scalar": "scalar",
+    "vector": "vector",
+    "vector_component": "scalar",  # one component is a scalar field
+    "tensor": "scalar",
+    "tensor_component": "scalar",  # one component is a scalar field
+    "eigenfunction": "scalar",
+    "spectrum": "scalar",
+    "complex_part": "scalar",
+    "metadata": "metadata",
+}
+
+
+def to_isn_kind(kind: str | None) -> str:
+    """Map a local extended kind value to one ISN's discriminator accepts.
+
+    Defaults to ``scalar`` for unknown values so validation never crashes
+    on a kind the ISN library doesn't recognise.
+    """
+    if not kind:
+        return "scalar"
+    return _ISN_KIND_MAP.get(kind, "scalar")
