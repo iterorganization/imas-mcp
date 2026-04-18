@@ -363,3 +363,118 @@ class TestSegmentEdgeTokenMiss:
             _write_segment_edges(mock_gc, ["electron_temperature"])
 
         assert not any("Token-miss" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Tests: round-trip segment edge writing (plan 29 E.8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("_patch_isn")
+class TestSegmentEdgeRoundTrip:
+    """Write HAS_SEGMENT edges and verify reconstructed segment list matches input."""
+
+    def test_round_trip_positions_match_input_order(self, mock_gc: MagicMock) -> None:
+        """Given a known parsed-segment list, verify the written edges carry
+        the correct {position, segment, token} fields that reconstruct
+        the original segment list in order."""
+        # Simulate: DELETE returns nothing, MERGE returns all matched
+        mock_gc.query.side_effect = [
+            # DELETE old edges
+            [],
+            # MERGE + RETURN
+            [
+                {"token": "electron", "segment": "subject", "matched": True},
+                {"token": "temperature", "segment": "physical_base", "matched": True},
+            ],
+        ]
+
+        from imas_codex.standard_names.graph_ops import _write_segment_edges
+
+        _write_segment_edges(mock_gc, ["electron_temperature"])
+
+        # Find the MERGE call and inspect edges parameter
+        merge_calls = _find_merge_segment_calls(mock_gc)
+        assert len(merge_calls) >= 1
+
+        edges_param = merge_calls[0][1].get("edges", [])
+        assert len(edges_param) == 2
+
+        # Reconstruct segment list sorted by position
+        sorted_edges = sorted(edges_param, key=lambda e: e["position"])
+
+        # Verify exact field values
+        assert sorted_edges[0] == {
+            "position": 2,
+            "segment": "subject",
+            "token": "electron",
+        }
+        assert sorted_edges[1] == {
+            "position": 5,
+            "segment": "physical_base",
+            "token": "temperature",
+        }
+
+    def test_round_trip_multi_segment_name(self, mock_gc: MagicMock) -> None:
+        """A name with 3+ segments should produce edges with monotonically
+        increasing positions matching ISN SEGMENT_ORDER."""
+        # poloidal_electron_temperature → component(0), subject(2), physical_base(5)
+        mock_gc.query.side_effect = [
+            [],  # DELETE
+            [  # MERGE results
+                {"token": "poloidal", "segment": "component", "matched": True},
+                {"token": "electron", "segment": "subject", "matched": True},
+                {"token": "temperature", "segment": "physical_base", "matched": True},
+            ],
+        ]
+
+        from imas_codex.standard_names.graph_ops import _write_segment_edges
+
+        _write_segment_edges(mock_gc, ["poloidal_electron_temperature"])
+
+        merge_calls = _find_merge_segment_calls(mock_gc)
+        assert len(merge_calls) >= 1
+
+        edges_param = merge_calls[0][1].get("edges", [])
+        assert len(edges_param) == 3
+
+        sorted_edges = sorted(edges_param, key=lambda e: e["position"])
+
+        # Positions must be monotonically increasing
+        positions = [e["position"] for e in sorted_edges]
+        assert positions == sorted(positions)
+        assert len(set(positions)) == len(positions), "Positions must be unique"
+
+        # Each edge must have all three fields
+        for edge in sorted_edges:
+            assert "position" in edge
+            assert "segment" in edge
+            assert "token" in edge
+            assert isinstance(edge["position"], int)
+            assert isinstance(edge["segment"], str)
+            assert isinstance(edge["token"], str)
+
+    def test_round_trip_edge_fields_complete(self, mock_gc: MagicMock) -> None:
+        """Every edge dict passed to Cypher must have exactly
+        {position, segment, token} — no extra, no missing keys."""
+        mock_gc.query.side_effect = [
+            [],  # DELETE
+            [
+                {"token": "electron", "segment": "subject", "matched": True},
+                {"token": "temperature", "segment": "physical_base", "matched": True},
+            ],
+        ]
+
+        from imas_codex.standard_names.graph_ops import _write_segment_edges
+
+        _write_segment_edges(mock_gc, ["electron_temperature"])
+
+        merge_calls = _find_merge_segment_calls(mock_gc)
+        edges_param = merge_calls[0][1].get("edges", [])
+
+        expected_keys = {"position", "segment", "token"}
+        for edge in edges_param:
+            assert set(edge.keys()) == expected_keys, (
+                f"Edge has unexpected keys: {set(edge.keys())} "
+                f"(expected {expected_keys})"
+            )
