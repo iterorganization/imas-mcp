@@ -776,6 +776,16 @@ def multi_subject_check(candidate: dict[str, Any]) -> list[str]:
 
         name_tokens = set(name.split("_"))
         matched_subjects = [s.value for s in Subject if s.value in name_tokens]
+
+        # Exempt known unit-qualifier compounds where a subject token appears
+        # as a modifier rather than a true subject. These are conventional
+        # particle-count conversions in the DD, not dual subjects.
+        #   - `*_electron_equivalent` — ionization-equivalent particle count
+        #     (e.g. hydrogen molecule released → N electrons on full ionization)
+        #   - `*_electron_temperature_equivalent` — temperature expressed as kT/e
+        if name.endswith("_electron_equivalent"):
+            matched_subjects = [s for s in matched_subjects if s != "electron"]
+
         if len(matched_subjects) >= 2:
             issues.append(
                 f"audit:multi_subject_check: name contains multiple subjects: "
@@ -1594,16 +1604,21 @@ def mode_number_suffix_check(candidate: dict[str, Any]) -> list[str]:
 
 
 def cumulative_prefix_check(candidate: dict[str, Any]) -> list[str]:
-    """Flag ``cumulative_``/``integrated_``/``running_``/``accumulated_`` prefixes.
+    """Flag spatial-integration misnomers like ``cumulative_``/``integrated_``/``running_``.
 
     DD leaf names ending in ``_inside`` (e.g. ``power_inside_thermal_n_tor``,
     ``current_tor_inside``) denote a quantity integrated inside the enclosing
-    flux surface. The canonical ISN suffix for this is ``_inside_flux_surface``
-    placed directly after the quantity; ``cumulative_`` (and synonyms) lose
-    the geometric meaning and are not part of the ISN grammar vocabulary.
+    flux surface. The canonical ISN suffix is ``_inside_flux_surface`` placed
+    directly after the quantity; ``cumulative_`` / ``integrated_`` / ``running_``
+    lose the geometric meaning and are not part of the ISN grammar vocabulary.
+
+    NOTE: ``accumulated_`` is NOT flagged here — DD gas-injection and coil-charge
+    paths use ``accumulated_`` to denote a running total over time, which is a
+    distinct physical concept from spatial flux-surface integration. Time
+    accumulation is handled via the ISN process / transformation vocabulary.
     """
     name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
-    bad_tokens = ("cumulative_", "integrated_", "running_", "accumulated_")
+    bad_tokens = ("cumulative_", "integrated_", "running_")
     tokens = name.split("_")
     for bad in bad_tokens:
         stem = bad.rstrip("_")
