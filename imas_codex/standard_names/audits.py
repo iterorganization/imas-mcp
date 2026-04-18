@@ -664,6 +664,19 @@ def name_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
             continue
         if token == "angle" and ("offset" in name_tokens or "gradient" in name_tokens):
             continue
+        # ``_flux`` shifts the head-noun dimension by time and area:
+        # ``energy_flux`` → W.m^-2 (power per area), not energy.
+        # ``mass_flux``   → kg.m^-2.s^-1, not mass.
+        # ``charge_flux`` → A.m^-2, not charge.
+        # The flux variant is too ambiguous (could be particle-flux of an
+        # energy-bearing species) for a hard audit; defer to dimensional
+        # consistency checks at the description layer.
+        if "flux" in name_tokens and token in ("energy", "mass", "voltage"):
+            continue
+        # ``_density`` qualifier already handled for power/energy above; also
+        # exempt for mass (mass_density → kg.m^-3) and pressure (rare).
+        if token == "mass" and "density" in name_tokens:
+            continue
         # _peaking_factor, _profile_factor, _ratio, _fraction names are
         # dimensionless by definition — the head noun (temperature, density)
         # describes the numerator quantity, not the declared unit.

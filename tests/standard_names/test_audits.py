@@ -1031,6 +1031,67 @@ class TestPeakingFactorExemption:
         )
         assert issues
 
+    def test_pass_energy_flux_with_power_per_area(self):
+        """``_energy_flux`` carries dimensions of power-per-area (W.m^-2),
+        not pure energy. The audit must accept this without flagging."""
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        for name, unit in [
+            ("incident_neutral_kinetic_energy_flux", "W.m^-2"),
+            ("incident_ion_kinetic_energy_flux_on_wall", "m^-2.W"),
+            ("electron_emitted_kinetic_energy_flux_at_first_wall", "m^-2.W"),
+        ]:
+            assert (
+                name_unit_consistency_check(
+                    {"id": name, "unit": unit, "description": ""}
+                )
+                == []
+            ), f"unexpected fail for {name} {unit}"
+
+    def test_pass_energy_flux_with_particle_flux_unit(self):
+        """A particle flux of energy-bearing species (``m^-2.s^-1``) is also
+        a legitimate use of ``_energy_flux`` per source-path semantics."""
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        assert (
+            name_unit_consistency_check(
+                {
+                    "id": "neutral_kinetic_energy_flux_emitted_from_wall",
+                    "unit": "m^-2.s^-1",
+                    "description": "",
+                }
+            )
+            == []
+        )
+
+    def test_pass_mass_flux_with_compound_unit(self):
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        assert (
+            name_unit_consistency_check(
+                {
+                    "id": "ion_mass_flux_at_separatrix",
+                    "unit": "kg.m^-2.s^-1",
+                    "description": "",
+                }
+            )
+            == []
+        )
+
+    def test_fail_bare_energy_with_particle_flux_unit(self):
+        """Without the ``flux`` qualifier, energy with a non-energy unit
+        must still fail — guards against the exemption being too broad."""
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        issues = name_unit_consistency_check(
+            {
+                "id": "neutral_kinetic_energy",
+                "unit": "m^-2.s^-1",
+                "description": "",
+            }
+        )
+        assert issues
+
 
 class TestAggregatorOrderCheck:
     def test_fail_trailing_volume_averaged(self):
