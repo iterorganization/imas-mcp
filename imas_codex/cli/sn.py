@@ -1863,235 +1863,219 @@ def sn_review(
 
 
 @sn.command("enrich")
-@click.option("--ids", default=None, help="Scope to names linked to specific IDS")
-@click.option("--domain", default=None, help="Scope to physics domain")
+@click.option(
+    "--domain",
+    multiple=True,
+    default=None,
+    help="Filter by physics domain (repeatable, e.g. --domain equilibrium --domain transport)",
+)
 @click.option(
     "--status",
     "status_filter",
-    default=None,
-    help="Filter by review_status",
+    default="named",
+    show_default=True,
+    help="Review status(es) to enrich from (comma-separated or repeated)",
 )
 @click.option(
     "-c",
     "--cost-limit",
     type=float,
-    default=5.0,
-    help="Max LLM spend in USD",
+    default=2.0,
+    show_default=True,
+    help="Maximum LLM spend in USD",
 )
-@click.option("--dry-run", is_flag=True, help="Show candidates without LLM calls")
-@click.option("--limit", type=int, default=None, help="Max names to enrich")
-@click.option("--batch-size", type=int, default=10, help="Names per LLM batch (max 20)")
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Cap total standard names to enrich",
+)
+@click.option(
+    "--batch-size",
+    type=int,
+    default=8,
+    show_default=True,
+    help="LLM batch size (names per request)",
+)
+@click.option("--dry-run", is_flag=True, help="Preview candidates without graph writes")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Re-enrich names already at review_status='enriched'",
+)
+@click.option(
+    "--model",
+    "model_override",
+    type=str,
+    default=None,
+    help="Override LLM model (default: sn-enrich from settings)",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
 def sn_enrich(
-    ids: str | None,
-    domain: str | None,
-    status_filter: str | None,
+    domain: tuple[str, ...],
+    status_filter: str,
     cost_limit: float,
-    dry_run: bool,
     limit: int | None,
     batch_size: int,
+    dry_run: bool,
+    force: bool,
+    model_override: str | None,
     verbose: bool,
     quiet: bool,
 ) -> None:
     """Enrich existing standard names with documentation.
 
     \b
-    Takes names as fixed input and generates/improves documentation
-    fields (description, documentation, tags, links) using ALL linked
-    DD paths as context.
+    Takes named standard names as input and generates documentation
+    fields (description, documentation, tags, links) using linked
+    DD paths as context.  Runs the five-phase pipeline:
+    EXTRACT → CONTEXTUALISE → DOCUMENT → VALIDATE → PERSIST.
 
     \b
     Does NOT change: name, grammar fields, kind, or unit.
-    Clears review_input_hash so stale reviews are invalidated.
 
     \b
     Examples:
-      imas-codex sn enrich --ids equilibrium --cost-limit 3.0
-      imas-codex sn enrich --status drafted --dry-run
-      imas-codex sn enrich --limit 50 --batch-size 5
+      imas-codex sn enrich --domain equilibrium -c 2.0
+      imas-codex sn enrich --domain transport --domain magnetics --limit 50 --dry-run
+      imas-codex sn enrich --force --model openrouter/anthropic/claude-opus-4.7
     """
-    import asyncio
-
-    from imas_codex.cli.utils import setup_logging
-
-    setup_logging("DEBUG" if verbose else "WARNING")
 
     from imas_codex.discovery.base.llm import set_litellm_offline_env
 
     set_litellm_offline_env()
 
-    from imas_codex.standard_names.graph_ops import (
-        get_enrichment_candidates,
-        write_enrichment_results,
+    from imas_codex.cli.discover.common import (
+        DiscoveryConfig,
+        make_log_print,
+        run_discovery,
+        setup_logging,
+        use_rich_output,
     )
 
-    # ── Fetch candidates ──────────────────────────────────────────────
-    candidates = get_enrichment_candidates(
-        ids_filter=ids,
-        domain_filter=domain,
-        status_filter=status_filter,
-        limit=limit,
-    )
+    # --- Parse domain / status lists ---
+    domain_list: list[str] | None = list(domain) if domain else None
+    # status_filter can be comma-separated or repeated
+    statuses = [
+        s.strip() for part in status_filter.split(",") for s in [part] if s.strip()
+    ]
 
-    if not candidates:
-        console.print("[yellow]No enrichment candidates found[/yellow]")
-        return
-
-    if not quiet:
-        console.print("\n[bold]Standard Name Enrichment[/bold]")
-        console.print(f"  Candidates: {len(candidates)}")
-        if ids:
-            console.print(f"  IDS filter: {ids}")
-        if domain:
-            console.print(f"  Domain filter: {domain}")
-        if status_filter:
-            console.print(f"  Status filter: {status_filter}")
-        console.print(f"  Batch size: {min(batch_size, 20)}")
-        console.print(f"  Cost limit: ${cost_limit:.2f}")
-
-    if dry_run:
+    # --- Validation warning ---
+    if not domain_list and limit is None:
         console.print(
-            f"\n[bold]Dry run:[/bold] {len(candidates)} names would be enriched:"
+            "[yellow]⚠ Enriching all named SNs — "
+            "use --domain or --limit to scope[/yellow]"
         )
-        for c in candidates[:20]:
-            n_paths = len(c.get("dd_paths") or [])
-            has_docs = "✓" if c.get("documentation") else "✗"
-            console.print(f"  {c['id']} — {n_paths} linked paths, docs: {has_docs}")
-        if len(candidates) > 20:
-            console.print(f"  … and {len(candidates) - 20} more")
-        return
 
-    # ── Run async enrichment ──────────────────────────────────────────
-    batch_size = min(batch_size, 20)
+    use_rich = use_rich_output()
+    console_obj = setup_logging("sn", "sn-enrich", use_rich, verbose=verbose)
+    log_print = make_log_print("sn-enrich", console_obj)
 
-    async def _run_enrich() -> None:
-        from imas_codex.discovery.base.llm import acall_llm_structured
-        from imas_codex.llm.prompt_loader import render_prompt
-        from imas_codex.settings import get_model
-        from imas_codex.standard_names.models import StandardNameEnrichBatch
+    # Suppress noisy loggers
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-        model = get_model("sn-generate")
-        total_cost = 0.0
-        total_enriched = 0
-        total_batches = 0
+    log_print("\n[bold]Standard Name Enrichment[/bold]")
+    if domain_list:
+        log_print(f"  Domain filter: {', '.join(domain_list)}")
+    log_print(f"  Status filter: {', '.join(statuses)}")
+    log_print(f"  Batch size: {batch_size}")
+    log_print(f"  Cost limit: ${cost_limit:.2f}")
+    if limit:
+        log_print(f"  Limit: {limit} names")
+    if force:
+        log_print("  Force: re-enriching already-enriched names")
+    if model_override:
+        log_print(f"  Model override: {model_override}")
+    if dry_run:
+        log_print("  Mode: dry run")
+    log_print("")
 
-        # Render system prompt once
-        system_prompt = render_prompt("sn/enrich_system")
+    from imas_codex.standard_names.enrich_pipeline import run_sn_enrich_engine
+    from imas_codex.standard_names.enrich_state import StandardNameEnrichState
 
-        # Batch the candidates
-        batches = [
-            candidates[i : i + batch_size]
-            for i in range(0, len(candidates), batch_size)
+    state = StandardNameEnrichState(
+        facility="dd",
+        domain=domain_list,
+        status_filter=statuses,
+        cost_limit=cost_limit,
+        limit=limit,
+        batch_size=batch_size,
+        dry_run=dry_run,
+        force=force,
+        model=model_override,
+    )
+
+    async def _run(stop_event, service_monitor):
+        if service_monitor:
+            state.service_monitor = service_monitor
+        await run_sn_enrich_engine(
+            state,
+            stop_event=stop_event,
+        )
+        return state.stats
+
+    config = DiscoveryConfig(
+        facility="dd",
+        domain="sn-enrich",
+        facility_config={},
+        display=None,
+        check_graph=True,
+        check_embed=False,
+        check_ssh=False,
+        check_auth=False,
+        check_model=not dry_run,
+        model_section="sn-enrich",
+        suppress_loggers=[
+            "imas_codex.standard_names",
+        ],
+        verbose=verbose,
+    )
+
+    result = run_discovery(config, _run)
+
+    # --- Print summary ---
+    if result:
+        extracted = result.get("extract_count", 0)
+        enriched_count = result.get("persist_written", 0)
+        failed_count = result.get("document_errors", 0)
+        quarantined = result.get("validate_quarantined", 0)
+        doc_cost = result.get("document_cost", 0.0)
+
+        log_print("\n[bold]Enrichment Summary[/bold]")
+        log_print(f"  Extracted:    {extracted}")
+        log_print(f"  Enriched:     {enriched_count}")
+        if failed_count:
+            log_print(f"  Failed:       {failed_count}")
+        if quarantined:
+            log_print(f"  Quarantined:  {quarantined}")
+        log_print(f"  Cost:         ${doc_cost:.4f} / ${cost_limit:.2f}")
+
+        # Per-phase timings
+        phase_stats = [
+            ("extract", state.extract_stats),
+            ("contextualise", state.contextualise_stats),
+            ("document", state.document_stats),
+            ("validate", state.validate_stats),
+            ("persist", state.persist_stats),
         ]
+        timing_parts = []
+        for name, stats in phase_stats:
+            elapsed = stats.elapsed
+            if elapsed and elapsed > 0 and stats.processed > 0:
+                timing_parts.append(f"{name}={elapsed:.1f}s")
+        if timing_parts:
+            log_print(f"  Timings:      {', '.join(timing_parts)}")
 
-        for batch_idx, batch in enumerate(batches):
-            if total_cost >= cost_limit:
-                if not quiet:
-                    console.print(
-                        f"[yellow]Cost limit reached: ${total_cost:.4f} >= ${cost_limit:.2f}[/yellow]"
-                    )
-                break
+        # Per-domain breakdown (if available)
+        domain_stats = result.get("domain_breakdown")
+        if domain_stats:
+            log_print("  By domain:")
+            for dom, count in sorted(domain_stats.items()):
+                log_print(f"    {dom}: {count}")
 
-            # Build per-name context for the user prompt
-            names_context = []
-            for c in batch:
-                grammar = {}
-                for seg in (
-                    "physical_base",
-                    "subject",
-                    "component",
-                    "coordinate",
-                    "position",
-                    "process",
-                    "geometric_base",
-                ):
-                    if c.get(seg):
-                        grammar[seg] = c[seg]
-
-                names_context.append(
-                    {
-                        "name": c["id"],
-                        "kind": c.get("kind", "scalar"),
-                        "unit": c.get("unit"),
-                        "description": c.get("description") or "",
-                        "documentation": c.get("documentation") or "",
-                        "tags": c.get("tags") or [],
-                        "links": c.get("links") or [],
-                        "validity_domain": c.get("validity_domain"),
-                        "constraints": c.get("constraints") or [],
-                        "grammar": grammar,
-                        "dd_paths": c.get("dd_paths") or [],
-                    }
-                )
-
-            user_prompt = render_prompt("sn/enrich_user", {"names": names_context})
-
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
-
-            try:
-                result = await acall_llm_structured(
-                    model=model,
-                    messages=messages,
-                    response_model=StandardNameEnrichBatch,
-                    max_tokens=4096,
-                    temperature=0.3,
-                    service="standard-names",
-                )
-                parsed, cost, tokens = result
-                total_cost += cost
-
-                # Match results back to candidates by name
-                result_map = {item.standard_name: item for item in parsed.items}
-                write_batch: list[dict] = []
-
-                for c in batch:
-                    enriched = result_map.get(c["id"])
-                    if enriched:
-                        write_batch.append(
-                            {
-                                "id": c["id"],
-                                "description": enriched.description,
-                                "documentation": enriched.documentation,
-                                "tags": enriched.tags or None,
-                                "links": enriched.links or None,
-                                "validity_domain": enriched.validity_domain,
-                                "constraints": enriched.constraints or None,
-                            }
-                        )
-                    else:
-                        logger.warning("LLM did not return result for %s", c["id"])
-
-                if write_batch:
-                    written = write_enrichment_results(write_batch)
-                    total_enriched += written
-
-                total_batches += 1
-
-                if not quiet:
-                    console.print(
-                        f"  Batch {batch_idx + 1}/{len(batches)}: "
-                        f"[green]{len(write_batch)}[/green] enriched, "
-                        f"cost ${cost:.4f} ({tokens} tokens)"
-                    )
-
-            except Exception as exc:
-                logger.error("Batch %d failed: %s", batch_idx + 1, exc)
-                if not quiet:
-                    console.print(
-                        f"  Batch {batch_idx + 1}/{len(batches)}: "
-                        f"[red]failed — {exc}[/red]"
-                    )
-
-        if not quiet:
-            console.print(
-                f"\n[bold]Enrichment complete:[/bold] "
-                f"[green]{total_enriched}[/green] names enriched "
-                f"in {total_batches} batches, "
-                f"total cost ${total_cost:.4f}"
-            )
-
-    asyncio.run(_run_enrich())
+        if dry_run:
+            log_print("  (dry run — no LLM calls or graph writes)")
+    elif not quiet:
+        log_print("[yellow]No enrichment results returned[/yellow]")

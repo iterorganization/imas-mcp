@@ -51,15 +51,24 @@ _CLAIM_TIMEOUT = "PT300S"  # 5 minutes
 def claim_names_for_enrichment(
     *,
     limit: int = 50,
-    domain: str | None = None,
+    domain: str | list[str] | None = None,
     ids: str | None = None,
     force: bool = False,
+    status_filter: list[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Atomically claim ``review_status='named'`` StandardNames for enrichment.
+    """Atomically claim StandardNames at a given review_status for enrichment.
 
     Uses the two-step claim-token pattern (SET + verify) to prevent
     parallel workers from double-processing.  Skips nodes already at
     ``enriched`` or later status unless *force* is True.
+
+    Args:
+        limit: Maximum number of names to claim.
+        domain: One or more physics domains to filter by.
+        ids: IDS name to filter by (via HAS_STANDARD_NAME relationships).
+        force: If True, also claim already-enriched nodes.
+        status_filter: Review statuses to claim from.  Defaults to
+            ``['named']``.
 
     Returns ``(token, items)`` where *token* must be passed to
     downstream stages for release or mark-done.
@@ -68,21 +77,30 @@ def claim_names_for_enrichment(
 
     token = str(uuid.uuid4())
 
+    # Resolve status filter
+    statuses = status_filter or ["named"]
+
     # Build WHERE clauses
     where_parts = [
-        "sn.review_status = 'named'",
+        "sn.review_status IN $statuses",
         "(sn.enrich_claimed_at IS NULL"
         "  OR sn.enrich_claimed_at < datetime() - duration($timeout))",
     ]
-    params: dict[str, Any] = {"limit": limit, "token": token, "timeout": _CLAIM_TIMEOUT}
+    params: dict[str, Any] = {
+        "limit": limit,
+        "token": token,
+        "timeout": _CLAIM_TIMEOUT,
+        "statuses": statuses,
+    }
 
     if not force:
         # Skip already-enriched nodes
         where_parts.append("sn.enriched_at IS NULL")
 
     if domain:
-        where_parts.append("sn.physics_domain = $domain")
-        params["domain"] = domain
+        domains = [domain] if isinstance(domain, str) else domain
+        where_parts.append("sn.physics_domain IN $domains")
+        params["domains"] = domains
 
     if ids:
         # Filter by IDS via source paths or HAS_STANDARD_NAME relationships
@@ -182,6 +200,7 @@ async def enrich_extract_worker(state: StandardNameEnrichState, **_kwargs) -> No
             domain=state.domain,
             ids=state.ids,
             force=state.force,
+            status_filter=state.status_filter,
         )
 
     if state.dry_run:
@@ -192,7 +211,7 @@ async def enrich_extract_worker(state: StandardNameEnrichState, **_kwargs) -> No
             await asyncio.to_thread(release_enrichment_claims, token)
 
         # Build batches from claimed items
-        batches = _build_batches(items)
+        batches = _build_batches(items, batch_size=state.batch_size)
         state.batches = batches
         total_items = sum(len(b["items"]) for b in batches)
         state.extract_stats.total = total_items
@@ -217,7 +236,7 @@ async def enrich_extract_worker(state: StandardNameEnrichState, **_kwargs) -> No
         state.extract_phase.mark_done()
         return
 
-    batches = _build_batches(items, token=token)
+    batches = _build_batches(items, batch_size=state.batch_size, token=token)
     state.batches = batches
     total_items = sum(len(b["items"]) for b in batches)
     state.extract_stats.total = total_items
@@ -656,7 +675,7 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
     from imas_codex.settings import get_model
     from imas_codex.standard_names.models import StandardNameEnrichBatch
 
-    model = get_model("sn-enrich")
+    model = state.model or get_model("sn-enrich")
 
     total_items = sum(len(b["items"]) for b in state.batches)
     state.document_stats.total = total_items

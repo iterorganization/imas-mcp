@@ -32,11 +32,14 @@ class StandardNameEnrichState(DiscoveryStateBase):
     """
 
     # --- Filters / configuration ---
-    domain: str | None = None
+    domain: list[str] | None = None
     ids: str | None = None
     limit: int | None = None
     force: bool = False
     dry_run: bool = False
+    batch_size: int = 8
+    model: str | None = None
+    status_filter: list[str] | None = None
 
     # --- Batch / accumulator data ---
     batches: list[Any] = field(default_factory=list)
