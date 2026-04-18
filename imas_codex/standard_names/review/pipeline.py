@@ -14,10 +14,26 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
+
+# Defense-in-depth: strict SN id pattern used to reject reviewer-hallucinated
+# revised_name values (e.g. multi-hundred-char stream-of-consciousness strings).
+_SN_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_SN_ID_MAX_LEN = 120
+
+
+def _valid_sn_id(candidate: str | None) -> bool:
+    """Return True iff candidate is a plausible standard-name id."""
+    if not candidate or not isinstance(candidate, str):
+        return False
+    if len(candidate) > _SN_ID_MAX_LEN:
+        return False
+    return bool(_SN_ID_PATTERN.match(candidate))
+
 
 if TYPE_CHECKING:
     from imas_codex.standard_names.review.state import StandardNameReviewState
@@ -706,6 +722,16 @@ def _match_reviews_to_entries(
         original["review_tier"] = review.scores.tier
 
         if review.verdict == StandardNameReviewVerdict.revise and review.revised_name:
+            if not _valid_sn_id(review.revised_name):
+                # Reviewer hallucinated garbage into revised_name (e.g. embedded
+                # stream-of-consciousness reasoning). Keep original and log.
+                wlog.warning(
+                    "Rejecting malformed revised_name (len=%d) for %r — keeping original",
+                    len(review.revised_name) if review.revised_name else 0,
+                    review.standard_name,
+                )
+                scored.append(original)
+                continue
             revised_entry = dict(original)
             revised_entry["id"] = review.revised_name
             if review.revised_fields:

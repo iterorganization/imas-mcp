@@ -60,9 +60,11 @@ Return a JSON object with an `items` array. Each item conforms to:
 - `standard_name` — MUST exactly match the input name (hard requirement for result matching).
 - `description` — ≤ 2 sentences. Must add information beyond what the name tokens encode.
 - `documentation` — ≥ 3 sentences. Must cover physical meaning, measurement context, and related quantities.
-- `tags` — lowercase, hyphen-separated. At least one physics-domain tag.
-- `links` — bare standard-name IDs only (e.g., `electron_temperature`). No `dd:` prefixes, no URLs, no `name:` prefixes. Each link must name an existing standard name.
+- `tags` — lowercase, hyphen-separated. MUST come from the controlled vocabularies below. At least one **primary** tag (physics-domain) is required.
+- `links` — MUST use the `name:foo_bar` prefix (e.g., `name:electron_temperature`). Each link must name an existing standard name. URLs (https://…) are permitted for external references.
 - `validity_domain` — optional but encouraged. Physical region or regime where the quantity is meaningful.
 - `constraints` — optional. Physical constraints on the quantity.
 - `cross_reference_rationale` — optional. Brief note explaining why the linked names were chosen.
 - `documentation_excerpt` — ≤ 160 characters. One-line summary suitable for tables and list views.
+
+{% include "sn/_controlled_tags.md" %}

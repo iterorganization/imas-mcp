@@ -38,6 +38,84 @@ logger = logging.getLogger(__name__)
 # Default batch size for grouping SNs into enrichment batches.
 _ENRICH_BATCH_SIZE = 10
 
+# Defense-in-depth sanitizers for LLM enrichment output.
+_SN_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_LINK_PREFIXES = ("name:", "http://", "https://")
+
+
+def _valid_tags() -> set[str]:
+    """Valid primary ∪ secondary tags sourced from ISN grammar context (cached)."""
+    global _VALID_TAGS_CACHE
+    try:
+        return _VALID_TAGS_CACHE  # type: ignore[name-defined]
+    except NameError:
+        pass
+    try:
+        from imas_standard_names.grammar import get_grammar_context
+
+        ctx = get_grammar_context()
+        td = ctx.get("tag_descriptions", {}) or {}
+        primary = set((td.get("primary") or {}).keys())
+        secondary = set((td.get("secondary") or {}).keys())
+        _VALID_TAGS_CACHE = primary | secondary  # type: ignore[name-defined]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to load ISN tag vocab: %s — tag filter disabled", exc)
+        _VALID_TAGS_CACHE = set()  # type: ignore[name-defined]
+    return _VALID_TAGS_CACHE  # type: ignore[name-defined]
+
+
+def _sanitize_tags(raw: list[str] | None) -> list[str]:
+    """Filter tags against the ISN controlled vocabulary."""
+    if not raw:
+        return []
+    valid = _valid_tags()
+    if not valid:
+        # Fail open: if vocab unavailable, accept anything lowercase-hyphen.
+        return [t for t in raw if isinstance(t, str) and t]
+    out: list[str] = []
+    for t in raw:
+        if not isinstance(t, str):
+            continue
+        norm = t.strip().lower()
+        if norm in valid and norm not in out:
+            out.append(norm)
+    return out
+
+
+def _sanitize_links(raw: list[str] | None) -> list[str]:
+    """Coerce LLM link strings to the required ``name:xxx`` / URL format."""
+    if not raw:
+        return []
+    out: list[str] = []
+    for link in raw:
+        if not isinstance(link, str):
+            continue
+        s = link.strip()
+        if not s:
+            continue
+        if s.startswith(_LINK_PREFIXES):
+            out.append(s)
+            continue
+        # Strip common hallucinated prefixes (``dd:``, ``standard_name:``).
+        for junk in ("dd:", "standard_name:", "sn:", "#"):
+            if s.lower().startswith(junk):
+                s = s[len(junk) :].strip()
+                break
+        # Bare id — coerce to name: prefix if it looks like an SN id.
+        if _SN_ID_RE.match(s):
+            candidate = f"name:{s}"
+            if candidate not in out:
+                out.append(candidate)
+    return out
+
+
+def _is_echoed_name(returned: str | None, expected: str) -> bool:
+    """Check the LLM echoed the input name exactly and didn't hallucinate."""
+    if not isinstance(returned, str):
+        return False
+    return returned.strip() == expected
+
+
 # Claim timeout for enrichment claims (ISO 8601 duration string).
 _CLAIM_TIMEOUT = "PT300S"  # 5 minutes
 
@@ -741,7 +819,7 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
             for enriched_item in result.items:
                 response_map[enriched_item.standard_name] = enriched_item
 
-            # Merge enriched fields onto batch items
+            # Merge enriched fields onto batch items (with sanitization)
             for item in items:
                 name = item["id"]
                 enriched = response_map.get(name)
@@ -751,10 +829,21 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
                     )
                     continue
 
+                # Guard: reject items where the LLM didn't echo the input name
+                # verbatim (catches runaway hallucination into standard_name field).
+                if not _is_echoed_name(enriched.standard_name, name):
+                    wlog.warning(
+                        "Dropping enrichment for %s — LLM returned mismatched name "
+                        "(%d chars)",
+                        name,
+                        len(enriched.standard_name or ""),
+                    )
+                    continue
+
                 item["enriched_description"] = enriched.description
                 item["enriched_documentation"] = enriched.documentation
-                item["enriched_links"] = enriched.links
-                item["enriched_tags"] = enriched.tags
+                item["enriched_links"] = _sanitize_links(enriched.links)
+                item["enriched_tags"] = _sanitize_tags(enriched.tags)
 
                 # Optional enrichment fields (validity_domain, constraints)
                 if enriched.validity_domain is not None:
