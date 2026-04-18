@@ -15,11 +15,34 @@ from __future__ import annotations
 
 import logging
 import re
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _isn_process_tokens() -> frozenset[str]:
+    """Return the canonical set of process tokens registered in ISN grammar.
+
+    Queried from ``imas_standard_names.grammar.get_grammar_context()`` at runtime
+    so the audit stays aligned with whichever ISN release is installed. Any token
+    in this set is a legitimate ``due_to_<token>`` target and must not be flagged
+    as an adjective by :func:`causal_due_to_check`.
+    """
+    try:
+        from imas_standard_names.grammar import get_grammar_context
+
+        ctx = get_grammar_context()
+        for section in ctx.get("vocabulary_sections", []) or []:
+            if section.get("segment") == "process":
+                return frozenset(section.get("tokens") or ())
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Could not load ISN process tokens: %s", exc)
+    return frozenset()
+
 
 # Checks whose failure demotes to quarantined
 CRITICAL_CHECKS = frozenset(
@@ -1162,7 +1185,16 @@ def causal_due_to_check(candidate: dict[str, Any]) -> list[str]:
         return []
     issues: list[str] = []
     suffix = name.split("_due_to_", 1)[1]
+
+    isn_processes = _isn_process_tokens()
+    # Exempt any ISN-registered process token — these are canonically valid
+    # targets of the ``due_to_`` template regardless of English part-of-speech.
+    if suffix in isn_processes or suffix.split("_", 1)[0] in isn_processes:
+        return []
+
     for event in _DURE_TO_TEMPORAL:
+        if event in isn_processes:
+            continue
         if suffix == event or suffix.startswith(event + "_"):
             issues.append(
                 f"audit:causal_due_to_check: name '{name}' uses 'due_to_{event}' — "
@@ -1171,6 +1203,8 @@ def causal_due_to_check(candidate: dict[str, Any]) -> list[str]:
             )
             break
     for adj, suggestion in _DURE_TO_ADJECTIVE.items():
+        if adj in isn_processes:
+            continue
         if suffix == adj or suffix == adj + "_":
             issues.append(
                 f"audit:causal_due_to_check: name '{name}' uses 'due_to_{adj}' — "

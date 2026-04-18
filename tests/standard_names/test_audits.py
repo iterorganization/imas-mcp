@@ -943,27 +943,36 @@ class TestSegmentOrderCheck:
 
 
 class TestCausalDueToCheckExtended:
-    def test_fail_due_to_resistive(self):
+    def test_pass_due_to_resistive_isn_process(self):
+        """`resistive` is registered as a process token in ISN rc13+."""
         from imas_codex.standard_names.audits import causal_due_to_check
 
-        issues = causal_due_to_check(
-            {"id": "parallel_current_density_due_to_resistive"}
+        assert (
+            causal_due_to_check({"id": "parallel_current_density_due_to_resistive"})
+            == []
         )
-        assert issues and "resistive" in issues[0]
 
-    def test_fail_due_to_non_inductive(self):
+    def test_pass_due_to_non_inductive_isn_process(self):
+        """`non_inductive` is registered as a process token in ISN rc13+."""
         from imas_codex.standard_names.audits import causal_due_to_check
 
-        issues = causal_due_to_check(
-            {"id": "parallel_current_density_due_to_non_inductive"}
+        assert (
+            causal_due_to_check({"id": "parallel_current_density_due_to_non_inductive"})
+            == []
         )
-        assert issues and "non_inductive" in issues[0]
 
-    def test_fail_due_to_turbulent(self):
+    def test_pass_due_to_turbulent_isn_process(self):
+        """`turbulent` is registered as a process token in ISN rc13+."""
         from imas_codex.standard_names.audits import causal_due_to_check
 
-        issues = causal_due_to_check({"id": "heat_flux_due_to_turbulent"})
-        assert issues and "turbulent" in issues[0]
+        assert causal_due_to_check({"id": "heat_flux_due_to_turbulent"}) == []
+
+    def test_fail_due_to_shutdown_temporal(self):
+        """Temporal events not in ISN process vocab remain flagged."""
+        from imas_codex.standard_names.audits import causal_due_to_check
+
+        issues = causal_due_to_check({"id": "heat_flux_due_to_shutdown"})
+        assert issues and "shutdown" in issues[0]
 
     def test_pass_due_to_resistive_diffusion(self):
         from imas_codex.standard_names.audits import causal_due_to_check
