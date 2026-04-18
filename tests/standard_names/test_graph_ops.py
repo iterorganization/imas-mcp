@@ -568,3 +568,113 @@ class TestClearStandardNames:
             kw.get("source_filter") for kw in all_kwargs if "source_filter" in kw
         ]
         assert "signals" in sources
+
+
+# =============================================================================
+# TestCocosScalarDefaulting — Fix #3 from D.3 senior review §4.3
+# =============================================================================
+
+
+class TestCocosScalarDefaulting:
+    """Test that persist_composed_batch defaults cocos_transformation_type
+    to ``one_like`` for safe scalar quantities."""
+
+    def test_safe_scalar_gets_one_like(self) -> None:
+        """A scalar with a safe unit and no prior COCOS type gets ``one_like``."""
+        from imas_codex.standard_names.graph_ops import (
+            SAFE_SCALAR_COCOS_UNITS,
+            persist_composed_batch,
+        )
+
+        # Verify the constant is accessible and non-empty
+        assert len(SAFE_SCALAR_COCOS_UNITS) > 0
+        assert "eV" in SAFE_SCALAR_COCOS_UNITS
+
+        candidates = [
+            {
+                "id": "electron_temperature",
+                "kind": "scalar",
+                "unit": "eV",
+                # no cocos_transformation_type set
+            }
+        ]
+
+        with patch(
+            "imas_codex.standard_names.graph_ops.write_standard_names"
+        ) as mock_w:
+            mock_w.return_value = 1
+            with patch("imas_codex.embeddings.description.embed_descriptions_batch"):
+                persist_composed_batch(candidates, compose_model="test/model")
+
+        assert candidates[0]["cocos_transformation_type"] == "one_like"
+
+    def test_existing_cocos_type_not_overridden(self) -> None:
+        """A scalar with an existing (non-one_like) COCOS type keeps it."""
+        from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+        candidates = [
+            {
+                "id": "poloidal_magnetic_flux",
+                "kind": "scalar",
+                "unit": "eV",
+                "cocos_transformation_type": "psi_like",
+            }
+        ]
+
+        with patch(
+            "imas_codex.standard_names.graph_ops.write_standard_names"
+        ) as mock_w:
+            mock_w.return_value = 1
+            with patch("imas_codex.embeddings.description.embed_descriptions_batch"):
+                persist_composed_batch(candidates, compose_model="test/model")
+
+        assert candidates[0]["cocos_transformation_type"] == "psi_like"
+
+    def test_vector_not_defaulted(self) -> None:
+        """A vector quantity does NOT get ``one_like`` defaulted."""
+        from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+        candidates = [
+            {
+                "id": "position_of_magnetic_axis",
+                "kind": "vector",
+                "unit": "m",
+                # no cocos_transformation_type
+            }
+        ]
+
+        with patch(
+            "imas_codex.standard_names.graph_ops.write_standard_names"
+        ) as mock_w:
+            mock_w.return_value = 1
+            with patch("imas_codex.embeddings.description.embed_descriptions_batch"):
+                persist_composed_batch(candidates, compose_model="test/model")
+
+        assert candidates[0].get("cocos_transformation_type") is None
+
+    def test_unsafe_unit_not_defaulted(self) -> None:
+        """A scalar with an unsafe unit (Wb, T, A) does NOT get defaulted."""
+        from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+        for unsafe_unit in ("Wb", "T", "A"):
+            candidates = [
+                {
+                    "id": "test_quantity",
+                    "kind": "scalar",
+                    "unit": unsafe_unit,
+                    # no cocos_transformation_type
+                }
+            ]
+
+            with patch(
+                "imas_codex.standard_names.graph_ops.write_standard_names"
+            ) as mock_w:
+                mock_w.return_value = 1
+                with patch(
+                    "imas_codex.embeddings.description.embed_descriptions_batch"
+                ):
+                    persist_composed_batch(candidates, compose_model="test/model")
+
+            assert candidates[0].get("cocos_transformation_type") is None, (
+                f"Unit {unsafe_unit} should NOT default to one_like"
+            )

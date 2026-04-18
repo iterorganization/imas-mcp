@@ -24,6 +24,51 @@ from imas_codex.standard_names.sources.base import ExtractionBatch
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Domain reclassification for magnetics IDS paths.
+#
+# Paths from the ``magnetics`` IDS are assigned ``physics_domain`` by the DD
+# enrichment layer, which often routes them into ``equilibrium`` (via the
+# constraint subtree) or ``general``.  For standard-name generation these
+# paths should live in ``magnetic_field_diagnostics``.
+# ---------------------------------------------------------------------------
+
+#: Magnetics IDS subtrees that should be reclassified to
+#: ``magnetic_field_diagnostics``.
+MAGNETICS_DIAGNOSTICS_SUBTREES: tuple[str, ...] = (
+    "magnetics/bpol_probe",
+    "magnetics/flux_loop",
+    "magnetics/rogowski_coil",
+    "magnetics/diamagnetic_flux",
+    "magnetics/b_field_",
+    "magnetics/ip",
+    "magnetics/method",
+    "magnetics/time",
+    "magnetics/shunt",
+)
+
+
+def reclassify_magnetics_domain(row: dict) -> None:
+    """Override ``physics_domain`` for magnetics-IDS paths.
+
+    Only modifies rows whose ``ids_name`` is ``magnetics``.  Any path under
+    the ``magnetics`` IDS that currently has a domain other than
+    ``magnetic_field_diagnostics`` is reclassified.
+
+    Args:
+        row: Enriched path dict (mutated in place).
+    """
+    ids_name = row.get("ids_name") or ""
+    if ids_name != "magnetics":
+        return
+
+    current_domain = row.get("physics_domain") or ""
+    if current_domain == "magnetic_field_diagnostics":
+        return  # already correct
+
+    row["physics_domain"] = "magnetic_field_diagnostics"
+
+
+# ---------------------------------------------------------------------------
 # Scope priority for primary cluster selection (most specific first).
 # ---------------------------------------------------------------------------
 
@@ -175,6 +220,9 @@ def enrich_paths(paths: list[dict]) -> list[dict]:
         if scope == "metadata":
             meta_count += 1
             continue
+
+        # Reclassify magnetics-IDS paths to magnetic_field_diagnostics
+        reclassify_magnetics_domain(base_row)
 
         # Select primary cluster (IDS-local, for per-item context)
         clusters = path_clusters.get(path, [])

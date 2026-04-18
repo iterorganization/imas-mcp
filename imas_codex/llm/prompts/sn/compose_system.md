@@ -13,6 +13,36 @@ You are a physics nomenclature expert generating IMAS standard names for fusion 
 
 {% include "sn/_exemplars_name_only.md" %}
 
+### REJECT — Forbidden Name Tokens
+
+REJECT any candidate name that contains any of the following tokens or substrings,
+because they encode data-model structure or solver semantics, not physics:
+
+Forbidden prefixes:
+  - measured_
+  - reconstructed_
+  - explicit_
+  - implicit_part_of_
+
+Forbidden suffixes:
+  - _measurement_time
+  - _constraint
+  - _constraint_weight
+  - _constraint_weight_of_*
+
+Forbidden tokens:
+  - equilibrium_reconstruction_
+  - ggd_object_
+  - _constraint_reconstructed_
+  - _constraint_measured_
+  - ntm_ (use neoclassical_tearing_mode_)
+  - ec_ (use electron_cyclotron_)
+  - exb_ (use e_cross_b_ or decomposition(drift_type))
+  - norm_ (use normalized_)
+
+When a DD path would produce one of these, SKIP and record as vocab_gap rather
+than composing.
+
 ### Template Application
 
 {{ template_rules }}

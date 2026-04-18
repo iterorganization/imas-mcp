@@ -592,6 +592,28 @@ _GRAMMAR_FIELDS = (
     "object",
 )
 
+#: Units for which scalar quantities can safely default to ``one_like``
+#: COCOS transformation type — these are sign-invariant under all COCOS
+#: conventions.  Do not include ``Wb``, ``T``, ``A``, ``V.s``, ``T.m``
+#: or any unit that may carry a COCOS-dependent sign.
+SAFE_SCALAR_COCOS_UNITS: frozenset[str] = frozenset(
+    {
+        "1",
+        "m",
+        "m^2",
+        "m^3",
+        "eV",
+        "Pa",
+        "kg.m^-3",
+        "s",
+        "s^-1",
+        "Hz",
+        "m^-3",
+        "m.s^-1",
+        "A.m^-2",
+    }
+)
+
 
 def persist_composed_batch(
     candidates: list[dict[str, Any]],
@@ -630,6 +652,15 @@ def persist_composed_batch(
         for field_name in _GRAMMAR_FIELDS:
             if field_name in fields and field_name not in entry:
                 entry[field_name] = fields[field_name]
+
+        # Default cocos_transformation_type to "one_like" for safe scalars
+        # when the extractor / DD node did not already annotate one.
+        if (
+            not entry.get("cocos_transformation_type")
+            and entry.get("kind") == "scalar"
+            and (entry.get("unit") or "") in SAFE_SCALAR_COCOS_UNITS
+        ):
+            entry["cocos_transformation_type"] = "one_like"
 
     # --- Batch-embed standard-name strings ---
     # Embed the name (id) field in a single batch call for efficiency.

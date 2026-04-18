@@ -655,3 +655,135 @@ class TestIntegration:
         batches = group_by_concept_and_unit(enriched)
         assert len(batches) == 1
         assert "unclustered" in batches[0].group_key
+
+
+# =============================================================================
+# TestMagneticsDomainReclassification — Fix #4 from D.3 senior review §4.4
+# =============================================================================
+
+
+class TestMagneticsDomainReclassification:
+    """Test that magnetics-IDS paths are reclassified to
+    ``magnetic_field_diagnostics``."""
+
+    def test_bpol_probe_reclassified(self):
+        """magnetics/bpol_probe/* → magnetic_field_diagnostics."""
+        from imas_codex.standard_names.enrichment import reclassify_magnetics_domain
+
+        row = _make_row(
+            path="magnetics/bpol_probe/field",
+            ids_name="magnetics",
+            data_type="FLT_1D",
+            unit="T",
+            description="Poloidal field probe measurement",
+        )
+        row["physics_domain"] = "equilibrium"
+        reclassify_magnetics_domain(row)
+        assert row["physics_domain"] == "magnetic_field_diagnostics"
+
+    def test_flux_loop_reclassified(self):
+        """magnetics/flux_loop/* → magnetic_field_diagnostics."""
+        from imas_codex.standard_names.enrichment import reclassify_magnetics_domain
+
+        row = _make_row(
+            path="magnetics/flux_loop/flux/data",
+            ids_name="magnetics",
+            data_type="FLT_1D",
+            unit="Wb",
+            description="Flux loop measurement",
+        )
+        row["physics_domain"] = "general"
+        reclassify_magnetics_domain(row)
+        assert row["physics_domain"] == "magnetic_field_diagnostics"
+
+    def test_rogowski_coil_reclassified(self):
+        """magnetics/rogowski_coil/* → magnetic_field_diagnostics."""
+        from imas_codex.standard_names.enrichment import reclassify_magnetics_domain
+
+        row = _make_row(
+            path="magnetics/rogowski_coil/current",
+            ids_name="magnetics",
+            data_type="FLT_0D",
+            unit="A",
+            description="Rogowski coil current",
+        )
+        row["physics_domain"] = "equilibrium"
+        reclassify_magnetics_domain(row)
+        assert row["physics_domain"] == "magnetic_field_diagnostics"
+
+    def test_ip_reclassified(self):
+        """magnetics/ip/* → magnetic_field_diagnostics."""
+        from imas_codex.standard_names.enrichment import reclassify_magnetics_domain
+
+        row = _make_row(
+            path="magnetics/ip/data",
+            ids_name="magnetics",
+            data_type="FLT_0D",
+            unit="A",
+            description="Plasma current from magnetics",
+        )
+        row["physics_domain"] = "equilibrium"
+        reclassify_magnetics_domain(row)
+        assert row["physics_domain"] == "magnetic_field_diagnostics"
+
+    def test_diamagnetic_flux_reclassified(self):
+        """magnetics/diamagnetic_flux/* → magnetic_field_diagnostics."""
+        from imas_codex.standard_names.enrichment import reclassify_magnetics_domain
+
+        row = _make_row(
+            path="magnetics/diamagnetic_flux/data",
+            ids_name="magnetics",
+            data_type="FLT_0D",
+            unit="Wb",
+            description="Diamagnetic flux",
+        )
+        row["physics_domain"] = "general"
+        reclassify_magnetics_domain(row)
+        assert row["physics_domain"] == "magnetic_field_diagnostics"
+
+    def test_non_magnetics_ids_not_reclassified(self):
+        """equilibrium IDS paths are NOT reclassified."""
+        from imas_codex.standard_names.enrichment import reclassify_magnetics_domain
+
+        row = _make_row(
+            path="equilibrium/time_slice/profiles_1d/psi",
+            ids_name="equilibrium",
+            data_type="FLT_1D",
+            unit="Wb",
+            description="Poloidal flux",
+        )
+        row["physics_domain"] = "equilibrium"
+        reclassify_magnetics_domain(row)
+        assert row["physics_domain"] == "equilibrium"
+
+    def test_already_correct_domain_unchanged(self):
+        """Paths already in magnetic_field_diagnostics stay unchanged."""
+        from imas_codex.standard_names.enrichment import reclassify_magnetics_domain
+
+        row = _make_row(
+            path="magnetics/bpol_probe/field",
+            ids_name="magnetics",
+            data_type="FLT_1D",
+            unit="T",
+            description="Poloidal field probe measurement",
+        )
+        row["physics_domain"] = "magnetic_field_diagnostics"
+        reclassify_magnetics_domain(row)
+        assert row["physics_domain"] == "magnetic_field_diagnostics"
+
+    def test_enrich_paths_reclassifies_magnetics(self):
+        """enrich_paths() applies domain reclassification for magnetics."""
+        rows = [
+            _make_row(
+                path="magnetics/bpol_probe/field",
+                ids_name="magnetics",
+                data_type="FLT_1D",
+                unit="T",
+                description="Poloidal field probe measurement",
+            ),
+        ]
+        rows[0]["physics_domain"] = "equilibrium"
+
+        enriched = enrich_paths(rows)
+        assert len(enriched) == 1
+        assert enriched[0]["physics_domain"] == "magnetic_field_diagnostics"
