@@ -492,6 +492,31 @@ because they are controller setpoints/waveforms with sentinel units
 `_reference_waveform` path reaches the compose stage, skip it and
 record as `vocab_gap`.
 
+**NC-29 `diamagnetic` is a drift, NEVER a projection axis — HARD
+PROHIBITION.** Unlike `toroidal`, `poloidal`, `radial`, `parallel`, or
+`perpendicular`, `diamagnetic` does NOT label a spatial projection axis.
+The diamagnetic drift velocity `v_dia = B × ∇p / (qnB²)` is itself a
+specific drift, not a component of another field along a "diamagnetic
+axis." Therefore `diamagnetic_component_of_<X>` is **physically wrong
+and always rejected** by the `diamagnetic_component_check` audit. When a
+DD path contains a sibling or subfield literally named `diamagnetic`
+(very common on transport / edge paths — e.g.
+`current_density/diamagnetic`, `electric_field/diamagnetic`,
+`velocity/diamagnetic`), DO NOT translate the label directly. The DD
+label is a shorthand for "the part due to the diamagnetic drift" — you
+must rename using `_due_to_diamagnetic_drift` (for currents, fluxes,
+heat flows driven by the drift) or pick the correct drift-velocity name
+for velocity-valued quantities.
+- ✓ `diamagnetic_drift_velocity` (the drift itself).
+- ✓ `ion_diamagnetic_drift_velocity`, `electron_diamagnetic_drift_velocity`.
+- ✓ `<base>_due_to_diamagnetic_drift` (a flux or current driven by the drift).
+- ✗ `diamagnetic_component_of_electric_field` — an electric field has no "diamagnetic component."
+- ✗ `diamagnetic_component_of_ion_velocity` — the diamagnetic drift IS a velocity.
+- ✗ `diamagnetic_component_of_current_density_due_to_<X>` — use `<X>_driven_current_density_due_to_diamagnetic_drift` or similar.
+Reserve `toroidal`, `poloidal`, `parallel`, `perpendicular`, `radial` for
+projection axes. Never use `diamagnetic` in a `_component_of_` or
+`<axis>_component` slot.
+
 ### Physics disambiguation glossary
 
 These terms are NOT synonyms. Pick the one supported by the source
