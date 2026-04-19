@@ -1903,6 +1903,100 @@ def ratio_binary_operator_check(candidate: dict[str, Any]) -> list[str]:
     return []
 
 
+def instrument_owned_observable_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag ``<observable>_of_<instrument>`` anti-pattern (NC-30).
+
+    Radiance, emissivity, temperature, brightness, and similar physical
+    observables are properties of the emitting plasma or observed surface,
+    NOT of the diagnostic detector that records them. A
+    ``radiance_of_visible_camera`` is physically meaningless — the camera has
+    responsivity, gain, and filters, but radiance belongs to the emitting
+    column. Allow instrument-property nouns (responsivity, throughput,
+    sensitivity, filter_bandwidth, field_of_view, integration_time, gain) but
+    reject physical observables coupled to instrument tokens.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+
+    _INSTRUMENTS = {
+        "infrared_camera",
+        "visible_camera",
+        "xray_camera",
+        "hard_xray_camera",
+        "soft_xray_camera",
+        "camera",
+        "spectrometer",
+        "bolometer",
+        "interferometer",
+        "reflectometer",
+        "polarimeter",
+        "thomson_scattering",
+        "langmuir_probe",
+        "mirnov_coil",
+        "rogowski_coil",
+        "flux_loop",
+        "bpol_probe",
+        "ece_receiver",
+        "neutron_detector",
+        "mse_diagnostic",
+        "cxrs_diagnostic",
+        "beam_emission",
+    }
+    _OBSERVABLES = {
+        "radiance",
+        "emissivity",
+        "brightness",
+        "temperature",
+        "density",
+        "pressure",
+        "intensity",
+        "spectral_intensity",
+        "photon_flux",
+        "irradiance",
+        "luminance",
+        "velocity",
+    }
+    for obs in _OBSERVABLES:
+        for instr in _INSTRUMENTS:
+            needle = f"{obs}_of_{instr}"
+            if needle in name:
+                return [
+                    f"audit:instrument_owned_observable_check: name '{name}' "
+                    f"attaches physical observable '{obs}' to instrument "
+                    f"'{instr}'. Observables belong to the emitting source, "
+                    f"not to the detector. Use "
+                    f"'{obs}_observed_by_{instr}' or "
+                    f"'<source>_{obs}_along_{instr}_line_of_sight'."
+                ]
+    return []
+
+
+def profile_suffix_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag redundant ``_profile`` suffix on scalar quantities (NC-31).
+
+    Every standard name denotes the scalar value at one coordinate; a
+    "profile" is just the same quantity sampled on an axis. The suffix is
+    redundant and should be stripped. Genuine profile-shape descriptors
+    (peakedness, half_width, aspect_ratio) are permitted.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if not name.endswith("_profile"):
+        return []
+    # Exempt shape descriptors (where _profile modifies a shape noun)
+    _SHAPE_PREFIXES_OK = (
+        "peakedness_profile",
+        "half_width_profile",
+        "aspect_ratio_profile",
+    )
+    if any(name.endswith(tail) for tail in _SHAPE_PREFIXES_OK):
+        return []
+    suggested = name[: -len("_profile")]
+    return [
+        f"audit:profile_suffix_check: name '{name}' ends with redundant "
+        f"'_profile' suffix. All spatial standard names are profiles by "
+        f"convention — strip the suffix. suggested_fix={suggested}"
+    ]
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -1959,6 +2053,8 @@ def run_audits(
     all_issues.extend(cumulative_prefix_check(candidate))
     all_issues.extend(pulse_schedule_reference_check(candidate, source_path))
     all_issues.extend(ratio_binary_operator_check(candidate))
+    all_issues.extend(instrument_owned_observable_check(candidate))
+    all_issues.extend(profile_suffix_check(candidate))
 
     return all_issues
 

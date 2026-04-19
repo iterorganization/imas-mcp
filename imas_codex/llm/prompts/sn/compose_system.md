@@ -517,6 +517,48 @@ Reserve `toroidal`, `poloidal`, `parallel`, `perpendicular`, `radial` for
 projection axes. Never use `diamagnetic` in a `_component_of_` or
 `<axis>_component` slot.
 
+**NC-30 Diagnostic instruments DO NOT own physical observables — HARD
+PROHIBITION on `<observable>_of_<instrument>` patterns.** Radiance, emissivity,
+temperature, brightness, photon flux, spectral intensity, and similar physical
+quantities are properties of the emitting plasma or observed surface, NOT of the
+detector that records them. A "radiance of an infrared camera" is physically
+meaningless — the camera has responsivity, gain, noise, field of view, pixel
+count, optical filters, and integration time, but it does not have radiance or
+emissivity. When the DD couples an observable to a diagnostic, rephrase so the
+observable attaches to its physical source. Characterize the diagnostic using
+instrument-property nouns (`responsivity`, `throughput`, `sensitivity`,
+`filter_bandwidth`, `field_of_view`, `integration_time`) or an `_observed_by_`
+/ `_measured_along_` qualifier that preserves the distinction.
+  - ✗ `emissivity_of_infrared_camera` — the observed surface has emissivity;
+    the camera does not. Use `surface_emissivity_observed_by_infrared_camera`
+    or `infrared_camera_filter_emissivity_assumption` depending on intent.
+  - ✗ `radiance_of_visible_camera` — radiance belongs to the emitting plasma
+    column. Use `visible_light_radiance_along_camera_line_of_sight` or
+    `photon_radiance_observed_by_visible_camera`.
+  - ✗ `temperature_of_thomson_scattering` — the electron population has the
+    temperature; Thomson scattering is the measurement technique. Use
+    `electron_temperature` (the observable) qualified by a provenance-free
+    path attachment, not the diagnostic label.
+  - ✓ `infrared_camera_filter_central_wavelength` (a filter property).
+  - ✓ `infrared_camera_integration_time` (an acquisition property).
+  - ✓ `surface_temperature_observed_by_infrared_camera` (physical observable
+    qualified by line-of-sight attribution).
+Applies identically to spectrometers, bolometers, interferometers,
+reflectometers, Langmuir probes, Mirnov coils, and any other diagnostic node.
+
+**NC-31 Drop the `_profile` suffix — it is implicit for all spatial fields —
+HARD PROHIBITION.** Every standard name denotes the scalar value at one
+coordinate; a "profile" is just the same quantity sampled on a coordinate
+axis. The suffix is redundant, adds no semantic content, and doubles the
+vocabulary for no benefit. Remove `_profile` from every candidate name.
+  - ✗ `hard_xray_emissivity_profile` → ✓ `hard_xray_emissivity`.
+  - ✗ `electron_temperature_profile` → ✓ `electron_temperature`.
+  - ✗ `safety_factor_profile` → ✓ `safety_factor`.
+The one exception is when the DD quantity is genuinely a profile-shape
+descriptor (peakedness, width, aspect ratio) — those carry a specific
+shape-token like `peak_width`, `half_width`, `peakedness`, `aspect_ratio`
+that replaces `_profile`, not appends to it.
+
 ### Physics disambiguation glossary
 
 These terms are NOT synonyms. Pick the one supported by the source
