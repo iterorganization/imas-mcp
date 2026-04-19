@@ -61,7 +61,7 @@ def get_extraction_candidates_dd(
     with GraphClient() as gc:
         params: dict[str, Any] = {"limit": limit}
         where_clauses = [
-            "n.node_type = 'dynamic'",
+            "n.node_type IN ['dynamic', 'constant']",
             "n.description IS NOT NULL",
             "n.description <> ''",
         ]

@@ -132,7 +132,7 @@ def extract_dd_candidates(
 
         params: dict = {"limit": limit, "sn_categories": list(SN_SOURCE_CATEGORIES)}
         where_parts = [
-            "n.node_type = 'dynamic'",
+            "n.node_type IN ['dynamic', 'constant']",
             "n.node_category IN $sn_categories",
             "n.description IS NOT NULL",
             "n.description <> ''",
