@@ -403,18 +403,18 @@ or `rate_of_change_of_<quantity>`. Never use `instant_change_of_...` —
 must match: if you describe a "rate of change" or "time derivative", the
 name must carry a rate marker.
 
-**NC-20 Amplitude / phase / magnitude use noun-suffix form, not `_of_`.**
-For the amplitude, phase, magnitude, real part, imaginary part, or modulus
-of a complex-valued or oscillatory quantity X, use the noun-suffix form
-`<X>_amplitude`, `<X>_phase`, `<X>_magnitude`, `<X>_real_part`,
-`<X>_imaginary_part`. Do NOT front-load with `amplitude_of_<X>`,
-`phase_of_<X>`, `magnitude_of_<X>` — these constructs break the grammar
-when `<X>` itself contains a `_of_` or `component_of_` chain. Within a
-single batch, pick one canonical form and use it consistently for every
-amplitude/phase pair of a family. ❌ `amplitude_of_parallel_component_of_wave_electric_field`
-→ ✅ `parallel_component_of_wave_electric_field_amplitude`. ❌
-`phase_of_right_hand_circularly_polarized_electric_field` → ✅
-`right_hand_circularly_polarized_electric_field_phase`.
+**NC-20 `_real_part` / `_imaginary_part` / `_amplitude` / `_phase` are SUFFIXES, never prefixes — HARD PROHIBITION** (the `amplitude_of_prefix_check` audit quarantines every violation).
+For complex-valued, oscillatory, or Fourier-decomposed quantities, the canonical ISN form places `_real_part`, `_imaginary_part`, `_amplitude`, `_phase`, `_magnitude`, or `_modulus` at the **end** of the name, after the full component-axis + subject chain. Prefix forms `real_part_of_<X>`, `imaginary_part_of_<X>`, `amplitude_of_<X>`, `phase_of_<X>` break the grammar whenever `<X>` contains a nested `_of_` or `_component_of_` chain (the parser cannot disambiguate which `_of_` binds where).
+Applies to EVERY complex-valued perturbation quantity in MHD / linear-stability / RF / wave-tool outputs — `perturbed_*`, `reynolds_stress_*`, `maxwell_stress_*`, `neoclassical_toroidal_viscosity_*`, `plasma_displacement`, `electrostatic_potential`, magnetic-field-perturbation families, etc.
+- ✓ `perturbed_electrostatic_potential_real_part`, `perturbed_mass_density_imaginary_part`.
+- ✓ `radial_component_of_perturbed_magnetic_field_real_part`.
+- ✓ `poloidal_component_of_perturbed_plasma_velocity_imaginary_part`.
+- ✓ `reynolds_stress_tensor_real_part`, `maxwell_stress_tensor_perturbation_imaginary_part`.
+- ✓ `parallel_component_of_wave_electric_field_amplitude`, `right_hand_circularly_polarized_electric_field_phase`.
+- ✗ `real_part_of_perturbed_electrostatic_potential` — prefix form, REJECTED.
+- ✗ `imaginary_part_of_radial_component_of_perturbed_magnetic_field` — nested `_of_` breaks parser, REJECTED.
+- ✗ `real_part_of_reynolds_stress_tensor`, `amplitude_of_parallel_component_of_wave_electric_field` — both REJECTED.
+Within a single batch, pick one canonical form and use it consistently for every amplitude/phase pair of a family.
 
 **NC-21 Spectral qualifier is `_per_toroidal_mode` — never `_per_toroidal_mode_number`.**
 When a quantity is resolved per toroidal (or poloidal) Fourier mode, the
