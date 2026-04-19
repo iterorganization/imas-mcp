@@ -28,14 +28,22 @@ American spelling (NC-17).
   - *Why good:* impurity species use their element name, not Zeff or a
     numeric index.
 
-#### P3. Position qualifiers — anchoring a quantity to a geometric locus
+#### P3. Position qualifiers: `of_` vs `at_` (semantic match)
 
-- ✅ `poloidal_magnetic_flux_at_magnetic_axis`
-- ✅ `electron_temperature_at_separatrix`
-- ✅ `safety_factor_at_plasma_boundary`
-  - *Why good:* `at_{position}` fixes the quantity at a named geometric
-    locus. `of_{position}` is reserved for when the quantity *describes
-    the position itself* (see P5).
+Positional qualifiers distinguish intrinsic geometric properties from
+field values evaluated at a locus.
+
+- **`of_<position>`** — intrinsic geometric property of a locus.
+  GOOD: `major_radius_of_magnetic_axis`, `area_of_plasma_boundary`,
+       `vertical_coordinate_of_x_point`.
+- **`at_<position>`** — value of a field quantity sampled at a point,
+  line, or surface.
+  GOOD: `electron_temperature_at_magnetic_axis`,
+       `poloidal_magnetic_flux_at_plasma_boundary`,
+       `safety_factor_at_minimum_safety_factor`.
+
+FORBIDDEN: `at_` for a geometric coordinate (wrong preposition).
+   BAD: `major_radius_at_magnetic_axis` → use `major_radius_of_magnetic_axis`.
 
 #### P4. Transformations on a base quantity
 
@@ -49,11 +57,13 @@ American spelling (NC-17).
 #### P5. Geometry of a structural entity
 
 - ✅ `major_radius_of_magnetic_axis`
-- ✅ `vertical_position_of_x_point`
+- ✅ `vertical_coordinate_of_x_point`
 - ✅ `major_radius_of_plasma_boundary_outline_point`
   - *Why good:* `of_{entity}` reads as "the property belonging to this
     entity". Do not switch to `at_{entity}` — the property *is* a feature
     of the entity, not a measurement taken at it.
+  - Note: `vertical_coordinate_of_` is the canonical Z coordinate form
+    (Rule 17); prefer it over the legacy `vertical_position_of_` form.
 
 #### P6. Distance-between form
 
@@ -72,12 +82,15 @@ American spelling (NC-17).
     must carry `fourier_coefficient_*`, `mode_amplitude_*`, or an explicit
     `harmonic_*` marker. Name and description must agree.
 
-#### P8. R/Z coordinate pairs
+#### P8. Poloidal-plane coordinates
 
-- ✅ Pair: `major_radius_of_x_point` **and** `vertical_position_of_x_point`
-  - *Why good:* R is `major_radius`, Z is `vertical_position`. Never use
-    the bare letters `r_of_*`, `z_of_*` — they look like coordinate
-    variables but read as abbreviations.
+- ✅ `vertical_coordinate_of_<position>` (preferred; Rule 17).
+- ✅ `major_radius_of_<position>` (preferred; Rule 17).
+- ✅ `toroidal_angle_of_<position>` (preferred; Rule 17).
+
+DEPRECATED: `vertical_position_of_<position>` (old form;
+    `vertical_coordinate_` is the canonical Z coordinate segment).
+
 - ✅ For 2-D fields, use `radial_coordinate` / `vertical_coordinate` for
   the independent-axis arrays themselves when they appear as grid paths.
 
@@ -112,11 +125,11 @@ American spelling (NC-17).
 
 #### A4. Mixed R/Z entity (inconsistency within a pair)
 
-- ❌ `r_of_magnetic_axis` paired with `vertical_position_of_magnetic_axis`
+- ❌ `r_of_magnetic_axis` paired with `vertical_coordinate_of_magnetic_axis`
   - *Why bad:* the pair is asymmetric — R uses a letter abbreviation, Z
     uses a full phrase. Grep for one and you miss the other.
   - *Fix:* pair as `major_radius_of_magnetic_axis` /
-    `vertical_position_of_magnetic_axis`.
+    `vertical_coordinate_of_magnetic_axis`.
 
 #### A5. Multi-subject naming (NC-2)
 
@@ -165,6 +178,37 @@ American spelling (NC-17).
 - ❌ `poloidal_magnetic_flux_of_plasma_boundary_at_plasma_boundary`
   - *Why bad:* `of` and `at` are exclusive for the same entity.
   - *Fix:* pick one preposition per name.
+
+### Forbidden patterns (anti-exemplars)
+
+1. `due_to_<adjective>` — always use the process noun.
+   BAD: `due_to_halo`, `due_to_ohmic`, `due_to_fast_ion`, `due_to_non_inductive`.
+   GOOD: `due_to_halo_currents`, `due_to_ohmic_dissipation`,
+         `due_to_fast_ions`, `due_to_non_inductive_drive`.
+
+2. `_over_<quantity>` as a division surrogate.
+   BAD: `ion_velocity_over_magnetic_field_strength`.
+   GOOD: `ion_velocity_per_magnetic_field_strength`.
+   Note: `over_<region>` (e.g. `over_halo_region`) is the valid Region
+   segment.
+
+3. `_ggd_coefficients`, `_finite_element_interpolation_coefficients_on_ggd`,
+   `_on_ggd`, `_coefficient_on_ggd` — basis-function storage, not
+   physics. Classifier excludes these; LLM must never propose them.
+
+4. `_reference_waveform`, `_reference` on pulse_schedule paths —
+   controller setpoints. Classifier excludes; LLM must never propose.
+
+5. `diamagnetic_component_of_<vector>` — the diamagnetic drift is a
+   vector quantity (`v_dia = (B × ∇p) / (q n B²)`), not a spatial axis.
+   If you need its projection, first name the drift:
+   `ion_diamagnetic_drift_velocity`; then project:
+   `radial_component_of_ion_diamagnetic_drift_velocity`.
+
+6. Duplicate-subject splitting on compound species.
+   BAD: `deuterium_tritium_*` interpreted as two subjects.
+   GOOD: treat `deuterium_tritium`, `deuterium_deuterium`,
+         `tritium_tritium` as single compound-subject tokens.
 
 ### Checklist before emitting a name
 
