@@ -740,6 +740,21 @@ def name_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
             )
         ):
             continue
+        # Meta-descriptor names: constraint_weight_of_X, exact_flag_of_X,
+        # convergence_count_of_X etc. describe META properties of a physical
+        # quantity X (weight, flag, count) — the head noun is the meta token
+        # (weight/flag/count), not X. Their unit is dimensionless by design.
+        if any(
+            marker in name
+            for marker in (
+                "_constraint_weight_of_",
+                "_constraint_weight",
+                "_exact_flag",
+                "_iteration_count",
+                "_convergence_count",
+            )
+        ):
+            continue
 
         if dimensionless:
             issues.append(
@@ -1308,6 +1323,7 @@ def causal_due_to_check(candidate: dict[str, Any]) -> list[str]:
 
 FIELD_DEVICE_WHITELIST = {
     "vacuum_toroidal_field_function",
+    "vacuum_toroidal_field_flux_function",
     "resistance_of_poloidal_field_coil",
 }
 
@@ -1387,9 +1403,23 @@ def density_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
         "_constraint_measured",
         "_constraint_time_measurement",
         "_constraint_position",
+        "_constraint",
     )
     for suffix in _CONSTRAINT_SUFFIXES:
         if name.endswith(suffix):
+            return []
+    # Meta-prefix patterns: ``measurement_time_of_X_density_constraint``,
+    # ``time_of_X_density_*`` describe a meta property of the constraint,
+    # not the density itself. Unit refers to the meta property (s, weight).
+    _META_PREFIXES = (
+        "measurement_time_of_",
+        "time_of_",
+        "position_of_",
+        "weight_of_",
+        "exact_flag_of_",
+    )
+    for prefix in _META_PREFIXES:
+        if name.startswith(prefix):
             return []
     # Acceptable density unit factors: any negative power of m.
     if "m^-" in unit or "m**-" in unit:
@@ -1724,6 +1754,29 @@ def cumulative_prefix_check(candidate: dict[str, Any]) -> list[str]:
     accumulation is handled via the ISN process / transformation vocabulary.
     """
     name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    # Meta-descriptor prefixes refer to a property OF a named quantity, not to a
+    # cumulative/integrated quantity itself. The "integrated_" inside is part of
+    # the inner quantity's name (e.g. "line_integrated_electron_density"), so this
+    # audit must not fire.
+    _META_PREFIXES = (
+        "measurement_time_of_",
+        "time_of_",
+        "position_of_",
+        "weight_of_",
+        "exact_flag_of_",
+    )
+    # Also skip meta-flag suffixes that wrap a quantity name (e.g. *_exact_flag,
+    # *_iteration_count, *_convergence_count, *_constraint_weight*).
+    _META_SUFFIXES = (
+        "_exact_flag",
+        "_iteration_count",
+        "_convergence_count",
+        "_constraint_weight",
+    )
+    if any(name.startswith(p) for p in _META_PREFIXES):
+        return []
+    if any(s in name for s in _META_SUFFIXES):
+        return []
     bad_tokens = ("cumulative_", "integrated_", "running_")
     tokens = name.split("_")
     for bad in bad_tokens:
