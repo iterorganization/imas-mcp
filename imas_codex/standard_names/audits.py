@@ -74,6 +74,8 @@ CRITICAL_CHECKS = frozenset(
         "amplitude_of_prefix_check",
         "mode_number_suffix_check",
         "cumulative_prefix_check",
+        "pulse_schedule_reference_check",
+        "ratio_binary_operator_check",
     }
 )
 
@@ -601,10 +603,33 @@ def unit_validity_check(candidate: dict[str, Any]) -> list[str]:
     Catches units containing semantic labels (e.g. ``m^dimension``, ``Wb*fourier``)
     rather than valid SI symbols. Does not validate unit algebra (left to Pydantic /
     pint); this is a defensive sanity check against LLM hallucinations.
+
+    Also flags DD-upstream quality issues: unit strings containing whitespace
+    (prose unit names like ``"Elementary Charge Unit"``) and ``^dimension``
+    placeholders that escaped the DD XML without resolution.
     """
     issues: list[str] = []
-    unit = (candidate.get("unit") or "").lower()
+    raw_unit = (candidate.get("unit") or "").strip()
+    unit = raw_unit.lower()
     if not unit or unit in ("1", "dimensionless", "-", "mixed", "none"):
+        return issues
+
+    # C.8: whitespace in unit string → dd_upstream severity
+    if re.search(r"\s", raw_unit):
+        issues.append(
+            f"audit:unit_validity_check: unit '{raw_unit}' contains "
+            f"whitespace — prose unit names are not valid SI expressions; "
+            f"severity=dd_upstream"
+        )
+        return issues
+
+    # C.8: ^dimension placeholder → dd_upstream severity
+    if "^dimension" in unit:
+        issues.append(
+            f"audit:unit_validity_check: unit '{raw_unit}' contains "
+            f"'^dimension' placeholder — unresolved DD variable; "
+            f"severity=dd_upstream"
+        )
         return issues
 
     # Split on unit algebra operators and check each token
@@ -614,7 +639,7 @@ def unit_validity_check(candidate: dict[str, Any]) -> list[str]:
             continue
         if tok in _INVALID_UNIT_TOKENS:
             issues.append(
-                f"audit:unit_validity_check: unit '{candidate.get('unit')}' "
+                f"audit:unit_validity_check: unit '{raw_unit}' "
                 f"contains non-unit token '{tok}'"
             )
             break
@@ -1227,7 +1252,7 @@ _DURE_TO_ADJECTIVE = {
     "wave": "wave_heating",
     "halo": "halo_currents",
     "runaway": "runaway_electrons",
-    "fast_ion": "fast_ion_thermalisation",
+    "fast_ion": "fast_ions",
     "alpha": "alpha_particle_heating",
     "resistive": "resistive_dissipation or resistive_diffusion",
     "non_inductive": "non_inductive_drive or non_inductive_current_drive",
@@ -1235,6 +1260,7 @@ _DURE_TO_ADJECTIVE = {
     "turbulent": "turbulent_transport",
     "neoclassical": "neoclassical_transport",
     "anomalous": "anomalous_transport",
+    "thermal": "thermal_fusion",
 }
 
 
@@ -1273,12 +1299,17 @@ def causal_due_to_check(candidate: dict[str, Any]) -> list[str]:
         if suffix == adj or suffix == adj + "_":
             issues.append(
                 f"audit:causal_due_to_check: name '{name}' uses 'due_to_{adj}' — "
-                f"'{adj}' is an adjective, not a process noun; use "
-                f"'due_to_{suggestion}' instead"
+                f"'{adj}' is an adjective, not a process noun; "
+                f"suggested_fix=due_to_{suggestion}"
             )
             break
     return issues
 
+
+FIELD_DEVICE_WHITELIST = {
+    "vacuum_toroidal_field_function",
+    "resistance_of_poloidal_field_coil",
+}
 
 _FIELD_QUALIFIERS = (
     "magnetic",
@@ -1302,6 +1333,11 @@ def implicit_field_check(candidate: dict[str, Any]) -> list[str]:
     """
     name = candidate.get("id", "")
     if not name:
+        return []
+    # Device whitelist: names referring to physical devices (field coils,
+    # toroidal-field machines) use "field" as a device qualifier, not a
+    # physics-field concept.
+    if name in FIELD_DEVICE_WHITELIST or "_field_coil" in name:
         return []
     tokens = name.split("_")
     issues: list[str] = []
@@ -1702,6 +1738,77 @@ def cumulative_prefix_check(candidate: dict[str, Any]) -> list[str]:
     return []
 
 
+# ---- Regex for ad-hoc ratio patterns (C.7) --------------------------------
+_ADHOC_RATIO_RE = re.compile(r"^(.+?)_to_(.+?)_ratio$")
+
+
+def pulse_schedule_reference_check(
+    candidate: dict[str, Any],
+    source_path: str | None = None,
+) -> list[str]:
+    """Flag reference/reference-waveform sentinels from pulse_schedule IDS.
+
+    Controller reference targets live under ``pulse_schedule/.../reference``
+    or ``pulse_schedule/.../reference_waveform`` and are not physics standard
+    name candidates.  Severity: critical.
+
+    Triggers when:
+    1. ``source_path`` matches ``pulse_schedule/.+/reference(_waveform)?``
+       (including deeper children like ``.../reference_waveform/data``).
+    2. Name ends with ``_reference`` or ``_reference_waveform``.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    issues: list[str] = []
+
+    # Check source path first
+    if source_path:
+        if re.match(r"pulse_schedule/.+/reference(_waveform)?(/|$)", source_path):
+            issues.append(
+                f"audit:pulse_schedule_reference_check: source path "
+                f"'{source_path}' is a controller reference target; "
+                f"not a physics SN candidate; severity=critical"
+            )
+            return issues
+
+    # Check name suffix
+    if name.endswith("_reference") or name.endswith("_reference_waveform"):
+        issues.append(
+            f"audit:pulse_schedule_reference_check: name '{name}' ends with "
+            f"a reference/reference_waveform suffix — likely a controller "
+            f"reference target, not a physics SN candidate; severity=critical"
+        )
+
+    return issues
+
+
+def ratio_binary_operator_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag ad-hoc ratio naming patterns; enforce ``ratio_of_<A>_to_<B>`` form.
+
+    The ISN canonical form for ratios is ``ratio_of_<A>_to_<B>`` (ISN-10).
+    Ad-hoc patterns like ``<A>_to_<B>_density_ratio`` or ``<A>_to_<B>_ratio``
+    are rejected with a suggested rewrite.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+
+    # Accept canonical form
+    if name.startswith("ratio_of_") and "_to_" in name:
+        return []
+
+    # Detect ad-hoc ``<A>_to_<B>_ratio`` or ``<A>_to_<B>_<noun>_ratio``
+    match = _ADHOC_RATIO_RE.match(name)
+    if match:
+        a_part = match.group(1)
+        b_part = match.group(2)
+        suggested = f"ratio_of_{a_part}_to_{b_part}"
+        return [
+            f"audit:ratio_binary_operator_check: name '{name}' uses ad-hoc "
+            f"ratio form; canonical ISN form is 'ratio_of_<A>_to_<B>'; "
+            f"suggested_fix={suggested}"
+        ]
+
+    return []
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -1756,6 +1863,8 @@ def run_audits(
     all_issues.extend(amplitude_of_prefix_check(candidate))
     all_issues.extend(mode_number_suffix_check(candidate))
     all_issues.extend(cumulative_prefix_check(candidate))
+    all_issues.extend(pulse_schedule_reference_check(candidate, source_path))
+    all_issues.extend(ratio_binary_operator_check(candidate))
 
     return all_issues
 
