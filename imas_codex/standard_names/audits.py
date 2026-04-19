@@ -725,6 +725,11 @@ def name_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
         # exempt for mass (mass_density → kg.m^-3) and pressure (rare).
         if token == "mass" and "density" in name_tokens:
             continue
+        # ``center_of_mass`` is a reference point (the barycentre), not a mass
+        # quantity. The mass token is part of a compound location label, not a
+        # dimensional subject. Same for similar location compounds.
+        if token == "mass" and "center_of_mass" in name:
+            continue
         # _peaking_factor, _profile_factor, _ratio, _fraction names are
         # dimensionless by definition — the head noun (temperature, density)
         # describes the numerator quantity, not the declared unit.

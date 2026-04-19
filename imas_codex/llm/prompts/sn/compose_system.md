@@ -715,6 +715,27 @@ is provided as context for your naming decisions.
     - ✗ `diamagnetic_component_of_electric_field` — makes no physical sense; an electric field does not have a "diamagnetic component."
     - ✗ `diamagnetic_component_of_ion_velocity` — the diamagnetic drift IS a velocity; it is not a component of the ion bulk velocity.
     - Use `toroidal`, `poloidal`, `parallel`, `perpendicular`, `radial` for projection axes; reserve `diamagnetic` for the drift-velocity concept itself.
+23. **`real_part` / `imaginary_part` are suffixes, NEVER prefixes — HARD PROHIBITION** (the `amplitude_of_prefix_check` audit quarantines every violation): For complex-valued perturbation quantities (common in MHD, linear-stability, wave-tool outputs), the canonical ISN form places `_real_part` / `_imaginary_part` / `_amplitude` / `_phase` at the **end** of the name, after the full component-axis + subject chain. Prefix forms `real_part_of_<X>` and `imaginary_part_of_<X>` break grammar when `<X>` already contains `_of_` or `_component_of_` (nested prepositions create parse ambiguity).
+    - ✓ `perturbed_electrostatic_potential_real_part`, `perturbed_mass_density_imaginary_part`.
+    - ✓ `radial_component_of_perturbed_magnetic_field_real_part`.
+    - ✓ `poloidal_component_of_perturbed_plasma_velocity_imaginary_part`.
+    - ✓ `reynolds_stress_tensor_real_part`, `maxwell_stress_tensor_perturbation_imaginary_part`.
+    - ✗ `real_part_of_perturbed_electrostatic_potential` — prefix form, rejected.
+    - ✗ `imaginary_part_of_radial_component_of_perturbed_magnetic_field` — nested `_of_` breaks the parser.
+    - ✗ `real_part_of_reynolds_stress_tensor` — use the suffix form instead.
+    - Same rule applies to `_amplitude` and `_phase` for Fourier-component quantities.
+24. **Do not re-quantity a location — `center_of_mass` is a reference point, not a mass quantity**: Place-name tokens that happen to include physical-quantity words are single grammatical location tokens. `center_of_mass` is a reference point (the barycentre), not a quantity with units of mass. When naming a quantity **at** the barycentre, treat `center_of_mass` as a location qualifier.
+    - ✓ `center_of_mass_velocity`, `radial_component_of_center_of_mass_velocity`.
+    - ✓ `center_of_mass_position`.
+    - ✗ `mass_velocity` or `mass_of_center_velocity` (both nonsensical).
+    - Apply the same principle to: `line_of_sight`, `field_of_view`, `point_of_closest_approach`.
+25. **Component segment position — prefix, NEVER trail** (the `segment_order_check` audit enforces this): Component/axis qualifiers (`toroidal`, `poloidal`, `radial`, `parallel`, `perpendicular`, `vertical`, `horizontal`) must precede the subject, OR use the explicit `<axis>_component_of_<quantity>` form. Never trail them.
+    - ✓ `toroidal_ion_rotation_frequency` or `toroidal_component_of_ion_rotation_frequency`.
+    - ✓ `poloidal_electron_diffusivity` or `poloidal_component_of_electron_diffusivity`.
+    - ✗ `ion_rotation_frequency_toroidal`, `electron_diffusivity_poloidal`.
+26. **Ratios use `ratio_of_<A>_to_<B>` — not `<A>_to_<B>_ratio`** (the `ratio_binary_operator_check` audit enforces this): The canonical form places `ratio_of_` as a leading prefix, with `_to_` joining the two operands.
+    - ✓ `ratio_of_ion_to_electron_density`, `ratio_of_poloidal_to_toroidal_magnetic_field`.
+    - ✗ `ion_to_electron_density_ratio`, `poloidal_to_toroidal_magnetic_field_ratio`.
 
 ## Output Format
 
