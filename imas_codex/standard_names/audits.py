@@ -94,8 +94,8 @@ _NAME_TOKEN_UNIT_EXPECTATIONS: dict[str, set[str]] = {
     "power": {"W", "MW", "kW"},
     # Temperature implies thermal units.
     "temperature": {"eV", "keV", "K"},
-    # Pressure implies Pa.
-    "pressure": {"Pa", "kPa", "MPa", "bar"},
+    # Pressure implies Pa (or dimensionally equivalent J/m^3).
+    "pressure": {"Pa", "kPa", "MPa", "bar", "J.m^-3"},
     # Voltage implies V.
     "voltage": {"V", "kV", "mV"},
     # Angle / rotation implies rad.
@@ -729,6 +729,33 @@ def name_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
         # quantity. The mass token is part of a compound location label, not a
         # dimensional subject. Same for similar location compounds.
         if token == "mass" and "center_of_mass" in name:
+            continue
+        # ``_source`` / ``_sink`` shift the head noun to a rate-per-volume:
+        # ``energy_source`` → W/m^3 (volumetric power density), not energy.
+        # ``particle_source`` → m^-3.s^-1, etc. Defer to description-layer
+        # dimensional checks.
+        if ("source" in name_tokens or "sink" in name_tokens) and token in (
+            "energy",
+            "power",
+            "mass",
+            "momentum",
+        ):
+            continue
+        # ``_diffusivity`` / ``_conductivity`` / ``_resistivity`` describe
+        # transport coefficients whose units depend on what is being
+        # transported, not on the prefix token. ``ion_energy_diffusivity``
+        # has m^2/s (kinematic diffusivity) regardless of the ``energy``
+        # qualifier — same shape as thermal diffusivity.
+        if any(
+            coef in name
+            for coef in (
+                "_diffusivity",
+                "_conductivity",
+                "_resistivity",
+                "_viscosity",
+                "_mobility",
+            )
+        ):
             continue
         # _peaking_factor, _profile_factor, _ratio, _fraction names are
         # dimensionless by definition — the head noun (temperature, density)
