@@ -112,13 +112,29 @@ grammar and convention scores.
 - Is concept identity preserved? (Same concept across IDSs → same standard name)
 - If the source is a coordinate or index, was it correctly skipped or handled?
 - Are vocab_gaps flagged when a needed grammar token doesn't exist?
+- **[I3.4]** **Length and conciseness** — count the underscore-separated tokens
+  of the bare name (excluding species suffixes like `_e`/`_i`):
+    - ≤ 6 tokens → ideal, no penalty
+    - 7 tokens → acceptable
+    - 8+ tokens → subtract **4 points per extra token** beyond 7, up to a
+      cumulative cap of **−10 on this dimension**
+  Also penalise redundant qualifiers already implied by the physics_domain
+  (e.g. `equilibrium_plasma_boundary_*` on an `equilibrium`-domain name,
+  `_of_plasma` on a `transport`-domain name) by **−4 on convention** (dim
+  4). Compound names that should decompose into two separate standard
+  names (e.g. `electron_temperature_and_density_profile`) → reject.
+  Examples:
+    - ❌ `equilibrium_plasma_boundary_outline_radial_coordinate` → prefer
+      `plasma_boundary_outline_r`
+    - ❌ `reconstructed_electron_temperature_profile_versus_normalized_psi`
+      → prefer `electron_temperature` (with coordinate context elsewhere)
 - **[I4.1]** For machine geometry, does the batch create an explosion of per-component position names when a generic parameterized name would suffice?
 - **[I4.2]** Are fitting/uncertainty quantities (chi_squared, weights) defined as standalone names rather than repeated per measured quantity?
 - **[I4.5]** Is naming consistent across the batch? (Same vocabulary for related entries, consistent suffix patterns)
 
-**20**: Perfect compliance with all composition instructions and batch consistency.
-**10**: Minor deviations — one anti-pattern or missing vocab_gap flag.
-**0**: Systematic disregard for instructions or gross batch inconsistency.
+**20**: Perfect compliance with all composition instructions and batch consistency, name is concise.
+**10**: Minor deviations — one anti-pattern, overlong name (~9+ tokens), or missing vocab_gap flag.
+**0**: Systematic disregard for instructions, gross batch inconsistency, or name ≥ 12 tokens.
 
 ## Quality Tiers
 

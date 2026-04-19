@@ -144,6 +144,29 @@ common_issues:
       rule: "Use | or |- block scalar for LaTeX content; never quoted strings"
       affects: [documentation, compliance]
 
+    I3.4_name_length_conciseness:
+      description: >-
+        Overlong or verbose standard name — redundant qualifiers, stacked
+        modifiers, or compound forms that should decompose into separate names.
+      rule: >-
+        Keep names concise. Target ≤ 6 tokens; names of 8+ tokens are
+        penalised unless every token is physically essential. Drop
+        redundant qualifiers already implied by the physics_domain (e.g. no
+        `equilibrium_` prefix on an equilibrium-domain name, no
+        `_of_plasma` when the domain is `transport`). Obvious compound
+        quantities (`{thing_a}_and_{thing_b}_...`) should split into
+        separate standard names.
+      examples_bad:
+        - "equilibrium_plasma_boundary_outline_radial_coordinate"
+        - "reconstructed_electron_temperature_profile_versus_normalized_psi"
+      examples_good:
+        - "plasma_boundary_outline_r"
+        - "electron_temperature"
+      affects: [compliance, convention]
+      score_override: >-
+        compliance -= 4 per extra token beyond 7 (capped at -10); convention -= 4
+        if redundant domain qualifier present.
+
   structural_scope:
     I4.1_geometry_explosion:
       description: "Too many per-component position/geometry names"

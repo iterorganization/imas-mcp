@@ -721,6 +721,12 @@ def _match_reviews_to_entries(
         original["reviewer_comments"] = review.reasoning
         original["review_tier"] = review.scores.tier
 
+        # Phase C: demote low-tier names to needs_revision so a subsequent
+        # `sn generate --include-review-feedback` run picks them up and
+        # regenerates with the reviewer critique fed back into the prompt.
+        if review.scores.tier in ("poor", "adequate"):
+            original["validation_status"] = "needs_revision"
+
         if review.verdict == StandardNameReviewVerdict.revise and review.revised_name:
             if not _valid_sn_id(review.revised_name):
                 # Reviewer hallucinated garbage into revised_name (e.g. embedded

@@ -344,7 +344,18 @@ def sn_generate(
 
     # Build filter kwargs for reset/clear functions
     _tiers = [t.strip() for t in tier.split(",")] if tier else None
-    _validation_status = "quarantined" if retry_quarantined else None
+    _validation_status: str | None = None
+    if retry_quarantined:
+        _validation_status = "quarantined"
+    elif include_review_feedback and not tier:
+        # Phase C: --include-review-feedback targets needs_revision names by
+        # default (the review worker demotes poor/adequate tier names to this
+        # state). Explicit --tier overrides this implicit filter.
+        _validation_status = "needs_revision"
+        logger.info(
+            "--include-review-feedback: implicit filter validation_status='needs_revision' "
+            "(pass --tier to override)"
+        )
     _reset_filter_kwargs: dict[str, Any] = {
         "since": since,
         "before": before,
@@ -390,8 +401,6 @@ def sn_generate(
         logger.info("--retry-skipped set (pending Phase B wire-up)")
     if retry_vocab_gap:
         logger.info("--retry-vocab-gap set (pending Phase B wire-up)")
-    if include_review_feedback:
-        logger.info("--include-review-feedback set (pending Phase C wire-up)")
 
     # Handle --revalidate: clear validated_at on pending SNs in current scope so
     # validate_worker re-runs ISN checks without a full regen. Safe with any source.
@@ -500,6 +509,7 @@ def sn_generate(
         cost_limit=cost_limit,
         dry_run=dry_run,
         force=force,
+        include_review_feedback=include_review_feedback,
         limit=limit,
         compose_model=compose_model,
         from_model=from_model,

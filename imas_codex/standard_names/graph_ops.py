@@ -245,6 +245,100 @@ def _get_rich_source_name_mapping() -> dict[str, dict]:
 # =============================================================================
 
 
+def fetch_review_feedback_for_sources(
+    source_ids: list[str] | set[str] | None,
+) -> dict[str, dict[str, Any]]:
+    """Fetch prior reviewer feedback for a batch of StandardNameSource ids.
+
+    Used by the compose worker when a regeneration run is invoked with
+    ``--include-review-feedback``. Each returned dict carries enough context
+    to let the LLM understand what the previous reviewer objected to and
+    adjust the new candidate accordingly.
+
+    Args:
+        source_ids: Iterable of source node ids (e.g. ``dd:equilibrium/...``
+            or ``signals:tcv:...``). ``None`` or empty input returns ``{}``
+            without hitting the graph.
+
+    Returns:
+        ``{source_id: feedback_dict}`` where feedback_dict has keys:
+
+        - ``previous_name`` (str | None): prior standard-name id
+        - ``previous_description`` (str | None)
+        - ``previous_documentation`` (str | None)
+        - ``reviewer_score`` (float | None): composite 0–1 score
+        - ``review_tier`` (str | None): ``outstanding|good|adequate|poor``
+        - ``reviewer_comments`` (str | None): free-form reviewer critique
+        - ``reviewer_scores`` (dict | None): parsed 6-dimensional rubric scores
+        - ``validation_status`` (str | None): graph lifecycle state at
+          fetch time (typically ``needs_revision``)
+
+        Only sources that currently link to a StandardName with a
+        non-null ``reviewer_score`` are returned — entries without prior
+        review data are silently omitted (the caller can treat this as a
+        cold-start and skip feedback injection).
+    """
+    if not source_ids:
+        return {}
+
+    ids = sorted({sid for sid in source_ids if sid})
+    if not ids:
+        return {}
+
+    with GraphClient() as gc:
+        rows = gc.query(
+            """
+            UNWIND $ids AS source_id
+            MATCH (src {id: source_id})-[:HAS_STANDARD_NAME]->(sn:StandardName)
+            WHERE sn.reviewer_score IS NOT NULL
+            RETURN source_id AS source_id,
+                   sn.id AS previous_name,
+                   sn.description AS previous_description,
+                   sn.documentation AS previous_documentation,
+                   sn.reviewer_score AS reviewer_score,
+                   sn.review_tier AS review_tier,
+                   sn.reviewer_comments AS reviewer_comments,
+                   sn.reviewer_scores AS reviewer_scores_json,
+                   sn.validation_status AS validation_status
+            """,
+            ids=ids,
+        )
+
+    mapping: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        sid = row.get("source_id")
+        if not sid:
+            continue
+        scores_json = row.get("reviewer_scores_json")
+        scores_dict: dict[str, Any] | None = None
+        if scores_json:
+            try:
+                scores_dict = json.loads(scores_json)
+            except (TypeError, ValueError):
+                scores_dict = None
+        # If a source_id has multiple linked SNs, prefer the one with the
+        # lowest reviewer_score (the one most in need of revision).
+        new_entry = {
+            "previous_name": row.get("previous_name"),
+            "previous_description": row.get("previous_description"),
+            "previous_documentation": row.get("previous_documentation"),
+            "reviewer_score": row.get("reviewer_score"),
+            "review_tier": row.get("review_tier"),
+            "reviewer_comments": row.get("reviewer_comments"),
+            "reviewer_scores": scores_dict,
+            "validation_status": row.get("validation_status"),
+        }
+        existing = mapping.get(sid)
+        if existing is None:
+            mapping[sid] = new_entry
+            continue
+        prev = existing.get("reviewer_score")
+        cur = new_entry.get("reviewer_score")
+        if prev is None or (cur is not None and cur < prev):
+            mapping[sid] = new_entry
+    return mapping
+
+
 def write_standard_names(names: list[dict[str, Any]]) -> int:
     """MERGE StandardName nodes with HAS_STANDARD_NAME relationships.
 

@@ -185,6 +185,16 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% endfor %}{% endif %}
 {% if item.previous_name.review_status == 'accepted' %}- **⚠️ This name was human-accepted** — only replace with a clearly better alternative.{% endif %}
 {% endif %}
+{% if item.review_feedback %}
+- **📝 Prior reviewer feedback — you MUST address the issues below in your new name:**
+  - **Previous name:** `{{ item.review_feedback.previous_name }}`{% if item.review_feedback.reviewer_score is not none %} (score={{ item.review_feedback.reviewer_score | round(2) }}{% if item.review_feedback.review_tier %}, tier={{ item.review_feedback.review_tier }}{% endif %}){% endif %}
+{% if item.review_feedback.previous_description %}  - **Prior description:** {{ item.review_feedback.previous_description }}
+{% endif %}{% if item.review_feedback.reviewer_scores %}  - **Rubric scores (out of 20 each):**
+{% for dim, dim_score in item.review_feedback.reviewer_scores.items() %}{% if dim not in ('score', 'tier') and dim_score is number %}    - `{{ dim }}`: {{ dim_score }}
+{% endif %}{% endfor %}{% endif %}{% if item.review_feedback.reviewer_comments %}  - **Reviewer critique:**
+    {{ item.review_feedback.reviewer_comments | replace('\n', '\n    ') }}
+{% endif %}  - **Instruction:** Produce a name that directly fixes every concrete issue raised above. Do NOT re-emit the previous name unchanged. If the reviewer flagged excessive length, redundant qualifiers, or convention violations, your new name must be shorter / cleaner / more idiomatic. If the reviewer was satisfied with a dimension (score ≥ 15), preserve that aspect.
+{% endif %}
 {% if item.cluster_siblings %}- **Cross-IDS siblings:**
 {% for sib in item.cluster_siblings[:5] %}  - {{ sib.path }} ({{ sib.unit or '?' }})
 {% endfor %}

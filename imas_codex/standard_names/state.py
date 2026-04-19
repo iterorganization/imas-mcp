@@ -38,6 +38,9 @@ class StandardNameBuildState(DiscoveryStateBase):
     paths_list: list[str] | None = None  # Explicit DD paths (bypass query+classifier)
     dry_run: bool = False
     force: bool = False  # Bypass source-level skip
+    include_review_feedback: bool = (
+        False  # Inject prior reviewer critique into compose prompt (Phase C regen)
+    )
     limit: int | None = None  # Cap on paths to process
     from_model: str | None = None  # Regenerate names produced by this model (substring)
 

@@ -146,6 +146,43 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
         if injected:
             wlog.info("Injected previous_name context for %d items", injected)
 
+    # Phase C: inject prior reviewer feedback for targeted regeneration. The
+    # compose prompt's {% if item.review_feedback %} block surfaces the previous
+    # reviewer critique so the LLM can directly address it in the new name.
+    if state.include_review_feedback:
+
+        def _get_feedback():
+            from imas_codex.standard_names.graph_ops import (
+                fetch_review_feedback_for_sources,
+            )
+
+            ids: set[str] = set()
+            for batch in batches:
+                for item in batch.items:
+                    path = item.get("path", item.get("signal_id"))
+                    if path:
+                        ids.add(path)
+            return fetch_review_feedback_for_sources(ids)
+
+        feedback_map = await asyncio.to_thread(_get_feedback)
+        fb_injected = 0
+        for batch in batches:
+            for item in batch.items:
+                path = item.get("path", item.get("signal_id"))
+                if path and path in feedback_map:
+                    item["review_feedback"] = feedback_map[path]
+                    fb_injected += 1
+        if fb_injected:
+            wlog.info(
+                "Injected review_feedback for %d items (--include-review-feedback)",
+                fb_injected,
+            )
+        else:
+            wlog.info(
+                "No prior reviewer feedback found for any batched sources; "
+                "compose will proceed without feedback injection."
+            )
+
     # Write StandardNameSource nodes for crash-resilient tracking
     if not state.dry_run and batches:
         from imas_codex.standard_names.graph_ops import merge_standard_name_sources

@@ -30,11 +30,12 @@ class TestValidationStatusEnum:
         assert StandardNameValidationStatus.pending == "pending"
         assert StandardNameValidationStatus.valid == "valid"
         assert StandardNameValidationStatus.quarantined == "quarantined"
+        assert StandardNameValidationStatus.needs_revision == "needs_revision"
 
     def test_enum_member_count(self) -> None:
         from imas_codex.graph.models import StandardNameValidationStatus
 
-        assert len(StandardNameValidationStatus) == 3
+        assert len(StandardNameValidationStatus) == 4
 
     def test_standard_name_model_has_field(self) -> None:
         """StandardName Pydantic model includes validation_status."""

@@ -164,6 +164,76 @@ class TestFilterPlumbing:
         call_kwargs = mock_reset.call_args[1]
         assert call_kwargs["validation_status"] == "quarantined"
 
+    def test_include_review_feedback_implies_needs_revision(
+        self, runner: CliRunner
+    ) -> None:
+        """--include-review-feedback (without --tier) selects needs_revision names."""
+        with patch(
+            "imas_codex.standard_names.graph_ops.reset_standard_names",
+            return_value=3,
+        ) as mock_reset:
+            result = runner.invoke(
+                sn,
+                [
+                    "generate",
+                    "--reset-to",
+                    "drafted",
+                    "--include-review-feedback",
+                    "--reset-only",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_reset.call_args[1]
+        assert call_kwargs["validation_status"] == "needs_revision"
+
+    def test_explicit_tier_overrides_include_review_feedback(
+        self, runner: CliRunner
+    ) -> None:
+        """Explicit --tier takes precedence; implicit needs_revision NOT set."""
+        with patch(
+            "imas_codex.standard_names.graph_ops.reset_standard_names",
+            return_value=1,
+        ) as mock_reset:
+            result = runner.invoke(
+                sn,
+                [
+                    "generate",
+                    "--reset-to",
+                    "drafted",
+                    "--include-review-feedback",
+                    "--tier",
+                    "poor",
+                    "--reset-only",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_reset.call_args[1]
+        assert call_kwargs["validation_status"] is None
+        assert call_kwargs["tiers"] == ["poor"]
+
+    def test_retry_quarantined_wins_over_include_review_feedback(
+        self, runner: CliRunner
+    ) -> None:
+        """--retry-quarantined takes precedence over --include-review-feedback."""
+        with patch(
+            "imas_codex.standard_names.graph_ops.reset_standard_names",
+            return_value=1,
+        ) as mock_reset:
+            result = runner.invoke(
+                sn,
+                [
+                    "generate",
+                    "--reset-to",
+                    "drafted",
+                    "--include-review-feedback",
+                    "--retry-quarantined",
+                    "--reset-only",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_reset.call_args[1]
+        assert call_kwargs["validation_status"] == "quarantined"
+
     def test_before_plumbs_to_clear(self, runner: CliRunner) -> None:
         """--before should be passed to clear_standard_names when reset-to=extracted."""
         with patch(

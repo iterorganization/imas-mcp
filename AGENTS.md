@@ -834,17 +834,22 @@ A separate `validation_status` field gates names before they participate in revi
 
 ```
 pending → valid | quarantined
+valid   → needs_revision   (set by review_worker when review_tier ∈ {poor, adequate})
+needs_revision → valid     (after regeneration with sn generate --include-review-feedback)
 ```
 
 - **pending**: Default state when a name is first drafted
 - **valid**: Passed all critical validation checks — eligible for `sn review`, consolidation, and `sn publish`
 - **quarantined**: Failed one or more critical checks — excluded from downstream pipeline stages
+- **needs_revision**: Review worker scored the name in a low tier (`poor` or `adequate`). The name is still grammatically valid but the reviewer flagged quality issues. Eligible for targeted regeneration via `sn generate --include-review-feedback` (which feeds the prior reviewer critique back into the compose prompt). Excluded from `sn publish` until promoted back to `valid`.
 
 **Critical failures (→ quarantine):** grammar round-trip failure, Pydantic construction error, detected ambiguity.
 
 **Non-critical issues (→ valid):** semantic warnings, description quality hints — persisted as `validation_issues` but do not gate the name.
 
-Only `valid` names participate in `sn review`, consolidation, and `sn publish`.
+**Review-driven demotion (→ needs_revision):** the `sn review` pipeline writes `validation_status='needs_revision'` for any name whose `review_tier` ends up `poor` or `adequate`. Running `sn generate --include-review-feedback` then selects these names (implicitly setting `validation_status='needs_revision'` as the filter unless `--tier` is passed), injects the prior `reviewer_comments`, `reviewer_score`, and 6-dimensional rubric scores into the compose prompt, and regenerates a replacement name that addresses the critique.
+
+Only `valid` names participate in `sn publish`. `needs_revision` names remain eligible for consolidation and subsequent review/regeneration cycles.
 
 ### StandardNameSource Lifecycle
 

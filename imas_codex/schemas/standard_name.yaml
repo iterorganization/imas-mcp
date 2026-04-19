@@ -23,7 +23,7 @@ description: >-
   shared vocabulary of physics concepts.
 
 license: MIT
-version: 0.7.0
+version: 0.8.0
 
 prefixes:
   linkml: https://w3id.org/linkml/
@@ -143,10 +143,20 @@ enums:
   StandardNameValidationStatus:
     description: >-
       Validation lifecycle for standard names.
-      pending → valid | quarantined.
+
+        pending → valid | quarantined
+        valid   → needs_revision   (set by review_worker when
+                  review_tier ∈ {poor, adequate})
+        needs_revision → valid     (after regeneration with
+                  --include-review-feedback)
+
       Names default to pending at persist time.
       validate_worker promotes to valid (passes) or quarantined (critical failures).
-      Only valid names participate in consolidation, review, publish.
+      review_worker may demote a valid name to needs_revision based on reviewer
+      tier — the regenerate cycle (sn generate --include-review-feedback) then
+      restores valid after the LLM addresses reviewer comments.
+      Only valid names participate in publish. needs_revision names remain
+      eligible for consolidation and subsequent review/regeneration.
     permissible_values:
       pending:
         description: Awaiting validation (set at compose/persist time)
@@ -156,6 +166,14 @@ enums:
         description: >-
           Failed critical validation checks (grammar round-trip failure,
           empty description, invalid kind). Can be re-validated after fixes.
+      needs_revision:
+        description: >-
+          Review worker scored this name in a low tier (poor or adequate).
+          The name is still grammatically valid but the reviewer flagged
+          quality issues. Eligible for targeted regeneration via
+          `sn generate --include-review-feedback`, which feeds the prior
+          reviewer critique back into the compose prompt. Excluded from
+          `sn publish` until promoted back to `valid`.
 
   LinkResolutionStatus:
     description: Status of cross-reference link resolution for standard names
@@ -390,8 +408,11 @@ classes:
       validation_status:
         description: >-
           Validation lifecycle gate. Set to 'pending' at compose time,
-          promoted to 'valid' or 'quarantined' by validate_worker.
-          Only 'valid' names participate in consolidation, review, and publish.
+          promoted to 'valid' or 'quarantined' by validate_worker. May be
+          demoted from 'valid' to 'needs_revision' by review_worker when
+          review_tier is 'poor' or 'adequate'. Only 'valid' names participate
+          in publish; 'needs_revision' names are eligible for regeneration
+          via `sn generate --include-review-feedback`.
         range: StandardNameValidationStatus
       consolidated_at:
         description: >-
