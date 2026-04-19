@@ -847,6 +847,15 @@ def multi_subject_check(candidate: dict[str, Any]) -> list[str]:
         if "_to_" in name and len(matched_subjects) == 2:
             matched_subjects = []
 
+        # Exempt metadata/flag descriptors — names ending in ``_flag``,
+        # ``_index``, or containing ``_state_`` reference classification
+        # attributes rather than two physical subjects. E.g.
+        # ``ion_state_neutral_flag`` describes a flag on the ion-state
+        # enum; ``neutral`` is an enum value, not a second subject.
+        _META_TOKENS = ("_flag", "_index", "_state_", "_type_flag")
+        if any(tok in name for tok in _META_TOKENS):
+            matched_subjects = []
+
         if len(matched_subjects) >= 2:
             issues.append(
                 f"audit:multi_subject_check: name contains multiple subjects: "
