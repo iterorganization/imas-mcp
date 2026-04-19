@@ -58,7 +58,9 @@ that belong in structured annotations. NEVER emit these patterns:
    is implicit; appending `_number` creates physics-identical synonym pairs.
 3. **`_over_*` prepositions** — use `_per_*` for all ratio quantities. `_over_`
    is a colloquial synonym that splits the catalog. ❌ `velocity_over_magnetic_field_strength`
-   → ✅ `velocity_per_magnetic_field_strength`.
+   → ✅ `velocity_per_magnetic_field_strength`. **Exception:** `over_<region>`
+   (e.g. `over_halo_region`) is the valid Region segment — do not confuse
+   division-surrogate `_over_` with the spatial Region qualifier.
 4. **`electron_thermal_*`** — population precedes species in the canonical form.
    Use `thermal_electron_*` (e.g. `thermal_electron_pressure`, not
    `electron_thermal_pressure`). Same for `ion_thermal_*` → `thermal_ion_*`.
@@ -259,10 +261,10 @@ boundary variant, derive it as `{flux_surface_quantity}_of_plasma_boundary`
 (e.g., `elongation_of_plasma_boundary`).
 
 **NC-3 Scalar vs vector position names.** Both atomic component names
-(`radial_position_of_x_point`, `vertical_position_of_x_point`) and vector
-names (`position_of_x_point`) are valid. Components use `radial_position_of_`
-or `vertical_position_of_` prefixes; the vector form uses `position_of_`.
-Define both when the DD provides both.
+(`major_radius_of_x_point`, `vertical_coordinate_of_x_point`) and vector
+names (`position_of_x_point`) are valid. Components use `major_radius_of_`
+or `vertical_coordinate_of_` prefixes (Rule 17); the vector form uses
+`position_of_`. Define both when the DD provides both.
 
 **NC-4 Batch consistency.** Within a batch, use identical vocabulary for related
 entries. If one entry uses `poloidal_magnetic_flux`, all related entries must
@@ -305,15 +307,15 @@ quantity (`fourier_amplitude_of_<quantity>`). ❌
 `normal_field_fourier_coefficients` → ✅ `mode_amplitude_of_normal_field`.
 
 **NC-11 R and Z coordinates describe the same entity.** When both
-`radial_position_of_X` and `vertical_position_of_X` appear, their
+`major_radius_of_X` and `vertical_coordinate_of_X` appear, their
 descriptions MUST agree on which entity X refers to. Do not describe the
 R-coordinate as on the plasma boundary and the Z-coordinate as on the
 secondary separatrix — either X is on the plasma boundary or it is on the
 separatrix, and both components share that context. Reread both candidates
 before emitting them. Concrete rule: if name is
-`radial_position_of_plasma_boundary`, the description must be the
+`major_radius_of_plasma_boundary`, the description must be the
 R-coordinate along the *same* boundary contour that
-`vertical_position_of_plasma_boundary` describes; the two names form a
+`vertical_coordinate_of_plasma_boundary` describes; the two names form a
 (R,Z) pair parameterising one curve.
 
 **NC-12 Batch-canonical spelling — never emit an abbreviated variant
@@ -332,8 +334,8 @@ truncated forms `norm_`, `perp_`, `par_`, `temp_`, `pos_`, `max_`, `min_`,
 of 2D points (a contour), not a scalar or vector field. Do not emit names
 like `vertical_outline_of_plasma_boundary` or `horizontal_outline_of_*`.
 For the Z-coordinate along the boundary contour use
-`vertical_position_of_plasma_boundary`; the 2D contour itself is expressed
-as the pair of `(radial_position, vertical_position)` standard names, not a
+`vertical_coordinate_of_plasma_boundary`; the 2D contour itself is expressed
+as the pair of `(major_radius, vertical_coordinate)` standard names, not a
 single `outline` name.
 
 **NC-14 Distance-between-entities uses `distance_between_X_and_Y` form.**
@@ -472,6 +474,23 @@ heating systems and devices in full, matching the ISN vocabulary:
 Abbreviations are not in the ISN grammar and fragment the corpus
 across synonymous aliases. ❌ `ec_launcher_mirror_rotation_angle` →
 ✅ `rotation_angle_of_electron_cyclotron_launcher_mirror`.
+
+**NC-27 Compound-subject tokens are single tokens — never decompose.**
+The tokens `deuterium_tritium`, `deuterium_deuterium`, and
+`tritium_tritium` are single entries in ISN `subjects.yml`. They
+describe compound fusion-reaction species pairs (D-T, D-D, T-T).
+Never decompose them into two separate subjects. ❌ Treating
+`deuterium_tritium_fusion_power` as two subjects `deuterium` and
+`tritium` → ✅ treat `deuterium_tritium` as a single compound-subject
+token.
+
+**NC-28 The suffix `_reference_waveform` denotes a controller setpoint,
+not a physics quantity.** The SN extractor excludes DD paths matching
+`pulse_schedule/*/reference` and `pulse_schedule/*/reference_waveform`
+because they are controller setpoints/waveforms with sentinel units
+(`unit=1`). Do not propose names matching this pattern. If a
+`_reference_waveform` path reaches the compose stage, skip it and
+record as `vocab_gap`.
 
 ### Physics disambiguation glossary
 
@@ -689,7 +708,7 @@ is provided as context for your naming decisions.
 21. **Named-feature preposition — use `_of_` for magnetic axis, x-point, strike point, LCFS** (extension of Rule 18): All named geometric features take the possessive `_of_` form, not `_at_`. The vocabulary includes: `magnetic_axis`, `plasma_boundary`, `last_closed_flux_surface`, `separatrix`, `x_point`, `o_point`, `strike_point`, `inner_strike_point`, `outer_strike_point`, `stagnation_point`.
     - ✓ `poloidal_magnetic_flux_of_magnetic_axis`, `loop_voltage_of_last_closed_flux_surface`, `poloidal_magnetic_flux_of_x_point`.
     - ✗ `poloidal_magnetic_flux_at_magnetic_axis`, `loop_voltage_at_last_closed_flux_surface`, `poloidal_magnetic_flux_at_x_point`.
-22. **`diamagnetic` is a drift, NOT a projection axis** (physics semantic — critical): Unlike `toroidal`, `poloidal`, `radial`, or `parallel`, `diamagnetic` does NOT label a spatial projection axis. The diamagnetic drift velocity `v_dia = B × ∇p / (qnB²)` is itself a specific drift — it is not a component of another velocity along a diamagnetic axis. Therefore `diamagnetic_component_of_<X>` is ALWAYS physically wrong.
+22. **`diamagnetic` is a drift, NOT a projection axis** (informational — classifier vetoes `diamagnetic_component_of_*` before compose sees the path, but this reminder is useful for edge cases): Unlike `toroidal`, `poloidal`, `radial`, or `parallel`, `diamagnetic` does NOT label a spatial projection axis. The diamagnetic drift velocity `v_dia = B × ∇p / (qnB²)` is itself a specific drift — it is not a component of another velocity along a diamagnetic axis. Therefore `diamagnetic_component_of_<X>` is physically wrong.
     - ✓ `diamagnetic_drift_velocity` (the drift itself).
     - ✓ `ion_diamagnetic_drift_velocity`, `electron_diamagnetic_drift_velocity`.
     - ✓ `<base>_due_to_diamagnetic_drift` (a flux/current driven by the drift).
