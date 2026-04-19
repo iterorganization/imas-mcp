@@ -79,20 +79,17 @@ with at least one of: subject, component, position, or `_of_` device reference.
 If the source context does not provide enough information to qualify the base,
 report this as a `vocab_gap` rather than using the bare generic base.
 
-#### Transformation Boundaries
+#### Transformations (live from imas-standard-names)
 
-Only these 4 transformation tokens are valid in the grammar:
+The full list of allowed transformation tokens is the `Transformation` enum
+in the installed ISN grammar package. The prompt template renders this list
+dynamically via `prompt_loader.render_prompt` with `{{ transformations }}`
+context variable.
 
-| Token | Meaning | Example |
-|-------|---------|---------|
-| `flux_surface_averaged` | Average over flux surface | `flux_surface_averaged_electron_density` |
-| `line_integrated` | Integral along line of sight | `line_integrated_electron_density` |
-| `norm` | Normalized value | `norm_poloidal_magnetic_flux` |
-| `square_root` | Square root transform | `square_root_norm_poloidal_magnetic_flux` |
+Current tokens: {{ transformations | join(', ') }}
 
-**Do NOT invent transformation tokens** like `time_derivative_of`, `volume_averaged`,
-`second_derivative_of`, or `gradient_of`. These are valid physics operations but are
-NOT yet in the grammar.
+Always use ONLY tokens from this list. Do not invent new transformation
+tokens.
 
 If you need a transformation not listed above, **report it as a `vocab_gap`** with
 `segment: "transformation"` and the needed token. Still generate the best name you
