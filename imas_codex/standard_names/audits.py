@@ -1846,25 +1846,18 @@ def pulse_schedule_reference_check(
     or ``pulse_schedule/.../reference_waveform`` and are not physics standard
     name candidates.  Severity: critical.
 
-    Triggers when:
-    1. ``source_path`` matches ``pulse_schedule/.+/reference(_waveform)?``
-       (including deeper children like ``.../reference_waveform/data``).
-    2. Name ends with ``_reference`` or ``_reference_waveform``.
+    Triggers only when the NAME itself encodes a controller reference target —
+    i.e. ends with ``_reference`` or ``_reference_waveform``.  A source_path
+    under ``pulse_schedule/.../reference`` alone is NOT sufficient, because a
+    physics standard name like ``plasma_current`` may legitimately have a
+    pulse_schedule controller-reference source attached (the setpoint refers
+    to the same physical quantity).  Only the name-suffix variant indicates
+    that the SN itself is a control-layer sentinel rather than a physics
+    quantity.  Severity: critical.
     """
     name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
     issues: list[str] = []
 
-    # Check source path first
-    if source_path:
-        if re.match(r"pulse_schedule/.+/reference(_waveform)?(/|$)", source_path):
-            issues.append(
-                f"audit:pulse_schedule_reference_check: source path "
-                f"'{source_path}' is a controller reference target; "
-                f"not a physics SN candidate; severity=critical"
-            )
-            return issues
-
-    # Check name suffix
     if name.endswith("_reference") or name.endswith("_reference_waveform"):
         issues.append(
             f"audit:pulse_schedule_reference_check: name '{name}' ends with "

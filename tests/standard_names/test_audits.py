@@ -1384,20 +1384,26 @@ class TestPulseScheduleReferenceCheck:
         )
         assert issues and "pulse_schedule_reference_check" in issues[0]
 
-    def test_fail_source_path_match(self):
+    def test_pass_source_path_with_physics_name(self):
+        """Physics SN with pulse_schedule source attached should NOT flag.
+
+        Name like ``plasma_current`` is a legitimate physics standard name
+        even if a controller-reference source path is attached to it.
+        """
         from imas_codex.standard_names.audits import pulse_schedule_reference_check
 
         issues = pulse_schedule_reference_check(
             {"id": "plasma_current"},
             source_path="pulse_schedule/position_control/reference",
         )
-        assert issues and "pulse_schedule_reference_check" in issues[0]
+        assert issues == []
 
-    def test_fail_source_path_reference_waveform(self):
+    def test_fail_reference_suffix_with_pulse_schedule_source(self):
+        """Name with _reference_waveform suffix must fail regardless of source."""
         from imas_codex.standard_names.audits import pulse_schedule_reference_check
 
         issues = pulse_schedule_reference_check(
-            {"id": "plasma_current"},
+            {"id": "plasma_current_reference_waveform"},
             source_path="pulse_schedule/position_control/reference_waveform/data",
         )
         assert issues and "pulse_schedule_reference_check" in issues[0]
