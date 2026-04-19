@@ -1,7 +1,8 @@
 """Tests for standard name graph operations.
 
 Tests write_standard_names coalesce behavior, relationship creation,
-and get_validated_standard_names filtering — all mocked, no live Neo4j.
+get_validated_standard_names filtering, and reset/clear filter plumbing
+— all mocked, no live Neo4j.
 """
 
 from __future__ import annotations
@@ -678,3 +679,144 @@ class TestCocosScalarDefaulting:
             assert candidates[0].get("cocos_transformation_type") is None, (
                 f"Unit {unsafe_unit} should NOT default to one_like"
             )
+
+
+class TestResetStandardNamesFilters:
+    """Test that reset_standard_names builds Cypher WHERE clauses for new filters."""
+
+    def _call_reset(self, mock_gc: MagicMock, **kwargs) -> int:
+        """Call reset_standard_names with a mocked GraphClient."""
+        # Return count > 0 from count query so reset runs, then 0 for remainder
+        mock_gc.query = MagicMock(side_effect=lambda cypher, **kw: [{"n": 5}])
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+            from imas_codex.standard_names.graph_ops import reset_standard_names
+
+            return reset_standard_names(**kwargs)
+
+    def _get_count_cypher(self, mock_gc: MagicMock) -> str:
+        """Extract the first Cypher query (the count query)."""
+        return mock_gc.query.call_args_list[0][0][0]
+
+    def _get_count_params(self, mock_gc: MagicMock) -> dict:
+        """Extract params from the first Cypher query."""
+        return mock_gc.query.call_args_list[0][1]
+
+    def test_since_filter(self) -> None:
+        """--since should add a generated_at >= datetime() clause."""
+        mock_gc = MagicMock()
+        self._call_reset(mock_gc, from_status="drafted", since="2026-04-19T10:00")
+        cypher = self._get_count_cypher(mock_gc)
+        params = self._get_count_params(mock_gc)
+        assert "datetime($since)" in cypher
+        assert params["since"] == "2026-04-19T10:00"
+
+    def test_before_filter(self) -> None:
+        """--before should add a generated_at < datetime() clause."""
+        mock_gc = MagicMock()
+        self._call_reset(mock_gc, from_status="drafted", before="2026-05-01")
+        cypher = self._get_count_cypher(mock_gc)
+        params = self._get_count_params(mock_gc)
+        assert "datetime($before)" in cypher
+        assert params["before"] == "2026-05-01"
+
+    def test_below_score_filter(self) -> None:
+        """--below-score should add a reviewer_score < clause."""
+        mock_gc = MagicMock()
+        self._call_reset(mock_gc, from_status="drafted", below_score=0.6)
+        cypher = self._get_count_cypher(mock_gc)
+        params = self._get_count_params(mock_gc)
+        assert "sn.reviewer_score < $below_score" in cypher
+        assert params["below_score"] == 0.6
+
+    def test_tiers_filter(self) -> None:
+        """--tier should add a review_tier IN clause."""
+        mock_gc = MagicMock()
+        self._call_reset(mock_gc, from_status="drafted", tiers=["poor", "adequate"])
+        cypher = self._get_count_cypher(mock_gc)
+        params = self._get_count_params(mock_gc)
+        assert "sn.review_tier IN $tiers" in cypher
+        assert params["tiers"] == ["poor", "adequate"]
+
+    def test_validation_status_filter(self) -> None:
+        """--validation_status should add a validation_status = clause."""
+        mock_gc = MagicMock()
+        self._call_reset(
+            mock_gc, from_status="drafted", validation_status="quarantined"
+        )
+        cypher = self._get_count_cypher(mock_gc)
+        params = self._get_count_params(mock_gc)
+        assert "sn.validation_status = $validation_status" in cypher
+        assert params["validation_status"] == "quarantined"
+
+    def test_combined_filters(self) -> None:
+        """Multiple filters should all appear in the Cypher WHERE clause."""
+        mock_gc = MagicMock()
+        self._call_reset(
+            mock_gc,
+            from_status="drafted",
+            since="2026-04-01",
+            below_score=0.5,
+            tiers=["poor"],
+        )
+        cypher = self._get_count_cypher(mock_gc)
+        assert "datetime($since)" in cypher
+        assert "sn.reviewer_score < $below_score" in cypher
+        assert "sn.review_tier IN $tiers" in cypher
+
+    def test_no_filters_backward_compat(self) -> None:
+        """Without new filters, Cypher should only contain from_status clause."""
+        mock_gc = MagicMock()
+        self._call_reset(mock_gc, from_status="drafted")
+        cypher = self._get_count_cypher(mock_gc)
+        assert "sn.review_status = $from_status" in cypher
+        assert "datetime" not in cypher
+        assert "reviewer_score" not in cypher
+        assert "review_tier" not in cypher
+        assert "validation_status" not in cypher
+
+
+class TestClearStandardNamesFilters:
+    """Test that clear_standard_names builds Cypher WHERE clauses for new filters."""
+
+    def _call_clear(self, mock_gc: MagicMock, **kwargs) -> int:
+        """Call clear_standard_names with a mocked GraphClient."""
+        mock_gc.query = MagicMock(side_effect=lambda cypher, **kw: [{"n": 3}])
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+            from imas_codex.standard_names.graph_ops import clear_standard_names
+
+            return clear_standard_names(**kwargs)
+
+    def _get_count_cypher(self, mock_gc: MagicMock) -> str:
+        """Extract the first Cypher query (the count query)."""
+        return mock_gc.query.call_args_list[0][0][0]
+
+    def _get_count_params(self, mock_gc: MagicMock) -> dict:
+        """Extract params from the first Cypher query."""
+        return mock_gc.query.call_args_list[0][1]
+
+    def test_since_filter(self) -> None:
+        """--since filter should appear in clear Cypher."""
+        mock_gc = MagicMock()
+        self._call_clear(mock_gc, status_filter=["drafted"], since="2026-04-19T10:00")
+        cypher = self._get_count_cypher(mock_gc)
+        params = self._get_count_params(mock_gc)
+        assert "datetime($since)" in cypher
+        assert params["since"] == "2026-04-19T10:00"
+
+    def test_below_score_filter(self) -> None:
+        """--below-score filter should appear in clear Cypher."""
+        mock_gc = MagicMock()
+        self._call_clear(mock_gc, status_filter=["drafted"], below_score=0.6)
+        cypher = self._get_count_cypher(mock_gc)
+        assert "sn.reviewer_score < $below_score" in cypher
+
+    def test_tiers_filter(self) -> None:
+        """--tier filter should appear in clear Cypher."""
+        mock_gc = MagicMock()
+        self._call_clear(mock_gc, status_filter=["drafted"], tiers=["poor"])
+        cypher = self._get_count_cypher(mock_gc)
+        assert "sn.review_tier IN $tiers" in cypher

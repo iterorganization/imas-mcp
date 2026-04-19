@@ -126,6 +126,89 @@ def sn() -> None:
         "Implies --force."
     ),
 )
+@click.option(
+    "--reset-only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Perform --reset-to cleanup then exit without running generation. "
+        "Requires --reset-to. Useful for housekeeping without recomposing."
+    ),
+)
+@click.option(
+    "--since",
+    type=str,
+    default=None,
+    help=(
+        "Only reset/regenerate names with generated_at >= this ISO timestamp "
+        "(e.g. '2026-04-19T10:00'). Combines with --reset-to and filters."
+    ),
+)
+@click.option(
+    "--before",
+    type=str,
+    default=None,
+    help=(
+        "Only reset/regenerate names with generated_at < this ISO timestamp. "
+        "Combines with --since for a window."
+    ),
+)
+@click.option(
+    "--below-score",
+    type=float,
+    default=None,
+    help=(
+        "Only reset/regenerate names with reviewer_score < this value "
+        "(0.0-1.0 scale). Requires prior `sn review` run."
+    ),
+)
+@click.option(
+    "--tier",
+    type=str,
+    default=None,
+    help=(
+        "Only reset/regenerate names with review_tier in this comma-separated "
+        "list (e.g. 'poor,adequate'). Requires prior `sn review` run."
+    ),
+)
+@click.option(
+    "--retry-quarantined",
+    is_flag=True,
+    default=False,
+    help=("Shortcut: select names with validation_status=quarantined for regen."),
+)
+@click.option(
+    "--retry-skipped",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include StandardNameSource records with status=skipped in re-extraction "
+        "(their underlying DD paths get re-queued). Useful after unit override "
+        "table updates. (status='skipped' will be added in Phase B — it is OK "
+        "for this flag to be a no-op today; Phase B will wire it up.)"
+    ),
+)
+@click.option(
+    "--retry-vocab-gap",
+    is_flag=True,
+    default=False,
+    help=(
+        "Select names with validation_status=quarantined AND a vocab_gap cause "
+        "(or StandardNameSource.status=vocab_gap) for regen after ISN vocab "
+        "updates."
+    ),
+)
+@click.option(
+    "--include-review-feedback",
+    is_flag=True,
+    default=False,
+    help=(
+        "When regenerating names that have reviewer_comments, inject the prior "
+        "attempt's name + score + comments into the compose prompt so the LLM "
+        "can improve on specific criticism. (Prompt block added in Phase C — "
+        "this flag stores a flag that Phase C will consume.)"
+    ),
+)
 def sn_generate(
     source: str,
     domain_filter: str | None,
@@ -141,6 +224,15 @@ def sn_generate(
     reset_to: str | None,
     from_model: str | None,
     revalidate: bool,
+    reset_only: bool,
+    since: str | None,
+    before: str | None,
+    below_score: float | None,
+    tier: str | None,
+    retry_quarantined: bool,
+    retry_skipped: bool,
+    retry_vocab_gap: bool,
+    include_review_feedback: bool,
 ) -> None:
     """Generate standard names from a source.
 
@@ -151,6 +243,8 @@ def sn_generate(
       imas-codex sn generate --source signals --facility tcv --physics-domain magnetics
       imas-codex sn generate --paths equilibrium/time_slice/profiles_1d/psi --paths equilibrium/time_slice/profiles_1d/q
       imas-codex sn generate --paths "equilibrium/time_slice/profiles_1d/psi equilibrium/time_slice/profiles_1d/q"
+      imas-codex sn generate --reset-to drafted --reset-only
+      imas-codex sn generate --reset-to drafted --below-score 0.6 --reset-only
     """
     # --ids has been removed from this command; scope narrowing is domain-based
     # so it works uniformly across DD and facility-signals sources.
@@ -243,6 +337,22 @@ def sn_generate(
     # --from-model implies --force (selecting by model only makes sense for regeneration)
     if from_model:
         force = True
+
+    # Validate --reset-only
+    if reset_only and reset_to is None:
+        raise click.UsageError("--reset-only requires --reset-to")
+
+    # Build filter kwargs for reset/clear functions
+    _tiers = [t.strip() for t in tier.split(",")] if tier else None
+    _validation_status = "quarantined" if retry_quarantined else None
+    _reset_filter_kwargs: dict[str, Any] = {
+        "since": since,
+        "before": before,
+        "below_score": below_score,
+        "tiers": _tiers,
+        "validation_status": _validation_status,
+    }
+
     # Handle --reset-to before the main pipeline
     if reset_to is not None and not dry_run:
         source_arg = "dd" if source == "dd" else "signals"
@@ -255,6 +365,7 @@ def sn_generate(
             n = clear_standard_names(
                 source_filter=source_arg,
                 ids_filter=ids_filter,
+                **_reset_filter_kwargs,
             )
             console.print(
                 f"[yellow]--reset-to extracted:[/yellow] cleared {n} SN nodes"
@@ -264,8 +375,23 @@ def sn_generate(
                 from_status="drafted",
                 source_filter=source_arg,
                 ids_filter=ids_filter,
+                **_reset_filter_kwargs,
             )
             console.print(f"[yellow]--reset-to drafted:[/yellow] reset {n} SN nodes")
+
+    if reset_only:
+        console.print(
+            "[green]--reset-only:[/green] reset complete, exiting without generation"
+        )
+        return
+
+    # Log Phase B/C flags that are pending wire-up
+    if retry_skipped:
+        logger.info("--retry-skipped set (pending Phase B wire-up)")
+    if retry_vocab_gap:
+        logger.info("--retry-vocab-gap set (pending Phase B wire-up)")
+    if include_review_feedback:
+        logger.info("--include-review-feedback set (pending Phase C wire-up)")
 
     # Handle --revalidate: clear validated_at on pending SNs in current scope so
     # validate_worker re-runs ISN checks without a full regen. Safe with any source.
@@ -671,6 +797,7 @@ def sn_status() -> None:
             "vocab_gap",
             "failed",
             "stale",
+            "skipped",
         ]:
             count = source_stats.get(status_name, 0)
             total += count
@@ -678,6 +805,28 @@ def sn_status() -> None:
                 source_table.add_row(status_name, str(count))
         source_table.add_row("[bold]Total[/bold]", f"[bold]{total}[/bold]")
         console.print(source_table)
+
+    # Skipped sources breakdown by reason (DD unit overrides, etc.)
+    try:
+        from imas_codex.standard_names.graph_ops import get_skipped_source_counts
+
+        skip_counts = get_skipped_source_counts()
+    except Exception as exc:  # pragma: no cover — graph connection issues
+        skip_counts = {}
+        logger.debug("Could not fetch skipped source counts: %s", exc)
+
+    if skip_counts:
+        console.print()
+        console.print("[bold]Skipped sources (by reason)[/bold]")
+        skip_table = Table(show_header=True)
+        skip_table.add_column("Skip Reason")
+        skip_table.add_column("Count", justify="right")
+        skip_total = 0
+        for reason, count in skip_counts.items():
+            skip_table.add_row(reason, str(count))
+            skip_total += count
+        skip_table.add_row("[bold]Total[/bold]", f"[bold]{skip_total}[/bold]")
+        console.print(skip_table)
 
 
 @sn.command("gaps")
@@ -1156,60 +1305,6 @@ def sn_import(
             console.print(f"    - {entry['id']}{units}")
         if len(result.entries) > 20:
             console.print(f"    ... and {len(result.entries) - 20} more")
-
-
-@sn.command("reset")
-@click.option("--status", required=True, help="Reset names with this review_status")
-@click.option(
-    "--to",
-    "to_status",
-    default=None,
-    help="Target review_status after reset (default: clear fields only)",
-)
-@click.option(
-    "--source",
-    type=click.Choice(["dd", "signals"]),
-    default=None,
-    help="Filter by source ('dd' or 'signals')",
-)
-@click.option("--ids", "ids_filter", default=None, help="Filter to specific IDS")
-@click.option("--dry-run", is_flag=True, help="Preview without modifying the graph")
-def sn_reset(
-    status: str,
-    to_status: str | None,
-    source: str | None,
-    ids_filter: str | None,
-    dry_run: bool,
-) -> None:
-    """Reset standard names for re-processing.
-
-    Clears transient fields (embedding, model, confidence, generated_at) and
-    removes HAS_STANDARD_NAME / HAS_UNIT relationships for matching
-    nodes, optionally changing their review_status.
-
-    \b
-    Examples:
-      imas-codex sn reset --status drafted --dry-run
-      imas-codex sn reset --status drafted --to extracted --ids equilibrium
-      imas-codex sn reset --status drafted --source dd
-    """
-    from imas_codex.standard_names.graph_ops import reset_standard_names
-
-    try:
-        count = reset_standard_names(
-            from_status=status,
-            to_status=to_status,
-            source_filter=source,
-            ids_filter=ids_filter,
-            dry_run=dry_run,
-        )
-    except Exception as e:
-        console.print(f"[red]Reset error:[/red] {e}")
-        raise SystemExit(1) from e
-
-    qualifier = "Would reset" if dry_run else "Reset"
-    to_note = f" → {to_status}" if to_status else " (fields cleared)"
-    console.print(f"{qualifier} {count} StandardName node(s){to_note}")
 
 
 @sn.command("clear")

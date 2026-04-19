@@ -51,7 +51,7 @@ For each domain D (ordered by coverage density):
    - prompt patches → `sn/enrich_*.md` edits (commit to codex).
    - grammar / vocab gaps → ISN PR.
    - audit additions → new `audits.py` rules.
-5. `sn reset --status enriched --domain D` then re-run step 1. Continue until either:
+5. `sn generate --reset-to drafted --reset-only` then re-run step 1. Continue until either:
    - mean reviewer score improves by ≥ 0.05, or
    - two consecutive iterations plateau.
 

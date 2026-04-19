@@ -1281,6 +1281,11 @@ def reset_standard_names(
     source_filter: str | None = None,
     ids_filter: str | None = None,
     dry_run: bool = False,
+    since: str | None = None,
+    before: str | None = None,
+    below_score: float | None = None,
+    tiers: list[str] | None = None,
+    validation_status: str | None = None,
 ) -> int:
     """Reset StandardName nodes to allow re-processing.
 
@@ -1302,6 +1307,16 @@ def reset_standard_names(
         IDS name (matched via ``IMASNode -[:HAS_STANDARD_NAME]-> sn``).
     dry_run:
         Return the count of matching nodes without modifying anything.
+    since:
+        Only reset names with ``generated_at >= this`` ISO timestamp.
+    before:
+        Only reset names with ``generated_at < this`` ISO timestamp.
+    below_score:
+        Only reset names with ``reviewer_score < this`` value (0.0–1.0).
+    tiers:
+        Only reset names with ``review_tier`` in this list.
+    validation_status:
+        Only reset names with this ``validation_status`` value.
 
     Returns
     -------
@@ -1314,6 +1329,22 @@ def reset_standard_names(
         if source_filter:
             where_clauses.append("$source_filter IN sn.source_types")
             params["source_filter"] = source_filter
+
+        if since:
+            where_clauses.append("sn.generated_at >= datetime($since)")
+            params["since"] = since
+        if before:
+            where_clauses.append("sn.generated_at < datetime($before)")
+            params["before"] = before
+        if below_score is not None:
+            where_clauses.append("sn.reviewer_score < $below_score")
+            params["below_score"] = below_score
+        if tiers:
+            where_clauses.append("sn.review_tier IN $tiers")
+            params["tiers"] = tiers
+        if validation_status:
+            where_clauses.append("sn.validation_status = $validation_status")
+            params["validation_status"] = validation_status
 
         where = " AND ".join(where_clauses)
 
@@ -1426,6 +1457,11 @@ def clear_standard_names(
     ids_filter: str | None = None,
     include_accepted: bool = False,
     dry_run: bool = False,
+    since: str | None = None,
+    before: str | None = None,
+    below_score: float | None = None,
+    tiers: list[str] | None = None,
+    validation_status: str | None = None,
 ) -> int:
     """Delete StandardName nodes and their relationships.
 
@@ -1455,6 +1491,16 @@ def clear_standard_names(
     dry_run:
         Return the count of nodes that would be deleted without modifying
         anything.
+    since:
+        Only clear names with ``generated_at >= this`` ISO timestamp.
+    before:
+        Only clear names with ``generated_at < this`` ISO timestamp.
+    below_score:
+        Only clear names with ``reviewer_score < this`` value (0.0–1.0).
+    tiers:
+        Only clear names with ``review_tier`` in this list.
+    validation_status:
+        Only clear names with this ``validation_status`` value.
 
     Returns
     -------
@@ -1481,6 +1527,22 @@ def clear_standard_names(
         if source_filter:
             sn_where_clauses.append("$source_filter IN sn.source_types")
             params["source_filter"] = source_filter
+
+        if since:
+            sn_where_clauses.append("sn.generated_at >= datetime($since)")
+            params["since"] = since
+        if before:
+            sn_where_clauses.append("sn.generated_at < datetime($before)")
+            params["before"] = before
+        if below_score is not None:
+            sn_where_clauses.append("sn.reviewer_score < $below_score")
+            params["below_score"] = below_score
+        if tiers:
+            sn_where_clauses.append("sn.review_tier IN $tiers")
+            params["tiers"] = tiers
+        if validation_status:
+            sn_where_clauses.append("sn.validation_status = $validation_status")
+            params["validation_status"] = validation_status
 
         sn_where = " AND ".join(sn_where_clauses) if sn_where_clauses else "true"
 
@@ -2190,6 +2252,143 @@ def mark_sources_stale(source_ids: list[str]) -> int:
             source_ids=source_ids,
         )
         return result[0]["affected"] if result else 0
+
+
+def write_skipped_sources(records: list[dict]) -> int:
+    """Record DD paths that cannot be resolved to a standard name source.
+
+    Each record must have: source_type, source_id, skip_reason,
+    skip_reason_detail. Optional: description, dd_path (auto-derived from
+    source_id for DD sources), signal (for signal sources).
+
+    The ``id`` is derived as ``{source_type}:{source_id}`` (matches the
+    existing ``merge_standard_name_sources`` key convention).
+
+    Idempotent — subsequent writes for the same id refresh skip_reason/
+    skip_reason_detail but do not re-enqueue for composition.
+
+    Returns count of nodes written.
+    """
+    if not records:
+        return 0
+
+    sources = []
+    for r in records:
+        source_type = r["source_type"]
+        source_id = r["source_id"]
+        sources.append(
+            {
+                "id": f"{source_type}:{source_id}",
+                "source_type": source_type,
+                "source_id": source_id,
+                "skip_reason": r["skip_reason"],
+                "skip_reason_detail": r.get("skip_reason_detail", ""),
+                "description": r.get("description", ""),
+                "dd_path": r.get("dd_path")
+                or (source_id if source_type == "dd" else None),
+                "signal": r.get("signal")
+                or (source_id if source_type == "signals" else None),
+            }
+        )
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $sources AS src
+            MERGE (sns:StandardNameSource {id: src.id})
+            ON CREATE SET
+                sns.source_type = src.source_type,
+                sns.source_id = src.source_id,
+                sns.status = 'skipped',
+                sns.skip_reason = src.skip_reason,
+                sns.skip_reason_detail = src.skip_reason_detail,
+                sns.description = src.description,
+                sns.attempt_count = 0
+            ON MATCH SET
+                sns.status = 'skipped',
+                sns.skip_reason = src.skip_reason,
+                sns.skip_reason_detail = src.skip_reason_detail,
+                sns.description = coalesce(src.description, sns.description),
+                sns.claimed_at = null,
+                sns.claim_token = null
+            WITH sns, src
+            FOREACH (_ IN CASE WHEN src.source_type = 'dd' AND src.dd_path IS NOT NULL
+                          THEN [1] ELSE [] END |
+                MERGE (imas:IMASNode {id: src.dd_path})
+                MERGE (sns)-[:FROM_DD_PATH]->(imas)
+            )
+            FOREACH (_ IN CASE WHEN src.source_type = 'signals' AND src.signal IS NOT NULL
+                          THEN [1] ELSE [] END |
+                MERGE (sig:FacilitySignal {id: src.signal})
+                MERGE (sns)-[:FROM_SIGNAL]->(sig)
+            )
+            RETURN count(sns) AS affected
+            """,
+            sources=sources,
+        )
+        return result[0]["affected"] if result else 0
+
+
+def list_skipped_sources(
+    limit: int = 100,
+    reason: str | None = None,
+) -> list[dict]:
+    """Query skipped StandardNameSource records.
+
+    Returns a list of dicts with keys: id, source_type, source_id,
+    skip_reason, skip_reason_detail, description.
+
+    Args:
+        limit: Maximum rows to return.
+        reason: Optional skip_reason filter.
+    """
+    where = "sns.status = 'skipped'"
+    params: dict = {"limit": limit}
+    if reason is not None:
+        where += " AND sns.skip_reason = $reason"
+        params["reason"] = reason
+
+    with GraphClient() as gc:
+        result = gc.query(
+            f"""
+            MATCH (sns:StandardNameSource)
+            WHERE {where}
+            RETURN sns.id AS id,
+                   sns.source_type AS source_type,
+                   sns.source_id AS source_id,
+                   sns.skip_reason AS skip_reason,
+                   sns.skip_reason_detail AS skip_reason_detail,
+                   sns.description AS description
+            ORDER BY sns.skip_reason, sns.id
+            LIMIT $limit
+            """,
+            **params,
+        )
+        return [dict(r) for r in result]
+
+
+def get_skipped_source_counts(
+    source_type: str | None = None,
+) -> dict[str, int]:
+    """Return counts of skipped StandardNameSource records grouped by skip_reason."""
+    where = "sns.status = 'skipped'"
+    params: dict = {}
+    if source_type is not None:
+        where += " AND sns.source_type = $source_type"
+        params["source_type"] = source_type
+
+    with GraphClient() as gc:
+        result = gc.query(
+            f"""
+            MATCH (sns:StandardNameSource)
+            WHERE {where}
+            RETURN coalesce(sns.skip_reason, 'unknown') AS skip_reason,
+                   count(sns) AS cnt
+            ORDER BY cnt DESC
+            """,
+            **params,
+        )
+        return {r["skip_reason"]: r["cnt"] for r in result}
 
 
 def release_standard_name_source_claims(token: str) -> int:

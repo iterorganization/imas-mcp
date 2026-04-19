@@ -782,14 +782,13 @@ The LLM never provides the unit field.
 
 | Command | Purpose | Key Options |
 |---------|---------|-------------|
-| `sn generate` | Generate standard names from DD paths or facility signals via LLM pipeline | `--source {dd,signals}`, `--ids`, `--domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--from-model`, `--name-only` |
+| `sn generate` | Generate standard names from DD paths or facility signals via LLM pipeline | `--source {dd,signals}`, `--ids`, `--domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--name-only`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--include-review-feedback` |
 | `sn review` | Score and tier existing valid standard names via batched reviewer LLM (1:1 scoring invariant, retry-unmatched) | `--ids`, `--domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force` |
 | `sn enrich` | Enrich existing standard names with documentation | `--ids`, `--domain`, `--status`, `-c/--cost-limit`, `--dry-run`, `--limit`, `--batch-size` |
 | `sn publish` | Export validated StandardName nodes to YAML catalog files | `--output-dir`, `--ids`, `--domain`, `--group-by {ids,domain,confidence}`, `--confidence-min`, `--catalog-dir`, `--create-pr` |
 | `sn import` | Import reviewed YAML catalog entries back into graph | `--catalog-dir` (required), `--tags`, `--dry-run`, `--check` |
 | `sn status` | Show standard name and StandardNameSource pipeline statistics | — |
 | `sn gaps` | List grammar vocabulary gaps from composition | `--segment`, `--export {table,yaml}` |
-| `sn reset` | Reset standard names for re-processing | `--status` (required), `--to`, `--source`, `--ids`, `--dry-run` |
 | `sn clear` | Delete standard names from the graph (relationship-first safety model) | `--status`, `--all`, `--source`, `--ids`, `--include-accepted`, `--include-sources`, `--dry-run` |
 | `sn reconcile` | Reconcile StandardNameSource nodes after DD/signal rebuild | `--source-type {dd,signals}` |
 | `sn benchmark` | Benchmark LLM models on standard name generation quality | `--models`, `--ids`, `--reviewer-model`, `--max-candidates` |
@@ -868,20 +867,26 @@ extracted → composed | attached | vocab_gap | failed | stale
 
 ### Reset and Clear Semantics
 
-**`sn reset`** — Re-processes existing nodes without deleting them. Clears transient fields
-(embedding, model, confidence, generated_at) and removes HAS_STANDARD_NAME and HAS_UNIT
-relationships. Optionally changes `review_status` via `--to <status>`. Default (no `--to`) leaves
-status unchanged, only clears fields.
+**`sn generate --reset-to`** — Re-processes existing nodes without deleting them (when using
+`--reset-to drafted`) or clears matching SN nodes for a full re-run (`--reset-to extracted`).
+Clears transient fields (embedding, model, confidence, generated_at) and removes
+HAS_STANDARD_NAME and HAS_UNIT relationships. Scoped to the same `--source` filter. Accepts
+additional filter flags: `--since`, `--before`, `--below-score`, `--tier`,
+`--retry-quarantined` to narrow which nodes are reset.
+
+**`sn generate --reset-only`** — Performs the `--reset-to` cleanup then exits without running
+the generation pipeline. Requires `--reset-to`. Useful for housekeeping without recomposing.
 
 **`sn clear`** — Deletes StandardName nodes. Uses a relationship-first safety model: HAS_STANDARD_NAME
 edges are removed before deleting nodes, and scoped deletes only remove orphaned nodes. Requires
 either `--status <value>` or `--all`. Pass `--include-sources` to also delete associated
 `StandardNameSource` nodes.
 
-**Safety guard:** Both commands require `--include-accepted` to touch names with `review_status=accepted`.
-Accepted names are catalog-authoritative and should rarely be deleted from the graph.
+**Safety guard:** Both `sn generate --reset-to` and `sn clear` require `--include-accepted` to touch
+names with `review_status=accepted`. Accepted names are catalog-authoritative and should rarely be
+deleted from the graph.
 
-**`sn generate --reset-to`** — Runs a `sn reset` before minting, scoped to the same `--ids`/`--source`
+**`sn generate --reset-to`** — Runs a reset before minting, scoped to the same `--source`
 filter. Accepts `extracted` or `drafted` as the target status. Useful for a clean re-run on a
 specific IDS without touching the rest of the graph.
 

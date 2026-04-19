@@ -451,7 +451,7 @@ drafted → published → accepted
 Additional transient statuses: `reviewed`, `validation_failed`, `vocab_gap`,
 `skipped` — used internally during pipeline execution.
 
-**Safety model:** `sn reset` and `sn clear` require `--include-accepted` to
+**Safety model:** `sn generate --reset-to` and `sn clear` require `--include-accepted` to
 touch accepted names. Accepted names are catalog-authoritative and rarely need
 graph modification.
 
