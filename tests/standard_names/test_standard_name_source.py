@@ -26,6 +26,7 @@ class TestStandardNameSourceSchema:
             "vocab_gap",
             "failed",
             "stale",
+            "skipped",
         }
 
     def test_source_type_enum_distinct(self):

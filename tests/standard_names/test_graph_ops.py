@@ -820,3 +820,163 @@ class TestClearStandardNamesFilters:
         self._call_clear(mock_gc, status_filter=["drafted"], tiers=["poor"])
         cypher = self._get_count_cypher(mock_gc)
         assert "sn.review_tier IN $tiers" in cypher
+
+
+class TestWriteSkippedSources:
+    """Test write_skipped_sources Cypher structure and behavior."""
+
+    def _call_write(self, records: list[dict], mock_gc: MagicMock) -> int:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+            from imas_codex.standard_names.graph_ops import write_skipped_sources
+
+            return write_skipped_sources(records)
+
+    def test_empty_returns_zero_no_graph_call(self) -> None:
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock()
+        count = self._call_write([], mock_gc)
+        assert count == 0
+        mock_gc.query.assert_not_called()
+
+    def test_write_dd_skipped_source(self) -> None:
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"affected": 1}])
+
+        count = self._call_write(
+            [
+                {
+                    "source_type": "dd",
+                    "source_id": "equilibrium/time_slice/ggd/space/object/measure",
+                    "skip_reason": "dd_unit_unresolvable",
+                    "skip_reason_detail": "Jinja template: m^dimension",
+                    "description": "cell measure",
+                }
+            ],
+            mock_gc,
+        )
+        assert count == 1
+        mock_gc.query.assert_called_once()
+        cypher, _ = mock_gc.query.call_args[0], mock_gc.query.call_args[1]
+        cypher_text = cypher[0]
+        assert "MERGE (sns:StandardNameSource" in cypher_text
+        assert "sns.status = 'skipped'" in cypher_text
+        assert "sns.skip_reason = src.skip_reason" in cypher_text
+        # claim fields cleared on match
+        assert "sns.claim_token = null" in cypher_text
+        # relationship creation for DD sources
+        assert "MERGE (imas:IMASNode" in cypher_text
+        assert "FROM_DD_PATH" in cypher_text
+
+        sources = mock_gc.query.call_args[1]["sources"]
+        assert len(sources) == 1
+        assert sources[0]["id"] == "dd:equilibrium/time_slice/ggd/space/object/measure"
+        assert sources[0]["source_type"] == "dd"
+        assert sources[0]["dd_path"] == sources[0]["source_id"]
+        assert sources[0]["signal"] is None
+        assert sources[0]["skip_reason"] == "dd_unit_unresolvable"
+
+    def test_write_signals_skipped_source(self) -> None:
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"affected": 1}])
+
+        self._call_write(
+            [
+                {
+                    "source_type": "signals",
+                    "source_id": "tcv:ip_raw",
+                    "skip_reason": "unavailable",
+                    "skip_reason_detail": "no data in MDSplus",
+                }
+            ],
+            mock_gc,
+        )
+        sources = mock_gc.query.call_args[1]["sources"]
+        assert sources[0]["source_type"] == "signals"
+        assert sources[0]["signal"] == "tcv:ip_raw"
+        assert sources[0]["dd_path"] is None
+
+    def test_batch_writes(self) -> None:
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"affected": 3}])
+        count = self._call_write(
+            [
+                {
+                    "source_type": "dd",
+                    "source_id": f"ids/path_{i}",
+                    "skip_reason": "dd_unit_context_dependent",
+                    "skip_reason_detail": "sentinel unit",
+                }
+                for i in range(3)
+            ],
+            mock_gc,
+        )
+        assert count == 3
+        assert len(mock_gc.query.call_args[1]["sources"]) == 3
+
+
+class TestListSkippedSources:
+    """Test list_skipped_sources filtering."""
+
+    def _call(self, mock_gc: MagicMock, **kwargs) -> list[dict]:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+            from imas_codex.standard_names.graph_ops import list_skipped_sources
+
+            return list_skipped_sources(**kwargs)
+
+    def test_default_filter_is_skipped_only(self) -> None:
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        self._call(mock_gc)
+        cypher = mock_gc.query.call_args[0][0]
+        assert "sns.status = 'skipped'" in cypher
+        assert "AND sns.skip_reason = $reason" not in cypher
+
+    def test_reason_filter_passes_parameter(self) -> None:
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        self._call(mock_gc, reason="dd_unit_unresolvable", limit=50)
+        cypher = mock_gc.query.call_args[0][0]
+        assert "AND sns.skip_reason = $reason" in cypher
+        kwargs = mock_gc.query.call_args[1]
+        assert kwargs["reason"] == "dd_unit_unresolvable"
+        assert kwargs["limit"] == 50
+
+
+class TestGetSkippedSourceCounts:
+    """Test get_skipped_source_counts aggregation."""
+
+    def _call(self, mock_gc: MagicMock, **kwargs) -> dict[str, int]:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+            from imas_codex.standard_names.graph_ops import (
+                get_skipped_source_counts,
+            )
+
+            return get_skipped_source_counts(**kwargs)
+
+    def test_returns_dict_keyed_by_reason(self) -> None:
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(
+            return_value=[
+                {"skip_reason": "dd_unit_unresolvable", "cnt": 140},
+                {"skip_reason": "dd_unit_context_dependent", "cnt": 1263},
+            ]
+        )
+        result = self._call(mock_gc)
+        assert result == {
+            "dd_unit_unresolvable": 140,
+            "dd_unit_context_dependent": 1263,
+        }
+
+    def test_source_type_filter(self) -> None:
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        self._call(mock_gc, source_type="dd")
+        cypher = mock_gc.query.call_args[0][0]
+        assert "AND sns.source_type = $source_type" in cypher
+        assert mock_gc.query.call_args[1]["source_type"] == "dd"

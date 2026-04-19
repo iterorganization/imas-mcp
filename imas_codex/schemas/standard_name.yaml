@@ -23,7 +23,7 @@ description: >-
   shared vocabulary of physics concepts.
 
 license: MIT
-version: 0.6.0
+version: 0.7.0
 
 prefixes:
   linkml: https://w3id.org/linkml/
@@ -134,6 +134,11 @@ enums:
         description: Composition failed after max retry attempts
       stale:
         description: Source entity no longer exists in upstream data
+      skipped:
+        description: >-
+          DD path cannot be resolved to a valid standard name source due to
+          upstream defects (prose unit, unresolvable Jinja template,
+          context-dependent inheritance). See skip_reason for classification.
 
   StandardNameValidationStatus:
     description: >-
@@ -584,3 +589,12 @@ classes:
         range: datetime
       description:
         description: Human-readable description of this source entity
+      skip_reason:
+        description: >-
+          Machine-readable skip classification (e.g.
+          'dd_unit_unresolvable', 'dd_unit_ambiguous',
+          'dd_unit_context_dependent'). Set when status='skipped'.
+      skip_reason_detail:
+        description: >-
+          Human-readable detail for the skip (e.g. the raw DD unit string,
+          the conflicting parent/child units). Set when status='skipped'.

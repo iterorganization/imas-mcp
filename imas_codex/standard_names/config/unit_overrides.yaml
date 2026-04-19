@@ -1,0 +1,187 @@
+# DD unit corrections applied at extraction time.
+#
+# The IMAS Data Dictionary emits several "prose" or unresolved unit strings
+# that break the standard-name pipeline. The DD team has confirmed these are
+# by-design; we handle them entirely on the imas-codex side.
+#
+# See plans/research/standard-names/dd-unit-bugs.md for full defect catalog.
+#
+# Strategy keys:
+#   override: replace dd_unit with override_unit (name proceeds normally)
+#   skip:     mark StandardNameSource as skipped with skip_reason
+#
+# Path pattern syntax: glob-style. "*" matches a single path segment,
+# "**" matches zero or more segments. Matched against the full DD path
+# string (IDS-prefixed, e.g. "core_profiles/profiles_1d/ion/element/z_n").
+#
+# Evaluation: rules are tried in order; first match wins.
+
+version: 1
+
+overrides:
+  # -------------------------------------------------------------------------
+  # Class 1a — prose "Elementary Charge Unit" on dimensionless multiplicity
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/element/multiplicity"
+    dd_unit: "Elementary Charge Unit"
+    strategy: override
+    override_unit: "1"
+    reason: "multiplicity is a dimensionless atom count per molecule"
+
+  # -------------------------------------------------------------------------
+  # Class 1b — prose "Elementary Charge Unit" on energies (eV)
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/ionisation_potential"
+    dd_unit: "Elementary Charge Unit"
+    strategy: override
+    override_unit: "eV"
+    reason: "ionisation potential is an energy expressed in electron volts"
+
+  - path_pattern: "**/ionization_potential"
+    dd_unit: "Elementary Charge Unit"
+    strategy: override
+    override_unit: "eV"
+    reason: "ionization potential (US spelling) is an energy in electron volts"
+
+  - path_pattern: "**/binding_energy"
+    dd_unit: "Elementary Charge Unit"
+    strategy: override
+    override_unit: "eV"
+    reason: "binding energy in electron volts"
+
+  # -------------------------------------------------------------------------
+  # Class 1c — prose "Elementary Charge Unit" on atomic/charge numbers
+  # (dimensionless nuclear charge Z). Catches z_n under element/, summary/, etc.
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/z_n"
+    dd_unit: "Elementary Charge Unit"
+    strategy: override
+    override_unit: "1"
+    reason: "nuclear charge number Z is dimensionless"
+
+  # -------------------------------------------------------------------------
+  # Class 2 — prose "Atomic Mass Unit" on atomic mass fields
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/element/a"
+    dd_unit: "Atomic Mass Unit"
+    strategy: override
+    override_unit: "u"
+    reason: "atomic mass number — unified atomic mass unit"
+
+  - path_pattern: "**/atomic_mass"
+    dd_unit: "Atomic Mass Unit"
+    strategy: override
+    override_unit: "u"
+    reason: "atomic mass — unified atomic mass unit"
+
+  - path_pattern: "**/a"
+    dd_unit: "Atomic Mass Unit"
+    strategy: override
+    override_unit: "u"
+    reason: "atomic mass number — unified atomic mass unit (generic fallback)"
+
+  # -------------------------------------------------------------------------
+  # Class 3 — dimensionless charge ratios / quantum numbers tagged unit="e"
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/z_n"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "1"
+    reason: "nuclear charge number is dimensionless"
+
+  - path_pattern: "**/charge_number"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "1"
+    reason: "ion charge number is dimensionless"
+
+  - path_pattern: "**/z_ion"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "1"
+    reason: "average ion charge number is dimensionless"
+
+  - path_pattern: "**/z_average"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "1"
+    reason: "average charge number <Z> is dimensionless"
+
+  - path_pattern: "**/z_square_average"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "1"
+    reason: "average squared charge number <Z^2> is dimensionless"
+
+  - path_pattern: "**/z_min"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "1"
+    reason: "minimum charge number bound is dimensionless"
+
+  - path_pattern: "**/z_max"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "1"
+    reason: "maximum charge number bound is dimensionless"
+
+  - path_pattern: "**/vibrational_level"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "1"
+    reason: "vibrational quantum number is a pure integer"
+
+  # Ionisation potential currently tagged unit="e" in edge_profiles GGD —
+  # should be energy (eV).
+  - path_pattern: "**/ionisation_potential"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "eV"
+    reason: "ionisation potential is an energy in electron volts"
+
+  - path_pattern: "**/ionization_potential"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "eV"
+    reason: "ionization potential (US spelling) is an energy in electron volts"
+
+  # Generic fallback for bare `z` fields if any remain.
+  - path_pattern: "**/z"
+    dd_unit: "e"
+    strategy: override
+    override_unit: "1"
+    reason: "charge number is dimensionless"
+
+  # -------------------------------------------------------------------------
+  # Class 4 — unresolved Jinja placeholder m^dimension (GGD grid measures).
+  # The true unit depends on the runtime "dimension" attribute (0..3) and
+  # cannot be statically resolved.
+  # -------------------------------------------------------------------------
+  - path_pattern: "**"
+    dd_unit: "m^dimension"
+    strategy: skip
+    skip_reason: "dd_unit_unresolvable"
+    reason: "DD Jinja template m^dimension is unresolved; unit depends on runtime 'dimension' attribute"
+
+  # -------------------------------------------------------------------------
+  # Class 5 — pulse_schedule reference waveforms carry sentinel unit="1"
+  # regardless of the physical quantity they reference. Cannot be resolved
+  # without inheriting the parent quantity's unit (context-dependent).
+  # -------------------------------------------------------------------------
+  - path_pattern: "pulse_schedule/**/reference"
+    dd_unit: "1"
+    strategy: skip
+    skip_reason: "dd_unit_context_dependent"
+    reason: "pulse_schedule reference unit=1 is a sentinel; true unit is inherited from parent controlled quantity"
+
+  - path_pattern: "pulse_schedule/**/reference/data"
+    dd_unit: "1"
+    strategy: skip
+    skip_reason: "dd_unit_context_dependent"
+    reason: "pulse_schedule reference/data unit=1 is a sentinel; true unit is inherited from parent controlled quantity"
+
+  - path_pattern: "pulse_schedule/**/reference_waveform/data"
+    dd_unit: "1"
+    strategy: skip
+    skip_reason: "dd_unit_context_dependent"
+    reason: "pulse_schedule reference_waveform/data unit=1 is a sentinel; true unit is inherited from parent controlled quantity"

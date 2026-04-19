@@ -13,8 +13,74 @@ from collections.abc import Callable
 
 from imas_codex.core.node_categories import SN_SOURCE_CATEGORIES
 from imas_codex.standard_names.sources.base import ExtractionBatch
+from imas_codex.standard_names.unit_overrides import resolve_unit
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_unit_overrides(
+    results: list[dict],
+    *,
+    source_type: str = "dd",
+    write_skipped: bool = True,
+) -> list[dict]:
+    """Apply DD unit overrides/skips in-place to an extraction result set.
+
+    For each row: resolves ``(path, unit)`` through the override engine.
+    - Override match: updates ``row['unit']`` to the corrected value and
+      records provenance on ``row['_unit_override']``.
+    - Skip match: removes the row from the returned list and queues a
+      ``StandardNameSource`` skip record.
+
+    When ``write_skipped`` is True and there is at least one skipped row,
+    the skip records are persisted via ``graph_ops.write_skipped_sources``.
+
+    Returns the filtered list of kept rows (skipped ones removed).
+    """
+    kept: list[dict] = []
+    skip_records: list[dict] = []
+
+    for row in results:
+        path = row.get("path") or ""
+        unit = row.get("unit")
+        effective_unit, meta = resolve_unit(path, unit)
+
+        if meta and meta.get("rule") == "skip":
+            skip_records.append(
+                {
+                    "source_type": source_type,
+                    "source_id": path,
+                    "skip_reason": meta["skip_reason"],
+                    "skip_reason_detail": meta["skip_reason_detail"],
+                    "description": row.get("description") or "",
+                }
+            )
+            continue
+
+        if meta and meta.get("rule") == "override":
+            row["unit"] = effective_unit
+            row["_unit_override"] = meta
+
+        kept.append(row)
+
+    if write_skipped and skip_records:
+        try:
+            from imas_codex.standard_names.graph_ops import write_skipped_sources
+
+            written = write_skipped_sources(skip_records)
+            logger.info(
+                "Recorded %d skipped DD sources (unit override config)", written
+            )
+        except Exception as exc:  # pragma: no cover
+            # Graph failures shouldn't block extraction itself.
+            logger.warning(
+                "Failed to write skipped DD sources to graph: %s (%d records)",
+                exc,
+                len(skip_records),
+            )
+
+    return kept
+
 
 # Enriched extraction query — single Cypher surfacing all context.
 # LIMIT is applied on DISTINCT (n, ids) pairs first, then clusters/coords
@@ -174,6 +240,13 @@ def extract_dd_candidates(
         # Resolve authoritative unit: prefer HAS_UNIT relationship, fall back to node property
         for row in results:
             row["unit"] = row.get("unit_from_rel") or row.get("unit") or None
+
+        # Apply DD unit override/skip config — fixes upstream defects and
+        # records unresolvable paths as skipped StandardNameSource records.
+        results = _apply_unit_overrides(results, source_type="dd")
+        if not results:
+            logger.info("No DD paths remain after unit override filtering")
+            return []
 
         # Collect cluster IDs for sibling lookup
         cluster_ids = {r["cluster_id"] for r in results if r.get("cluster_id")}
@@ -343,13 +416,23 @@ def extract_specific_paths(
         logger.info("No targeted paths found in graph")
         return []
 
-    # Resolve units + deduplicate rows (multi-cluster → multiple rows per path)
+    # Pre-resolve authoritative unit (prefer HAS_UNIT relationship), then
+    # apply DD unit override/skip config before further processing.
+    for row in results:
+        row["unit"] = row.get("unit_from_rel") or row.get("unit") or None
+
+    results = _apply_unit_overrides(results, source_type="dd")
+    if not results:
+        logger.info("No targeted DD paths remain after unit override filtering")
+        return []
+
+    # Deduplicate rows (multi-cluster → multiple rows per path)
     path_base: dict[str, dict] = {}
     path_clusters: dict[str, list[dict]] = {}
 
     for row in results:
         p = row.get("path", "")
-        row["unit"] = row.get("unit_from_rel") or row.get("unit") or None
+        # Unit already resolved + override-applied above.
         row["cluster_siblings"] = []
 
         if p not in path_base:

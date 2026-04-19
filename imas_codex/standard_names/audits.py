@@ -607,6 +607,17 @@ def unit_validity_check(candidate: dict[str, Any]) -> list[str]:
     Also flags DD-upstream quality issues: unit strings containing whitespace
     (prose unit names like ``"Elementary Charge Unit"``) and ``^dimension``
     placeholders that escaped the DD XML without resolution.
+
+    Note:
+        As of Phase B (DD unit overrides), the classes of DD-upstream defects
+        enumerated in ``plans/research/standard-names/dd-unit-bugs.md`` are
+        remapped at extraction time by
+        ``imas_codex.standard_names.unit_overrides.resolve_unit`` — valid
+        candidates should no longer reach this audit carrying prose units
+        or ``m^dimension`` placeholders. This function is kept as a safety
+        net: if either branch below fires in production, it means the
+        override YAML (``standard_names/config/unit_overrides.yaml``)
+        missed a case and needs a new rule.
     """
     issues: list[str] = []
     raw_unit = (candidate.get("unit") or "").strip()
