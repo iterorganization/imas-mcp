@@ -803,6 +803,18 @@ is provided as context for your naming decisions.
 26. **Ratios use `ratio_of_<A>_to_<B>` — not `<A>_to_<B>_ratio`** (the `ratio_binary_operator_check` audit enforces this): The canonical form places `ratio_of_` as a leading prefix, with `_to_` joining the two operands.
     - ✓ `ratio_of_ion_to_electron_density`, `ratio_of_poloidal_to_toroidal_magnetic_field`.
     - ✗ `ion_to_electron_density_ratio`, `poloidal_to_toroidal_magnetic_field_ratio`.
+27. **Position token `wall` — never `wall_surface`** (recurring quarantine pattern): The ISN Position vocabulary has `wall` as a valid token. The compound `wall_surface` is NOT in the vocabulary and will fail grammar validation. When the DD describes a quantity at or on the wall, always use `at_wall`, never `at_wall_surface`. The `_surface` suffix is physically redundant — a wall IS a surface.
+    - ✓ `emitted_radiation_energy_flux_at_wall`, `electron_emitted_kinetic_energy_flux_at_wall`.
+    - ✗ `emitted_radiation_energy_flux_at_wall_surface` — fails grammar validation.
+    - ✗ `ion_emitted_energy_flux_due_to_recombination_at_wall_surface` — fails on both `wall_surface` AND `recombination_at_wall_surface`.
+28. **Process tokens after `due_to_` are BARE vocabulary entries — never append spatial qualifiers**: The token after `due_to_` must exactly match an entry from the Process vocabulary. Never append location, region, or state qualifiers (`_at_X`, `_in_X`, `_on_X`, `_for_X`) to a process token. If you need to specify where a process occurs, move the qualifier to the subject prefix or use a Region segment.
+    - ✓ `halo_region_electron_radiated_energy_due_to_impurity_radiation` — region qualifier is in the subject prefix.
+    - ✓ `ion_incident_energy_flux_at_wall_due_to_recombination` — bare process token.
+    - ✗ `electron_radiated_energy_due_to_impurity_radiation_in_halo_region` — `impurity_radiation_in_halo_region` is not a Process token.
+    - ✗ `ion_incident_energy_flux_due_to_recombination_at_ion_state` — `recombination_at_ion_state` is not a Process token.
+29_b. **Qualify `outline_point` with its parent entity** (recurring quarantine pattern): A bare `outline_point` is meaningless without context. Always prefix it with the entity whose outline is being described: `plasma_boundary_outline_point`, `wall_outline_point`, `separatrix_outline_point`. The grammar position vocabulary expects compound position tokens, not a bare `outline_point`.
+    - ✓ `vertical_coordinate_of_plasma_boundary_outline_point`, `major_radius_of_wall_outline_point`.
+    - ✗ `vertical_coordinate_of_outline_point` — bare `outline_point` fails parse.
 
 ## Output Format
 

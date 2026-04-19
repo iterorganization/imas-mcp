@@ -2090,6 +2090,79 @@ def instrument_stokes_bind_check(candidate: dict[str, Any]) -> list[str]:
     return []
 
 
+# Redundant position tokens: the ISN grammar has 'wall', not 'wall_surface'.
+_REDUNDANT_POSITION_MAP: dict[str, str] = {
+    "wall_surface": "wall",
+}
+
+
+def position_redundancy_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag redundant position tokens like ``at_wall_surface`` → ``at_wall``.
+
+    The ISN Position vocabulary has ``wall`` but NOT ``wall_surface``.
+    The ``_surface`` suffix is physically redundant — a wall IS a surface.
+    Catches both ``_at_wall_surface`` and ``_on_wall_surface`` patterns.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if not name:
+        return []
+
+    issues: list[str] = []
+    for redundant, canonical in _REDUNDANT_POSITION_MAP.items():
+        for prep in ("_at_", "_on_"):
+            bad = f"{prep}{redundant}"
+            good = f"{prep}{canonical}"
+            if bad in name or name.endswith(f"{prep[1:]}{redundant}"):
+                suggested = name.replace(bad, good)
+                issues.append(
+                    f"audit:position_redundancy_check: name '{name}' uses "
+                    f"'{redundant}' as a position token, but ISN vocabulary "
+                    f"has '{canonical}'. Rename to '{suggested}'."
+                )
+    return issues
+
+
+def process_qualifier_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag over-qualified process tokens after ``due_to_``.
+
+    Process tokens in ``due_to_<process>`` must be bare vocabulary entries.
+    Appending spatial qualifiers (``_at_X``, ``_in_X``, ``_on_X``) to the
+    process token produces an invalid compound that fails grammar validation.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if not name:
+        return []
+
+    due_to_idx = name.find("_due_to_")
+    if due_to_idx < 0:
+        return []
+
+    process_tail = name[due_to_idx + len("_due_to_") :]
+    if not process_tail:
+        return []
+
+    # Check for spatial qualifiers embedded in the process token
+    spatial_patterns = [
+        ("_at_", "at"),
+        ("_in_", "in"),
+        ("_on_", "on"),
+        ("_for_", "for"),
+    ]
+    issues: list[str] = []
+    for pattern, prep in spatial_patterns:
+        if pattern in process_tail:
+            bare_process = process_tail.split(pattern, 1)[0]
+            qualifier = process_tail.split(pattern, 1)[1]
+            issues.append(
+                f"audit:process_qualifier_check: name '{name}' appends "
+                f"'{prep}_{qualifier}' to process token '{bare_process}' "
+                f"after 'due_to_'. Process tokens must be bare vocabulary "
+                f"entries — move the qualifier to the subject prefix or "
+                f"Region segment."
+            )
+    return issues
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -2151,6 +2224,8 @@ def run_audits(
     all_issues.extend(repeated_token_check(candidate))
     all_issues.extend(length_soft_cap_check(candidate))
     all_issues.extend(instrument_stokes_bind_check(candidate))
+    all_issues.extend(position_redundancy_check(candidate))
+    all_issues.extend(process_qualifier_check(candidate))
 
     return all_issues
 

@@ -34,6 +34,10 @@ The `unit` field for each path is pre-populated from the IMAS Data Dictionary
 | `reconstructed_faraday_rotation_angle` | `faraday_rotation_angle` | Processing method is metadata, not part of the name |
 | `geometric_minor_radius` | `minor_radius` | DD section prefix leaking into standard name |
 | `flux_surface_averaged_elongation` | `elongation` | Elongation is a geometric property of a contour, not a flux-surface average |
+| `energy_flux_at_wall_surface` | `energy_flux_at_wall` | Position token is `wall`, not `wall_surface` — the `_surface` suffix is redundant |
+| `energy_due_to_recombination_at_ion_state` | `energy_due_to_recombination` | Process tokens are bare vocabulary entries — never append `_at_X` / `_in_X` / `_on_X` qualifiers |
+| `energy_due_to_impurity_radiation_in_halo_region` | `halo_region_radiated_energy_due_to_impurity_radiation` | Region qualifiers go in the subject prefix, not after `due_to_<process>` |
+| `vertical_coordinate_of_outline_point` | `vertical_coordinate_of_wall_outline_point` | Always qualify `outline_point` with its parent entity (`wall_`, `plasma_boundary_`) |
 
 ## Batch Consistency Check
 

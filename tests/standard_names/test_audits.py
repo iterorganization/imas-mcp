@@ -1644,3 +1644,102 @@ class TestInstrumentStokesBindCheck:
         from imas_codex.standard_names.audits import instrument_stokes_bind_check
 
         assert instrument_stokes_bind_check({"id": "electron_temperature"}) == []
+
+
+# =========================================================================
+# position_redundancy_check
+# =========================================================================
+
+
+class TestPositionRedundancyCheck:
+    """Tests for position_redundancy_check audit."""
+
+    def test_fail_at_wall_surface(self):
+        """``at_wall_surface`` triggers — ISN has ``wall``, not ``wall_surface``."""
+        from imas_codex.standard_names.audits import position_redundancy_check
+
+        issues = position_redundancy_check(
+            {"id": "emitted_radiation_energy_flux_at_wall_surface"}
+        )
+        assert len(issues) == 1
+        assert "position_redundancy_check" in issues[0]
+        assert "'wall'" in issues[0]
+
+    def test_fail_on_wall_surface(self):
+        """``on_wall_surface`` also triggers."""
+        from imas_codex.standard_names.audits import position_redundancy_check
+
+        issues = position_redundancy_check({"id": "ion_energy_flux_on_wall_surface"})
+        assert len(issues) == 1
+        assert "position_redundancy_check" in issues[0]
+
+    def test_pass_at_wall(self):
+        """Correct ``at_wall`` does not trigger."""
+        from imas_codex.standard_names.audits import position_redundancy_check
+
+        assert (
+            position_redundancy_check({"id": "emitted_radiation_energy_flux_at_wall"})
+            == []
+        )
+
+    def test_pass_unrelated(self):
+        """Unrelated name does not trigger."""
+        from imas_codex.standard_names.audits import position_redundancy_check
+
+        assert position_redundancy_check({"id": "electron_temperature"}) == []
+
+
+# =========================================================================
+# process_qualifier_check
+# =========================================================================
+
+
+class TestProcessQualifierCheck:
+    """Tests for process_qualifier_check audit."""
+
+    def test_fail_due_to_recombination_at_ion_state(self):
+        """Over-qualified process ``recombination_at_ion_state`` triggers."""
+        from imas_codex.standard_names.audits import process_qualifier_check
+
+        issues = process_qualifier_check(
+            {"id": "ion_incident_energy_flux_on_wall_due_to_recombination_at_ion_state"}
+        )
+        assert len(issues) == 1
+        assert "process_qualifier_check" in issues[0]
+        assert "'recombination'" in issues[0]
+
+    def test_fail_due_to_impurity_radiation_in_halo_region(self):
+        """Over-qualified process ``impurity_radiation_in_halo_region`` triggers."""
+        from imas_codex.standard_names.audits import process_qualifier_check
+
+        issues = process_qualifier_check(
+            {"id": "electron_radiated_energy_due_to_impurity_radiation_in_halo_region"}
+        )
+        assert len(issues) == 1
+        assert "process_qualifier_check" in issues[0]
+        assert "'impurity_radiation'" in issues[0]
+
+    def test_pass_bare_process(self):
+        """Correct bare process token does not trigger."""
+        from imas_codex.standard_names.audits import process_qualifier_check
+
+        assert (
+            process_qualifier_check({"id": "ion_energy_flux_due_to_recombination"})
+            == []
+        )
+
+    def test_pass_no_due_to(self):
+        """Name without ``due_to`` does not trigger."""
+        from imas_codex.standard_names.audits import process_qualifier_check
+
+        assert process_qualifier_check({"id": "electron_temperature"}) == []
+
+    def test_fail_due_to_process_on_surface(self):
+        """``_on_`` qualifier after process triggers."""
+        from imas_codex.standard_names.audits import process_qualifier_check
+
+        issues = process_qualifier_check(
+            {"id": "heat_flux_due_to_radiation_on_outer_wall"}
+        )
+        assert len(issues) == 1
+        assert "process_qualifier_check" in issues[0]
