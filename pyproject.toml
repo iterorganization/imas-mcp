@@ -364,6 +364,7 @@ markers = [
     "graph: marks tests requiring a live Neo4j connection (auto-skipped when unavailable)",
     "graph_mcp: marks graph-native MCP tests requiring Neo4j with fixture data",
     "fixture_only: marks tests that require fixture data and should be skipped on production graphs",
+    "corpus_health: marks corpus-health gate tests requiring a populated Neo4j graph (run with -m corpus_health)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",
