@@ -1123,20 +1123,42 @@ def name_description_consistency_check(candidate: dict[str, Any]) -> list[str]:
 
 
 _REPRESENTATION_NAME_RE = re.compile(
-    r"_(?:coefficients|ggd|finite_element|interpolation|interpolation_coefficients|"
-    r"basis|spline|fourier_modes|harmonics_coefficients|ggd_coefficients|"
-    r"finite_element_interpolation_coefficients)(?:_|$)"
+    r"(?:"
+    # Generic coefficient / basis / spline / ggd / fourier suffixes
+    r"_(?:coefficients|ggd|basis|spline|fourier_modes|harmonics_coefficients)"
+    # GGD-coefficient variants
+    r"|_ggd_coefficients"
+    r"|_coefficient_on_ggd"
+    # Interpolation coefficient variants (singular/plural, optional _on_ggd)
+    r"|_interpolation_coefficients?(?:_on_ggd)?"
+    # Finite-element coefficient variants (base + real/imaginary split)
+    r"|_finite_element(?:_interpolation)?_coefficients?"
+    r"|_finite_element_coefficients_(?:real|imaginary)_part"
+    r")"
+    r"(?:_|$)"
 )
 
+#: Heuristic regex: bare ``_on_ggd$`` suffix — flagged only when the
+#: DD source path carries a GGD marker (``/ggd/`` or ``/grids_ggd/``).
+#: Avoids false positives on legitimate ``_on_<other>`` suffixes.
+_ON_GGD_SUFFIX_RE = re.compile(r"_on_ggd$")
 
-def representation_artifact_check(candidate: dict[str, Any]) -> list[str]:
+
+def representation_artifact_check(
+    candidate: dict[str, Any], source_path: str | None = None
+) -> list[str]:
     """Flag names whose final tokens describe a basis-function representation.
 
     Names ending in ``_coefficients``, ``_ggd_coefficients``,
-    ``_finite_element_interpolation_coefficients``, ``_basis``, ``_spline``,
-    ``_fourier_modes`` etc. are storage representations of an underlying
-    physical field, not standalone physics concepts.  They should be
-    quarantined and the corresponding source path skipped at classification.
+    ``_coefficient_on_ggd``, ``_interpolation_coefficient(s)(_on_ggd)``,
+    ``_finite_element_coefficients_(real|imaginary)_part``, ``_basis``,
+    ``_spline``, ``_fourier_modes`` etc. are storage representations of an
+    underlying physical field, not standalone physics concepts.  They should
+    be quarantined and the corresponding source path skipped at classification.
+
+    A bare ``_on_ggd$`` suffix is flagged only when *source_path* carries a
+    GGD marker (``/ggd/`` or ``/grids_ggd/``) — this avoids false positives
+    on legitimate ``_on_<other>`` compound terms.
     """
     name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
     if not name:
@@ -1147,6 +1169,18 @@ def representation_artifact_check(candidate: dict[str, Any]) -> list[str]:
             "basis-function or grid representation; the underlying physical "
             "quantity already has a standard name on the sibling path — "
             "this path should have been classified as skip"
+        ]
+    # Heuristic _on_ggd$ — only fire when DD source path carries a GGD marker
+    if (
+        _ON_GGD_SUFFIX_RE.search(name)
+        and source_path
+        and ("/ggd/" in source_path or "/grids_ggd/" in source_path)
+    ):
+        return [
+            f"audit:representation_artifact_check: name '{name}' ends in "
+            "'_on_ggd' and its DD source path contains a GGD marker — this "
+            "is a grid-representation storage node, not a physics concept; "
+            "the source path should have been classified as skip"
         ]
     return []
 
@@ -1673,7 +1707,7 @@ def run_audits(
     all_issues.extend(name_unit_consistency_check(candidate))
     all_issues.extend(multi_subject_check(candidate))
     all_issues.extend(cocos_specificity_check(candidate, source_cocos_type))
-    all_issues.extend(representation_artifact_check(candidate))
+    all_issues.extend(representation_artifact_check(candidate, source_path))
     all_issues.extend(causal_due_to_check(candidate))
     all_issues.extend(implicit_field_check(candidate))
     all_issues.extend(density_unit_consistency_check(candidate))

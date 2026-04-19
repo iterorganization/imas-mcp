@@ -1220,3 +1220,268 @@ class TestDiamagneticComponentCheck:
             diamagnetic_component_check({"id": "toroidal_component_of_electric_field"})
             == []
         )
+
+
+# =========================================================================
+# C.1: multi_subject_check — greedy compound-subject match
+# =========================================================================
+
+
+class TestMultiSubjectCheckGreedy:
+    """Tests for greedy longest-match in multi_subject_check."""
+
+    @pytest.mark.parametrize(
+        "name,expected_passes",
+        [
+            ("deuterium_tritium_fusion_power_density", True),
+            ("tritium_to_deuterium_density_ratio", True),
+            ("deuterium_deuterium_fusion_power", True),
+            ("tritium_tritium_reaction_rate", True),
+            ("electron_deuterium_density", False),
+        ],
+    )
+    def test_compound_species_greedy(self, name, expected_passes):
+        from imas_codex.standard_names.audits import multi_subject_check
+
+        issues = multi_subject_check({"id": name})
+        if expected_passes:
+            assert issues == [], f"False positive on '{name}': {issues}"
+        else:
+            assert issues, f"Expected failure on '{name}'"
+
+    def test_pass_single_compound_subject(self):
+        from imas_codex.standard_names.audits import multi_subject_check
+
+        assert multi_subject_check({"id": "deuterium_tritium_fusion_power"}) == []
+
+    def test_pass_electron_equivalent_exemption_preserved(self):
+        from imas_codex.standard_names.audits import multi_subject_check
+
+        assert multi_subject_check({"id": "ion_electron_equivalent"}) == []
+
+
+# =========================================================================
+# C.3: density_unit_consistency_check — constraint-metadata suffix skip
+# =========================================================================
+
+
+class TestDensityConstraintMetadataExemption:
+    """Tests for constraint-metadata suffix skip in density_unit_consistency_check."""
+
+    @pytest.mark.parametrize(
+        "suffix",
+        [
+            "_constraint_measurement_time",
+            "_constraint_weight",
+            "_constraint_reconstructed",
+            "_constraint_measured",
+            "_constraint_time_measurement",
+            "_constraint_position",
+        ],
+    )
+    def test_pass_constraint_metadata_suffix(self, suffix):
+        from imas_codex.standard_names.audits import density_unit_consistency_check
+
+        name = f"toroidal_current_density{suffix}"
+        assert density_unit_consistency_check({"id": name, "unit": "s"}) == [], (
+            f"False positive on '{name}'"
+        )
+
+    def test_fail_density_without_constraint_suffix(self):
+        """Density without a constraint suffix and wrong unit still flagged."""
+        from imas_codex.standard_names.audits import density_unit_consistency_check
+
+        issues = density_unit_consistency_check(
+            {"id": "toroidal_current_density", "unit": "s"}
+        )
+        assert issues, "Expected failure for bare density with wrong unit"
+
+
+# =========================================================================
+# C.4: implicit_field_check — device whitelist
+# =========================================================================
+
+
+class TestImplicitFieldDeviceWhitelist:
+    """Tests for device whitelist in implicit_field_check."""
+
+    def test_pass_vacuum_toroidal_field_function(self):
+        from imas_codex.standard_names.audits import implicit_field_check
+
+        assert implicit_field_check({"id": "vacuum_toroidal_field_function"}) == []
+
+    def test_pass_resistance_of_poloidal_field_coil(self):
+        from imas_codex.standard_names.audits import implicit_field_check
+
+        assert implicit_field_check({"id": "resistance_of_poloidal_field_coil"}) == []
+
+    def test_pass_field_coil_substring(self):
+        from imas_codex.standard_names.audits import implicit_field_check
+
+        assert (
+            implicit_field_check({"id": "current_in_poloidal_field_coil_supply"}) == []
+        )
+
+    def test_fail_bare_field_still_flagged(self):
+        from imas_codex.standard_names.audits import implicit_field_check
+
+        issues = implicit_field_check({"id": "vacuum_toroidal_field"})
+        assert issues and "implicit_field_check" in issues[0]
+
+
+# =========================================================================
+# C.5: causal_due_to_check — adjective-to-process map + suggested_fix
+# =========================================================================
+
+
+class TestCausalDueToSuggestedFix:
+    """Tests for suggested_fix in causal_due_to_check adjective map."""
+
+    def test_suggested_fix_halo(self):
+        from imas_codex.standard_names.audits import causal_due_to_check
+
+        issues = causal_due_to_check({"id": "power_due_to_halo"})
+        if issues:  # only fires if halo is not in ISN process vocab
+            assert "suggested_fix=" in issues[0]
+            assert "halo_currents" in issues[0]
+
+    def test_suggested_fix_thermal(self):
+        from imas_codex.standard_names.audits import causal_due_to_check
+
+        issues = causal_due_to_check({"id": "power_due_to_thermal"})
+        if issues:
+            assert "suggested_fix=" in issues[0]
+            assert "thermal_fusion" in issues[0]
+
+    def test_suggested_fix_fast_ion(self):
+        from imas_codex.standard_names.audits import causal_due_to_check
+
+        issues = causal_due_to_check({"id": "power_due_to_fast_ion"})
+        if issues:
+            assert "suggested_fix=" in issues[0]
+            assert "fast_ions" in issues[0]
+
+
+# =========================================================================
+# C.6: pulse_schedule_reference_check
+# =========================================================================
+
+
+class TestPulseScheduleReferenceCheck:
+    """Tests for pulse_schedule_reference_check audit."""
+
+    def test_fail_reference_suffix(self):
+        from imas_codex.standard_names.audits import pulse_schedule_reference_check
+
+        issues = pulse_schedule_reference_check({"id": "plasma_current_reference"})
+        assert issues and "pulse_schedule_reference_check" in issues[0]
+
+    def test_fail_reference_waveform_suffix(self):
+        from imas_codex.standard_names.audits import pulse_schedule_reference_check
+
+        issues = pulse_schedule_reference_check(
+            {"id": "plasma_current_reference_waveform"}
+        )
+        assert issues and "pulse_schedule_reference_check" in issues[0]
+
+    def test_fail_source_path_match(self):
+        from imas_codex.standard_names.audits import pulse_schedule_reference_check
+
+        issues = pulse_schedule_reference_check(
+            {"id": "plasma_current"},
+            source_path="pulse_schedule/position_control/reference",
+        )
+        assert issues and "pulse_schedule_reference_check" in issues[0]
+
+    def test_fail_source_path_reference_waveform(self):
+        from imas_codex.standard_names.audits import pulse_schedule_reference_check
+
+        issues = pulse_schedule_reference_check(
+            {"id": "plasma_current"},
+            source_path="pulse_schedule/position_control/reference_waveform/data",
+        )
+        assert issues and "pulse_schedule_reference_check" in issues[0]
+
+    def test_pass_no_reference(self):
+        from imas_codex.standard_names.audits import pulse_schedule_reference_check
+
+        assert pulse_schedule_reference_check({"id": "electron_temperature"}) == []
+
+    def test_pass_source_path_no_pulse_schedule(self):
+        from imas_codex.standard_names.audits import pulse_schedule_reference_check
+
+        assert (
+            pulse_schedule_reference_check(
+                {"id": "electron_temperature"},
+                source_path="core_profiles/profiles_1d/electrons/temperature",
+            )
+            == []
+        )
+
+
+# =========================================================================
+# C.7: ratio_binary_operator_check
+# =========================================================================
+
+
+class TestRatioBinaryOperatorCheck:
+    """Tests for ratio_binary_operator_check audit."""
+
+    def test_pass_canonical_ratio(self):
+        from imas_codex.standard_names.audits import ratio_binary_operator_check
+
+        assert (
+            ratio_binary_operator_check(
+                {"id": "ratio_of_electron_density_to_ion_density"}
+            )
+            == []
+        )
+
+    def test_fail_adhoc_density_ratio(self):
+        from imas_codex.standard_names.audits import ratio_binary_operator_check
+
+        issues = ratio_binary_operator_check({"id": "electron_to_ion_density_ratio"})
+        assert issues and "ratio_binary_operator_check" in issues[0]
+        assert "suggested_fix=" in issues[0]
+        assert "ratio_of_electron_to_ion" in issues[0]
+
+    def test_fail_adhoc_bare_ratio(self):
+        from imas_codex.standard_names.audits import ratio_binary_operator_check
+
+        issues = ratio_binary_operator_check({"id": "tritium_to_deuterium_ratio"})
+        assert issues and "ratio_binary_operator_check" in issues[0]
+
+    def test_pass_no_ratio(self):
+        from imas_codex.standard_names.audits import ratio_binary_operator_check
+
+        assert ratio_binary_operator_check({"id": "electron_temperature"}) == []
+
+
+# =========================================================================
+# C.8: unit_validity_check — whitespace and ^dimension
+# =========================================================================
+
+
+class TestUnitValidityCheckStrengthened:
+    """Tests for strengthened unit_validity_check."""
+
+    def test_fail_whitespace_prose_unit(self):
+        from imas_codex.standard_names.audits import unit_validity_check
+
+        issues = unit_validity_check({"unit": "Elementary Charge Unit"})
+        assert issues and "whitespace" in issues[0]
+        assert "dd_upstream" in issues[0]
+
+    def test_fail_caret_dimension_placeholder(self):
+        from imas_codex.standard_names.audits import unit_validity_check
+
+        issues = unit_validity_check({"unit": "m^dimension"})
+        assert issues and "^dimension" in issues[0]
+        assert "dd_upstream" in issues[0]
+
+    def test_pass_normal_unit(self):
+        from imas_codex.standard_names.audits import unit_validity_check
+
+        assert unit_validity_check({"unit": "m^-3"}) == []
+        assert unit_validity_check({"unit": "eV"}) == []
+        assert unit_validity_check({"unit": "kg.m.s^-2"}) == []
