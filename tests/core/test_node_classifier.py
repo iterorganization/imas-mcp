@@ -704,6 +704,195 @@ class TestRepresentationPass1:
 
 
 # ──────────────────────────────────────────────────────────────────
+# Transport-solver boundary-conditions / coefficients (Rules F3, F4)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestTransportSolverFitArtifact:
+    """Plan 31 WS-A — solver-internal nodes → fit_artifact."""
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            # Rule F3 — boundary_conditions_* subtree → fit_artifact
+            (
+                "transport_solver_numerics/boundary_conditions_ion/value",
+                "value",
+            ),
+            (
+                "transport_solver_numerics/boundary_conditions_ion/rho_tor_norm",
+                "rho_tor_norm",
+            ),
+            (
+                "transport_solver_numerics/boundary_conditions_electrons/"
+                "particles/value",
+                "value",
+            ),
+            (
+                "transport_solver_numerics/boundary_conditions_current/identifier",
+                "identifier",
+            ),
+            # Rule F4 — solver_1d coefficient* leaves → fit_artifact
+            (
+                "transport_solver_numerics/solver_1d/equation/coefficient/profile",
+                "profile",
+            ),
+            (
+                "transport_solver_numerics/solver_1d/equation/"
+                "boundary_condition/coefficient",
+                "coefficient",
+            ),
+            (
+                "transport_solver_numerics/solver_1d/equation/coefficients",
+                "coefficients",
+            ),
+        ],
+    )
+    def test_transport_solver_fit_artifact(self, path, name):
+        result = classify_node_pass1(path, name, data_type="FLT_1D", unit="-")
+        assert result == "fit_artifact"
+
+    def test_unrelated_transport_ids_unaffected(self):
+        # core_transport is NOT the solver-numerics IDS — should stay quantity.
+        result = classify_node_pass1(
+            "core_transport/model/profiles_1d/ion/particles/d",
+            "d",
+            data_type="FLT_1D",
+            unit="m^2.s^-1",
+        )
+        assert result == "quantity"
+
+
+# ──────────────────────────────────────────────────────────────────
+# pulse_schedule reference exclusion (Rule R3)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestPulseScheduleReference:
+    """Plan 31 WS-A — pulse_schedule reference subtrees → representation."""
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            (
+                "pulse_schedule/flux_control/i_plasma/reference",
+                "reference",
+            ),
+            (
+                "pulse_schedule/flux_control/i_plasma/reference/data",
+                "data",
+            ),
+            (
+                "pulse_schedule/density_control/n_e_line/reference_waveform",
+                "reference_waveform",
+            ),
+            (
+                "pulse_schedule/density_control/n_e_line/reference_waveform/data",
+                "data",
+            ),
+            (
+                "pulse_schedule/ec/launcher/power/reference",
+                "reference",
+            ),
+        ],
+    )
+    def test_pulse_schedule_reference_representation(self, path, name):
+        result = classify_node_pass1(path, name, data_type="FLT_1D", unit="A")
+        assert result == "representation"
+
+    def test_pulse_schedule_non_reference_unaffected(self):
+        # A pulse_schedule leaf that is NOT under /reference should fall
+        # through to quantity.
+        result = classify_node_pass1(
+            "pulse_schedule/time",
+            "time",
+            data_type="FLT_1D",
+            unit="s",
+        )
+        # /time leaf is coordinate per rule 5
+        assert result == "coordinate"
+
+    def test_non_pulse_schedule_reference_unaffected(self):
+        # A /reference leaf outside pulse_schedule is a plain quantity.
+        result = classify_node_pass1(
+            "equilibrium/time_slice/reference",
+            "reference",
+            data_type="FLT_0D",
+            unit="Wb",
+        )
+        assert result == "quantity"
+
+
+# ──────────────────────────────────────────────────────────────────
+# Diamagnetic-axis exclusion (Rule R4)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestDiamagneticAxis:
+    """Plan 31 WS-A — vector-container /diamagnetic axis → representation."""
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            (
+                "core_profiles/profiles_1d/velocity/diamagnetic",
+                "diamagnetic",
+            ),
+            (
+                "core_profiles/profiles_1d/ion/velocity/diamagnetic",
+                "diamagnetic",
+            ),
+            (
+                "equilibrium/time_slice/profiles_1d/e_field/diamagnetic",
+                "diamagnetic",
+            ),
+            (
+                "waves/coherent_wave/profiles_1d/a_field/diamagnetic",
+                "diamagnetic",
+            ),
+            (
+                "core_sources/source/profiles_1d/j_tot/diamagnetic",
+                "diamagnetic",
+            ),
+            (
+                "equilibrium/time_slice/profiles_2d/b_field/diamagnetic",
+                "diamagnetic",
+            ),
+            # With child leaf under /diamagnetic
+            (
+                "core_profiles/profiles_1d/velocity/diamagnetic/data",
+                "data",
+            ),
+        ],
+    )
+    def test_diamagnetic_axis_representation(self, path, name):
+        result = classify_node_pass1(path, name, data_type="FLT_1D", unit="m.s^-1")
+        assert result == "representation"
+
+    def test_diamagnetic_name_outside_vector_container_unaffected(self):
+        # /diamagnetic on a non-vector container (e.g. /magnetics) stays
+        # quantity — the rule is scoped to velocity/e_field/a_field/j_tot/b_field.
+        result = classify_node_pass1(
+            "magnetics/diamagnetic_flux/data",
+            "data",
+            data_type="FLT_1D",
+            unit="Wb",
+        )
+        assert result == "quantity"
+
+    def test_diamagnetic_drift_velocity_unaffected(self):
+        # A leaf literally named diamagnetic_drift but not under
+        # one of the vector containers should not be flagged.
+        result = classify_node_pass1(
+            "core_profiles/profiles_1d/diamagnetic_drift_velocity",
+            "diamagnetic_drift_velocity",
+            data_type="FLT_1D",
+            unit="m.s^-1",
+        )
+        assert result == "quantity"
+
+
+# ──────────────────────────────────────────────────────────────────
 # Pass 2 — fit-child promotion (R4)
 # ──────────────────────────────────────────────────────────────────
 

@@ -139,6 +139,18 @@ FIT_CHILD_SEGMENTS: frozenset[str] = frozenset(
 #: Regex matching ``*_fit`` parent segment.
 _FIT_PARENT_RE: re.Pattern[str] = re.compile(r"[A-Za-z0-9_]*_fit$")
 
+#: Regex matching transport_solver_numerics boundary-condition subtree.
+#: Covers e.g. ``transport_solver_numerics/boundary_conditions_ion/.../value``.
+_TRANSPORT_SOLVER_BC_RE: re.Pattern[str] = re.compile(
+    r"^transport_solver_numerics/[^/]*boundary_conditions[^/]*/"
+)
+
+#: Regex matching transport_solver_numerics solver_1d coefficient leaves.
+#: Covers e.g. ``transport_solver_numerics/solver_1d/*/equation/*/coefficient``.
+_TRANSPORT_SOLVER_COEFF_RE: re.Pattern[str] = re.compile(
+    r"^transport_solver_numerics/solver_1d(?:/[^/]+)*/coefficient[^/]*(?:/.*)?$"
+)
+
 # ──────────────────────────────────────────────────────────────────
 # Representation constants
 # ──────────────────────────────────────────────────────────────────
@@ -148,6 +160,23 @@ _REPRESENTATION_PATH_MARKERS: tuple[str, ...] = (
     "grids_ggd/",
     "/ggd_fast/",
     "/grid_subset/",
+)
+
+#: Regex matching ``pulse_schedule/.../reference`` or ``.../reference_waveform``
+#: subtrees.  These store the commanded waveform representation of an
+#: underlying physics quantity (plasma current, densities, heating power, …)
+#: — not an independent physics concept.
+_PULSE_SCHEDULE_REFERENCE_RE: re.Pattern[str] = re.compile(
+    r"^pulse_schedule/.+/reference(?:_waveform)?(?:/.+)?$"
+)
+
+#: Regex matching vector-container ``/diamagnetic`` leaves.  These DD paths
+#: (e.g. ``core_profiles/profiles_1d/velocity/diamagnetic``) are mis-labelings
+#: of drift-decomposition axes — see DD-01 (plan 31 §8, WS-E).  Until the DD
+#: is corrected, route to ``representation`` so they are excluded from SN
+#: extraction.
+_DIAMAGNETIC_AXIS_RE: re.Pattern[str] = re.compile(
+    r"^(?:.*)/(?:velocity|e_field|a_field|j_tot|b_field)/diamagnetic(?:/.+)?$"
 )
 
 #: Regex for representation leaf/parent segments — spline coefficients,
@@ -344,6 +373,17 @@ def classify_node_pass1(
         ):
             return "fit_artifact"
 
+    # Rule F3: transport_solver_numerics/boundary_conditions_*/… → fit_artifact
+    # Solver boundary-condition configuration nodes (value, rho_tor_norm,
+    # identifier, …) are numerical-solver internals, not physics concepts.
+    if _TRANSPORT_SOLVER_BC_RE.match(path):
+        return "fit_artifact"
+
+    # Rule F4: transport_solver_numerics/solver_1d/*/coefficient* → fit_artifact
+    # Finite-volume / finite-difference PDE coefficients are solver internals.
+    if _TRANSPORT_SOLVER_COEFF_RE.match(path):
+        return "fit_artifact"
+
     # ── Representation rules (before quantity/geometry fallthrough) ──
 
     # Rule R1: GGD / grid_subset subtrees → representation
@@ -354,6 +394,17 @@ def classify_node_pass1(
     if _REPRESENTATION_SEGMENT_RE.search(last_seg):
         return "representation"
     if len(parts) >= 2 and _REPRESENTATION_SEGMENT_RE.search(parts[-2]):
+        return "representation"
+
+    # Rule R3: pulse_schedule/.../reference(_waveform) → representation
+    # Commanded waveform representations of underlying physics quantities.
+    if _PULSE_SCHEDULE_REFERENCE_RE.match(path):
+        return "representation"
+
+    # Rule R4: vector-container /diamagnetic axis → representation
+    # DD mis-labeling (tracked upstream as DD-01 / plan 31 §8, WS-E);
+    # exclude from SN extraction until DD is corrected.
+    if _DIAMAGNETIC_AXIS_RE.match(path):
         return "representation"
 
     # Rule 9a: Physics leaf type + spatial unit + geometry ancestor → geometry

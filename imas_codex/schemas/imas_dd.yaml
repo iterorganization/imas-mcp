@@ -270,11 +270,15 @@ enums:
           nor SN-extracted.
       fit_artifact:
         description: >-
-          Artefact of a fitting or reconstruction process — not an independent
-          physics concept. Includes fit diagnostics (chi_squared, residual,
-          covariance, fitting_weight, fit_type) and per-fit provenance children
-          under *_fit parents (reconstructed, measured, weight, time_measurement,
-          rho_tor_norm). Neither enriched, embedded, nor SN-extracted.
+          Artefact of a fitting, reconstruction, or numerical-solver process —
+          not an independent physics concept. Includes fit diagnostics
+          (chi_squared, residual, covariance, fitting_weight, fit_type) and
+          per-fit provenance children under *_fit parents (reconstructed,
+          measured, weight, time_measurement, rho_tor_norm), plus
+          transport-solver boundary-condition / coefficient configuration
+          nodes under transport_solver_numerics/boundary_conditions_*/ and
+          transport_solver_numerics/solver_1d/*/coefficient*. Neither
+          enriched, embedded, nor SN-extracted.
       representation:
         description: >-
           Discretisation / basis-function storage that encodes a physical field
