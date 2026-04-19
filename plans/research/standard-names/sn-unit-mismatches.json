@@ -1,0 +1,30 @@
+[
+  {
+    "name": "electron_temperature_peaking_factor",
+    "current_unit": "1",
+    "canonical_unit": "eV",
+    "source_path": "plasma_profiles/global_quantities/t_e_peaking",
+    "dd_side_bug": true
+  },
+  {
+    "name": "ion_average_charge_of_ion_state",
+    "current_unit": "1",
+    "canonical_unit": "e",
+    "source_path": "edge_profiles/profiles_1d/ion/z_ion_1d",
+    "dd_side_bug": true
+  },
+  {
+    "name": "ion_average_square_charge_of_ion_state",
+    "current_unit": "1",
+    "canonical_unit": "e",
+    "source_path": "edge_profiles/profiles_1d/ion/z_ion_square_1d",
+    "dd_side_bug": true
+  },
+  {
+    "name": "plasma_current",
+    "current_unit": "1",
+    "canonical_unit": "A",
+    "source_path": "pulse_schedule/flux_control/ip/reference",
+    "dd_side_bug": false
+  }
+]
