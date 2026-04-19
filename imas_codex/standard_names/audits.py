@@ -770,12 +770,27 @@ def multi_subject_check(candidate: dict[str, Any]) -> list[str]:
         # Parse failure is handled by grammar round-trip check
         return issues
 
-    # Heuristic: check if name contains two subject enum values
+    # Heuristic: check if name contains two subject enum values.
+    # Use greedy longest-match so compound subjects like
+    # ``deuterium_tritium`` consume their constituent tokens and prevent
+    # ``deuterium`` + ``tritium`` from being counted as two subjects.
     try:
         from imas_standard_names.grammar import Subject
 
-        name_tokens = set(name.split("_"))
-        matched_subjects = [s.value for s in Subject if s.value in name_tokens]
+        # Sort longest-first for greedy matching
+        all_subjects = sorted((s.value for s in Subject), key=len, reverse=True)
+        remaining = name
+        matched_subjects: list[str] = []
+        for sv in all_subjects:
+            # Match the subject value as a whole-word substring
+            # (delimited by underscores or string boundaries)
+            pattern = rf"(?:^|_){re.escape(sv)}(?:_|$)"
+            if re.search(pattern, remaining):
+                matched_subjects.append(sv)
+                # Remove matched tokens so shorter subjects sharing the
+                # same tokens (e.g. ``deuterium`` inside
+                # ``deuterium_tritium``) are not double-counted.
+                remaining = re.sub(pattern, "_", remaining).strip("_")
 
         # Exempt known unit-qualifier compounds where a subject token appears
         # as a modifier rather than a true subject. These are conventional
@@ -785,6 +800,12 @@ def multi_subject_check(candidate: dict[str, Any]) -> list[str]:
         #   - `*_electron_temperature_equivalent` — temperature expressed as kT/e
         if name.endswith("_electron_equivalent"):
             matched_subjects = [s for s in matched_subjects if s != "electron"]
+
+        # Exempt ratio/comparison patterns: ``{species1}_to_{species2}_…``
+        # uses ``_to_`` as a conventional connector between numerator and
+        # denominator species (e.g. tritium_to_deuterium_density_ratio).
+        if "_to_" in name and len(matched_subjects) == 2:
+            matched_subjects = []
 
         if len(matched_subjects) >= 2:
             issues.append(
@@ -1319,6 +1340,21 @@ def density_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
         return []
     if "_density" not in name and not name.endswith("_density"):
         return []
+    # Skip constraint-metadata suffixes: names like
+    # ``toroidal_current_density_constraint_measurement_time`` carry
+    # ``_density`` in the base quantity, not in the metadata suffix.
+    # The unit refers to the suffix semantics (e.g. ``s`` for time).
+    _CONSTRAINT_SUFFIXES = (
+        "_constraint_measurement_time",
+        "_constraint_weight",
+        "_constraint_reconstructed",
+        "_constraint_measured",
+        "_constraint_time_measurement",
+        "_constraint_position",
+    )
+    for suffix in _CONSTRAINT_SUFFIXES:
+        if name.endswith(suffix):
+            return []
     # Acceptable density unit factors: any negative power of m.
     if "m^-" in unit or "m**-" in unit:
         return []
