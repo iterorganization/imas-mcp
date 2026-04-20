@@ -59,7 +59,15 @@ logger = logging.getLogger(__name__)
 
 # Categories we want to probe. The first two are the current SN-eligible
 # set; the remaining three are what Phase 1 investigates for FN paths.
-CATEGORIES = ["quantity", "geometry", "coordinate", "identifier", "meta"]
+CATEGORIES = [
+    "quantity",
+    "geometry",
+    "coordinate",
+    "identifier",
+    "metadata",
+    "representation",
+    "fit_artifact",
+]
 
 # Top IDSs by path count — stratify samples so the reviewer sees a
 # representative slice rather than e.g. 200 random edge_profiles paths.
