@@ -1,0 +1,33 @@
+{
+  "model": "anthropic/claude-opus-4.6",
+  "total_cost_usd": 0.2431,
+  "per_variant": {
+    "A": {
+      "mean_score": 0.805,
+      "pass_at_1": 0.75,
+      "compose_cost": 0.0416,
+      "compose_tokens": 3869,
+      "compose_latency_s": 17.66,
+      "review_cost": 0.0428,
+      "n_candidates": 20
+    },
+    "B": {
+      "mean_score": 0.755,
+      "pass_at_1": 0.65,
+      "compose_cost": 0.0358,
+      "compose_tokens": 3181,
+      "compose_latency_s": 12.37,
+      "review_cost": 0.0437,
+      "n_candidates": 20
+    },
+    "C": {
+      "mean_score": 0.815,
+      "pass_at_1": 0.75,
+      "compose_cost": 0.0365,
+      "compose_tokens": 3259,
+      "compose_latency_s": 12.45,
+      "review_cost": 0.0427,
+      "n_candidates": 20
+    }
+  }
+}
