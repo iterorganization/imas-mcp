@@ -549,6 +549,16 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     if not names:
         return 0
 
+    # Guard: warn when cocos_transformation_type is set but cocos integer is missing
+    for n in names:
+        if n.get("cocos_transformation_type") and n.get("cocos") is None:
+            logger.warning(
+                "StandardName '%s' has cocos_transformation_type='%s' but no cocos "
+                "integer — HAS_COCOS edge will not be created",
+                n["id"],
+                n["cocos_transformation_type"],
+            )
+
     with GraphClient() as gc:
         # Conflict-detect on unit — same name with different unit is a data
         # integrity error.  Filter out conflicting entries rather than raising
