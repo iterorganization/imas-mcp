@@ -1,0 +1,293 @@
+{
+  "_meta": {
+    "version": "v1",
+    "purpose": "Plan 34 — curated SN quality benchmark (DD path → expected standard name + anti-pattern negatives)",
+    "target_size": {"positives": 50, "negatives": 20},
+    "current_size": {"positives": 20, "negatives": 10, "todo_stubs": 30},
+    "domains": [
+      "equilibrium", "core_plasma_physics", "magnetic_field_diagnostics",
+      "transport", "waves", "fast_particles", "turbulence",
+      "plasma_wall_interactions", "gyrokinetics", "edge_plasma_physics"
+    ],
+    "gating": {
+      "positives_pass_at_1": 0.80,
+      "positives_mean_reviewer_score": 0.75,
+      "negatives_rejection_rate": 0.90
+    },
+    "notes": "Positives sourced from ISN published catalog + high-scoring graph names. Negatives sourced from graph-quarantined low-score names + hand-synthesised classics. Expansion to 50+20 pending future cycles (see plan 34 §3)."
+  },
+
+  "positives": [
+    {
+      "dd_path": "equilibrium/time_slice/profiles_1d/psi",
+      "physics_domain": "equilibrium",
+      "expected_name": "poloidal_magnetic_flux",
+      "expected_unit": "Wb",
+      "source": "isn_catalog",
+      "rationale": "Canonical 1:1 ISN mapping — poloidal flux on the 1D equilibrium profile."
+    },
+    {
+      "dd_path": "equilibrium/time_slice/profiles_1d/q",
+      "physics_domain": "equilibrium",
+      "expected_name": "safety_factor",
+      "expected_unit": "1",
+      "source": "isn_catalog",
+      "rationale": "ISN published name — tokamak safety factor q."
+    },
+    {
+      "dd_path": "equilibrium/time_slice/boundary/elongation",
+      "physics_domain": "equilibrium",
+      "expected_name": "elongation_of_plasma_boundary",
+      "expected_unit": "1",
+      "source": "isn_catalog",
+      "rationale": "ISN published — boundary-scoped elongation; tests missing-qualifier defence."
+    },
+    {
+      "dd_path": "equilibrium/time_slice/boundary/minor_radius",
+      "physics_domain": "equilibrium",
+      "expected_name": "minor_radius_of_plasma_boundary",
+      "expected_unit": "m",
+      "source": "isn_catalog",
+      "rationale": "ISN published — boundary-scoped geometry."
+    },
+    {
+      "dd_path": "equilibrium/time_slice/global_quantities/volume",
+      "physics_domain": "equilibrium",
+      "expected_name": "plasma_volume",
+      "expected_unit": "m^3",
+      "source": "isn_catalog",
+      "rationale": "ISN published; global-quantity scalar."
+    },
+    {
+      "dd_path": "equilibrium/time_slice/global_quantities/q_axis",
+      "physics_domain": "equilibrium",
+      "expected_name": "safety_factor_at_magnetic_axis",
+      "expected_unit": "1",
+      "source": "graph_published",
+      "rationale": "Position-qualified safety factor on axis."
+    },
+    {
+      "dd_path": "core_profiles/profiles_1d/electrons/temperature",
+      "physics_domain": "core_plasma_physics",
+      "expected_name": "electron_temperature",
+      "expected_unit": "eV",
+      "source": "isn_catalog",
+      "rationale": "ISN reference entry — kinetic Te profile."
+    },
+    {
+      "dd_path": "core_profiles/profiles_1d/electrons/density",
+      "physics_domain": "core_plasma_physics",
+      "expected_name": "electron_density",
+      "expected_unit": "m^-3",
+      "source": "isn_catalog",
+      "rationale": "ISN reference entry — ne profile."
+    },
+    {
+      "dd_path": "core_profiles/profiles_1d/electrons/pressure",
+      "physics_domain": "core_plasma_physics",
+      "expected_name": "electron_pressure",
+      "expected_unit": "Pa",
+      "source": "isn_catalog",
+      "rationale": "ISN reference entry — pe profile."
+    },
+    {
+      "dd_path": "core_profiles/profiles_1d/ion/temperature",
+      "physics_domain": "core_plasma_physics",
+      "expected_name": "ion_temperature",
+      "expected_unit": "eV",
+      "source": "isn_catalog",
+      "rationale": "ISN reference entry — Ti profile."
+    },
+    {
+      "dd_path": "magnetics/ip/data",
+      "physics_domain": "magnetic_field_diagnostics",
+      "expected_name": "plasma_current",
+      "expected_unit": "A",
+      "source": "isn_catalog",
+      "rationale": "ISN published — canonical toroidal plasma current. Tests 'ip'/symbol anti-pattern avoidance."
+    },
+    {
+      "dd_path": "magnetics/flux_loop/flux/data",
+      "physics_domain": "magnetic_field_diagnostics",
+      "expected_name": "magnetic_flux",
+      "expected_unit": "Wb",
+      "source": "isn_catalog",
+      "rationale": "ISN published — bare magnetic flux measured by flux loop."
+    },
+    {
+      "dd_path": "tf/field_map/b_field_tor/values",
+      "physics_domain": "magnetic_field_diagnostics",
+      "expected_name": "toroidal_component_of_magnetic_field",
+      "expected_unit": "T",
+      "source": "isn_catalog",
+      "rationale": "ISN published — component_of template. Tests component-prefix order."
+    },
+    {
+      "dd_path": "tf/field_map/b_field_r/values",
+      "physics_domain": "magnetic_field_diagnostics",
+      "expected_name": "radial_component_of_magnetic_field",
+      "expected_unit": "T",
+      "source": "isn_catalog",
+      "rationale": "ISN published — radial component; paired vector decomposition."
+    },
+    {
+      "dd_path": "tf/field_map/b_field_z/values",
+      "physics_domain": "magnetic_field_diagnostics",
+      "expected_name": "vertical_component_of_magnetic_field",
+      "expected_unit": "T",
+      "source": "isn_catalog",
+      "rationale": "ISN published — vertical component; completes the RφZ triple."
+    },
+    {
+      "dd_path": "summary/global_quantities/tau_energy/value",
+      "physics_domain": "transport",
+      "expected_name": "energy_confinement_time",
+      "expected_unit": "s",
+      "source": "isn_catalog",
+      "rationale": "ISN published — τE global scalar."
+    },
+    {
+      "dd_path": "core_profiles/global_quantities/beta_tor",
+      "physics_domain": "transport",
+      "expected_name": "toroidal_beta",
+      "expected_unit": "1",
+      "source": "graph_published",
+      "rationale": "Dimensionless plasma beta; no position qualifier needed."
+    },
+    {
+      "dd_path": "equilibrium/time_slice/profiles_2d/phi",
+      "physics_domain": "equilibrium",
+      "expected_name": "toroidal_magnetic_flux",
+      "expected_unit": "Wb",
+      "source": "graph_published",
+      "rationale": "Toroidal flux scalar on 2D grid — paired with poloidal_magnetic_flux."
+    },
+    {
+      "dd_path": "edge_profiles/profiles_1d/electrons/temperature",
+      "physics_domain": "edge_plasma_physics",
+      "expected_name": "electron_temperature",
+      "expected_unit": "eV",
+      "source": "isn_catalog",
+      "rationale": "Edge-profile Te — tests cross-IDS name reuse (same SN, different IDS)."
+    },
+    {
+      "dd_path": "edge_profiles/profiles_1d/electrons/density",
+      "physics_domain": "edge_plasma_physics",
+      "expected_name": "electron_density",
+      "expected_unit": "m^-3",
+      "source": "isn_catalog",
+      "rationale": "Edge-profile ne — cross-IDS reuse test."
+    },
+
+    {"dd_path": "TODO", "physics_domain": "waves",                       "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub — needs ISN rc16 object vocab before filling (plan 33 §4)."},
+    {"dd_path": "TODO", "physics_domain": "waves",                       "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "waves",                       "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "waves",                       "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "waves",                       "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+
+    {"dd_path": "TODO", "physics_domain": "fast_particles",              "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub — fast_particles currently 0.14 avg; needs regen before curation."},
+    {"dd_path": "TODO", "physics_domain": "fast_particles",              "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "fast_particles",              "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "fast_particles",              "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "fast_particles",              "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+
+    {"dd_path": "TODO", "physics_domain": "turbulence",                  "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub — turbulence currently 0.33 avg."},
+    {"dd_path": "TODO", "physics_domain": "turbulence",                  "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "turbulence",                  "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "turbulence",                  "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "turbulence",                  "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+
+    {"dd_path": "TODO", "physics_domain": "plasma_wall_interactions",    "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub — PWI currently 0.34 avg; needs rc16 first."},
+    {"dd_path": "TODO", "physics_domain": "plasma_wall_interactions",    "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "plasma_wall_interactions",    "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "plasma_wall_interactions",    "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "plasma_wall_interactions",    "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+
+    {"dd_path": "TODO", "physics_domain": "gyrokinetics",                "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub — gyrokinetics currently 0.37 avg; normalized-quantity semantics tricky."},
+    {"dd_path": "TODO", "physics_domain": "gyrokinetics",                "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "gyrokinetics",                "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "gyrokinetics",                "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "gyrokinetics",                "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+
+    {"dd_path": "TODO", "physics_domain": "transport",                   "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub — reserved for transport diffusivity/flux panel."},
+    {"dd_path": "TODO", "physics_domain": "transport",                   "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "transport",                   "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+
+    {"dd_path": "TODO", "physics_domain": "edge_plasma_physics",         "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub — divertor heat flux / strike point coords."},
+    {"dd_path": "TODO", "physics_domain": "edge_plasma_physics",         "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."},
+    {"dd_path": "TODO", "physics_domain": "edge_plasma_physics",         "expected_name": "TODO", "expected_unit": "TODO", "source": "todo", "rationale": "Stub."}
+  ],
+
+  "negatives": [
+    {
+      "candidate_name": "poloidal_magnetic_magnetic_field_probe_voltage",
+      "dd_path": "equilibrium/time_slice/constraints/b_field_pol_probe/measured",
+      "physics_domain": "equilibrium",
+      "anti_pattern_category": "base_duplication",
+      "rejection_reason": "Tautological 'magnetic' repeated; name conflates poloidal flux with magnetic-field probe. Graph audit flag: audit:repeated_token_check."
+    },
+    {
+      "candidate_name": "electron_diffusivity_poloidal",
+      "dd_path": "edge_transport/model/ggd/ion/particles/d_pol/values",
+      "physics_domain": "edge_plasma_physics",
+      "anti_pattern_category": "component_prefix_order",
+      "rejection_reason": "Component token '_poloidal' in suffix position; grammar requires '<axis>_component_of_<quantity>' or 'poloidal_electron_diffusivity'."
+    },
+    {
+      "candidate_name": "ion_rotation_frequency_toroidal",
+      "dd_path": "core_profiles/profiles_1d/ion/rotation_frequency_tor",
+      "physics_domain": "transport",
+      "anti_pattern_category": "component_prefix_order",
+      "rejection_reason": "Component token '_toroidal' misplaced — expected 'toroidal_ion_rotation_frequency' or 'toroidal_component_of_ion_rotation_frequency'."
+    },
+    {
+      "candidate_name": "vertical_coordinate_of_outline_point",
+      "dd_path": "wall/description_2d/mobile/unit/outline/z",
+      "physics_domain": "plasma_wall_interactions",
+      "anti_pattern_category": "missing_qualifier",
+      "rejection_reason": "'outline_point' is unscoped — needs host object (e.g. vertical_coordinate_of_first_wall_outline_point). Component vocab missing 'vertical_coordinate_of'."
+    },
+    {
+      "candidate_name": "normalized_energy_flux_due_to_electrostatic_potential",
+      "dd_path": "gyrokinetics/fluxes_integrated_norm/energy_phi_potential",
+      "physics_domain": "gyrokinetics",
+      "anti_pattern_category": "wrong_transformation",
+      "rejection_reason": "Token 'electrostatic_potential' is not a valid Process vocabulary member for the 'due_to_' template."
+    },
+    {
+      "candidate_name": "ion_cumulative_ionization_potential_at_ion_state",
+      "dd_path": "core_profiles/profiles_2d/ion/state/ionisation_potential",
+      "physics_domain": "core_plasma_physics",
+      "anti_pattern_category": "wrong_transformation",
+      "rejection_reason": "'cumulative_' prefix misuse — DD '_inside' quantities must use suffix 'inside_flux_surface' after the quantity, not a 'cumulative_' prefix on the base."
+    },
+    {
+      "candidate_name": "diamagnetic_component_of_ion_e_cross_b_drift_velocity",
+      "dd_path": "plasma_profiles/ggd/ion/state/velocity_exb/diamagnetic",
+      "physics_domain": "transport",
+      "anti_pattern_category": "wrong_transformation",
+      "rejection_reason": "'diamagnetic' not in Component vocabulary; ExB drift components must use toroidal/poloidal/radial. Reviewer must reject."
+    },
+    {
+      "candidate_name": "electron_temperature_ev",
+      "dd_path": "core_profiles/profiles_1d/electrons/temperature",
+      "physics_domain": "core_plasma_physics",
+      "anti_pattern_category": "llm_supplied_unit",
+      "rejection_reason": "Unit suffix in name — unit is authoritative from HAS_UNIT and must never appear in SN id."
+    },
+    {
+      "candidate_name": "t_e",
+      "dd_path": "core_profiles/profiles_1d/electrons/temperature",
+      "physics_domain": "core_plasma_physics",
+      "anti_pattern_category": "symbol_leakage",
+      "rejection_reason": "Symbol/abbreviation — SN must use descriptive snake_case controlled vocabulary."
+    },
+    {
+      "candidate_name": "ip",
+      "dd_path": "magnetics/ip/data",
+      "physics_domain": "magnetic_field_diagnostics",
+      "anti_pattern_category": "symbol_leakage",
+      "rejection_reason": "DD variable name lifted as SN — SN must be plasma_current."
+    }
+  ]
+}
