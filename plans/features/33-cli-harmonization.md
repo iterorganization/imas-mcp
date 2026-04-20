@@ -52,7 +52,7 @@ extraction-batching work):
 - Unit + prompt-rendering tests in
   `tests/standard_names/test_review_name_only.py`.
 
-### Phase 3 — Option rename on non-generate commands (partial: landed)
+### Phase 3 — Option rename on non-generate commands (expanded: landed)
 
 `refactor(sn): canonicalise --physics-domain with --domain alias`
 added `--physics-domain` (canonical) + `--domain` (alias) on:
@@ -65,6 +65,40 @@ added `--physics-domain` (canonical) + `--domain` (alias) on:
 
 `--ids` kept distinct — it filters by IDS name, not physics domain
 (see research doc §6.2).
+
+**Cross-group expansion (landed in this PR):**
+
+`refactor(cli): canonicalise --physics-domain and --ids aliases across
+imas/sn` — same alias pattern (canonical first, old name preserved
+through the click decorator) applied outside the `sn` group:
+
+- `imas map run` — `--domain/-d` → `--physics-domain` (alias `--domain`,
+  short `-d` preserved). Semantic match: domains filter physics
+  domains, same as `sn` canonical.
+- `imas dd build` — `--ids-filter` → `--ids` (alias `--ids-filter`).
+  Semantic match: `--ids` is already the canonical IDS-name filter
+  used by `imas dd search`, `sn review/enrich/benchmark/publish`.
+- `sn gaps` — `--export {table,yaml}` → `--format {table,yaml}`
+  (alias `--export`). Canonical for output formatting per research
+  doc §3.
+- `sn reconcile` — `--source-type {dd,signals}` → `--source`
+  (alias `--source-type`). Canonical `--source` matches `sn generate`,
+  `sn clear`, `sn seed`, `sn benchmark` which already use `--source`.
+
+**Audit result for remaining top-level groups** (see research doc §1.3
+— no code changes required):
+
+- `graph` — `--facility`, `--force`, `--dry-run` already canonical.
+  `-v` = `--version` inside `graph fetch/pull/tags` is a local tag
+  selector, no `--verbose` competition. Keep as-is.
+- `embed`, `llm` — no facility concept, so `-f` = `--foreground` /
+  `--follow` is locally unambiguous. `--host/--port/--log-level`
+  are infra-standard. Keep as-is.
+- `tunnel` — `--neo4j/--embed/--llm/--timeout/--all` are all tunnel-
+  specific. No collisions with canonical vocab. Keep as-is.
+- `config`, `release`, `tools`, `serve`, `credentials`, `host`,
+  `facilities`, `hpc` — already use `--force`, `--dry-run`, `--json`,
+  `--verbose` canonically. No renames needed.
 
 **Deferred (not yet implemented):**
 
