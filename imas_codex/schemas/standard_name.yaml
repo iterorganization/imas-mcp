@@ -519,6 +519,26 @@ classes:
           produced or regenerated this name. Paired with
           ``last_rotation_id`` for temporal queries.
         range: datetime
+      # --- Regeneration tracking (plan-32 phase-4) ---
+      regen_count:
+        description: >-
+          Number of review→regen cycles this name has been through.
+          0 for fresh names; incremented by the regen pass in
+          ``sn generate --until-complete``. Hard cap at 1 prevents
+          infinite regeneration loops on persistently poor scorers.
+        range: integer
+        ifabsent: int(0)
+      regen_reason:
+        description: >-
+          Reviewer comments that triggered the last regeneration cycle.
+          Captured from ``reviewer_comments`` at regen time so the
+          reason survives subsequent review overwrites.
+      rotation_id:
+        description: >-
+          UUID of the rotation run that last touched this name during
+          a regeneration cycle. Points to a ``RotationRun`` node.
+          Distinct from ``last_rotation_id`` (set by ``sn rotate`` for
+          any phase) — ``rotation_id`` is only stamped on regen.
       # --- REFERENCES relationship (enrich link graph) ---
       references:
         description: >-
@@ -656,3 +676,70 @@ classes:
         description: >-
           Human-readable detail for the skip (e.g. the raw DD unit string,
           the conflicting parent/child units). Set when status='skipped'.
+
+  RotationRun:
+    description: >-
+      A single invocation of ``sn generate --until-complete`` or
+      ``sn rotate``. Records budget, counts, domains touched, and stop
+      reason so operators can audit rotation cycles over time.
+
+      Example Cypher:
+        MATCH (rr:RotationRun)
+        RETURN rr.id, rr.started_at, rr.cost_spent, rr.names_composed,
+               rr.names_reviewed, rr.stop_reason
+        ORDER BY rr.started_at DESC LIMIT 10
+
+        MATCH (sn:StandardName)
+        WHERE sn.rotation_id IS NOT NULL
+        MATCH (rr:RotationRun {id: sn.rotation_id})
+        RETURN rr.id, count(sn) AS regenerated
+        ORDER BY rr.started_at DESC
+    class_uri: sn:RotationRun
+    attributes:
+      id:
+        identifier: true
+        description: UUID of the rotation run
+        required: true
+      started_at:
+        description: When the rotation run started
+        required: true
+        range: datetime
+      ended_at:
+        description: When the rotation run completed (null if interrupted)
+        range: datetime
+      cost_spent:
+        description: Total LLM cost spent across all passes (USD)
+        range: float
+        ifabsent: float(0.0)
+      cost_limit:
+        description: Cost budget supplied to this rotation run (USD)
+        range: float
+      names_composed:
+        description: Count of names produced by the generate pass(es)
+        range: integer
+        ifabsent: int(0)
+      names_enriched:
+        description: Count of names enriched during this rotation
+        range: integer
+        ifabsent: int(0)
+      names_reviewed:
+        description: Count of names reviewed during this rotation
+        range: integer
+        ifabsent: int(0)
+      names_regenerated:
+        description: Count of names that went through the regen pass
+        range: integer
+        ifabsent: int(0)
+      domains_touched:
+        description: Physics domains that had at least one pass run
+        multivalued: true
+      stop_reason:
+        description: >-
+          Why the rotation exited. One of:
+          'budget_exhausted', 'plateau', 'interrupted', 'error', 'completed'.
+      passes:
+        description: Number of full extract→enrich→review→regen passes executed
+        range: integer
+        ifabsent: int(0)
+      description:
+        description: Free-text notes about this rotation run (optional)
