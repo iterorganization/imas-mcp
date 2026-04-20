@@ -534,7 +534,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     ``validity_domain``, ``constraints``, ``model``, ``review_status``,
     ``generated_at``, ``confidence``, ``reviewer_model``, ``reviewer_score``,
     ``reviewer_scores``, ``reviewer_comments``, ``reviewed_at``,
-    ``review_tier``, ``reviewer_disagreement``,
+    ``review_tier``, ``reviewer_model_secondary``, ``reviewer_score_secondary``,
+    ``reviewer_scores_secondary``, ``reviewer_disagreement``,
     ``vocab_gap_detail``, ``validation_issues``,
     ``validation_layer_summary``, ``cocos_transformation_type``, ``dd_version``,
     ``review_input_hash``.
@@ -678,11 +679,6 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "reviewer_comments": n.get("reviewer_comments"),
                     "reviewed_at": n.get("reviewed_at"),
                     "review_tier": n.get("review_tier"),
-                    "reviewer_model_secondary": n.get("reviewer_model_secondary"),
-                    "reviewer_score_secondary": n.get("reviewer_score_secondary"),
-                    "reviewer_scores_secondary": _ensure_json(
-                        n.get("reviewer_scores_secondary")
-                    ),
                     "reviewer_disagreement": n.get("reviewer_disagreement"),
                     "vocab_gap_detail": _ensure_json(n.get("vocab_gap_detail")),
                     "validation_issues": n.get("validation_issues") or None,
@@ -809,6 +805,112 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     written = len(names)
     logger.info("Wrote %d StandardName nodes", written)
     return written
+
+
+def write_reviews(records: list[dict[str, Any]]) -> int:
+    """MERGE ``Review`` nodes and their ``REVIEWS`` edges to StandardName.
+
+    Each record must contain:
+
+    - ``id`` (str) — composite key
+      ``{standard_name_id}:{model_slug}:{reviewed_at_iso}``
+    - ``standard_name_id`` (str) — parent StandardName
+    - ``model`` (str), ``model_family`` (str), ``is_canonical`` (bool)
+    - ``score`` (float 0-1), ``scores_json`` (str), ``tier`` (str)
+    - ``reviewed_at`` (str ISO 8601)
+
+    Optional: ``comments`` (str), ``cost_usd`` (float),
+    ``tokens_in`` (int), ``tokens_out`` (int).
+
+    MERGE-by-``id`` semantics make re-runs idempotent when the same
+    model reviews the same name at the same timestamp.
+
+    Returns the number of Review records written.
+    """
+    if not records:
+        return 0
+    # Guard: must attach to an existing StandardName.
+    valid = [r for r in records if r.get("id") and r.get("standard_name_id")]
+    if not valid:
+        return 0
+    with GraphClient() as gc:
+        gc.query(
+            """
+            UNWIND $batch AS b
+            MERGE (r:Review {id: b.id})
+            SET r.standard_name_id = b.standard_name_id,
+                r.model = b.model,
+                r.model_family = b.model_family,
+                r.is_canonical = b.is_canonical,
+                r.score = b.score,
+                r.scores_json = b.scores_json,
+                r.tier = b.tier,
+                r.comments = b.comments,
+                r.reviewed_at = b.reviewed_at,
+                r.cost_usd = b.cost_usd,
+                r.tokens_in = b.tokens_in,
+                r.tokens_out = b.tokens_out
+            WITH r, b
+            MATCH (sn:StandardName {id: b.standard_name_id})
+            MERGE (r)-[:REVIEWS]->(sn)
+            """,
+            batch=[
+                {
+                    "id": r["id"],
+                    "standard_name_id": r["standard_name_id"],
+                    "model": r.get("model") or "",
+                    "model_family": r.get("model_family") or "other",
+                    "is_canonical": bool(r.get("is_canonical", False)),
+                    "score": float(r.get("score") or 0.0),
+                    "scores_json": _ensure_json(r.get("scores_json") or "{}"),
+                    "tier": r.get("tier") or "unknown",
+                    "comments": r.get("comments") or "",
+                    "reviewed_at": r.get("reviewed_at"),
+                    "cost_usd": r.get("cost_usd"),
+                    "tokens_in": r.get("tokens_in"),
+                    "tokens_out": r.get("tokens_out"),
+                }
+                for r in valid
+            ],
+        )
+    logger.info("Wrote %d Review nodes", len(valid))
+    return len(valid)
+
+
+def update_review_aggregates(
+    standard_name_ids: list[str],
+    *,
+    threshold: float = 0.2,
+) -> int:
+    """Recompute per-StandardName aggregates from attached Review nodes.
+
+    Sets ``review_count``, ``review_mean_score``, and
+    ``review_disagreement`` based on the currently attached
+    ``(:Review)-[:REVIEWS]->(sn)`` nodes. ``review_disagreement`` is
+    ``true`` iff ``N >= 2`` and ``max(scores) - min(scores) >= threshold``;
+    it is always ``false`` for ``N <= 1``.
+
+    Returns the number of StandardName nodes updated.
+    """
+    if not standard_name_ids:
+        return 0
+    with GraphClient() as gc:
+        rows = gc.query(
+            """
+            UNWIND $ids AS sid
+            MATCH (sn:StandardName {id: sid})
+            OPTIONAL MATCH (sn)<-[:REVIEWS]-(r:Review)
+            WITH sn, count(r) AS n, avg(r.score) AS mean,
+                 CASE WHEN count(r) > 1 THEN max(r.score) - min(r.score) ELSE 0.0 END AS spread
+            SET sn.review_count = n,
+                sn.review_mean_score = CASE WHEN n > 0 THEN mean ELSE null END,
+                sn.review_disagreement = (n > 1 AND spread >= $threshold)
+            RETURN sn.id AS id
+            """,
+            ids=standard_name_ids,
+            threshold=float(threshold),
+        )
+        return len(list(rows or []))
 
 
 def _resolve_grammar_token_version(gc: GraphClient, isn_version: str) -> str | None:

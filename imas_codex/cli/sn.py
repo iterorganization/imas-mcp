@@ -1965,7 +1965,18 @@ def sn_resolve_links(
     is_flag=True,
     help="Force re-review of already-scored names",
 )
-@click.option("--model", default=None, help="Override review model")
+@click.option(
+    "--model", default=None, help="Override the canonical review model (legacy)"
+)
+@click.option(
+    "--models",
+    "models_override",
+    default=None,
+    help=(
+        "Ad-hoc override for the reviewer list as comma-separated model "
+        "ids. First entry is canonical. Overrides [sn.review].models."
+    ),
+)
 @click.option(
     "--batch-size",
     type=int,
@@ -2007,6 +2018,7 @@ def sn_review(
     unreviewed: bool,
     force: bool,
     model: str | None,
+    models_override: str | None,
     batch_size: int,
     neighborhood: int,
     cost_limit: float,
@@ -2037,13 +2049,21 @@ def sn_review(
     # Enforce batch-size cap
     batch_size = min(batch_size, 25)
 
-    # Load cross-family settings
+    # Load reviewer list (N>=1). CLI --models overrides pyproject, and
+    # --model overrides just the canonical entry.
     from imas_codex.settings import (
         get_sn_review_disagreement_threshold,
-        get_sn_review_secondary_models,
+        get_sn_review_models,
     )
 
-    secondary_models = get_sn_review_secondary_models()
+    if models_override:
+        review_models = [m.strip() for m in models_override.split(",") if m.strip()]
+    else:
+        review_models = get_sn_review_models()
+    if model and review_models:
+        review_models = [model, *review_models[1:]]
+    elif model and not review_models:
+        review_models = [model]
     disagreement_threshold = get_sn_review_disagreement_threshold()
 
     # Build state
@@ -2056,14 +2076,14 @@ def sn_review(
         unreviewed_only=unreviewed,
         force_review=force,
         skip_audit=skip_audit,
-        review_model=model,
+        review_model=(review_models[0] if review_models else model),
         batch_size=batch_size,
         neighborhood_k=neighborhood,
         concurrency=concurrency,
         dry_run=dry_run,
         name_only=name_only,
         budget_manager=ReviewBudgetManager(cost_limit),
-        secondary_models=secondary_models,
+        review_models=review_models,
         disagreement_threshold=disagreement_threshold,
     )
 

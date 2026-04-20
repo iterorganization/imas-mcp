@@ -35,6 +35,85 @@ def _valid_sn_id(candidate: str | None) -> bool:
     return bool(_SN_ID_PATTERN.match(candidate))
 
 
+def _model_slug(model: str) -> str:
+    """Return a filesystem/id-safe slug of a model string."""
+    import re as _re
+
+    return _re.sub(r"[^a-z0-9]+", "-", model.lower()).strip("-") or "unknown"
+
+
+def _derive_model_family(model: str) -> str:
+    """Map an OpenRouter-style model id to a family label."""
+    if not model:
+        return "other"
+    m = model.lower()
+    for needle, family in (
+        ("anthropic", "anthropic"),
+        ("claude", "anthropic"),
+        ("openai", "openai"),
+        ("gpt", "openai"),
+        ("google", "google"),
+        ("gemini", "google"),
+        ("mistral", "mistral"),
+        ("meta", "meta"),
+        ("llama", "meta"),
+        ("xai", "xai"),
+        ("grok", "xai"),
+        ("cohere", "cohere"),
+    ):
+        if needle in m:
+            return family
+    return "other"
+
+
+def _build_review_record(
+    item: dict,
+    *,
+    model: str,
+    is_canonical: bool,
+    reviewed_at: str,
+    score: float | None = None,
+    scores: Any = None,
+    tier: str | None = None,
+    comments: str | None = None,
+    cost_usd: float | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
+) -> dict:
+    """Build a Review graph record for a scored item."""
+    sn_id = item.get("id") or ""
+    if not sn_id or not model or not reviewed_at:
+        return {}
+    rid = f"{sn_id}:{_model_slug(model)}:{reviewed_at}"
+    raw_scores = scores if scores is not None else item.get("reviewer_scores")
+    if isinstance(raw_scores, dict | list):
+        scores_json = json.dumps(raw_scores)
+    elif isinstance(raw_scores, str) and raw_scores:
+        scores_json = raw_scores
+    else:
+        scores_json = "{}"
+    return {
+        "id": rid,
+        "standard_name_id": sn_id,
+        "model": model,
+        "model_family": _derive_model_family(model),
+        "is_canonical": bool(is_canonical),
+        "score": float(
+            score if score is not None else (item.get("reviewer_score") or 0.0)
+        ),
+        "scores_json": scores_json,
+        "tier": (tier if tier is not None else item.get("review_tier")) or "unknown",
+        "comments": (
+            comments if comments is not None else item.get("reviewer_comments")
+        )
+        or "",
+        "reviewed_at": reviewed_at,
+        "cost_usd": cost_usd,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+    }
+
+
 if TYPE_CHECKING:
     from imas_codex.standard_names.review.state import StandardNameReviewState
 
@@ -358,22 +437,25 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
 
     sem = asyncio.Semaphore(state.concurrency)
     scored: list[dict] = []
+    review_records: list[dict] = []
     total_cost = 0.0
     total_tokens = 0
     errors = 0
     revised = 0
     unscored = 0
 
-    async def _process_batch(batch_idx: int, batch: dict) -> list[dict]:
+    async def _process_batch(
+        batch_idx: int, batch: dict
+    ) -> tuple[list[dict], list[dict]]:
         nonlocal total_cost, total_tokens, errors, revised, unscored
 
         async with sem:
             if state.should_stop():
-                return []
+                return [], []
 
             names = batch.get("names", [])
             if not names:
-                return []
+                return [], []
 
             # Estimate cost and reserve budget
             estimated_cost = len(names) * 0.002  # ~$0.002 per name heuristic
@@ -386,7 +468,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                         "Budget exhausted at batch %d — stopping review",
                         batch_idx,
                     )
-                    return []
+                    return [], []
 
             try:
                 batch_scored = await _review_single_batch(
@@ -431,32 +513,71 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                         }
                     ]
                 )
-                # --- Cross-family secondary review ----------------------------
-                if state.secondary_models and batch_items:
-                    sec_model = state.secondary_models[
-                        batch_idx % len(state.secondary_models)
-                    ]
-                    try:
-                        batch_items = await _run_secondary_review(
-                            primary_items=batch_items,
-                            secondary_model=sec_model,
-                            threshold=state.disagreement_threshold,
-                            grammar_enums=grammar_enums,
-                            compose_ctx=compose_ctx,
-                            calibration_entries=calibration_entries,
-                            batch=batch,
-                            wlog=wlog,
-                            name_only=state.name_only,
+                # --- Build Review records for each configured model -----------
+                batch_review_records: list[dict] = []
+                models = state.review_models or (
+                    [state.review_model] if state.review_model else []
+                )
+                if models and batch_items:
+                    # Canonical model (models[0]) — items already scored above
+                    canonical_ts = datetime.now(UTC).isoformat()
+                    for item in batch_items:
+                        rec = _build_review_record(
+                            item,
+                            model=models[0],
+                            is_canonical=True,
+                            reviewed_at=canonical_ts,
                         )
-                    except Exception:
-                        wlog.warning(
-                            "Secondary review failed for batch %d — "
-                            "primary scores kept, no secondary fields",
-                            batch_idx,
-                            exc_info=True,
-                        )
+                        if rec:
+                            batch_review_records.append(rec)
 
-                return batch_items
+                    # Additional models — deep-copy canonical items, re-review
+                    import copy as _copy
+
+                    for sec_model in models[1:]:
+                        try:
+                            sec_input = _copy.deepcopy(batch_items)
+                            sec_result = await _review_single_batch(
+                                names=sec_input,
+                                model=sec_model,
+                                grammar_enums=grammar_enums,
+                                compose_ctx=compose_ctx,
+                                calibration_entries=calibration_entries,
+                                batch_context=batch.get("group_key", ""),
+                                neighborhood=batch.get("neighborhood", []),
+                                audit_findings=batch.get("audit_findings", []),
+                                wlog=wlog,
+                                name_only=state.name_only,
+                            )
+                            sec_items = sec_result.get("_items", [])
+                            sec_cost = sec_result.get("_cost", 0.0)
+                            total_cost += sec_cost
+                            state.review_stats.cost += sec_cost
+
+                            sec_ts = datetime.now(UTC).isoformat()
+                            sec_by_id = {s["id"]: s for s in sec_items if "id" in s}
+                            for item in batch_items:
+                                sec = sec_by_id.get(item.get("id", ""))
+                                if sec is None:
+                                    continue
+                                rec = _build_review_record(
+                                    sec,
+                                    model=sec_model,
+                                    is_canonical=False,
+                                    reviewed_at=sec_ts,
+                                    cost_usd=sec_cost / max(len(sec_items), 1),
+                                )
+                                if rec:
+                                    batch_review_records.append(rec)
+                        except Exception:
+                            wlog.warning(
+                                "Additional reviewer %s failed for batch %d — skipped",
+                                sec_model,
+                                batch_idx,
+                                exc_info=True,
+                            )
+
+                return batch_items, batch_review_records
 
             except Exception:
                 wlog.debug(
@@ -468,7 +589,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 unscored += len(names)
                 state.review_stats.errors += len(names)
                 # Do NOT pass through unscored entries — they lack scores
-                return []
+                return [], []
 
             finally:
                 if state.budget_manager:
@@ -478,12 +599,21 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     for r in results:
-        if isinstance(r, list):
-            scored.extend(r)
+        if isinstance(r, tuple):
+            items, recs = r
+            scored.extend(items)
+            review_records.extend(recs)
         elif isinstance(r, Exception):
             wlog.warning("Batch task failed: %s", r)
 
     state.review_results = scored
+
+    # Determine canonical model from review_models or fallback to review_model
+    models_list = state.review_models or (
+        [state.review_model] if state.review_model else []
+    )
+    state.canonical_review_model = models_list[0] if models_list else None
+    state.review_records = review_records
 
     wlog.info(
         "Review complete: %d scored, %d unscored, %d revised, %d errors "
@@ -517,9 +647,15 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
     1. Compute fresh ``review_input_hash``.
     2. Add ``reviewed_at`` timestamp and ``reviewer_model``.
     3. Write via ``write_standard_names()``.
+    4. Write Review nodes via ``write_reviews()``.
+    5. Update aggregates (review_count, review_mean_score, review_disagreement).
     """
     from imas_codex.cli.logging import WorkerLogAdapter
-    from imas_codex.standard_names.graph_ops import write_standard_names
+    from imas_codex.standard_names.graph_ops import (
+        update_review_aggregates,
+        write_reviews,
+        write_standard_names,
+    )
 
     wlog = WorkerLogAdapter(logger, worker_name="sn_review_persist")
 
@@ -546,7 +682,7 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
         if _compute_hash is not None:
             entry["review_input_hash"] = _compute_hash(entry)
 
-    # Write to graph
+    # Write canonical scores to StandardName nodes
     def _write() -> int:
         return write_standard_names(results)
 
@@ -554,6 +690,30 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
 
     state.persist_stats.processed = written
     state.persist_stats.record_batch(written)
+
+    # Write Review nodes
+    review_records = state.review_records or []
+    if review_records:
+
+        def _write_reviews() -> int:
+            return write_reviews(review_records)
+
+        reviews_written = await asyncio.to_thread(_write_reviews)
+        wlog.info("Wrote %d Review nodes", reviews_written)
+        state.stats["review_nodes_written"] = reviews_written
+    else:
+        state.stats["review_nodes_written"] = 0
+
+    # Update aggregates on reviewed names
+    reviewed_ids = [r["id"] for r in results if r.get("id")]
+    if reviewed_ids:
+
+        def _update_agg() -> None:
+            update_review_aggregates(
+                reviewed_ids, threshold=state.disagreement_threshold
+            )
+
+        await asyncio.to_thread(_update_agg)
 
     wlog.info("Persisted %d/%d review results", written, len(results))
     state.stats["persist_count"] = written
@@ -568,119 +728,6 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
             }
         ]
     )
-
-
-# =============================================================================
-# Cross-family secondary review helper
-# =============================================================================
-
-
-async def _run_secondary_review(
-    *,
-    primary_items: list[dict],
-    secondary_model: str,
-    threshold: float,
-    grammar_enums: dict[str, list[str]],
-    compose_ctx: dict[str, Any],
-    calibration_entries: list[dict],
-    batch: dict,
-    wlog: logging.LoggerAdapter | logging.Logger,
-    name_only: bool = False,
-) -> list[dict]:
-    """Run a secondary reviewer on already-scored items and merge results.
-
-    For each primary item, if the secondary batch produced a matching
-    result the following fields are injected:
-
-    - ``reviewer_model_secondary`` — the secondary model id
-    - ``reviewer_score_secondary`` — the secondary 0-1 score
-    - ``reviewer_scores_secondary`` — JSON per-dimension scores
-    - ``reviewer_disagreement`` — ``abs(primary - secondary)``
-
-    When ``disagreement > threshold``, the item's ``validation_status``
-    is set to ``needs_revision`` and ``reviewer_score`` is consolidated
-    to ``min(primary, secondary)`` (conservative).
-
-    Returns the mutated *primary_items* list (in-place update).
-    """
-    import copy
-
-    # Save primary scores before secondary review (which mutates names)
-    primary_scores: dict[str, float] = {}
-    primary_reviewer_scores: dict[str, Any] = {}
-    for item in primary_items:
-        name_id = item.get("id", "")
-        if name_id:
-            primary_scores[name_id] = item.get("reviewer_score", 0.0) or 0.0
-            primary_reviewer_scores[name_id] = item.get("reviewer_scores")
-
-    # Deep-copy items so _review_single_batch doesn't overwrite primary fields
-    sec_input = copy.deepcopy(primary_items)
-
-    sec_result = await _review_single_batch(
-        names=sec_input,
-        model=secondary_model,
-        grammar_enums=grammar_enums,
-        compose_ctx=compose_ctx,
-        calibration_entries=calibration_entries,
-        batch_context=batch.get("group_key", ""),
-        neighborhood=batch.get("neighborhood", []),
-        audit_findings=batch.get("audit_findings", []),
-        wlog=wlog,
-        name_only=name_only,
-    )
-
-    sec_items = sec_result.get("_items", [])
-    sec_cost = sec_result.get("_cost", 0.0)
-
-    # Build lookup from secondary results
-    sec_by_id: dict[str, dict] = {
-        item["id"]: item for item in sec_items if "id" in item
-    }
-
-    disagreements = 0
-    for item in primary_items:
-        name_id = item.get("id", "")
-        sec = sec_by_id.get(name_id)
-        if sec is None:
-            continue
-
-        sec_score = sec.get("reviewer_score")
-        if sec_score is None:
-            continue
-
-        item["reviewer_model_secondary"] = secondary_model
-        item["reviewer_score_secondary"] = sec_score
-        item["reviewer_scores_secondary"] = sec.get("reviewer_scores")
-        primary_score = primary_scores.get(name_id, 0.0)
-        diff = round(abs(primary_score - sec_score), 4)
-        item["reviewer_disagreement"] = diff
-
-        if diff > threshold:
-            item["validation_status"] = "needs_revision"
-            # Conservative: use the lower score
-            item["reviewer_score"] = min(primary_score, sec_score)
-            disagreements += 1
-            wlog.info(
-                "Cross-family disagreement on %r: primary=%.2f secondary=%.2f "
-                "Δ=%.2f > %.2f → needs_revision",
-                name_id,
-                primary_score,
-                sec_score,
-                diff,
-                threshold,
-            )
-
-    wlog.info(
-        "Secondary review (%s): %d/%d matched, %d disagreements (cost=$%.4f)",
-        secondary_model,
-        len(sec_by_id),
-        len(primary_items),
-        disagreements,
-        sec_cost,
-    )
-
-    return primary_items
 
 
 # =============================================================================

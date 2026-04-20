@@ -286,13 +286,11 @@ name-only-batch-size = 50
 model = "openrouter/anthropic/claude-opus-4.6"
 
 [tool.imas-codex.sn.review]
-# Cross-family reviewer diversity settings (opt-in).
-# Primary model matches [sn.benchmark].reviewer-model by default.
-primary-model = "openrouter/anthropic/claude-opus-4.6"
-# Secondary models for cross-family scoring (empty = feature off).
-# When non-empty, each name gets a rotating secondary review; if
-# |primary − secondary| > disagreement-threshold the name is escalated.
-secondary-models = []
+# Reviewer models for `sn review`. N >= 1. The first entry is canonical —
+# its score/tier/comments mirror onto the StandardName node. Additional
+# entries produce Review graph nodes linked via REVIEWS for diversity.
+models = ["openrouter/anthropic/claude-opus-4.6"]
+# Disagreement detection: true iff N>=2 AND max(score) - min(score) >= threshold.
 disagreement-threshold = 0.2
 
 [tool.imas-codex.sn.benchmark]

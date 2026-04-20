@@ -42,9 +42,12 @@ class StandardNameReviewState(DiscoveryStateBase):
     concurrency: int = 2
     dry_run: bool = False
 
-    # Cross-family reviewer diversity
-    secondary_models: list[str] = field(default_factory=list)
+    # Reviewer list (N >= 1). review_models[0] is canonical.
+    review_models: list[str] = field(default_factory=list)
     disagreement_threshold: float = 0.2
+    # Deprecated alias — kept only to avoid breaking callers passing
+    # ``secondary_models=[]`` as kwarg. Not used by the pipeline anymore.
+    secondary_models: list[str] = field(default_factory=list)
 
     # ------------------------------------------------------------------
     # Pipeline data
@@ -54,6 +57,9 @@ class StandardNameReviewState(DiscoveryStateBase):
     audit_report: Any = None  # AuditReport from Layer 1
     review_batches: list[dict] = field(default_factory=list)
     review_results: list[dict] = field(default_factory=list)
+    # Per-model review records built during REVIEW phase, persisted in PERSIST
+    review_records: list[dict] = field(default_factory=list)
+    canonical_review_model: str | None = None
 
     # Budget manager (set by CLI)
     budget_manager: Any = None  # ReviewBudgetManager
