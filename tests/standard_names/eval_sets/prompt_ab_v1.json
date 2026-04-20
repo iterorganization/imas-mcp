@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "purpose": "Plan 32 Phase 2 — stratified 20-path eval set for A/B/C prompt bake-off",
+    "stratification": "5 physics_domains × 4 path-kinds = 20 items",
+    "physics_domains": ["equilibrium", "magnetics", "transport", "heating", "diagnostics"],
+    "path_kinds": ["dynamic_scalar", "dynamic_profile", "geometry", "constant"],
+    "notes": "Paths chosen to span clear cases and edge cases. Golden names provided by reviewer post-hoc; empty during scaffolding."
+  },
+  "items": [
+    {"path": "equilibrium/time_slice/profiles_1d/psi", "physics_domain": "equilibrium", "path_kind": "dynamic_profile", "golden_name": ""},
+    {"path": "equilibrium/time_slice/boundary/elongation", "physics_domain": "equilibrium", "path_kind": "dynamic_scalar", "golden_name": ""},
+    {"path": "equilibrium/time_slice/boundary/outline/r", "physics_domain": "equilibrium", "path_kind": "geometry", "golden_name": ""},
+    {"path": "equilibrium/vacuum_toroidal_field/r0", "physics_domain": "equilibrium", "path_kind": "constant", "golden_name": ""},
+
+    {"path": "magnetics/ip/data", "physics_domain": "magnetics", "path_kind": "dynamic_scalar", "golden_name": ""},
+    {"path": "magnetics/flux_loop/flux/data", "physics_domain": "magnetics", "path_kind": "dynamic_scalar", "golden_name": ""},
+    {"path": "magnetics/b_field_pol_probe/position/r", "physics_domain": "magnetics", "path_kind": "geometry", "golden_name": ""},
+    {"path": "magnetics/b_field_pol_probe/length", "physics_domain": "magnetics", "path_kind": "constant", "golden_name": ""},
+
+    {"path": "core_transport/model/profiles_1d/electrons/energy/d", "physics_domain": "transport", "path_kind": "dynamic_profile", "golden_name": ""},
+    {"path": "core_transport/model/profiles_1d/electrons/particles/flux", "physics_domain": "transport", "path_kind": "dynamic_profile", "golden_name": ""},
+    {"path": "core_transport/model/profiles_1d/grid/rho_tor_norm", "physics_domain": "transport", "path_kind": "geometry", "golden_name": ""},
+    {"path": "core_transport/vacuum_toroidal_field/r0", "physics_domain": "transport", "path_kind": "constant", "golden_name": ""},
+
+    {"path": "nbi/unit/energy/data", "physics_domain": "heating", "path_kind": "dynamic_scalar", "golden_name": ""},
+    {"path": "nbi/unit/beam_power_fraction/data", "physics_domain": "heating", "path_kind": "dynamic_profile", "golden_name": ""},
+    {"path": "ec_launchers/beam/launching_position/r", "physics_domain": "heating", "path_kind": "geometry", "golden_name": ""},
+    {"path": "nbi/unit/species/a", "physics_domain": "heating", "path_kind": "constant", "golden_name": ""},
+
+    {"path": "thomson_scattering/channel/t_e/data", "physics_domain": "diagnostics", "path_kind": "dynamic_scalar", "golden_name": ""},
+    {"path": "interferometer/channel/n_e_line/data", "physics_domain": "diagnostics", "path_kind": "dynamic_scalar", "golden_name": ""},
+    {"path": "thomson_scattering/channel/position/r", "physics_domain": "diagnostics", "path_kind": "geometry", "golden_name": ""},
+    {"path": "interferometer/channel/line_of_sight/first_point/r", "physics_domain": "diagnostics", "path_kind": "constant", "golden_name": ""}
+  ]
+}
