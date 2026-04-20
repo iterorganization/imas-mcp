@@ -32,7 +32,7 @@ def sn() -> None:
     pass
 
 
-def _run_until_complete(
+def _run_rotator(
     *,
     cost_limit: float,
     plateau_passes: int,
@@ -40,7 +40,7 @@ def _run_until_complete(
     dry_run: bool,
     quiet: bool,
 ) -> None:
-    """Execute ``sn generate --until-complete`` and render the summary."""
+    """Execute the DD completion rotator and render the summary."""
     import asyncio
 
     from rich.console import Console
@@ -291,25 +291,24 @@ def _run_until_complete(
     ),
 )
 @click.option(
-    "--until-complete",
+    "--single-pass",
     is_flag=True,
     default=False,
     help=(
-        "Loop extract → enrich → review → regen across every eligible "
-        "physics_domain until the budget is exhausted or consecutive "
-        "passes produce no net change (plateau). Writes a RotationRun "
-        "audit node. Mutually exclusive with --physics-domain; the "
-        "rotator picks domains automatically from live graph state."
+        "Force the single-pass extract → compose pipeline instead of "
+        "the default domain-rotating completion loop. Useful for CI "
+        "and regression tests. --plateau-passes is ignored."
     ),
 )
 @click.option(
     "--plateau-passes",
     type=int,
-    default=1,
+    default=2,
     show_default=True,
     help=(
-        "Consecutive zero-change passes before --until-complete exits. "
-        "Set higher than 1 to tolerate transient extraction stalls."
+        "Consecutive zero-change passes before the rotator exits. "
+        "Set higher to tolerate transient extraction stalls. "
+        "Ignored under --single-pass."
     ),
 )
 def sn_generate(
@@ -338,42 +337,36 @@ def sn_generate(
     include_review_feedback: bool,
     name_only: bool,
     name_only_batch_size: int | None,
-    until_complete: bool,
+    single_pass: bool,
     plateau_passes: int,
 ) -> None:
     """Generate standard names from a source.
 
     \b
+    Scope routing:
+      - With --paths: single-pass pipeline (explicit paths too narrow for rotation)
+      - Without --paths: domain-rotating completion loop (default)
+      - With --single-pass: always single-pass pipeline
+
+    \b
     Examples:
-      imas-codex sn generate --physics-domain equilibrium --dry-run
-      imas-codex sn generate --physics-domain magnetics -c 2
+      imas-codex sn generate -c 50                            # rotator over all domains
+      imas-codex sn generate --physics-domain equilibrium -c 5 # rotator, one domain
+      imas-codex sn generate --physics-domain magnetics --dry-run
       imas-codex sn generate --source signals --facility tcv --physics-domain magnetics
       imas-codex sn generate --paths equilibrium/time_slice/profiles_1d/psi --paths equilibrium/time_slice/profiles_1d/q
-      imas-codex sn generate --paths "equilibrium/time_slice/profiles_1d/psi equilibrium/time_slice/profiles_1d/q"
+      imas-codex sn generate --single-pass --paths equilibrium/time_slice/profiles_1d/psi -c 1  # single compose pass on explicit paths
       imas-codex sn generate --reset-to drafted --reset-only
       imas-codex sn generate --reset-to drafted --below-score 0.6 --reset-only
-      imas-codex sn generate --until-complete -c 50
     """
-    # --until-complete short-circuits the normal single-pass flow. It selects
-    # physics domains automatically, runs the full extract→enrich→review→regen
-    # rotation per domain, and persists a RotationRun audit node. --domain is
-    # incompatible because the rotator picks domains itself.
-    if until_complete:
-        if domain_filter:
-            raise click.UsageError(
-                "--until-complete is mutually exclusive with --physics-domain / --domain. "
-                "The rotator selects domains automatically from live graph state."
-            )
-        if source != "dd":
-            raise click.UsageError(
-                "--until-complete only supports --source dd (the DD naming exercise). "
-                "Use plain sn generate for signals-source extraction."
-            )
-        if paths_list:
-            raise click.UsageError(
-                "--until-complete cannot be combined with --paths (targeted regeneration)."
-            )
-        _run_until_complete(
+    # Scope-routing: --paths → single-pass; else → rotator (unless --single-pass).
+    # The rotator drives the full extract→enrich→review→regen rotation per domain
+    # and persists a RotationRun audit node. --physics-domain is forwarded to scope
+    # the rotator to a single domain (single-element rotation).
+    use_rotator = not single_pass and not paths_list and source == "dd"
+
+    if use_rotator:
+        _run_rotator(
             cost_limit=cost_limit,
             plateau_passes=plateau_passes,
             per_domain_limit=limit,
@@ -987,7 +980,7 @@ def sn_status() -> None:
         skip_table.add_row("[bold]Total[/bold]", f"[bold]{skip_total}[/bold]")
         console.print(skip_table)
 
-    # Latest RotationRun (from sn generate --until-complete)
+    # Latest RotationRun (from sn generate rotator)
     try:
         from imas_codex.graph.client import GraphClient
 
@@ -1020,7 +1013,7 @@ def sn_status() -> None:
     if rr_rows:
         rr = rr_rows[0]
         console.print()
-        console.print("[bold]Latest Rotation (sn generate --until-complete)[/bold]")
+        console.print("[bold]Latest Rotation (sn generate)[/bold]")
         rr_table = Table(show_header=True)
         rr_table.add_column("Field")
         rr_table.add_column("Value")

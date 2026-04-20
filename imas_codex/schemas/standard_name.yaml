@@ -524,7 +524,7 @@ classes:
         description: >-
           Number of review→regen cycles this name has been through.
           0 for fresh names; incremented by the regen pass in
-          ``sn generate --until-complete``. Hard cap at 1 prevents
+          ``sn generate``. Hard cap at 1 prevents
           infinite regeneration loops on persistently poor scorers.
         range: integer
         ifabsent: int(0)
@@ -679,8 +679,8 @@ classes:
 
   RotationRun:
     description: >-
-      A single invocation of ``sn generate --until-complete`` or
-      ``sn rotate``. Records budget, counts, domains touched, and stop
+      A single invocation of the ``sn generate`` rotator.
+      Records budget, counts, domains touched, and stop
       reason so operators can audit rotation cycles over time.
 
       Example Cypher:

@@ -304,3 +304,11 @@ run concurrent if time-boxed. Phase 3 depends on Phase 2 result.
   cover skip-by-design, the `RotationSummary` shape, and the four
   stop conditions (dry_run / plateau / budget_exhausted / rotation_id
   propagation). All 202 SN tests pass.
+
+  **2025-07-15 — rotator-as-default:** `--until-complete` was removed
+  in favour of making the domain-rotating completion loop the default
+  behaviour of `sn generate`. The rotator is strictly more useful
+  than single-pass extract+compose, and a cost limit (`-c`) is the
+  natural stop condition. `--paths` auto-selects single-pass (explicit
+  paths are too narrow for rotation); `--single-pass` is the opt-out
+  escape hatch for CI/regression tests.

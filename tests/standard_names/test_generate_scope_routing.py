@@ -1,0 +1,105 @@
+"""Tests for ``sn generate`` scope-routing rules.
+
+Validates that the CLI routes to the rotator or single-pass pipeline
+based on the presence/absence of ``--paths`` and ``--single-pass``.
+
+No LLM calls — all external dependencies are mocked.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+import pytest
+from click.testing import CliRunner
+
+from imas_codex.cli.sn import sn
+
+
+@pytest.fixture()
+def runner():
+    return CliRunner()
+
+
+# Patch target for the rotator entrypoint in the CLI module.
+_ROTATOR = "imas_codex.cli.sn._run_rotator"
+
+
+class TestScopeRouting:
+    """``sn generate`` routes to rotator vs single-pass correctly."""
+
+    def test_default_routes_to_rotator(self, runner):
+        """No --paths, no --single-pass → rotator."""
+        with patch(_ROTATOR) as mock_rot:
+            result = runner.invoke(sn, ["generate", "-c", "0.01", "-q"])
+            assert mock_rot.called, f"Rotator not called. Output: {result.output}"
+
+    def test_paths_routes_to_single_pass(self, runner):
+        """--paths supplied → single-pass pipeline (not rotator)."""
+        # When --paths is given the function falls through to the single-pass
+        # path which does lazy imports.  We only need to verify the rotator
+        # was NOT called — let the single-pass path fail naturally (exit != 0
+        # is fine, we check mock_rot.called).
+        with patch(_ROTATOR) as mock_rot:
+            runner.invoke(
+                sn,
+                [
+                    "generate",
+                    "--paths",
+                    "equilibrium/time_slice/profiles_1d/psi",
+                    "-c",
+                    "0.01",
+                    "-q",
+                ],
+            )
+            assert not mock_rot.called, "Rotator should NOT be called with --paths"
+
+    def test_physics_domain_routes_to_rotator(self, runner):
+        """--physics-domain without --paths → rotator (scoped single-domain)."""
+        with patch(_ROTATOR) as mock_rot:
+            result = runner.invoke(
+                sn,
+                ["generate", "--physics-domain", "equilibrium", "-c", "0.01", "-q"],
+            )
+            assert mock_rot.called, (
+                f"Rotator not called with --physics-domain. Output: {result.output}"
+            )
+
+    def test_single_pass_flag_overrides_rotator(self, runner):
+        """--single-pass forces single-pass even without --paths."""
+        with patch(_ROTATOR) as mock_rot:
+            runner.invoke(
+                sn,
+                [
+                    "generate",
+                    "--single-pass",
+                    "--physics-domain",
+                    "equilibrium",
+                    "-c",
+                    "0.01",
+                    "-q",
+                ],
+            )
+            assert not mock_rot.called, (
+                "Rotator should NOT be called with --single-pass"
+            )
+
+    def test_signals_source_routes_to_single_pass(self, runner):
+        """--source signals → single-pass (rotator is DD-only)."""
+        with patch(_ROTATOR) as mock_rot:
+            runner.invoke(
+                sn,
+                [
+                    "generate",
+                    "--source",
+                    "signals",
+                    "--facility",
+                    "tcv",
+                    "-c",
+                    "0.01",
+                    "-q",
+                ],
+            )
+            assert not mock_rot.called, (
+                "Rotator should NOT be called with --source signals"
+            )

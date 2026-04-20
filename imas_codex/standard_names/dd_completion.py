@@ -1,4 +1,4 @@
-"""DD completion loop — drives ``sn generate --until-complete``.
+"""DD completion loop — drives the ``sn generate`` rotator.
 
 Iterates rotation cycles (generate → enrich → review → regen) across
 every physics_domain that still has eligible DD paths, persists a
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RotationSummary:
-    """Aggregated result of a ``sn generate --until-complete`` run."""
+    """Aggregated result of a ``sn generate`` rotator run."""
 
     rotation_id: str
     started_at: datetime
