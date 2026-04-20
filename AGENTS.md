@@ -783,9 +783,9 @@ The LLM never provides the unit field.
 
 | Command | Purpose | Key Options |
 |---------|---------|-------------|
-| `sn generate` | Generate standard names from DD paths or facility signals via LLM pipeline | `--source {dd,signals}`, `--ids`, `--domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--name-only`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--include-review-feedback`, `--single-pass`, `--plateau-passes` |
-| `sn review` | Score and tier existing valid standard names via batched reviewer LLM (1:1 scoring invariant, retry-unmatched) | `--ids`, `--domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force` |
-| `sn enrich` | Enrich existing standard names with documentation | `--ids`, `--domain`, `--status`, `-c/--cost-limit`, `--dry-run`, `--limit`, `--batch-size` |
+| `sn generate` | Generate standard names from DD paths or facility signals via LLM pipeline | `--source {dd,signals}`, `--ids`, `--domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--target {names,docs,full}`, `--name-only` (alias for `--target names`), `--docs-status`, `--docs-batch-size`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--include-review-feedback`, `--single-pass`, `--plateau-passes` |
+| `sn review` | Score and tier existing valid standard names via batched reviewer LLM (1:1 scoring invariant, retry-unmatched) | `--ids`, `--domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--target {names,docs,full}`, `--name-only` (alias for `--target names`) |
+| `sn enrich` | Back-compat alias for `sn generate --target docs` — enrich existing names with documentation | `--ids`, `--domain`, `--status`, `-c/--cost-limit`, `--dry-run`, `--limit`, `--batch-size` |
 | `sn publish` | Export validated StandardName nodes to YAML catalog files | `--output-dir`, `--ids`, `--domain`, `--group-by {ids,domain,confidence}`, `--confidence-min`, `--catalog-dir`, `--create-pr` |
 | `sn import` | Import reviewed YAML catalog entries back into graph | `--catalog-dir` (required), `--tags`, `--dry-run`, `--check` |
 | `sn status` | Show standard name and StandardNameSource pipeline statistics | — |
@@ -927,9 +927,32 @@ specific IDS without touching the rest of the graph.
 `model` field contains the given substring (e.g. `--from-model gemini`). Useful for re-generating
 names produced by a specific model after benchmarking reveals a better alternative.
 
-**`sn generate --name-only`** — Name-only composition mode. The compose prompt focuses exclusively
-on naming and grammar — no documentation, description, or enrichment fields are generated. Faster
-and cheaper for bulk naming passes where enrichment will be added later via `sn enrich`.
+**`sn generate --target {names,docs,full}` / `sn review --target {names,docs,full}`** — Unified
+rubric/scope selector, replacing the legacy `--name-only` flag on both commands and consolidating
+the old `sn enrich` subcommand.
+
+- `--target names` — Name-only compose/review. Compose prompt focuses on naming + grammar; review
+  uses the 4-dimension rubric (grammar/semantic/convention/completeness over 80). Fast and cheap
+  for bulk naming passes where documentation is deferred.
+- `--target docs` — Docs-only generation/review. `sn generate --target docs` runs the five-phase
+  enrichment pipeline on existing names (does NOT change name/grammar/unit). `sn review --target
+  docs` uses the 4-dimension docs rubric (description_quality / documentation_quality /
+  completeness / physics_accuracy over 80) to grade just the generated prose. Batch size comes
+  from `[tool.imas-codex.sn-generate].docs-batch-size` (default 12) when `--docs-batch-size` is
+  unspecified, falling back to `[tool.imas-codex.sn-enrich].batch-size`.
+- `--target full` (default) — Full compose+enrich pass on generate; full 6-dimension rubric
+  (grammar / semantic / documentation / convention / completeness / compliance over 120) on review.
+- `--name-only` remains as a back-compat alias for `--target names` on both commands. When both
+  flags are provided, `--target` wins.
+
+**`sn review` fidelity rank:** `name_only` < `docs` < `full`. A lower-fidelity review run will
+NOT overwrite a higher-fidelity `review_mode` on an existing name unless `--force` is passed.
+This prevents a cheap `--target names` sweep from clobbering a prior full review. The
+`review_mode` enum (persisted on `StandardName.review_mode`) now has three values: `full`,
+`name_only`, `docs`.
+
+**`sn enrich`** is a thin back-compat alias for `sn generate --target docs`; new code should use
+the unified form.
 
 **Rotator (default)** — Without `--paths`, `sn generate` runs the DD-completion rotator.
 Iterates over physics domains that still have extract-eligible paths, running a per-domain
