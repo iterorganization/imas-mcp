@@ -31,6 +31,7 @@ class StandardNameReviewState(DiscoveryStateBase):
     unreviewed_only: bool = False
     force_review: bool = False
     skip_audit: bool = False
+    name_only: bool = False
 
     # ------------------------------------------------------------------
     # Config

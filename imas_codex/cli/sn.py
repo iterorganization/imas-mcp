@@ -1793,6 +1793,16 @@ def sn_resolve_links(
 )
 @click.option("--skip-audit", is_flag=True, help="Skip Layer 1 audits (debug only)")
 @click.option("--concurrency", type=int, default=2, help="Parallel review batches")
+@click.option(
+    "--name-only",
+    is_flag=True,
+    help=(
+        "Score the name only (4-dim rubric: grammar/semantic/convention/"
+        "completeness over 80). Use to review batches produced by "
+        "'sn generate --name-only'. Will not overwrite a prior full review "
+        "unless combined with --force."
+    ),
+)
 def sn_review(
     ids: str | None,
     domain: str | None,
@@ -1806,6 +1816,7 @@ def sn_review(
     dry_run: bool,
     skip_audit: bool,
     concurrency: int,
+    name_only: bool,
 ) -> None:
     """Review standard names with 3-layer pipeline.
 
@@ -1819,6 +1830,7 @@ def sn_review(
       imas-codex sn review --unreviewed --cost-limit 5.0
       imas-codex sn review --ids equilibrium --dry-run
       imas-codex sn review --force --domain magnetics
+      imas-codex sn review --name-only --unreviewed
     """
     import asyncio
 
@@ -1843,6 +1855,7 @@ def sn_review(
         neighborhood_k=neighborhood,
         concurrency=concurrency,
         dry_run=dry_run,
+        name_only=name_only,
         budget_manager=ReviewBudgetManager(cost_limit),
     )
 

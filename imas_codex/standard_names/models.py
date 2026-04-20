@@ -240,6 +240,71 @@ class StandardNameQualityReviewBatch(BaseModel):
 
 
 # =============================================================================
+# Name-only review — 4-dimensional rubric for --name-only cycles
+# =============================================================================
+
+
+class StandardNameQualityScoreNameOnly(BaseModel):
+    """4-dimensional quality score for name-only review mode.
+
+    Scores the name itself (grammar, semantic, convention, completeness)
+    without penalising missing documentation or compliance, which are
+    intentionally deferred in name-only generation cycles. Normalised
+    over 80 rather than 120.
+    """
+
+    grammar: int = Field(ge=0, le=20, description="Grammar correctness (0-20)")
+    semantic: int = Field(ge=0, le=20, description="Semantic accuracy (0-20)")
+    convention: int = Field(ge=0, le=20, description="Naming conventions (0-20)")
+    completeness: int = Field(ge=0, le=20, description="Entry completeness (0-20)")
+
+    @property
+    def total(self) -> int:
+        return self.grammar + self.semantic + self.convention + self.completeness
+
+    @property
+    def score(self) -> float:
+        """Normalized quality score (0-1). Sum of 4 dimensions / 80."""
+        return self.total / 80.0
+
+    @property
+    def tier(self) -> str:
+        s = self.score
+        if s >= 0.85:
+            return "outstanding"
+        elif s >= 0.60:
+            return "good"
+        elif s >= 0.40:
+            return "adequate"
+        return "poor"
+
+
+class StandardNameQualityReviewNameOnly(BaseModel):
+    """Review of a single standard name using the 4-dimensional rubric."""
+
+    source_id: str = Field(description="Source entity ID being reviewed")
+    standard_name: str = Field(description="The standard name under review")
+    scores: StandardNameQualityScoreNameOnly = Field(
+        description="4-dimensional quality scores"
+    )
+    verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
+    reasoning: str = Field(description="Specific justification per dimension")
+    revised_name: str | None = Field(
+        default=None, description="Suggested revision if verdict is revise"
+    )
+    revised_fields: dict[str, Any] | None = Field(
+        default=None, description="Revised grammar fields"
+    )
+    issues: list[str] = Field(default_factory=list, description="Specific issues found")
+
+
+class StandardNameQualityReviewNameOnlyBatch(BaseModel):
+    """LLM response for name-only quality-scored review of a batch."""
+
+    reviews: list[StandardNameQualityReviewNameOnly]
+
+
+# =============================================================================
 # Enrichment models — documentation iteration (Phase 3D)
 # =============================================================================
 

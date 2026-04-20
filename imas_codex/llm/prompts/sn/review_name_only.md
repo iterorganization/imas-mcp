@@ -1,0 +1,145 @@
+---
+name: sn/review_name_only
+description: Four-dimension quality review for name-only standard name candidates
+used_by: imas_codex.standard_names.review.pipeline._review_single_batch
+task: review
+dynamic: true
+schema_needs: []
+---
+
+You are a quality reviewer for IMAS standard name entries in fusion plasma physics. These candidates were produced in **name-only mode** — the composer emitted only the standard name plus grammar fields, without freshly written documentation text. Your job is to evaluate the **name itself** across four quality dimensions, assign numeric scores, and render an accept/reject/revise verdict.
+
+Do **not** penalise entries for missing or terse `description`/`documentation`. Those fields were intentionally skipped in name-only mode and will be filled in by a later enrichment pass.
+
+## Standard Name Grammar
+
+A valid standard name is composed from optional segments in a specific order:
+
+**Canonical pattern:** `[process] [transformation] [subject] [component] physical_base [position] [object]`
+
+Or with geometric_base: `[process] [transformation] [subject] [component] geometric_base [position] [object]`
+
+Every name MUST have either a `physical_base` (open vocabulary) or a `geometric_base` (restricted vocabulary), but never both.
+
+### Segment Vocabulary
+
+- **subject**: species or population ({{ subjects | join(', ') }})
+- **component**: vector/tensor component ({{ components | join(', ') }})
+- **position**: spatial location ({{ positions | join(', ') }})
+- **process**: physical mechanism ({{ processes | join(', ') }})
+- **transformation**: mathematical operation ({{ transformations | join(', ') }})
+- **geometric_base**: geometric quantity ({{ geometric_bases | join(', ') }})
+- **object**: device component ({{ objects | join(', ') }})
+- **binary_operator**: for compound names ({{ binary_operators | join(', ') }})
+
+## Scoring Dimensions
+
+Rate each dimension from 0 to 20. The total score is the sum (0-80).
+
+If ISN validation issues are present for an entry, assess whether they are
+genuine quality problems or false positives. Factor genuine issues into your
+grammar and convention scores.
+
+### 1. Grammar Correctness (0-20)
+- Does the name parse correctly under the standard name grammar?
+- Are all segments valid enum values from the vocabulary?
+- Is the field decomposition consistent with the composed name?
+- Does the name round-trip: `parse(name) → compose() == name`?
+
+### 2. Semantic Accuracy (0-20)
+- Does the name accurately describe the physical quantity implied by the source path?
+- Is the chosen `physical_base` or `geometric_base` appropriate?
+- Are `subject`, `component`, and `position` assignments physically correct?
+- Would a domain expert pick the same decomposition?
+
+### 3. Naming Convention Adherence (0-20)
+- Does the name avoid ambiguous or overloaded terms?
+- Does it follow snake_case consistently?
+- Is segment ordering canonical (no reshuffled segments)?
+- Are abbreviations and redundancies avoided (e.g. no `electron_electron_temperature`)?
+
+### 4. Completeness (0-20)
+- Are all physically relevant segments present (e.g. `component` supplied for vector quantities)?
+- No missing `subject` when required (e.g. ``temperature`` without species)?
+- Unit and kind consistent with the decomposed name?
+- Tags (if present) cover the expected physics domain?
+
+## Quality Tiers
+
+Map the total score (0-80) to a tier:
+- **outstanding** (68-80): Exemplary name ready for documentation enrichment
+- **good** (48-67): Solid name with minor improvements possible
+- **adequate** (32-47): Acceptable but needs refinement before enrichment
+- **poor** (0-31): Needs fundamental rework — likely a wrong decomposition
+
+## Verdict Rules
+
+Derive your verdict from the scores:
+- **accept**: Total ≥ 48 AND no dimension scores 0 → name is good enough to flow into enrichment
+- **reject**: Total < 32 OR any dimension scores 0 → fundamental naming issues
+- **revise**: Otherwise → fixable issues; provide `revised_name` and `revised_fields`
+
+When revising, fix ONLY grammar and naming issues. Do **not** invent documentation.
+
+{% if batch_context %}
+## Source Context (same as composer received)
+
+{{ batch_context }}
+{% endif %}
+
+{% if nearby_existing_names %}
+## Nearby Existing Standard Names
+
+These names already exist in the catalog. Flag candidates that duplicate them:
+{% for name in nearby_existing_names %}
+- **{{ name.id }}**: {{ name.description | default('', true) }} ({{ name.kind | default('scalar', true) }}, {{ name.unit | default('dimensionless', true) }})
+{% endfor %}
+{% endif %}
+
+## Candidates to Review
+
+{% for item in items %}
+### Candidate {{ loop.index }}
+- **Standard name**: {{ item.standard_name or item.id }}
+- **Source ID**: {{ item.source_id }}
+- **Unit**: {{ item.unit | default('N/A', true) }}
+- **Kind**: {{ item.kind | default('N/A', true) }}
+- **Tags**: {{ item.tags | default([], true) | join(', ') }}
+- **Grammar Fields**: {{ item.grammar_fields or item.fields | default({}, true) }}
+{% if item.source_paths %}
+- **IMAS Paths**: {{ item.source_paths | join(', ') }}
+{% endif %}
+{% if item.validation_issues %}
+**ISN Validation Issues:**
+{% for issue in item.validation_issues %}
+- {{ issue }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+
+## Output Format
+
+Return a JSON object with a `reviews` array. Each review MUST include:
+
+```json
+{
+  "reviews": [
+    {
+      "source_id": "path/to/quantity",
+      "standard_name": "electron_temperature",
+      "scores": {
+        "grammar": 20,
+        "semantic": 18,
+        "convention": 19,
+        "completeness": 18
+      },
+      "verdict": "accept",
+      "reasoning": "Brief specific justification covering each dimension",
+      "revised_name": null,
+      "revised_fields": null,
+      "issues": []
+    }
+  ]
+}
+```

@@ -169,6 +169,12 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
             if name.get("reviewer_score") is not None:
                 continue
 
+        # --name-only downgrade guard: don't overwrite a prior full review
+        # with a narrower name-only one unless --force.
+        if state.name_only and not state.force_review:
+            if name.get("review_mode") == "full":
+                continue
+
         targets.append(name)
 
     state.target_names = targets
@@ -393,6 +399,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                     neighborhood=batch.get("neighborhood", []),
                     audit_findings=batch.get("audit_findings", []),
                     wlog=wlog,
+                    name_only=state.name_only,
                 )
                 batch_cost = batch_scored.pop("_cost", 0.0)
                 batch_tokens = batch_scored.pop("_tokens", 0)
@@ -678,14 +685,21 @@ def _match_reviews_to_entries(
     reviews: list,
     names: list[dict],
     wlog: logging.LoggerAdapter,
+    name_only: bool = False,
 ) -> tuple[list[dict], list[dict], int]:
     """Match LLM review results to original entries.
 
     Returns ``(scored, unmatched, revised_count)`` where *scored* contains
     entries with review scores applied and *unmatched* contains entries that
     the LLM did not return a review for.
+
+    When *name_only* is True, each scored entry is stamped with
+    ``review_mode = "name_only"`` so future runs can avoid overwriting
+    a higher-quality full review. Otherwise stamped ``"full"``.
     """
     from imas_codex.standard_names.models import StandardNameReviewVerdict
+
+    review_mode = "name_only" if name_only else "full"
 
     # Build lookup: source_id → entry, id → entry
     entry_map: dict[str, dict] = {}
@@ -720,6 +734,7 @@ def _match_reviews_to_entries(
         original["reviewer_scores"] = json.dumps(review.scores.model_dump())
         original["reviewer_comments"] = review.reasoning
         original["review_tier"] = review.scores.tier
+        original["review_mode"] = review_mode
 
         # Phase C: demote low-tier names to needs_revision so a subsequent
         # `sn generate --include-review-feedback` run picks them up and
@@ -785,6 +800,7 @@ async def _review_single_batch(
     neighborhood: list[dict],
     audit_findings: list[str],
     wlog: logging.LoggerAdapter,
+    name_only: bool = False,
     _is_retry: bool = False,
 ) -> dict[str, Any]:
     """Review a single batch via LLM — mirrors ``_review_batch()`` from workers.py.
@@ -798,12 +814,24 @@ async def _review_single_batch(
     remain unmatched after retry are **not** included in ``_items`` —
     they are counted in ``_unscored`` so callers never report unscored
     entries as reviewed.
+
+    When ``name_only`` is True the four-dimension rubric
+    (``sn/review_name_only`` prompt + ``StandardNameQualityReviewNameOnlyBatch``
+    response model) is used instead of the full six-dimension review.
     """
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.standard_names.models import (
         StandardNameQualityReviewBatch,
+        StandardNameQualityReviewNameOnlyBatch,
     )
+
+    if name_only:
+        prompt_name = "sn/review_name_only"
+        response_model: type = StandardNameQualityReviewNameOnlyBatch
+    else:
+        prompt_name = "sn/review"
+        response_model = StandardNameQualityReviewBatch
 
     cal = calibration_entries or []
 
@@ -840,10 +868,10 @@ async def _review_single_batch(
         "audit_findings": [],
         **grammar_enums,
     }
-    system_prompt = render_prompt("sn/review", system_context)
+    system_prompt = render_prompt(prompt_name, system_context)
 
     # User prompt: actual candidates + context
-    user_prompt = render_prompt("sn/review", context)
+    user_prompt = render_prompt(prompt_name, context)
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -853,13 +881,13 @@ async def _review_single_batch(
     result, cost, tokens = await acall_llm_structured(
         model=model,
         messages=messages,
-        response_model=StandardNameQualityReviewBatch,
+        response_model=response_model,
         service="standard-names",
     )
 
     # --- Match reviews to original entries -----------------------------------
     scored, unmatched, revised_count = _match_reviews_to_entries(
-        result.reviews, names, wlog
+        result.reviews, names, wlog, name_only=name_only
     )
 
     total_cost = cost
@@ -887,6 +915,7 @@ async def _review_single_batch(
             neighborhood=neighborhood,
             audit_findings=audit_findings,
             wlog=wlog,
+            name_only=name_only,
             _is_retry=True,
         )
 
