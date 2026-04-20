@@ -77,3 +77,34 @@ arriving at or emitted from the wall.
 | 1 | process  | `diamagnetic_drift`    | 3            | High     |
 | 2 | position | `wall_outline_point`   | 1            | Medium   |
 | 3 | position | `wall`                 | 5            | High     |
+
+---
+
+## rc16 Release — 2026-04-20
+
+All three issues above were resolved in rc15 (2026-04-19). The rc16 release
+extends vocabulary coverage substantially, closing 56 additional VocabGap
+entries identified by querying the codex Neo4j graph:
+
+```cypher
+MATCH (vg:VocabGap)
+RETURN vg.segment AS segment, vg.needed_token AS token, count(*) AS hits
+ORDER BY hits DESC
+```
+
+### Tokens added per category
+
+| Category        | Count | Key additions |
+|-----------------|:-----:|---------------|
+| Positions       |  16   | `geometric_axis`, `control_surface`, `separatrix`, `pedestal`, `pedestal_top`, `charge_state`, `ion_charge_state`, `along_line_of_sight`, `launching_position` |
+| Objects         |  15   | `wave_beam`, `beam_tracing_beam`, `beam_tracing_ray`, `coordinate_system`, `ferritic_insert`, `pellet`, `vacuum_vessel`, `diagnostic_aperture`, `plasma_facing_component` |
+| Subjects        |  13   | `thermal_neutral`, `total_ion`, `molecular_ion`, `molecular_neutral`, `cold_neutral`, `hot_neutral`, `trapped`, `co_passing`, `counter_passing`, `fast_particle` |
+| Processes       |   6   | `resistive_dissipation`, `dreicer`, `coulomb_collisions`, `neutral_beam_shinethrough`, `surface_emission`, `halo_current` |
+| Transformations |   6   | `perturbed`, `spectral_density`, `second_derivative_of`, `per_poloidal_mode`, `derivative_with_respect_to_rho_tor`, `line_of_sight_projected` |
+
+**ISN release**: `v0.7.0rc16` (tag SHA: `6448c4e`)
+**Codex bump**: `pyproject.toml` updated from `v0.7.0rc15` → `v0.7.0rc16`
+**VocabGap count**: 1066 total (636 physical_base + 430 structured). Structured-segment
+gaps reduced: ~56 tokens directly match VocabGap entries; remaining gaps are mostly
+LLM grammar composition errors (compound terms placed in wrong segments) that require
+prompt engineering rather than vocabulary additions.

@@ -285,6 +285,16 @@ name-only-batch-size = 50
 [tool.imas-codex.sn-enrich]
 model = "openrouter/anthropic/claude-opus-4.6"
 
+[tool.imas-codex.sn.review]
+# Cross-family reviewer diversity settings (opt-in).
+# Primary model matches [sn.benchmark].reviewer-model by default.
+primary-model = "openrouter/anthropic/claude-opus-4.6"
+# Secondary models for cross-family scoring (empty = feature off).
+# When non-empty, each name gets a rotating secondary review; if
+# |primary − secondary| > disagreement-threshold the name is escalated.
+secondary-models = ["openrouter/google/gemini-3.1-pro-preview"]
+disagreement-threshold = 0.2
+
 [tool.imas-codex.sn.benchmark]
 # Models to evaluate for standard name composition.
 # Each is benchmarked independently; results are compared side-by-side.
