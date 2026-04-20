@@ -8,8 +8,14 @@ from typing import Any
 import click
 from rich.console import Console
 
+from imas_codex.core.physics_domain import PhysicsDomain
+
 logger = logging.getLogger(__name__)
 console = Console()
+
+_PHYSICS_DOMAIN_CHOICE = click.Choice(
+    [d.value for d in PhysicsDomain], case_sensitive=False
+)
 
 
 @click.group()
@@ -106,7 +112,7 @@ def _run_rotator(
     "--physics-domain",
     "--domain",
     "domain_filter",
-    type=str,
+    type=_PHYSICS_DOMAIN_CHOICE,
     default=None,
     help=(
         "Filter to a specific physics domain (e.g. magnetics, equilibrium, "
@@ -746,7 +752,7 @@ def sn_generate(
     "--physics-domain",
     "--domain",
     "domain_filter",
-    type=str,
+    type=_PHYSICS_DOMAIN_CHOICE,
     default=None,
     help="Filter to physics domain (alias: --domain).",
 )
@@ -1175,7 +1181,7 @@ def sn_gaps(segment: str | None, export_format: str) -> None:
     "--physics-domain",
     "--domain",
     "domain_filter",
-    type=str,
+    type=_PHYSICS_DOMAIN_CHOICE,
     default=None,
     help="Filter to physics domain — applied to tags (alias: --domain).",
 )
@@ -1939,6 +1945,7 @@ def sn_resolve_links(
     "--physics-domain",
     "--domain",
     "domain",
+    type=_PHYSICS_DOMAIN_CHOICE,
     default=None,
     help="Scope to physics domain (alias: --domain).",
 )
@@ -2257,6 +2264,7 @@ def sn_review(
     "--physics-domain",
     "--domain",
     "domain",
+    type=_PHYSICS_DOMAIN_CHOICE,
     multiple=True,
     default=None,
     help=(
@@ -2481,6 +2489,7 @@ def sn_enrich(
     "--physics-domain",
     "--domain",
     "domain",
+    type=_PHYSICS_DOMAIN_CHOICE,
     required=True,
     help="Physics domain scope, applied to all 4 phases (alias: --domain).",
 )

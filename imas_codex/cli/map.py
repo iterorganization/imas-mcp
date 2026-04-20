@@ -16,8 +16,13 @@ import logging
 import click
 
 from imas_codex.cli.logging import configure_cli_logging
+from imas_codex.core.physics_domain import PhysicsDomain
 
 logger = logging.getLogger(__name__)
+
+_PHYSICS_DOMAIN_CHOICE = click.Choice(
+    [d.value for d in PhysicsDomain], case_sensitive=False
+)
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +102,7 @@ def map_cmd() -> None:
     "--domain",
     "-d",
     "domains",
+    type=_PHYSICS_DOMAIN_CHOICE,
     multiple=True,
     help="Physics domain(s) to map. Repeatable. Without this flag, "
     "maps all domains with enriched signal sources. "
