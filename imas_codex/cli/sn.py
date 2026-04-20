@@ -882,12 +882,14 @@ def sn_status() -> None:
     help="Filter by grammar segment (e.g., transformation, process)",
 )
 @click.option(
+    "--format",
     "--export",
     "export_format",
     type=click.Choice(["table", "yaml"]),
     default="table",
     show_default=True,
-    help="Output format (yaml for ISN issue filing)",
+    help="Output format (yaml for ISN issue filing). "
+    "(--export is a backward-compatible alias.)",
 )
 def sn_gaps(segment: str | None, export_format: str) -> None:
     """List grammar vocabulary gaps identified during composition.
@@ -1502,10 +1504,12 @@ def sn_clear(
 
 @sn.command("reconcile")
 @click.option(
+    "--source",
     "--source-type",
+    "source_type",
     type=click.Choice(["dd", "signals"]),
     default="dd",
-    help="Source type to reconcile",
+    help="Source type to reconcile. (--source-type is a backward-compatible alias.)",
 )
 def reconcile(source_type: str) -> None:
     """Reconcile StandardNameSource nodes after DD/signal rebuild.

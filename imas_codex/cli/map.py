@@ -93,12 +93,14 @@ def map_cmd() -> None:
 @map_cmd.command("run")
 @click.argument("facility")
 @click.option(
+    "--physics-domain",
     "--domain",
     "-d",
     "domains",
     multiple=True,
     help="Physics domain(s) to map. Repeatable. Without this flag, "
-    "maps all domains with enriched signal sources.",
+    "maps all domains with enriched signal sources. "
+    "(--domain is a backward-compatible alias.)",
 )
 @click.option(
     "--ids",

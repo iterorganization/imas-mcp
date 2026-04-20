@@ -81,9 +81,12 @@ imas.add_command(map_cmd, "map")
     ),
 )
 @click.option(
+    "--ids",
     "--ids-filter",
+    "ids_filter",
     type=str,
-    help="Filter to specific IDS (space-separated, for testing)",
+    help="Filter to specific IDS (space-separated, for testing). "
+    "(--ids-filter is a backward-compatible alias.)",
 )
 @click.option(
     "--dry-run", is_flag=True, help="Preview changes without writing to graph"
