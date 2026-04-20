@@ -51,6 +51,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | `[reasoning]` | Complex structured output (IMAS mapping, multi-step reasoning) | `get_model("reasoning")` |
 | `[discovery]` | Discovery threshold for high-value processing | `get_discovery_threshold()` |
 | `[data-dictionary]` | DD version, include-ggd, include-error-fields | `get_dd_version()` |
+| `[sn.review]` | Cross-family reviewer diversity (primary, secondary models, threshold) | `get_sn_review_primary_model()`, `get_sn_review_secondary_models()`, `get_sn_review_disagreement_threshold()` |
 | `[sn.benchmark]` | SN benchmark compose-models list and reviewer-model | `get_sn_benchmark_compose_models()`, `get_sn_benchmark_reviewer_model()` |
 
 **Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"reasoning"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.
@@ -820,6 +821,31 @@ singleton) and provides known-quality examples for reviewer consistency checks.
 (handled automatically in `llm.py`) and cannot use `temperature=0.0` (handled in benchmark).
 Quality is adequate (68.9 avg) but not top-tier for standard name generation.
 
+### Cross-Family Review
+
+The `sn review` pipeline supports optional **cross-family reviewer diversity** to detect
+measurement bias from a single model family. When enabled, each reviewed batch receives a
+secondary LLM review from a rotating model (cycling through `secondary-models` by batch index).
+
+**Configuration** (`pyproject.toml`):
+```toml
+[tool.imas-codex.sn.review]
+primary-model = "openrouter/anthropic/claude-opus-4.6"
+secondary-models = ["openrouter/openai/gpt-5.4"]  # empty = feature off
+disagreement-threshold = 0.2
+```
+
+**Settings accessors:** `get_sn_review_primary_model()`, `get_sn_review_secondary_models()`,
+`get_sn_review_disagreement_threshold()`.
+
+**Disagreement semantics:** When `|primary_score − secondary_score| > threshold`:
+- `reviewer_disagreement` is set to the absolute difference
+- `reviewer_score` is consolidated to `min(primary, secondary)` (conservative)
+- `validation_status` is set to `needs_revision`
+
+**Persisted fields:** `reviewer_model_secondary`, `reviewer_score_secondary`,
+`reviewer_scores_secondary` (JSON), `reviewer_disagreement` (float).
+
 ### StandardName Lifecycle
 
 ```
@@ -955,6 +981,11 @@ by the model.
 each 0-20), `reviewer_comments`, `reviewed_at`, `review_tier` (outstanding/good/adequate/poor),
 `vocab_gap_detail` (JSON: segment/needed_token/reason), `catalog_commit_sha`,
 `validation_issues` (list of tagged strings), `validation_layer_summary` (JSON).
+
+**Cross-family fields** (v0.6.1): `reviewer_model_secondary`, `reviewer_score_secondary` (float 0-1),
+`reviewer_scores_secondary` (JSON, same schema as `reviewer_scores`), `reviewer_disagreement`
+(float, abs difference between primary and secondary scores). Only populated when
+`[sn.review].secondary-models` is configured.
 
 **VocabGap nodes** record missing grammar tokens identified during composition when a needed
 vocabulary token does not exist in the ISN grammar. Linked via `HAS_SN_VOCAB_GAP` from IMASNode

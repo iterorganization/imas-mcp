@@ -10,6 +10,8 @@ Configuration is organized into subsections:
   [tool.imas-codex.vision]         — vision models for image/document tasks
   [tool.imas-codex.agent]          — agent models for planning/exploration tasks
   [tool.imas-codex.compaction]     — compaction models for summarization tasks
+  [tool.imas-codex.sn.review]      — cross-family reviewer model diversity settings
+  [tool.imas-codex.sn.benchmark]   — SN benchmark compose-models and reviewer-model
 
 All settings support environment variable overrides (IMAS_CODEX_* prefix / NEO4J_*).
 """
@@ -638,6 +640,53 @@ INCLUDE_ERROR_FIELDS = get_include_error_fields()
 EMBEDDING_DIMENSION = get_embedding_dimension()
 
 
+# ─── SN review settings ────────────────────────────────────────────────────
+
+_SN_REVIEW_DEFAULTS = {
+    "primary-model": "openrouter/anthropic/claude-opus-4.6",
+    "secondary-models": [],
+    "disagreement-threshold": 0.2,
+}
+
+
+def get_sn_review_primary_model() -> str:
+    """Get the primary reviewer model for ``sn review``.
+
+    Priority: ``[sn.review].primary-model`` in pyproject.toml → default.
+    """
+    section = _get_section("sn").get("review", {})
+    return section.get("primary-model", _SN_REVIEW_DEFAULTS["primary-model"])
+
+
+def get_sn_review_secondary_models() -> list[str]:
+    """Get the secondary (cross-family) reviewer model list.
+
+    When non-empty, the review worker runs a rotating secondary scorer
+    per-name and computes ``reviewer_disagreement``.
+
+    Priority: ``[sn.review].secondary-models`` → ``[]`` (feature off).
+    """
+    section = _get_section("sn").get("review", {})
+    return section.get("secondary-models", _SN_REVIEW_DEFAULTS["secondary-models"])
+
+
+def get_sn_review_disagreement_threshold() -> float:
+    """Get the score-difference threshold that triggers escalation.
+
+    Names with ``|primary − secondary| > threshold`` are flagged
+    ``reviewer_disagreement=True`` and set to ``needs_revision``.
+
+    Priority: ``[sn.review].disagreement-threshold`` → ``0.2``.
+    """
+    section = _get_section("sn").get("review", {})
+    return float(
+        section.get(
+            "disagreement-threshold",
+            _SN_REVIEW_DEFAULTS["disagreement-threshold"],
+        )
+    )
+
+
 # ─── SN benchmark settings ─────────────────────────────────────────────────
 
 _SN_BENCHMARK_DEFAULTS = {
@@ -666,7 +715,10 @@ def get_sn_benchmark_compose_models() -> list[str]:
 def get_sn_benchmark_reviewer_model() -> str:
     """Get the reviewer model for SN benchmark scoring.
 
-    Priority: [sn.benchmark].reviewer-model in pyproject.toml → default.
+    Priority: ``[sn.benchmark].reviewer-model`` → ``[sn.review].primary-model``
+    → default.  The fallback to ``[sn.review]`` ensures the benchmark and
+    review pipelines share the same default judge unless overridden.
     """
     section = _get_section("sn").get("benchmark", {})
-    return section.get("reviewer-model", _SN_BENCHMARK_DEFAULTS["reviewer-model"])
+    fallback = get_sn_review_primary_model()
+    return section.get("reviewer-model", fallback)

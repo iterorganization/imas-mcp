@@ -381,6 +381,11 @@ classes:
           reviewer (0-1). Compared with ``reviewer_score`` to compute
           ``reviewer_disagreement``.
         range: float
+      reviewer_scores_secondary:
+        description: >-
+          JSON-encoded per-dimension scores from the secondary reviewer
+          (same schema as ``reviewer_scores``). Stored for audit trail
+          and downstream analysis of cross-family agreement.
       reviewer_disagreement:
         description: >-
           Absolute difference between primary and secondary reviewer

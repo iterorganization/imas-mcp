@@ -2037,6 +2037,15 @@ def sn_review(
     # Enforce batch-size cap
     batch_size = min(batch_size, 25)
 
+    # Load cross-family settings
+    from imas_codex.settings import (
+        get_sn_review_disagreement_threshold,
+        get_sn_review_secondary_models,
+    )
+
+    secondary_models = get_sn_review_secondary_models()
+    disagreement_threshold = get_sn_review_disagreement_threshold()
+
     # Build state
     state = StandardNameReviewState(
         facility="dd",
@@ -2054,6 +2063,8 @@ def sn_review(
         dry_run=dry_run,
         name_only=name_only,
         budget_manager=ReviewBudgetManager(cost_limit),
+        secondary_models=secondary_models,
+        disagreement_threshold=disagreement_threshold,
     )
 
     async def _run() -> None:

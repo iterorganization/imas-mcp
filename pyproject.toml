@@ -292,7 +292,7 @@ primary-model = "openrouter/anthropic/claude-opus-4.6"
 # Secondary models for cross-family scoring (empty = feature off).
 # When non-empty, each name gets a rotating secondary review; if
 # |primary − secondary| > disagreement-threshold the name is escalated.
-secondary-models = ["openrouter/google/gemini-3.1-pro-preview"]
+secondary-models = []
 disagreement-threshold = 0.2
 
 [tool.imas-codex.sn.benchmark]

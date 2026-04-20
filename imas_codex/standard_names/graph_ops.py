@@ -534,7 +534,9 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     ``validity_domain``, ``constraints``, ``model``, ``review_status``,
     ``generated_at``, ``confidence``, ``reviewer_model``, ``reviewer_score``,
     ``reviewer_scores``, ``reviewer_comments``, ``reviewed_at``,
-    ``review_tier``, ``vocab_gap_detail``, ``validation_issues``,
+    ``review_tier``, ``reviewer_model_secondary``, ``reviewer_score_secondary``,
+    ``reviewer_scores_secondary``, ``reviewer_disagreement``,
+    ``vocab_gap_detail``, ``validation_issues``,
     ``validation_layer_summary``, ``cocos_transformation_type``, ``dd_version``,
     ``review_input_hash``.
 
@@ -617,6 +619,10 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.reviewer_comments = coalesce(b.reviewer_comments, sn.reviewer_comments),
                 sn.reviewed_at = coalesce(b.reviewed_at, sn.reviewed_at),
                 sn.review_tier = coalesce(b.review_tier, sn.review_tier),
+                sn.reviewer_model_secondary = coalesce(b.reviewer_model_secondary, sn.reviewer_model_secondary),
+                sn.reviewer_score_secondary = coalesce(b.reviewer_score_secondary, sn.reviewer_score_secondary),
+                sn.reviewer_scores_secondary = coalesce(b.reviewer_scores_secondary, sn.reviewer_scores_secondary),
+                sn.reviewer_disagreement = coalesce(b.reviewer_disagreement, sn.reviewer_disagreement),
                 sn.vocab_gap_detail = coalesce(b.vocab_gap_detail, sn.vocab_gap_detail),
                 sn.validation_issues = coalesce(b.validation_issues, sn.validation_issues),
                 sn.validation_layer_summary = coalesce(b.validation_layer_summary, sn.validation_layer_summary),
@@ -673,6 +679,12 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "reviewer_comments": n.get("reviewer_comments"),
                     "reviewed_at": n.get("reviewed_at"),
                     "review_tier": n.get("review_tier"),
+                    "reviewer_model_secondary": n.get("reviewer_model_secondary"),
+                    "reviewer_score_secondary": n.get("reviewer_score_secondary"),
+                    "reviewer_scores_secondary": _ensure_json(
+                        n.get("reviewer_scores_secondary")
+                    ),
+                    "reviewer_disagreement": n.get("reviewer_disagreement"),
                     "vocab_gap_detail": _ensure_json(n.get("vocab_gap_detail")),
                     "validation_issues": n.get("validation_issues") or None,
                     "validation_layer_summary": _ensure_json(

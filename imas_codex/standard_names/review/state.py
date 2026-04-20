@@ -42,6 +42,10 @@ class StandardNameReviewState(DiscoveryStateBase):
     concurrency: int = 2
     dry_run: bool = False
 
+    # Cross-family reviewer diversity
+    secondary_models: list[str] = field(default_factory=list)
+    disagreement_threshold: float = 0.2
+
     # ------------------------------------------------------------------
     # Pipeline data
     # ------------------------------------------------------------------

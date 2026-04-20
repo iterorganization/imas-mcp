@@ -431,6 +431,31 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                         }
                     ]
                 )
+                # --- Cross-family secondary review ----------------------------
+                if state.secondary_models and batch_items:
+                    sec_model = state.secondary_models[
+                        batch_idx % len(state.secondary_models)
+                    ]
+                    try:
+                        batch_items = await _run_secondary_review(
+                            primary_items=batch_items,
+                            secondary_model=sec_model,
+                            threshold=state.disagreement_threshold,
+                            grammar_enums=grammar_enums,
+                            compose_ctx=compose_ctx,
+                            calibration_entries=calibration_entries,
+                            batch=batch,
+                            wlog=wlog,
+                            name_only=state.name_only,
+                        )
+                    except Exception:
+                        wlog.warning(
+                            "Secondary review failed for batch %d — "
+                            "primary scores kept, no secondary fields",
+                            batch_idx,
+                            exc_info=True,
+                        )
+
                 return batch_items
 
             except Exception:
@@ -543,6 +568,119 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
             }
         ]
     )
+
+
+# =============================================================================
+# Cross-family secondary review helper
+# =============================================================================
+
+
+async def _run_secondary_review(
+    *,
+    primary_items: list[dict],
+    secondary_model: str,
+    threshold: float,
+    grammar_enums: dict[str, list[str]],
+    compose_ctx: dict[str, Any],
+    calibration_entries: list[dict],
+    batch: dict,
+    wlog: logging.LoggerAdapter | logging.Logger,
+    name_only: bool = False,
+) -> list[dict]:
+    """Run a secondary reviewer on already-scored items and merge results.
+
+    For each primary item, if the secondary batch produced a matching
+    result the following fields are injected:
+
+    - ``reviewer_model_secondary`` — the secondary model id
+    - ``reviewer_score_secondary`` — the secondary 0-1 score
+    - ``reviewer_scores_secondary`` — JSON per-dimension scores
+    - ``reviewer_disagreement`` — ``abs(primary - secondary)``
+
+    When ``disagreement > threshold``, the item's ``validation_status``
+    is set to ``needs_revision`` and ``reviewer_score`` is consolidated
+    to ``min(primary, secondary)`` (conservative).
+
+    Returns the mutated *primary_items* list (in-place update).
+    """
+    import copy
+
+    # Save primary scores before secondary review (which mutates names)
+    primary_scores: dict[str, float] = {}
+    primary_reviewer_scores: dict[str, Any] = {}
+    for item in primary_items:
+        name_id = item.get("id", "")
+        if name_id:
+            primary_scores[name_id] = item.get("reviewer_score", 0.0) or 0.0
+            primary_reviewer_scores[name_id] = item.get("reviewer_scores")
+
+    # Deep-copy items so _review_single_batch doesn't overwrite primary fields
+    sec_input = copy.deepcopy(primary_items)
+
+    sec_result = await _review_single_batch(
+        names=sec_input,
+        model=secondary_model,
+        grammar_enums=grammar_enums,
+        compose_ctx=compose_ctx,
+        calibration_entries=calibration_entries,
+        batch_context=batch.get("group_key", ""),
+        neighborhood=batch.get("neighborhood", []),
+        audit_findings=batch.get("audit_findings", []),
+        wlog=wlog,
+        name_only=name_only,
+    )
+
+    sec_items = sec_result.get("_items", [])
+    sec_cost = sec_result.get("_cost", 0.0)
+
+    # Build lookup from secondary results
+    sec_by_id: dict[str, dict] = {
+        item["id"]: item for item in sec_items if "id" in item
+    }
+
+    disagreements = 0
+    for item in primary_items:
+        name_id = item.get("id", "")
+        sec = sec_by_id.get(name_id)
+        if sec is None:
+            continue
+
+        sec_score = sec.get("reviewer_score")
+        if sec_score is None:
+            continue
+
+        item["reviewer_model_secondary"] = secondary_model
+        item["reviewer_score_secondary"] = sec_score
+        item["reviewer_scores_secondary"] = sec.get("reviewer_scores")
+        primary_score = primary_scores.get(name_id, 0.0)
+        diff = round(abs(primary_score - sec_score), 4)
+        item["reviewer_disagreement"] = diff
+
+        if diff > threshold:
+            item["validation_status"] = "needs_revision"
+            # Conservative: use the lower score
+            item["reviewer_score"] = min(primary_score, sec_score)
+            disagreements += 1
+            wlog.info(
+                "Cross-family disagreement on %r: primary=%.2f secondary=%.2f "
+                "Δ=%.2f > %.2f → needs_revision",
+                name_id,
+                primary_score,
+                sec_score,
+                diff,
+                threshold,
+            )
+
+    wlog.info(
+        "Secondary review (%s): %d/%d matched, %d disagreements (cost=$%.4f)",
+        secondary_model,
+        len(sec_by_id),
+        len(primary_items),
+        disagreements,
+        sec_cost,
+    )
+
+    return primary_items
 
 
 # =============================================================================
