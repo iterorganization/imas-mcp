@@ -399,3 +399,122 @@ def group_by_concept_and_unit(
         max_batch_size,
     )
     return batches
+
+
+# ---------------------------------------------------------------------------
+# Name-only grouping (Workstream 2a) — coarser batches, broader concept bins.
+# ---------------------------------------------------------------------------
+
+
+def build_name_only_context(items: list[dict], group_key: str) -> str:
+    """Build compact context for a ``name_only`` batch.
+
+    Name-only batches use ``(physics_domain × unit)`` as the grouping
+    key and may contain items from many clusters and IDSs.  The prompt
+    asks the LLM to identify natural sub-groups within the batch, so
+    the context summarises the domain-level shape rather than a single
+    cluster.
+    """
+    parts: list[str] = []
+
+    domain = items[0].get("physics_domain") or "unspecified"
+    unit = items[0].get("unit") or "dimensionless"
+
+    parts.append(f"Physics domain: {domain}")
+    parts.append(f"Authoritative unit: {unit}")
+    parts.append(f"{len(items)} paths sharing (domain, unit)")
+
+    ids_names = sorted({item.get("ids_name") or "unknown" for item in items})
+    if len(ids_names) > 1:
+        parts.append(f"Cross-IDS: {', '.join(ids_names)}")
+    elif ids_names:
+        parts.append(f"IDS: {ids_names[0]}")
+
+    # Surface the cluster diversity so the LLM knows to look for
+    # natural sub-groups when composing names.
+    cluster_labels = {
+        (item.get("grouping_cluster_label") or item.get("primary_cluster_label"))
+        for item in items
+        if item.get("grouping_cluster_label") or item.get("primary_cluster_label")
+    }
+    cluster_labels.discard(None)
+    if cluster_labels:
+        labels_preview = sorted(cluster_labels)[:8]
+        suffix = (
+            f" (+{len(cluster_labels) - len(labels_preview)} more)"
+            if len(cluster_labels) > len(labels_preview)
+            else ""
+        )
+        parts.append("Represented clusters: " + "; ".join(labels_preview) + suffix)
+
+    return "\n".join(parts)
+
+
+def group_for_name_only(
+    items: list[dict],
+    batch_size: int = 50,
+    existing_names: set[str] | None = None,
+) -> list[ExtractionBatch]:
+    """Group enriched paths by ``(physics_domain × unit)`` for name-only mode.
+
+    This is the Workstream 2a batching strategy: coarser grouping than
+    :func:`group_by_concept_and_unit` to amortise the system-prompt
+    cost across many more items per LLM call.  Empirically this
+    collapses the ~35 %% singleton tail of (cluster × unit) batching
+    into dense bins (mean ≈ 13 items at ``batch_size=50``) while
+    preserving unit safety.
+
+    Args:
+        items: Enriched path dicts (output of :func:`enrich_paths`).
+        batch_size: Maximum items per batch.  Items beyond this cap
+            are split into chunks that keep the same group key but
+            append a ``#<idx>`` suffix for traceability.
+        existing_names: Known standard names for dedup awareness.
+
+    Returns:
+        List of :class:`ExtractionBatch` objects with ``mode="name_only"``.
+    """
+    if existing_names is None:
+        existing_names = set()
+
+    if not items:
+        return []
+
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for item in items:
+        domain = item.get("physics_domain") or "unspecified"
+        unit = item.get("unit") or "dimensionless"
+        # `ids_name` is NOT part of the key — we intentionally merge
+        # across IDSs to encourage cross-IDS name reuse.
+        group_key = f"name_only/{domain}/{unit}"
+        groups[group_key].append(item)
+
+    batches: list[ExtractionBatch] = []
+    for group_key in sorted(groups):
+        group_items = groups[group_key]
+        chunks = [
+            group_items[i : i + batch_size]
+            for i in range(0, len(group_items), batch_size)
+        ]
+        for chunk_idx, chunk in enumerate(chunks):
+            batch_key = group_key if len(chunks) == 1 else f"{group_key}#{chunk_idx}"
+            context = build_name_only_context(chunk, group_key)
+            batches.append(
+                ExtractionBatch(
+                    source="dd",
+                    group_key=batch_key,
+                    items=chunk,
+                    context=context,
+                    existing_names=existing_names,
+                    mode="name_only",
+                )
+            )
+
+    logger.info(
+        "Name-only grouping: %d paths → %d batches (batch_size=%d, mean=%.1f)",
+        len(items),
+        len(batches),
+        batch_size,
+        len(items) / len(batches) if batches else 0.0,
+    )
+    return batches

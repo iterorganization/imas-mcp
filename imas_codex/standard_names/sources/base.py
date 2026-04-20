@@ -12,6 +12,14 @@ class ExtractionBatch:
 
     Each batch groups related items (e.g., same IDS, same cluster, same diagnostic)
     to give the LLM coherent context for generating standard names.
+
+    Attributes:
+        mode: Grouping strategy. ``"default"`` uses the rich
+            (cluster × unit) grouping with per-item sibling / COCOS /
+            cross-IDS context. ``"name_only"`` uses coarse
+            (physics_domain × unit) grouping in larger bins and pairs
+            with a leaner user prompt that defers deep enrichment to
+            a follow-up review pass.
     """
 
     source: str  # "dd" or "signals"
@@ -24,6 +32,7 @@ class ExtractionBatch:
     dd_version: str | None = None  # DD version whose conventions apply
     cocos_version: int | None = None  # COCOS convention from that DD version
     cocos_params: dict | None = None  # Full COCOS node properties
+    mode: str = "default"  # "default" or "name_only"
 
 
 class ExtractionSource(Protocol):

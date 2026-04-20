@@ -149,6 +149,8 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     on_status=_on_status,
                     from_model=state.from_model,
                     force=state.force,
+                    name_only=state.name_only,
+                    name_only_batch_size=state.name_only_batch_size,
                 )
         else:
             wlog.error("Unknown source: %s", state.source)
@@ -1099,7 +1101,17 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 "cocos_version": batch.cocos_version,
                 "dd_version": batch.dd_version,
             }
-            user_prompt = render_prompt("sn/compose_dd", {**context, **user_context})
+            # Name-only batches (Workstream 2a) render a leaner user prompt
+            # that trades per-item cluster siblings / COCOS blocks / sibling
+            # fields for a "identify natural sub-groups, then name" directive.
+            # System prompt and per-candidate L6/L7 logic are unchanged so
+            # prompt caching and grammar safety stay intact.
+            prompt_template = (
+                "sn/compose_dd_name_only"
+                if batch.mode == "name_only"
+                else "sn/compose_dd"
+            )
+            user_prompt = render_prompt(prompt_template, {**context, **user_context})
 
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -1357,6 +1369,40 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
         errors,
         state.compose_stats.cost,
     )
+
+    # --- Batch-size telemetry (Workstream 2a) ---
+    # Report the distribution of items per batch and the name-only mode
+    # indicator so rotation summaries can compare name-only vs default
+    # throughput without bespoke log scraping.
+    if state.extracted:
+        sizes = [len(b.items) for b in state.extracted]
+        total_items_in_batches = sum(sizes)
+        name_only_batches = sum(
+            1 for b in state.extracted if getattr(b, "mode", "default") == "name_only"
+        )
+        singleton_count = sum(1 for s in sizes if s == 1)
+        wlog.info(
+            "Batch telemetry: %d batches (%d name_only), total_items=%d, "
+            "mean=%.2f, min=%d, max=%d, singletons=%d (%.1f%%), cost_per_batch=$%.4f",
+            len(sizes),
+            name_only_batches,
+            total_items_in_batches,
+            total_items_in_batches / len(sizes) if sizes else 0.0,
+            min(sizes) if sizes else 0,
+            max(sizes) if sizes else 0,
+            singleton_count,
+            100.0 * singleton_count / len(sizes) if sizes else 0.0,
+            state.compose_stats.cost / len(sizes) if sizes else 0.0,
+        )
+        state.stats["compose_batches"] = len(sizes)
+        state.stats["compose_batches_name_only"] = name_only_batches
+        state.stats["compose_batch_mean_size"] = (
+            total_items_in_batches / len(sizes) if sizes else 0.0
+        )
+        state.stats["compose_batch_singleton_pct"] = (
+            100.0 * singleton_count / len(sizes) if sizes else 0.0
+        )
+
     state.stats["compose_count"] = len(composed)
     state.stats["compose_errors"] = errors
     state.stats["compose_cost"] = state.compose_stats.cost

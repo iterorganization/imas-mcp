@@ -44,6 +44,13 @@ class StandardNameBuildState(DiscoveryStateBase):
     limit: int | None = None  # Cap on paths to process
     from_model: str | None = None  # Regenerate names produced by this model (substring)
 
+    # Name-only batching mode (Workstream 2a): group by (physics_domain × unit)
+    # in larger bins and skip L2 exemplar / L4 theme / IDS-prefetch enrichment.
+    # Produces named candidates faster during bootstrap; downstream review
+    # / enrichment passes restore the deeper context.
+    name_only: bool = False
+    name_only_batch_size: int = 50
+
     # Model overrides (None = use defaults from pyproject.toml)
     compose_model: str | None = None  # Override for compose step (default: reasoning)
 

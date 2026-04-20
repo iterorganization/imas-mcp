@@ -10,8 +10,10 @@ import pytest
 
 from imas_codex.standard_names.enrichment import (
     build_batch_context,
+    build_name_only_context,
     enrich_paths,
     group_by_concept_and_unit,
+    group_for_name_only,
     select_primary_cluster,
 )
 from imas_codex.standard_names.sources.base import ExtractionBatch
@@ -442,6 +444,140 @@ class TestGroupByConceptAndUnit:
         ]
         batches = group_by_concept_and_unit(items)
         assert len(batches) == 2
+
+
+# ============================================================================
+# group_for_name_only (Workstream 2a)
+# ============================================================================
+
+
+class TestGroupForNameOnly:
+    """Tests for coarse (physics_domain × unit) grouping used by --name-only."""
+
+    def _enriched(self, **overrides) -> dict:
+        base = {
+            "path": "core_profiles/profiles_1d/electrons/temperature",
+            "data_type": "FLT_1D",
+            "unit": "eV",
+            "ids_name": "core_profiles",
+            "description": "Electron temperature",
+            "physics_domain": "kinetics",
+            "primary_cluster_id": "c1",
+            "primary_cluster_label": "Electron temperature",
+            "grouping_cluster_id": "c1",
+            "grouping_cluster_label": "Electron temperature",
+            "parent_path": "core_profiles/profiles_1d/electrons",
+            "cluster_siblings": [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_empty_input(self):
+        assert group_for_name_only([]) == []
+
+    def test_single_batch_same_domain_unit(self):
+        items = [
+            self._enriched(path=f"a/b/path_{i}", physics_domain="kinetics", unit="eV")
+            for i in range(5)
+        ]
+        batches = group_for_name_only(items)
+        assert len(batches) == 1
+        batch = batches[0]
+        assert batch.mode == "name_only"
+        assert batch.group_key == "name_only/kinetics/eV"
+        assert len(batch.items) == 5
+
+    def test_different_units_split(self):
+        items = [
+            self._enriched(path="a/temperature", unit="eV"),
+            self._enriched(path="b/temperature", unit="K"),
+        ]
+        batches = group_for_name_only(items)
+        assert len(batches) == 2
+        keys = sorted(b.group_key for b in batches)
+        assert keys == ["name_only/kinetics/K", "name_only/kinetics/eV"]
+
+    def test_different_domains_split(self):
+        items = [
+            self._enriched(
+                path="core_profiles/temperature",
+                physics_domain="kinetics",
+                unit="eV",
+            ),
+            self._enriched(
+                path="equilibrium/psi",
+                physics_domain="equilibrium",
+                unit="eV",
+            ),
+        ]
+        batches = group_for_name_only(items)
+        assert len(batches) == 2
+        assert all(b.mode == "name_only" for b in batches)
+
+    def test_cross_ids_same_domain_unit_merged(self):
+        items = [
+            self._enriched(
+                path="core_profiles/foo",
+                ids_name="core_profiles",
+                physics_domain="transport",
+                unit="m^-3.s^-1",
+            ),
+            self._enriched(
+                path="core_transport/bar",
+                ids_name="core_transport",
+                physics_domain="transport",
+                unit="m^-3.s^-1",
+            ),
+        ]
+        batches = group_for_name_only(items)
+        assert len(batches) == 1
+        assert batches[0].group_key == "name_only/transport/m^-3.s^-1"
+        assert len(batches[0].items) == 2
+        # Context should flag cross-IDS
+        assert "Cross-IDS" in batches[0].context
+
+    def test_chunking_respects_batch_size(self):
+        items = [self._enriched(path=f"a/b/path_{i}") for i in range(120)]
+        batches = group_for_name_only(items, batch_size=50)
+        assert len(batches) == 3
+        sizes = sorted(len(b.items) for b in batches)
+        assert sizes == [20, 50, 50]
+        # Chunk suffix appears on multi-chunk groups.
+        assert any("#" in b.group_key for b in batches)
+        assert all(b.mode == "name_only" for b in batches)
+
+    def test_missing_domain_or_unit_defaults(self):
+        items = [
+            self._enriched(path="a", physics_domain=None, unit=None),
+        ]
+        batches = group_for_name_only(items)
+        assert len(batches) == 1
+        assert batches[0].group_key == "name_only/unspecified/dimensionless"
+
+    def test_existing_names_passed_through(self):
+        items = [self._enriched()]
+        existing = {"electron_temperature", "ion_temperature"}
+        batches = group_for_name_only(items, existing_names=existing)
+        assert batches[0].existing_names == existing
+
+    def test_build_name_only_context_mentions_clusters(self):
+        items = [
+            self._enriched(
+                path="a/temp",
+                primary_cluster_label="Electron temperature",
+                grouping_cluster_label="Electron temperature",
+            ),
+            self._enriched(
+                path="b/dens",
+                primary_cluster_label="Electron density",
+                grouping_cluster_label="Electron density",
+            ),
+        ]
+        ctx = build_name_only_context(items, "name_only/kinetics/eV")
+        assert "Physics domain: kinetics" in ctx
+        assert "Authoritative unit: eV" in ctx
+        assert "Electron temperature" in ctx
+        assert "Electron density" in ctx
 
 
 # ============================================================================

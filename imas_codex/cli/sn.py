@@ -209,6 +209,27 @@ def sn() -> None:
         "this flag stores a flag that Phase C will consume.)"
     ),
 )
+@click.option(
+    "--name-only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Use the Workstream 2a name-only batching mode: group paths by "
+        "(physics_domain × unit) with larger batches and a lean user prompt "
+        "(no cluster siblings, exemplars, or review feedback). Trades per-item "
+        "context depth for ~70% fewer LLM calls during bootstrap."
+    ),
+)
+@click.option(
+    "--name-only-batch-size",
+    type=int,
+    default=None,
+    help=(
+        "Max items per name-only batch. Defaults to "
+        "[tool.imas-codex.sn-generate].name-only-batch-size in pyproject.toml "
+        "(50). Only meaningful when --name-only is set."
+    ),
+)
 def sn_generate(
     source: str,
     domain_filter: str | None,
@@ -233,6 +254,8 @@ def sn_generate(
     retry_skipped: bool,
     retry_vocab_gap: bool,
     include_review_feedback: bool,
+    name_only: bool,
+    name_only_batch_size: int | None,
 ) -> None:
     """Generate standard names from a source.
 
@@ -499,6 +522,16 @@ def sn_generate(
         except Exception:
             logger.debug("Could not create progress display", exc_info=True)
 
+    # Resolve name-only batch size from pyproject default when unspecified.
+    if name_only_batch_size is None:
+        from imas_codex.settings import _get_section
+
+        name_only_batch_size = int(
+            _get_section("sn-generate").get("name-only-batch-size", 50)
+        )
+    if name_only:
+        logger.info("Mode: name-only (batch_size=%d)", name_only_batch_size)
+
     state = StandardNameBuildState(
         facility=effective_facility,
         source=source,
@@ -513,6 +546,8 @@ def sn_generate(
         limit=limit,
         compose_model=compose_model,
         from_model=from_model,
+        name_only=name_only,
+        name_only_batch_size=name_only_batch_size,
     )
 
     if display:

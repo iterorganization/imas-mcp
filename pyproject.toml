@@ -274,6 +274,13 @@ model = "anthropic/claude-sonnet-4.6"
 [tool.imas-codex.sn-generate]
 model = "anthropic/claude-sonnet-4.6"
 batch-size = 25
+# Batch size used when ``sn generate --name-only`` groups paths by
+# ``(physics_domain × unit)`` rather than ``(cluster × unit)``.  The
+# name-only mode trades per-item cluster context for breadth: wider
+# batches (default 50) cut LLM-call count ~70% during bootstrap at
+# the cost of richer per-candidate enrichment, which the subsequent
+# review / enrichment passes restore.
+name-only-batch-size = 50
 
 [tool.imas-codex.sn-enrich]
 model = "openrouter/anthropic/claude-opus-4.6"

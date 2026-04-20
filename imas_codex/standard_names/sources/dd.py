@@ -146,6 +146,8 @@ def extract_dd_candidates(
     on_status: Callable[[str], None] | None = None,
     from_model: str | None = None,
     force: bool = False,
+    name_only: bool = False,
+    name_only_batch_size: int = 50,
 ) -> list[ExtractionBatch]:
     """Extract candidate quantities from IMAS DD paths with enriched context.
 
@@ -164,6 +166,13 @@ def extract_dd_candidates(
             by a model containing this substring
         force: When False, exclude paths that already have a non-stale/non-failed
             StandardNameSource node (skip already-processed).
+        name_only: When True, use the Workstream 2a coarser grouping
+            (``physics_domain × unit``) via :func:`group_for_name_only`
+            instead of :func:`group_by_concept_and_unit`. Batches are
+            tagged ``mode="name_only"`` so the compose worker picks the
+            lean user prompt.
+        name_only_batch_size: Maximum items per batch when ``name_only``
+            is True.
 
     Returns:
         List of ExtractionBatch objects grouped by (primary_cluster, unit)
@@ -284,6 +293,7 @@ def extract_dd_candidates(
     from imas_codex.standard_names.enrichment import (
         enrich_paths,
         group_by_concept_and_unit,
+        group_for_name_only,
     )
 
     enriched = enrich_paths(results)
@@ -293,13 +303,26 @@ def extract_dd_candidates(
         return []
 
     # Group GLOBALLY by (primary_cluster × unit) — same concept across IDSs
-    # gets batched together for coherent naming.
-    _status(f"grouping {len(enriched)} quantities into batches…")
-    batches = group_by_concept_and_unit(
-        enriched,
-        max_batch_size=25,
-        existing_names=existing_names,
-    )
+    # gets batched together for coherent naming.  In ``name_only`` mode
+    # use the coarser (physics_domain × unit) grouping for higher
+    # throughput during bootstrap (see Workstream 2a).
+    if name_only:
+        _status(
+            f"grouping {len(enriched)} quantities by "
+            f"(physics_domain × unit) [name_only]…"
+        )
+        batches = group_for_name_only(
+            enriched,
+            batch_size=name_only_batch_size,
+            existing_names=existing_names,
+        )
+    else:
+        _status(f"grouping {len(enriched)} quantities into batches…")
+        batches = group_by_concept_and_unit(
+            enriched,
+            max_batch_size=25,
+            existing_names=existing_names,
+        )
 
     logger.info(
         "Extracted %d batches from %d DD paths (%d clusters, force=%s)",
