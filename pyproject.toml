@@ -281,6 +281,13 @@ batch-size = 25
 # the cost of richer per-candidate enrichment, which the subsequent
 # review / enrichment passes restore.
 name-only-batch-size = 50
+# Batch size used when ``sn generate --target docs`` routes through the
+# five-phase enrich pipeline. Enrichment packs ~800–1200 tokens per name
+# (docs, exemplars, DD context) so batches should be smaller than the
+# default compose batches. Mirrors ``[tool.imas-codex.sn-enrich].batch-size``
+# but allows tuning the docs-generation pass independently when invoked
+# through ``sn generate``.
+docs-batch-size = 12
 # Pre-flight token budget guard.  Batches whose estimated token count
 # exceeds this value are binary-split before dispatch.  Set below the
 # model's context window (200 k) to leave headroom for the response.
