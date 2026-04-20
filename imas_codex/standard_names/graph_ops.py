@@ -30,6 +30,54 @@ def _ensure_json(value: Any) -> str | None:
     return json.dumps(value)
 
 
+_GRAMMAR_DECOMPOSITION_FIELDS: tuple[str, ...] = (
+    "component",
+    "coordinate",
+    "subject",
+    "physical_base",
+    "geometric_base",
+    "process",
+    "transformation",
+    "object",
+    "geometry",
+    "position",
+    "device",
+    "secondary_base",
+    "binary_operator",
+)
+
+
+def _grammar_decomposition(name: str) -> dict[str, str | None]:
+    """Parse ``name`` via ISN grammar and return grammar_* field dict.
+
+    Returns a dict with keys ``grammar_component``, ``grammar_subject``,
+    ``grammar_physical_base``, … mapped to string values (enum ``.value``
+    extracted where applicable) or ``None``. Returns a dict of all-None
+    values if ISN is unavailable or parsing fails.
+    """
+    empty = {f"grammar_{f}": None for f in _GRAMMAR_DECOMPOSITION_FIELDS}
+    try:
+        from imas_standard_names.grammar import parse_standard_name
+    except ImportError:
+        return empty
+    try:
+        parsed = parse_standard_name(name)
+    except Exception:
+        logger.debug("Grammar parse failed for '%s' — grammar_* left unset", name)
+        return empty
+
+    out: dict[str, str | None] = {}
+    for field in _GRAMMAR_DECOMPOSITION_FIELDS:
+        value = getattr(parsed, field, None)
+        if value is None:
+            out[f"grammar_{field}"] = None
+        elif hasattr(value, "value"):  # enum
+            out[f"grammar_{field}"] = str(value.value)
+        else:
+            out[f"grammar_{field}"] = str(value)
+    return out
+
+
 def _compute_link_status(links: list[str] | None) -> str | None:
     """Determine link resolution status from link prefixes.
 
@@ -577,6 +625,19 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.review_input_hash = b.review_input_hash,
                 sn.embedding = coalesce(b.embedding, sn.embedding),
                 sn.embedded_at = coalesce(b.embedded_at, sn.embedded_at),
+                sn.grammar_component = coalesce(b.grammar_component, sn.grammar_component),
+                sn.grammar_coordinate = coalesce(b.grammar_coordinate, sn.grammar_coordinate),
+                sn.grammar_subject = coalesce(b.grammar_subject, sn.grammar_subject),
+                sn.grammar_physical_base = coalesce(b.grammar_physical_base, sn.grammar_physical_base),
+                sn.grammar_geometric_base = coalesce(b.grammar_geometric_base, sn.grammar_geometric_base),
+                sn.grammar_process = coalesce(b.grammar_process, sn.grammar_process),
+                sn.grammar_transformation = coalesce(b.grammar_transformation, sn.grammar_transformation),
+                sn.grammar_object = coalesce(b.grammar_object, sn.grammar_object),
+                sn.grammar_geometry = coalesce(b.grammar_geometry, sn.grammar_geometry),
+                sn.grammar_position = coalesce(b.grammar_position, sn.grammar_position),
+                sn.grammar_device = coalesce(b.grammar_device, sn.grammar_device),
+                sn.grammar_secondary_base = coalesce(b.grammar_secondary_base, sn.grammar_secondary_base),
+                sn.grammar_binary_operator = coalesce(b.grammar_binary_operator, sn.grammar_binary_operator),
                 sn.created_at = coalesce(sn.created_at, datetime())
             """,
             batch=[
@@ -622,6 +683,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "review_input_hash": n.get("review_input_hash"),
                     "embedding": n.get("embedding"),
                     "embedded_at": n.get("embedded_at"),
+                    **_grammar_decomposition(n["id"]),
                 }
                 for n in names
             ],

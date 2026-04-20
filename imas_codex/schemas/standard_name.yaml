@@ -369,6 +369,25 @@ classes:
           normalised over 80). A ``name_only`` run must not overwrite a
           prior ``full`` review unless ``--force`` is given.
         range: StandardNameReviewMode
+      reviewer_model_secondary:
+        description: >-
+          Cross-family LLM model that provided the secondary review.
+          Set when ``[sn.review].secondary-models`` is configured.
+          Used with ``reviewer_score_secondary`` and
+          ``reviewer_disagreement`` for measurement diversity.
+      reviewer_score_secondary:
+        description: >-
+          Normalized quality score from the secondary (cross-family)
+          reviewer (0-1). Compared with ``reviewer_score`` to compute
+          ``reviewer_disagreement``.
+        range: float
+      reviewer_disagreement:
+        description: >-
+          Absolute difference between primary and secondary reviewer
+          scores: ``abs(reviewer_score - reviewer_score_secondary)``.
+          Values above ``[sn.review].disagreement-threshold`` (default
+          0.2) trigger escalation to ``needs_revision``.
+        range: float
       validation_issues:
         description: >-
           ISN validation issues from three-layer validation
@@ -539,6 +558,82 @@ classes:
           a regeneration cycle. Points to a ``RotationRun`` node.
           Distinct from ``last_rotation_id`` (set by ``sn rotate`` for
           any phase) — ``rotation_id`` is only stamped on regen.
+      # --- Grammar decomposition (from imas_standard_names.grammar.parse_standard_name) ---
+      grammar_component:
+        description: >-
+          Component prefix from grammar decomposition (e.g. ``radial``,
+          ``toroidal``, ``poloidal``). Persisted from
+          ``parse_standard_name().component`` to enable per-segment queries.
+        range: string
+      grammar_coordinate:
+        description: >-
+          Coordinate qualifier from grammar decomposition (e.g. ``r``,
+          ``z``, ``phi``). Persisted from ``parse_standard_name().coordinate``.
+        range: string
+      grammar_subject:
+        description: >-
+          Particle/species subject from grammar decomposition (e.g.
+          ``electron``, ``ion``, ``neutral``). Persisted from
+          ``parse_standard_name().subject``.
+        range: string
+      grammar_physical_base:
+        description: >-
+          Core physical quantity base from grammar decomposition
+          (e.g. ``temperature``, ``density``, ``velocity``). Persisted
+          from ``parse_standard_name().physical_base``.
+        range: string
+      grammar_geometric_base:
+        description: >-
+          Geometric base token from grammar decomposition (e.g.
+          ``area``, ``volume``). Persisted from
+          ``parse_standard_name().geometric_base``.
+        range: string
+      grammar_process:
+        description: >-
+          Process / ``due_to_`` token from grammar decomposition.
+          Persisted from ``parse_standard_name().process``.
+        range: string
+      grammar_transformation:
+        description: >-
+          Transformation prefix from grammar decomposition (e.g.
+          ``time_derivative_of``). Persisted from
+          ``parse_standard_name().transformation``.
+        range: string
+      grammar_object:
+        description: >-
+          Named physical object from grammar decomposition (e.g.
+          ``separatrix``, ``magnetic_axis``). Persisted from
+          ``parse_standard_name().object``.
+        range: string
+      grammar_geometry:
+        description: >-
+          Geometric qualifier from grammar decomposition (e.g.
+          ``flux_surface_averaged``, ``line_integrated``). Persisted
+          from ``parse_standard_name().geometry``.
+        range: string
+      grammar_position:
+        description: >-
+          Position qualifier from grammar decomposition (e.g.
+          ``at_magnetic_axis``, ``at_boundary``). Persisted from
+          ``parse_standard_name().position``.
+        range: string
+      grammar_device:
+        description: >-
+          Device/instrument qualifier from grammar decomposition.
+          Persisted from ``parse_standard_name().device``.
+        range: string
+      grammar_secondary_base:
+        description: >-
+          Secondary base token from grammar decomposition (used in
+          binary-operator compositions). Persisted from
+          ``parse_standard_name().secondary_base``.
+        range: string
+      grammar_binary_operator:
+        description: >-
+          Binary operator token from grammar decomposition (e.g.
+          ``ratio_of``, ``difference_of``). Persisted from
+          ``parse_standard_name().binary_operator``.
+        range: string
       # --- REFERENCES relationship (enrich link graph) ---
       references:
         description: >-
