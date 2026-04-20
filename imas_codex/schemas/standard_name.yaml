@@ -195,12 +195,23 @@ enums:
       ``name_only`` uses four dimensions (grammar, semantic, convention,
       completeness) normalised over 80 points and is used for names
       generated without rich descriptions, typically during
-      ``sn generate --name-only`` rotation cycles.
+      ``sn generate --target names`` rotation cycles.
+      ``docs`` uses four dimensions (description_quality, documentation_quality,
+      completeness, physics_accuracy) normalised over 80 points and evaluates
+      a docs-generation cycle (``sn generate --target docs``) without
+      re-scoring the name itself.
+      Fidelity rank: ``name_only`` < ``docs`` < ``full``. A lower-fidelity
+      run must not overwrite a prior higher-fidelity review unless
+      ``--force`` is given.
     permissible_values:
       full:
         description: All six dimensions scored (default).
       name_only:
         description: Four dimensions scored — grammar, semantic, convention, completeness.
+      docs:
+        description: >-
+          Four dimensions scored — description_quality, documentation_quality,
+          completeness, physics_accuracy.
 
 # =============================================================================
 # Classes

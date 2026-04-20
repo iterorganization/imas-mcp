@@ -248,10 +248,18 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
             if name.get("reviewer_score") is not None:
                 continue
 
-        # --name-only downgrade guard: don't overwrite a prior full review
-        # with a narrower name-only one unless --force.
-        if state.name_only and not state.force_review:
-            if name.get("review_mode") == "full":
+        # Downgrade guard: don't overwrite a higher-fidelity review with a
+        # lower-fidelity one unless --force. Fidelity rank: name_only < docs < full.
+        if not state.force_review:
+            _rank = {"name_only": 1, "docs": 2, "full": 3}
+            target = getattr(state, "target", None) or (
+                "names" if state.name_only else "full"
+            )
+            incoming_mode = "name_only" if target == "names" else target
+            existing_mode = name.get("review_mode")
+            if existing_mode and _rank.get(incoming_mode, 0) < _rank.get(
+                existing_mode, 0
+            ):
                 continue
 
         targets.append(name)
@@ -482,6 +490,8 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                     audit_findings=batch.get("audit_findings", []),
                     wlog=wlog,
                     name_only=state.name_only,
+                    target=getattr(state, "target", None)
+                    or ("names" if state.name_only else "full"),
                 )
                 batch_cost = batch_scored.pop("_cost", 0.0)
                 batch_tokens = batch_scored.pop("_tokens", 0)
@@ -548,6 +558,8 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                                 audit_findings=batch.get("audit_findings", []),
                                 wlog=wlog,
                                 name_only=state.name_only,
+                                target=getattr(state, "target", None)
+                                or ("names" if state.name_only else "full"),
                             )
                             sec_items = sec_result.get("_items", [])
                             sec_cost = sec_result.get("_cost", 0.0)
@@ -871,6 +883,7 @@ def _match_reviews_to_entries(
     names: list[dict],
     wlog: logging.LoggerAdapter,
     name_only: bool = False,
+    target: str | None = None,
 ) -> tuple[list[dict], list[dict], int]:
     """Match LLM review results to original entries.
 
@@ -878,13 +891,20 @@ def _match_reviews_to_entries(
     entries with review scores applied and *unmatched* contains entries that
     the LLM did not return a review for.
 
-    When *name_only* is True, each scored entry is stamped with
-    ``review_mode = "name_only"`` so future runs can avoid overwriting
-    a higher-quality full review. Otherwise stamped ``"full"``.
+    ``target`` selects the ``review_mode`` stamped onto each scored entry:
+    ``"names"`` → ``"name_only"``, ``"docs"`` → ``"docs"``, ``"full"`` →
+    ``"full"``. When ``target`` is None, falls back to the legacy
+    ``name_only`` boolean for back-compat.
     """
     from imas_codex.standard_names.models import StandardNameReviewVerdict
 
-    review_mode = "name_only" if name_only else "full"
+    if target is None:
+        target = "names" if name_only else "full"
+    review_mode = {
+        "names": "name_only",
+        "docs": "docs",
+        "full": "full",
+    }.get(target, "full")
 
     # Build lookup: source_id → entry, id → entry
     entry_map: dict[str, dict] = {}
@@ -986,6 +1006,7 @@ async def _review_single_batch(
     audit_findings: list[str],
     wlog: logging.LoggerAdapter,
     name_only: bool = False,
+    target: str | None = None,
     _is_retry: bool = False,
 ) -> dict[str, Any]:
     """Review a single batch via LLM — mirrors ``_review_batch()`` from workers.py.
@@ -1000,20 +1021,35 @@ async def _review_single_batch(
     they are counted in ``_unscored`` so callers never report unscored
     entries as reviewed.
 
-    When ``name_only`` is True the four-dimension rubric
-    (``sn/review_name_only`` prompt + ``StandardNameQualityReviewNameOnlyBatch``
-    response model) is used instead of the full six-dimension review.
+    ``target`` selects the rubric:
+
+    * ``"names"`` → ``sn/review_name_only`` prompt +
+      ``StandardNameQualityReviewNameOnlyBatch`` (4 dims, /80).
+    * ``"docs"`` → ``sn/review_docs`` prompt +
+      ``StandardNameQualityReviewDocsBatch`` (4 docs dims, /80).
+    * ``"full"`` → ``sn/review`` prompt + ``StandardNameQualityReviewBatch``
+      (6 dims, /120).
+
+    When ``target`` is None, the legacy ``name_only`` boolean selects
+    between ``"names"`` and ``"full"`` for back-compat.
     """
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.standard_names.models import (
         StandardNameQualityReviewBatch,
+        StandardNameQualityReviewDocsBatch,
         StandardNameQualityReviewNameOnlyBatch,
     )
 
-    if name_only:
+    if target is None:
+        target = "names" if name_only else "full"
+
+    if target == "names":
         prompt_name = "sn/review_name_only"
         response_model: type = StandardNameQualityReviewNameOnlyBatch
+    elif target == "docs":
+        prompt_name = "sn/review_docs"
+        response_model = StandardNameQualityReviewDocsBatch
     else:
         prompt_name = "sn/review"
         response_model = StandardNameQualityReviewBatch
@@ -1072,7 +1108,7 @@ async def _review_single_batch(
 
     # --- Match reviews to original entries -----------------------------------
     scored, unmatched, revised_count = _match_reviews_to_entries(
-        result.reviews, names, wlog, name_only=name_only
+        result.reviews, names, wlog, name_only=name_only, target=target
     )
 
     total_cost = cost
@@ -1101,6 +1137,7 @@ async def _review_single_batch(
             audit_findings=audit_findings,
             wlog=wlog,
             name_only=name_only,
+            target=target,
             _is_retry=True,
         )
 

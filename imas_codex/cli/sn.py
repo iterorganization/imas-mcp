@@ -2083,13 +2083,27 @@ def sn_resolve_links(
 @click.option("--skip-audit", is_flag=True, help="Skip Layer 1 audits (debug only)")
 @click.option("--concurrency", type=int, default=2, help="Parallel review batches")
 @click.option(
+    "--target",
+    type=click.Choice(["names", "docs", "full"], case_sensitive=False),
+    default=None,
+    help=(
+        "Which review rubric to apply. 'names' → 4-dim name rubric "
+        "(grammar/semantic/convention/completeness, /80). 'docs' → 4-dim "
+        "docs rubric (description_quality/documentation_quality/"
+        "completeness/physics_accuracy, /80). 'full' → 6-dim full rubric "
+        "(/120, default). A lower-fidelity target will not overwrite a "
+        "higher-fidelity prior review unless --force. Fidelity rank: "
+        "names < docs < full. --target takes precedence over the "
+        "back-compat --name-only alias."
+    ),
+)
+@click.option(
     "--name-only",
     is_flag=True,
     help=(
-        "Score the name only (4-dim rubric: grammar/semantic/convention/"
-        "completeness over 80). Use to review batches produced by "
-        "'sn generate --name-only'. Will not overwrite a prior full review "
-        "unless combined with --force."
+        "Back-compat alias for --target=names. Score the name only using "
+        "the 4-dim name rubric (grammar/semantic/convention/completeness "
+        "over 80). --target takes precedence when both are provided."
     ),
 )
 def sn_review(
@@ -2106,6 +2120,7 @@ def sn_review(
     dry_run: bool,
     skip_audit: bool,
     concurrency: int,
+    target: str | None,
     name_only: bool,
 ) -> None:
     """Review standard names with 3-layer pipeline.
@@ -2120,12 +2135,23 @@ def sn_review(
       imas-codex sn review --unreviewed --cost-limit 5.0
       imas-codex sn review --ids equilibrium --dry-run
       imas-codex sn review --force --domain magnetics
-      imas-codex sn review --name-only --unreviewed
+      imas-codex sn review --target names --unreviewed
+      imas-codex sn review --target docs --domain equilibrium
     """
     import asyncio
 
     from imas_codex.standard_names.review.budget import ReviewBudgetManager
     from imas_codex.standard_names.review.state import StandardNameReviewState
+
+    # Resolve --target (takes precedence over --name-only back-compat alias).
+    if target:
+        target_normalized = target.lower()
+    elif name_only:
+        target_normalized = "names"
+    else:
+        target_normalized = "full"
+    # Sync name_only so downstream state is consistent.
+    name_only = target_normalized == "names"
 
     # Enforce batch-size cap
     batch_size = min(batch_size, 25)
@@ -2163,6 +2189,7 @@ def sn_review(
         concurrency=concurrency,
         dry_run=dry_run,
         name_only=name_only,
+        target=target_normalized,
         budget_manager=ReviewBudgetManager(cost_limit),
         review_models=review_models,
         disagreement_threshold=disagreement_threshold,

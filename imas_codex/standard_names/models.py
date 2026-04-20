@@ -305,6 +305,90 @@ class StandardNameQualityReviewNameOnlyBatch(BaseModel):
 
 
 # =============================================================================
+# Docs review — 4-dimensional rubric for --target docs cycles
+# =============================================================================
+
+
+class StandardNameQualityScoreDocs(BaseModel):
+    """4-dimensional quality score for docs review mode.
+
+    Scores the generated documentation (description, documentation body,
+    completeness of doc fields, and physics accuracy of prose) without
+    re-scoring the name itself — the name was already reviewed in a prior
+    ``--target names`` cycle. Normalised over 80 rather than 120.
+    """
+
+    description_quality: int = Field(
+        ge=0, le=20, description="Clarity and precision of short description (0-20)"
+    )
+    documentation_quality: int = Field(
+        ge=0,
+        le=20,
+        description="Documentation body: equations, variables, sign conventions (0-20)",
+    )
+    completeness: int = Field(
+        ge=0,
+        le=20,
+        description="Required doc fields filled (links, aliases, cross-refs) (0-20)",
+    )
+    physics_accuracy: int = Field(
+        ge=0,
+        le=20,
+        description="Physics correctness of documentation prose and equations (0-20)",
+    )
+
+    @property
+    def total(self) -> int:
+        return (
+            self.description_quality
+            + self.documentation_quality
+            + self.completeness
+            + self.physics_accuracy
+        )
+
+    @property
+    def score(self) -> float:
+        """Normalized quality score (0-1). Sum of 4 dimensions / 80."""
+        return self.total / 80.0
+
+    @property
+    def tier(self) -> str:
+        s = self.score
+        if s >= 0.85:
+            return "outstanding"
+        elif s >= 0.60:
+            return "good"
+        elif s >= 0.40:
+            return "adequate"
+        return "poor"
+
+
+class StandardNameQualityReviewDocs(BaseModel):
+    """Review of a single standard name's docs using the 4-dimensional rubric."""
+
+    source_id: str = Field(description="Source entity ID being reviewed")
+    standard_name: str = Field(description="The standard name under review")
+    scores: StandardNameQualityScoreDocs = Field(
+        description="4-dimensional docs quality scores"
+    )
+    verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
+    reasoning: str = Field(description="Specific justification per dimension")
+    revised_description: str | None = Field(
+        default=None, description="Suggested revised description if verdict is revise"
+    )
+    revised_documentation: str | None = Field(
+        default=None, description="Suggested revised documentation body"
+    )
+    issues: list[str] = Field(default_factory=list, description="Specific issues found")
+
+
+class StandardNameQualityReviewDocsBatch(BaseModel):
+    """LLM response for docs quality-scored review of a batch."""
+
+    reviews: list[StandardNameQualityReviewDocs]
+
+
+# =============================================================================
 # Enrichment models — documentation iteration (Phase 3D)
 # =============================================================================
 
