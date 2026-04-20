@@ -621,11 +621,12 @@ def sn_generate(
     help="Filter to specific IDS (for DD source)",
 )
 @click.option(
+    "--physics-domain",
     "--domain",
     "domain_filter",
     type=str,
     default=None,
-    help="Filter to physics domain",
+    help="Filter to physics domain (alias: --domain).",
 )
 @click.option(
     "--facility",
@@ -991,11 +992,12 @@ def sn_gaps(segment: str | None, export_format: str) -> None:
     help="Filter to specific IDS name",
 )
 @click.option(
+    "--physics-domain",
     "--domain",
     "domain_filter",
     type=str,
     default=None,
-    help="Filter to physics domain (applied to tags)",
+    help="Filter to physics domain — applied to tags (alias: --domain).",
 )
 @click.option(
     "--output-dir",
@@ -1751,7 +1753,13 @@ def sn_resolve_links(
 
 @sn.command("review")
 @click.option("--ids", default=None, help="Scope to names linked to specific IDS")
-@click.option("--domain", default=None, help="Scope to physics domain")
+@click.option(
+    "--physics-domain",
+    "--domain",
+    "domain",
+    default=None,
+    help="Scope to physics domain (alias: --domain).",
+)
 @click.option(
     "--status",
     "status_filter",
@@ -2064,10 +2072,15 @@ def sn_review(
 
 @sn.command("enrich")
 @click.option(
+    "--physics-domain",
     "--domain",
+    "domain",
     multiple=True,
     default=None,
-    help="Filter by physics domain (repeatable, e.g. --domain equilibrium --domain transport)",
+    help=(
+        "Filter by physics domain, repeatable (alias: --domain). "
+        "Example: --physics-domain equilibrium --physics-domain transport"
+    ),
 )
 @click.option(
     "--status",
@@ -2283,9 +2296,11 @@ def sn_enrich(
 
 @sn.command("rotate")
 @click.option(
+    "--physics-domain",
     "--domain",
+    "domain",
     required=True,
-    help="Physics domain scope (applied to all 4 phases)",
+    help="Physics domain scope, applied to all 4 phases (alias: --domain).",
 )
 @click.option(
     "-c",
