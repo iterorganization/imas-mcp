@@ -1,6 +1,6 @@
-"""Regression tests for --include-review-feedback regen-only extraction.
+"""Regression tests for --regen-only regen-only extraction.
 
-Covers the architectural bug where --include-review-feedback only gated
+Covers the architectural bug where --regen-only only gated
 prompt injection without narrowing the extraction scope. The fix adds a
 "regen-only" mode that re-queues exactly the sources whose linked
 StandardName is in ``validation_status='needs_revision'``.
@@ -13,9 +13,9 @@ Tests cover:
 2. ``test_domain_filter_narrows_regen_scope`` — ``--domain`` passed
    through ``state.domain_filter`` reaches the Cypher query.
 3. ``test_broad_extract_when_not_regen_mode`` — without
-   ``--include-review-feedback``, the old DD extraction path is used.
+   ``--regen-only``, the old DD extraction path is used.
 4. ``test_is_regen_only_mode_gating`` — ``paths_list`` / ``from_model``
-   short-circuit regen-only even with ``--include-review-feedback``.
+   short-circuit regen-only even with ``--regen-only``.
 5. ``test_fetch_needs_revision_sources_cypher_shape`` — helper builds
    the expected Cypher and params.
 """
@@ -40,17 +40,17 @@ from imas_codex.standard_names.workers import extract_worker
 
 class TestIsRegenOnlyMode:
     def test_regen_on_with_plain_flag(self) -> None:
-        st = StandardNameBuildState(facility="dd", include_review_feedback=True)
+        st = StandardNameBuildState(facility="dd", regen_only=True)
         assert st.is_regen_only_mode() is True
 
     def test_off_without_flag(self) -> None:
-        st = StandardNameBuildState(facility="dd", include_review_feedback=False)
+        st = StandardNameBuildState(facility="dd", regen_only=False)
         assert st.is_regen_only_mode() is False
 
     def test_paths_list_short_circuits(self) -> None:
         st = StandardNameBuildState(
             facility="dd",
-            include_review_feedback=True,
+            regen_only=True,
             paths_list=["equilibrium/time_slice/profiles_1d/psi"],
         )
         assert st.is_regen_only_mode() is False
@@ -58,7 +58,7 @@ class TestIsRegenOnlyMode:
     def test_from_model_short_circuits(self) -> None:
         st = StandardNameBuildState(
             facility="dd",
-            include_review_feedback=True,
+            regen_only=True,
             from_model="anthropic/claude-sonnet-4.6",
         )
         assert st.is_regen_only_mode() is False
@@ -67,7 +67,7 @@ class TestIsRegenOnlyMode:
         """--domain narrows regen scope, it does NOT disable regen-only mode."""
         st = StandardNameBuildState(
             facility="dd",
-            include_review_feedback=True,
+            regen_only=True,
             domain_filter="equilibrium",
         )
         assert st.is_regen_only_mode() is True
@@ -264,7 +264,7 @@ class TestExtractWorkerRegenOnly:
         state = StandardNameBuildState(
             facility="dd",
             source="dd",
-            include_review_feedback=True,
+            regen_only=True,
             force=True,
             domain_filter="equilibrium",
             dry_run=True,
@@ -321,7 +321,7 @@ class TestExtractWorkerRegenOnly:
         state = StandardNameBuildState(
             facility="dd",
             source="dd",
-            include_review_feedback=True,
+            regen_only=True,
             force=True,
             domain_filter="equilibrium",
             ids_filter="equilibrium",
@@ -357,11 +357,11 @@ class TestExtractWorkerRegenOnly:
         assert kwargs["source_type"] == "dd"
 
     def test_broad_extract_when_not_regen_mode(self) -> None:
-        """Without --include-review-feedback the broad DD path is still used."""
+        """Without --regen-only the broad DD path is still used."""
         state = StandardNameBuildState(
             facility="dd",
             source="dd",
-            include_review_feedback=False,
+            regen_only=False,
             domain_filter="equilibrium",
             dry_run=True,
         )
@@ -390,12 +390,12 @@ class TestExtractWorkerRegenOnly:
         mock_extract_broad.assert_called_once()
 
     def test_regen_only_skipped_when_paths_list_present(self) -> None:
-        """--paths + --include-review-feedback still uses targeted path extraction,
+        """--paths + --regen-only still uses targeted path extraction,
         not the needs_revision query (paths_list is a stricter scope)."""
         state = StandardNameBuildState(
             facility="dd",
             source="dd",
-            include_review_feedback=True,
+            regen_only=True,
             force=True,
             paths_list=["equilibrium/time_slice/profiles_1d/psi"],
             dry_run=True,

@@ -46,7 +46,7 @@ source line numbers are included for traceability.
 | `--retry-quarantined` | — | target `validation_status=quarantined` | off | flag |
 | `--retry-skipped` | — | include `status=skipped` sources | off | flag |
 | `--retry-vocab-gap` | — | target vocab-gap names | off | flag |
-| `--include-review-feedback` | — | feed prior reviewer comments | off | flag |
+| `--regen-only` | — | feed prior reviewer comments | off | flag |
 
 **Observations** — `sn generate` uses `--physics-domain` (with `--domain` alias). Every
 other `sn` subcommand uses `--ids` or `--domain` bare. `-c` is cost-limit here, in line

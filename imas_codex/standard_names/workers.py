@@ -77,8 +77,8 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
         _on_status("loading existing names…")
         existing = get_existing_standard_names()
 
-        # Regen-only mode: when --include-review-feedback is passed without a
-        # narrower source selector, re-queue exactly the sources whose linked
+        # Regen-only mode: when --regen-only is passed without a narrower
+        # source selector, re-queue exactly the sources whose linked
         # StandardName has validation_status='needs_revision'. The subsequent
         # feedback-injection block (below) then attaches reviewer_comments /
         # tier / scores to each item so compose regenerates with critique
@@ -98,7 +98,7 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
             )
             if not regen_sources:
                 wlog.info(
-                    "Regen-only mode (--include-review-feedback): no "
+                    "Regen-only mode (--regen-only): no "
                     "needs_revision sources found (domain=%s, ids=%s, limit=%s)",
                     state.domain_filter,
                     state.ids_filter,
@@ -192,10 +192,12 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
         if injected:
             wlog.info("Injected previous_name context for %d items", injected)
 
-    # Phase C: inject prior reviewer feedback for targeted regeneration. The
-    # compose prompt's {% if item.review_feedback %} block surfaces the previous
+    # Inject prior reviewer feedback for targeted regeneration. The compose
+    # prompt's {% if item.review_feedback %} block surfaces the previous
     # reviewer critique so the LLM can directly address it in the new name.
-    if state.include_review_feedback:
+    # Always-on by default (no-op when no prior feedback exists); disabled by
+    # ``--no-review-feedback``.
+    if state.inject_review_feedback:
 
         def _get_feedback():
             from imas_codex.standard_names.graph_ops import (
@@ -220,13 +222,8 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     fb_injected += 1
         if fb_injected:
             wlog.info(
-                "Injected review_feedback for %d items (--include-review-feedback)",
+                "Injected review_feedback for %d items",
                 fb_injected,
-            )
-        else:
-            wlog.info(
-                "No prior reviewer feedback found for any batched sources; "
-                "compose will proceed without feedback injection."
             )
 
     # Write StandardNameSource nodes for crash-resilient tracking

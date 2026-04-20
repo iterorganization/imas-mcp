@@ -737,7 +737,7 @@ def _match_reviews_to_entries(
         original["review_mode"] = review_mode
 
         # Phase C: demote low-tier names to needs_revision so a subsequent
-        # `sn generate --include-review-feedback` run picks them up and
+        # `sn generate --regen-only` run picks them up and
         # regenerates with the reviewer critique fed back into the prompt.
         if review.scores.tier in ("poor", "adequate"):
             original["validation_status"] = "needs_revision"

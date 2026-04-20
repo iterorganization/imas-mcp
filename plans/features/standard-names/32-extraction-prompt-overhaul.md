@@ -162,7 +162,7 @@ Add `sn rotate` (or extend `sn generate --until-complete`) that loops:
 4. **Regen phase.** For names with `reviewer_score < threshold`
    (default 0.5) that have not yet been regenerated (track via
    `regen_count` property on StandardName; new field), reset to
-   `drafted` with `--include-review-feedback`, regenerate once.
+   `drafted` with `--regen-only`, regenerate once.
    Hard cap at `regen_count <= 1` to prevent infinite loops.
 5. **Stop conditions** (any triggers exit):
    - Budget exhausted (`spend >= cost_limit`).

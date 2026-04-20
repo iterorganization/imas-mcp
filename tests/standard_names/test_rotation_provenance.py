@@ -158,9 +158,7 @@ class TestRotationProvenanceOnRegen:
                 side_effect=capture_provenance,
             ),
         ):
-            result = await _run_generate_phase(
-                cfg, include_review_feedback=True, force=True
-            )
+            result = await _run_generate_phase(cfg, regen_only=True, force=True)
 
         assert result.name == "regen"
         assert len(provenance_calls) == 1

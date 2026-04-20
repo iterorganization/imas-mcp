@@ -48,7 +48,7 @@ class TestGenerateHelpShowsNewFlags:
             "--retry-quarantined",
             "--retry-skipped",
             "--retry-vocab-gap",
-            "--include-review-feedback",
+            "--regen-only",
         ]:
             assert flag in result.output, f"Missing flag {flag} in help output"
 
@@ -164,10 +164,8 @@ class TestFilterPlumbing:
         call_kwargs = mock_reset.call_args[1]
         assert call_kwargs["validation_status"] == "quarantined"
 
-    def test_include_review_feedback_implies_needs_revision(
-        self, runner: CliRunner
-    ) -> None:
-        """--include-review-feedback (without --tier) selects needs_revision names."""
+    def test_regen_only_implies_needs_revision(self, runner: CliRunner) -> None:
+        """--regen-only (without --tier) selects needs_revision names."""
         with patch(
             "imas_codex.standard_names.graph_ops.reset_standard_names",
             return_value=3,
@@ -178,7 +176,7 @@ class TestFilterPlumbing:
                     "generate",
                     "--reset-to",
                     "drafted",
-                    "--include-review-feedback",
+                    "--regen-only",
                     "--reset-only",
                 ],
             )
@@ -186,9 +184,7 @@ class TestFilterPlumbing:
         call_kwargs = mock_reset.call_args[1]
         assert call_kwargs["validation_status"] == "needs_revision"
 
-    def test_explicit_tier_overrides_include_review_feedback(
-        self, runner: CliRunner
-    ) -> None:
+    def test_explicit_tier_overrides_regen_only(self, runner: CliRunner) -> None:
         """Explicit --tier takes precedence; implicit needs_revision NOT set."""
         with patch(
             "imas_codex.standard_names.graph_ops.reset_standard_names",
@@ -200,7 +196,7 @@ class TestFilterPlumbing:
                     "generate",
                     "--reset-to",
                     "drafted",
-                    "--include-review-feedback",
+                    "--regen-only",
                     "--tier",
                     "poor",
                     "--reset-only",
@@ -211,10 +207,8 @@ class TestFilterPlumbing:
         assert call_kwargs["validation_status"] is None
         assert call_kwargs["tiers"] == ["poor"]
 
-    def test_retry_quarantined_wins_over_include_review_feedback(
-        self, runner: CliRunner
-    ) -> None:
-        """--retry-quarantined takes precedence over --include-review-feedback."""
+    def test_retry_quarantined_wins_over_regen_only(self, runner: CliRunner) -> None:
+        """--retry-quarantined takes precedence over --regen-only."""
         with patch(
             "imas_codex.standard_names.graph_ops.reset_standard_names",
             return_value=1,
@@ -225,7 +219,7 @@ class TestFilterPlumbing:
                     "generate",
                     "--reset-to",
                     "drafted",
-                    "--include-review-feedback",
+                    "--regen-only",
                     "--retry-quarantined",
                     "--reset-only",
                 ],

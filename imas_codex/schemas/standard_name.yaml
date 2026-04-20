@@ -148,12 +148,12 @@ enums:
         valid   → needs_revision   (set by review_worker when
                   review_tier ∈ {poor, adequate})
         needs_revision → valid     (after regeneration with
-                  --include-review-feedback)
+                  --regen-only)
 
       Names default to pending at persist time.
       validate_worker promotes to valid (passes) or quarantined (critical failures).
       review_worker may demote a valid name to needs_revision based on reviewer
-      tier — the regenerate cycle (sn generate --include-review-feedback) then
+      tier — the regenerate cycle (sn generate --regen-only) then
       restores valid after the LLM addresses reviewer comments.
       Only valid names participate in publish. needs_revision names remain
       eligible for consolidation and subsequent review/regeneration.
@@ -171,7 +171,7 @@ enums:
           Review worker scored this name in a low tier (poor or adequate).
           The name is still grammatically valid but the reviewer flagged
           quality issues. Eligible for targeted regeneration via
-          `sn generate --include-review-feedback`, which feeds the prior
+          `sn generate --regen-only`, which feeds the prior
           reviewer critique back into the compose prompt. Excluded from
           `sn publish` until promoted back to `valid`.
 
@@ -436,7 +436,7 @@ classes:
           demoted from 'valid' to 'needs_revision' by review_worker when
           review_tier is 'poor' or 'adequate'. Only 'valid' names participate
           in publish; 'needs_revision' names are eligible for regeneration
-          via `sn generate --include-review-feedback`.
+          via `sn generate --regen-only`.
         range: StandardNameValidationStatus
       consolidated_at:
         description: >-

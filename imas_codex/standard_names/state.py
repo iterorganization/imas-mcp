@@ -38,9 +38,14 @@ class StandardNameBuildState(DiscoveryStateBase):
     paths_list: list[str] | None = None  # Explicit DD paths (bypass query+classifier)
     dry_run: bool = False
     force: bool = False  # Bypass source-level skip
-    include_review_feedback: bool = (
-        False  # Inject prior reviewer critique into compose prompt (Phase C regen)
-    )
+    # Scope extraction to existing SNs in validation_status='needs_revision'
+    # (set by --regen-only or by the rotator's regen phase). When False, the
+    # extract worker runs the broad DD path / signals source.
+    regen_only: bool = False
+    # Inject prior reviewer critique (tier, score, comments) into the compose
+    # prompt so the LLM can directly address it on regeneration. Always-on by
+    # default — the CLI exposes ``--no-review-feedback`` to disable.
+    inject_review_feedback: bool = True
     limit: int | None = None  # Cap on paths to process
     from_model: str | None = None  # Regenerate names produced by this model (substring)
 
@@ -122,14 +127,14 @@ class StandardNameBuildState(DiscoveryStateBase):
     def is_regen_only_mode(self) -> bool:
         """Return True when extraction should be scoped to needs_revision SNs only.
 
-        Triggered by ``--include-review-feedback`` when no narrower
-        source-selection flag overrides the default extraction scope.
+        Triggered by ``--regen-only`` (or by the rotator's regen phase) when no
+        narrower source-selection flag overrides the default extraction scope.
         ``--paths`` (``paths_list``) and ``--from-model`` both narrow to an
         explicit source set, so they short-circuit regen-only mode.
         ``--domain`` / ``--ids`` / ``--limit`` are *narrowing* filters
         within regen-only mode, not overrides.
         """
-        if not self.include_review_feedback:
+        if not self.regen_only:
             return False
         if self.paths_list:
             return False

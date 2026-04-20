@@ -261,14 +261,25 @@ def _run_rotator(
     ),
 )
 @click.option(
-    "--include-review-feedback",
+    "--regen-only",
     is_flag=True,
     default=False,
     help=(
-        "When regenerating names that have reviewer_comments, inject the prior "
-        "attempt's name + score + comments into the compose prompt so the LLM "
-        "can improve on specific criticism. (Prompt block added in Phase C — "
-        "this flag stores a flag that Phase C will consume.)"
+        "Narrow extraction to existing StandardName sources whose linked name "
+        "has validation_status='needs_revision'. Use after a review pass to "
+        "regenerate only the names flagged for revision. Prior reviewer "
+        "comments are injected into the compose prompt automatically whenever "
+        "they are available — use --no-review-feedback to disable that."
+    ),
+)
+@click.option(
+    "--no-review-feedback",
+    is_flag=True,
+    default=False,
+    help=(
+        "Opt out of the default behaviour of injecting prior reviewer "
+        "comments / score / tier into the compose prompt. Useful for "
+        "A/B comparing prompts with and without feedback context."
     ),
 )
 @click.option(
@@ -336,7 +347,8 @@ def sn_generate(
     retry_quarantined: bool,
     retry_skipped: bool,
     retry_vocab_gap: bool,
-    include_review_feedback: bool,
+    regen_only: bool,
+    no_review_feedback: bool,
     name_only: bool,
     name_only_batch_size: int | None,
     single_pass: bool,
@@ -479,13 +491,13 @@ def sn_generate(
     _validation_status: str | None = None
     if retry_quarantined:
         _validation_status = "quarantined"
-    elif include_review_feedback and not tier:
-        # Phase C: --include-review-feedback targets needs_revision names by
-        # default (the review worker demotes poor/adequate tier names to this
-        # state). Explicit --tier overrides this implicit filter.
+    elif regen_only and not tier:
+        # --regen-only targets needs_revision names by default (review_worker
+        # demotes poor/adequate tier names to this state). Explicit --tier
+        # overrides this implicit filter.
         _validation_status = "needs_revision"
         logger.info(
-            "--include-review-feedback: implicit filter validation_status='needs_revision' "
+            "--regen-only: implicit filter validation_status='needs_revision' "
             "(pass --tier to override)"
         )
     _reset_filter_kwargs: dict[str, Any] = {
@@ -651,7 +663,8 @@ def sn_generate(
         cost_limit=cost_limit,
         dry_run=dry_run,
         force=force,
-        include_review_feedback=include_review_feedback,
+        regen_only=regen_only,
+        inject_review_feedback=not no_review_feedback,
         limit=limit,
         compose_model=compose_model,
         from_model=from_model,

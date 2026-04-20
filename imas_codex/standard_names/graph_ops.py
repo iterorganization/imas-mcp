@@ -257,7 +257,7 @@ def fetch_needs_revision_sources(
     Walks ``(:IMASNode|:FacilitySignal)-[:HAS_STANDARD_NAME]->(:StandardName)``
     and returns the originating source IDs along with the reviewer feedback
     that caused the demotion. Used by the extract worker's regen-only mode
-    (``sn generate --include-review-feedback``) to re-queue the exact sources
+    (``sn generate --regen-only``) to re-queue the exact sources
     that need rework instead of re-scanning the full DD.
 
     Args:
@@ -380,7 +380,7 @@ def fetch_review_feedback_for_sources(
     """Fetch prior reviewer feedback for a batch of StandardNameSource ids.
 
     Used by the compose worker when a regeneration run is invoked with
-    ``--include-review-feedback``. Each returned dict carries enough context
+    ``--regen-only``. Each returned dict carries enough context
     to let the LLM understand what the previous reviewer objected to and
     adjust the new candidate accordingly.
 

@@ -67,7 +67,7 @@ class RotationConfig:
 async def _run_generate_phase(
     cfg: RotationConfig,
     *,
-    include_review_feedback: bool = False,
+    regen_only: bool = False,
     force: bool = False,
 ) -> PhaseResult:
     """Run the generate (or regen) pipeline phase.
@@ -76,8 +76,8 @@ async def _run_generate_phase(
     :func:`run_sn_generate_engine` — the same function that
     ``sn generate`` delegates to.
     """
-    phase_name = "regen" if include_review_feedback else "generate"
-    phase_idx = 3 if include_review_feedback else 0
+    phase_name = "regen" if regen_only else "generate"
+    phase_idx = 3 if regen_only else 0
     budget = cfg.phase_budget(phase_idx)
 
     if cfg.dry_run:
@@ -98,7 +98,7 @@ async def _run_generate_phase(
         cost_limit=budget,
         dry_run=False,
         force=force,
-        include_review_feedback=include_review_feedback,
+        regen_only=regen_only,
         limit=cfg.limit,
     )
 
@@ -255,7 +255,7 @@ async def run_rotation(cfg: RotationConfig) -> list[PhaseResult]:
         (
             "regen",
             cfg.skip_regen,
-            lambda: _run_generate_phase(cfg, include_review_feedback=True, force=True),
+            lambda: _run_generate_phase(cfg, regen_only=True, force=True),
         ),
     ]
 
