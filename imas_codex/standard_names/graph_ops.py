@@ -534,8 +534,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     ``validity_domain``, ``constraints``, ``model``, ``review_status``,
     ``generated_at``, ``confidence``, ``reviewer_model``, ``reviewer_score``,
     ``reviewer_scores``, ``reviewer_comments``, ``reviewed_at``,
-    ``review_tier``, ``reviewer_model_secondary``, ``reviewer_score_secondary``,
-    ``reviewer_scores_secondary``, ``reviewer_disagreement``,
+    ``review_tier``, ``reviewer_disagreement``,
     ``vocab_gap_detail``, ``validation_issues``,
     ``validation_layer_summary``, ``cocos_transformation_type``, ``dd_version``,
     ``review_input_hash``.
@@ -769,14 +768,93 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
             )
 
         # Create HAS_SEGMENT relationships: StandardName → GrammarToken
-        _write_segment_edges(gc, [n["id"] for n in names])
+        token_miss_gaps = _write_segment_edges(gc, [n["id"] for n in names])
+
+    # Persist token-miss gaps as VocabGap nodes (outside gc context —
+    # write_vocab_gaps opens its own GraphClient)
+    if token_miss_gaps:
+        # Build sn_id → source mapping from the names list
+        sn_source_map: dict[str, tuple[str, str]] = {}
+        for n in names:
+            sn_id = n["id"]
+            source_id = n.get("source_id")
+            source_type = "dd" if "dd" in (n.get("source_types") or []) else "signals"
+            if source_id and sn_id not in sn_source_map:
+                sn_source_map[sn_id] = (source_id, source_type)
+
+        # Group gaps by source_type for write_vocab_gaps
+        dd_gap_dicts: list[dict[str, str]] = []
+        signal_gap_dicts: list[dict[str, str]] = []
+        for gap in token_miss_gaps:
+            mapping = sn_source_map.get(gap["sn_id"])
+            if not mapping:
+                continue
+            source_id, source_type = mapping
+            gap_dict = {
+                "source_id": source_id,
+                "segment": gap["segment"],
+                "needed_token": gap["needed_token"],
+                "reason": f"Token-miss during grammar edge writing for '{gap['sn_id']}'",
+            }
+            if source_type == "dd":
+                dd_gap_dicts.append(gap_dict)
+            else:
+                signal_gap_dicts.append(gap_dict)
+
+        if dd_gap_dicts:
+            write_vocab_gaps(dd_gap_dicts, source_type="dd")
+        if signal_gap_dicts:
+            write_vocab_gaps(signal_gap_dicts, source_type="signals")
 
     written = len(names)
     logger.info("Wrote %d StandardName nodes", written)
     return written
 
 
-def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> None:
+def _resolve_grammar_token_version(gc: GraphClient, isn_version: str) -> str | None:
+    """Find the best GrammarToken version for HAS_SEGMENT resolution.
+
+    Prefers exact match with the ISN runtime version.  When no tokens
+    exist for that version (e.g. ISN was upgraded but
+    ``imas-codex graph sync-isn-grammar`` was not re-run), falls back
+    to the latest available version so that token-miss detection does
+    not produce false-positive VocabGap nodes.
+
+    Returns ``None`` when no GrammarToken nodes exist at all.
+    """
+    # Fast path: check exact version
+    rows = list(
+        gc.query(
+            "MATCH (t:GrammarToken {version: $v}) RETURN t.version LIMIT 1",
+            v=isn_version,
+        )
+        or []
+    )
+    if rows:
+        return isn_version
+
+    # Fallback: latest available version
+    rows = list(
+        gc.query(
+            "MATCH (t:GrammarToken) "
+            "RETURN DISTINCT t.version AS v ORDER BY v DESC LIMIT 1"
+        )
+        or []
+    )
+    if rows:
+        fallback = rows[0]["v"]
+        logger.warning(
+            "No GrammarToken nodes for ISN %s — falling back to %s. "
+            "Run `imas-codex graph sync-isn-grammar` to update.",
+            isn_version,
+            fallback,
+        )
+        return fallback
+
+    return None
+
+
+def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> list[dict[str, str]]:
     """Write HAS_SEGMENT edges from StandardName nodes to GrammarToken nodes.
 
     For each name, parses via ISN grammar, resolves segment tokens, and
@@ -784,19 +862,35 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> None:
 
     Idempotent: existing HAS_SEGMENT edges are deleted before re-writing.
     Parse failures are logged and skipped — the SN node remains intact.
-    Token-miss (vocabulary drift) is detected and warned.
+    Token-miss (vocabulary drift) is detected, warned, and returned.
+
+    The GrammarToken version used for resolution is the installed ISN
+    version when available, otherwise the latest synced version (see
+    :func:`_resolve_grammar_token_version`).
 
     Args:
         gc: Open GraphClient session (caller manages the context manager).
         name_ids: List of StandardName.id values to process.
+
+    Returns:
+        List of detected token-miss gaps, each a dict with keys:
+        ``sn_id``, ``segment``, ``needed_token``.
     """
+    all_gaps: list[dict[str, str]] = []
+
     try:
         from imas_standard_names import __version__ as isn_version
         from imas_standard_names.grammar import parse_standard_name
         from imas_standard_names.graph.spec import segment_edge_specs
     except ImportError:
         logger.debug("ISN grammar not available — skipping HAS_SEGMENT edges")
-        return
+        return all_gaps
+
+    # Resolve the best available GrammarToken version
+    token_version = _resolve_grammar_token_version(gc, isn_version)
+    if token_version is None:
+        logger.debug("No GrammarToken nodes in graph — skipping HAS_SEGMENT edges")
+        return all_gaps
 
     for sn_id in name_ids:
         try:
@@ -840,7 +934,7 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> None:
                 OPTIONAL MATCH (t:GrammarToken {
                     value: edge.token,
                     segment: edge.segment,
-                    version: $isn_version
+                    version: $token_version
                 })
                 WITH sn, edge, t
                 FOREACH (_ IN CASE WHEN t IS NOT NULL THEN [1] ELSE [] END |
@@ -854,7 +948,7 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> None:
                 """,
                 sn_id=sn_id,
                 edges=edges_param,
-                isn_version=isn_version,
+                token_version=token_version,
             )
             or []
         )
@@ -867,11 +961,23 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> None:
         ]
         if missing:
             logger.warning(
-                "Token-miss for '%s': %s (ISN %s) — vocab gap",
+                "Token-miss for '%s': %s (ISN %s, tokens %s) — vocab gap",
                 sn_id,
                 ", ".join(missing),
                 isn_version,
+                token_version,
             )
+            for r in results:
+                if not r.get("matched", True):
+                    all_gaps.append(
+                        {
+                            "sn_id": sn_id,
+                            "segment": r["segment"],
+                            "needed_token": r["token"],
+                        }
+                    )
+
+    return all_gaps
 
 
 # =============================================================================

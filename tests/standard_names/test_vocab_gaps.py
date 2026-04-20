@@ -402,3 +402,245 @@ class TestAmbiguityClassification:
 
         assert len(issues) == 1
         assert issues[0].startswith("parse_error:")
+
+
+# ---------------------------------------------------------------------------
+# Test 5: persist_composed_batch creates VocabGap from token-miss
+# ---------------------------------------------------------------------------
+
+
+class TestPersistBatchTokenMissGaps:
+    """write_standard_names calls write_vocab_gaps for token misses detected
+    during _write_segment_edges."""
+
+    def test_token_miss_creates_vocab_gap_nodes(self):
+        """When _write_segment_edges detects unmatched tokens, VocabGap nodes are created."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+
+        # Simulate _write_segment_edges returning a token miss
+        token_miss_gaps = [
+            {
+                "sn_id": "electron_temperature",
+                "segment": "subject",
+                "needed_token": "exotic_particle",
+            }
+        ]
+
+        names = [
+            {
+                "id": "electron_temperature",
+                "source_id": "core_profiles/profiles_1d/electrons/temperature",
+                "source_types": ["dd"],
+                "unit": "eV",
+            }
+        ]
+
+        with (
+            patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC,
+            patch(
+                "imas_codex.standard_names.graph_ops._write_segment_edges",
+                return_value=token_miss_gaps,
+            ),
+            patch(
+                "imas_codex.standard_names.graph_ops.write_vocab_gaps"
+            ) as mock_write_vg,
+        ):
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+
+            from imas_codex.standard_names.graph_ops import write_standard_names
+
+            write_standard_names(names)
+
+        # write_vocab_gaps should have been called with DD gaps
+        mock_write_vg.assert_called_once()
+        call_args = mock_write_vg.call_args
+        gap_dicts = call_args[0][0]
+        assert len(gap_dicts) == 1
+        assert gap_dicts[0]["source_id"] == (
+            "core_profiles/profiles_1d/electrons/temperature"
+        )
+        assert gap_dicts[0]["segment"] == "subject"
+        assert gap_dicts[0]["needed_token"] == "exotic_particle"
+        assert call_args[1]["source_type"] == "dd"
+
+    def test_no_token_miss_skips_write_vocab_gaps(self):
+        """When _write_segment_edges returns no gaps, write_vocab_gaps is not called."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+
+        names = [
+            {
+                "id": "electron_temperature",
+                "source_id": "core_profiles/profiles_1d/electrons/temperature",
+                "source_types": ["dd"],
+                "unit": "eV",
+            }
+        ]
+
+        with (
+            patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC,
+            patch(
+                "imas_codex.standard_names.graph_ops._write_segment_edges",
+                return_value=[],
+            ),
+            patch(
+                "imas_codex.standard_names.graph_ops.write_vocab_gaps"
+            ) as mock_write_vg,
+        ):
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+
+            from imas_codex.standard_names.graph_ops import write_standard_names
+
+            write_standard_names(names)
+
+        mock_write_vg.assert_not_called()
+
+    def test_signal_source_routes_to_signals_type(self):
+        """Signal source_types route gaps to write_vocab_gaps with source_type='signals'."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+
+        token_miss_gaps = [
+            {
+                "sn_id": "plasma_current",
+                "segment": "process",
+                "needed_token": "novel_process",
+            }
+        ]
+
+        names = [
+            {
+                "id": "plasma_current",
+                "source_id": "tcv:ip/measured",
+                "source_types": ["signals"],
+                "unit": "A",
+            }
+        ]
+
+        with (
+            patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC,
+            patch(
+                "imas_codex.standard_names.graph_ops._write_segment_edges",
+                return_value=token_miss_gaps,
+            ),
+            patch(
+                "imas_codex.standard_names.graph_ops.write_vocab_gaps"
+            ) as mock_write_vg,
+        ):
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+
+            from imas_codex.standard_names.graph_ops import write_standard_names
+
+            write_standard_names(names)
+
+        mock_write_vg.assert_called_once()
+        assert mock_write_vg.call_args[1]["source_type"] == "signals"
+
+
+# ---------------------------------------------------------------------------
+# Test 6: _resolve_grammar_token_version fallback
+# ---------------------------------------------------------------------------
+
+
+class TestResolveGrammarTokenVersion:
+    """_resolve_grammar_token_version uses exact ISN version when available,
+    falls back to latest graph version, or returns None."""
+
+    def test_exact_version_match(self):
+        """Returns ISN version when GrammarToken nodes exist for it."""
+        from imas_codex.standard_names.graph_ops import _resolve_grammar_token_version
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"t.version": "0.7.0rc16"}])
+
+        result = _resolve_grammar_token_version(mock_gc, "0.7.0rc16")
+        assert result == "0.7.0rc16"
+
+    def test_fallback_to_latest(self):
+        """Falls back to latest available version when exact doesn't exist."""
+        from imas_codex.standard_names.graph_ops import _resolve_grammar_token_version
+
+        mock_gc = MagicMock()
+
+        # First call (exact version) returns empty, second (fallback) returns rc14
+        mock_gc.query = MagicMock(side_effect=[[], [{"v": "0.7.0rc14"}]])
+
+        result = _resolve_grammar_token_version(mock_gc, "0.7.0rc16")
+        assert result == "0.7.0rc14"
+
+    def test_no_grammar_tokens(self):
+        """Returns None when no GrammarToken nodes exist at all."""
+        from imas_codex.standard_names.graph_ops import _resolve_grammar_token_version
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+
+        result = _resolve_grammar_token_version(mock_gc, "0.7.0rc16")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Test 7: _write_segment_edges version fallback integration
+# ---------------------------------------------------------------------------
+
+
+class TestWriteSegmentEdgesVersionFallback:
+    """_write_segment_edges uses version fallback to avoid false-positive
+    VocabGap nodes when GrammarToken nodes are stale."""
+
+    def test_no_grammar_tokens_skips_entirely(self):
+        """When no GrammarToken nodes exist, returns empty gaps without parsing."""
+        mock_gc = MagicMock()
+
+        with patch(
+            "imas_codex.standard_names.graph_ops._resolve_grammar_token_version",
+            return_value=None,
+        ):
+            from imas_codex.standard_names.graph_ops import _write_segment_edges
+
+            gaps = _write_segment_edges(mock_gc, ["electron_temperature"])
+
+        assert gaps == []
+
+    def test_fallback_version_passed_to_cypher(self):
+        """When ISN version differs from graph tokens, fallback version is used
+        in the OPTIONAL MATCH to avoid false-positive VocabGap."""
+        mock_gc = MagicMock()
+        # Return matched=True for the token query
+        mock_gc.query = MagicMock(
+            return_value=[{"token": "electron", "segment": "subject", "matched": True}]
+        )
+
+        with (
+            patch(
+                "imas_codex.standard_names.graph_ops._resolve_grammar_token_version",
+                return_value="0.7.0rc14",
+            ),
+            patch("imas_standard_names.grammar.parse_standard_name") as mock_parse,
+            patch("imas_standard_names.graph.spec.segment_edge_specs") as mock_specs,
+        ):
+            mock_parsed = MagicMock()
+            mock_parse.return_value = mock_parsed
+            mock_spec = MagicMock()
+            mock_spec.position = 2
+            mock_spec.segment = "subject"
+            mock_spec.token = "electron"
+            mock_specs.return_value = [mock_spec]
+
+            from imas_codex.standard_names.graph_ops import _write_segment_edges
+
+            gaps = _write_segment_edges(mock_gc, ["electron_temperature"])
+
+        # No gaps — token was matched via fallback version
+        assert gaps == []
+
+        # Verify fallback version (0.7.0rc14) was used in the query
+        opt_match_calls = [
+            c for c in mock_gc.query.call_args_list if "OPTIONAL MATCH" in str(c)
+        ]
+        assert len(opt_match_calls) >= 1
+        assert opt_match_calls[0][1]["token_version"] == "0.7.0rc14"
