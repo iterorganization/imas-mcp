@@ -281,9 +281,18 @@ batch-size = 25
 # the cost of richer per-candidate enrichment, which the subsequent
 # review / enrichment passes restore.
 name-only-batch-size = 50
+# Pre-flight token budget guard.  Batches whose estimated token count
+# exceeds this value are binary-split before dispatch.  Set below the
+# model's context window (200 k) to leave headroom for the response.
+max-tokens = 150000
 
 [tool.imas-codex.sn-enrich]
 model = "openrouter/anthropic/claude-opus-4.6"
+# Enrich packs ~800–1200 tokens per name (docs, exemplars, DD context)
+# so batches should be smaller than generate batches.
+batch-size = 12
+# Pre-flight token budget guard (same semantics as sn-generate).
+max-tokens = 150000
 
 [tool.imas-codex.sn.review]
 # Reviewer models for `sn review`. N >= 1. The first entry is canonical —

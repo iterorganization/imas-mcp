@@ -319,6 +319,7 @@ def group_by_concept_and_unit(
     items: list[dict],
     max_batch_size: int = 25,
     existing_names: set[str] | None = None,
+    max_tokens: int | None = None,
 ) -> list[ExtractionBatch]:
     """Group enriched paths by (primary_cluster × unit) **globally**.
 
@@ -336,6 +337,8 @@ def group_by_concept_and_unit(
         items: Enriched path dicts (output of :func:`enrich_paths`).
         max_batch_size: Maximum concepts per batch (token budget guard).
         existing_names: Known standard names for dedup awareness.
+        max_tokens: When set, apply a pre-flight token check that
+            binary-splits any batch exceeding this estimated token count.
 
     Returns:
         List of :class:`ExtractionBatch` objects ready for the compose
@@ -398,6 +401,13 @@ def group_by_concept_and_unit(
         len(batches),
         max_batch_size,
     )
+
+    # Pre-flight token check: split batches that exceed token budget
+    if max_tokens is not None:
+        from imas_codex.standard_names.batching import pre_flight_token_check
+
+        batches = pre_flight_token_check(batches, max_tokens=max_tokens)
+
     return batches
 
 
@@ -454,6 +464,7 @@ def group_for_name_only(
     items: list[dict],
     batch_size: int = 50,
     existing_names: set[str] | None = None,
+    max_tokens: int | None = None,
 ) -> list[ExtractionBatch]:
     """Group enriched paths by ``(physics_domain × unit)`` for name-only mode.
 
@@ -470,6 +481,8 @@ def group_for_name_only(
             are split into chunks that keep the same group key but
             append a ``#<idx>`` suffix for traceability.
         existing_names: Known standard names for dedup awareness.
+        max_tokens: When set, apply a pre-flight token check that
+            binary-splits any batch exceeding this estimated token count.
 
     Returns:
         List of :class:`ExtractionBatch` objects with ``mode="name_only"``.
@@ -517,4 +530,11 @@ def group_for_name_only(
         batch_size,
         len(items) / len(batches) if batches else 0.0,
     )
+
+    # Pre-flight token check: split batches that exceed token budget
+    if max_tokens is not None:
+        from imas_codex.standard_names.batching import pre_flight_token_check
+
+        batches = pre_flight_token_check(batches, max_tokens=max_tokens)
+
     return batches

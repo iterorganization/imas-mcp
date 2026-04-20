@@ -141,6 +141,11 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     on_status=_on_status,
                 )
             else:
+                from imas_codex.standard_names.batching import (
+                    get_generate_batch_config,
+                )
+
+                batch_cfg = get_generate_batch_config()
                 batches = extract_dd_candidates(
                     ids_filter=state.ids_filter,
                     domain_filter=state.domain_filter,
@@ -151,6 +156,8 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     force=state.force,
                     name_only=state.name_only,
                     name_only_batch_size=state.name_only_batch_size,
+                    max_batch_size=batch_cfg["batch_size"],
+                    max_tokens=batch_cfg["max_tokens"],
                 )
         else:
             wlog.error("Unknown source: %s", state.source)

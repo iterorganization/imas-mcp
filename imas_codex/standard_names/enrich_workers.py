@@ -354,6 +354,10 @@ async def enrich_extract_worker(state: StandardNameEnrichState, **_kwargs) -> No
             status_filter=state.status_filter,
         )
 
+    from imas_codex.standard_names.batching import get_enrich_batch_config
+
+    enrich_cfg = get_enrich_batch_config()
+
     if state.dry_run:
         # In dry-run mode, query without claiming
         token, items = await asyncio.to_thread(_claim)
@@ -362,7 +366,11 @@ async def enrich_extract_worker(state: StandardNameEnrichState, **_kwargs) -> No
             await asyncio.to_thread(release_enrichment_claims, token)
 
         # Build batches from claimed items
-        batches = _build_batches(items, batch_size=state.batch_size)
+        batches = _build_batches(
+            items,
+            batch_size=state.batch_size,
+            max_tokens=enrich_cfg["max_tokens"],
+        )
         state.batches = batches
         total_items = sum(len(b["items"]) for b in batches)
         state.extract_stats.total = total_items
@@ -387,7 +395,12 @@ async def enrich_extract_worker(state: StandardNameEnrichState, **_kwargs) -> No
         state.extract_phase.mark_done()
         return
 
-    batches = _build_batches(items, batch_size=state.batch_size, token=token)
+    batches = _build_batches(
+        items,
+        batch_size=state.batch_size,
+        token=token,
+        max_tokens=enrich_cfg["max_tokens"],
+    )
     state.batches = batches
     total_items = sum(len(b["items"]) for b in batches)
     state.extract_stats.total = total_items
@@ -410,11 +423,15 @@ def _build_batches(
     items: list[dict[str, Any]],
     batch_size: int = _ENRICH_BATCH_SIZE,
     token: str | None = None,
+    max_tokens: int | None = None,
 ) -> list[dict[str, Any]]:
     """Split flat item list into enrichment batches.
 
     Each batch is a dict with ``items`` (list of SN dicts) and
     ``claim_token`` for downstream release/mark.
+
+    When *max_tokens* is set, a pre-flight token check binary-splits
+    any batch whose estimated token count exceeds the budget.
     """
     if not items:
         return []
@@ -429,6 +446,15 @@ def _build_batches(
                 "batch_index": len(batches),
             }
         )
+
+    if max_tokens is not None:
+        from imas_codex.standard_names.batching import pre_flight_enrich_token_check
+
+        batches = pre_flight_enrich_token_check(batches, max_tokens=max_tokens)
+        # Re-index after potential splits
+        for idx, b in enumerate(batches):
+            b["batch_index"] = idx
+
     return batches
 
 

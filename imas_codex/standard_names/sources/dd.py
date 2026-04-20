@@ -272,6 +272,8 @@ def extract_dd_candidates(
     force: bool = False,
     name_only: bool = False,
     name_only_batch_size: int = 50,
+    max_batch_size: int = 25,
+    max_tokens: int | None = None,
 ) -> list[ExtractionBatch]:
     """Extract candidate quantities from IMAS DD paths with enriched context.
 
@@ -297,6 +299,9 @@ def extract_dd_candidates(
             lean user prompt.
         name_only_batch_size: Maximum items per batch when ``name_only``
             is True.
+        max_batch_size: Maximum items per batch in full compose mode.
+        max_tokens: When set, apply a pre-flight token check that
+            binary-splits any batch exceeding this estimated token count.
 
     Returns:
         List of ExtractionBatch objects grouped by (primary_cluster, unit)
@@ -447,13 +452,15 @@ def extract_dd_candidates(
             enriched,
             batch_size=name_only_batch_size,
             existing_names=existing_names,
+            max_tokens=max_tokens,
         )
     else:
         _status(f"grouping {len(enriched)} quantities into batches…")
         batches = group_by_concept_and_unit(
             enriched,
-            max_batch_size=25,
+            max_batch_size=max_batch_size,
             existing_names=existing_names,
+            max_tokens=max_tokens,
         )
 
     logger.info(
