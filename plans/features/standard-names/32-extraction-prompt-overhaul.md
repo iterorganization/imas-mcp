@@ -133,3 +133,140 @@ composed/$.
 - Should the harness gate on `dd_version`? Yes — freeze at the
   `dd_version` in `settings.get_dd_version()` at the time of the eval
   to avoid noise from DD updates mid-experiment.
+
+---
+
+## Phase 4 — DD completion endpoint (1–2 days)
+
+**Motivation.** User goal: leave `sn generate` running with a large budget
+and have it drive the IMAS DD naming exercise to completion — all
+SN-eligible paths named, enriched, reviewed, low-scorers regenerated
+once. Currently this requires manual rotation across domains plus
+manual enrich/review phases. Domains become invisible once extract
+returns 0 despite having unenriched/low-score names.
+
+**Design — a single long-running rotator under the existing CLI.**
+
+Add `sn rotate` (or extend `sn generate --until-complete`) that loops:
+
+1. **Extract phase.** For each physics_domain with extract-eligible
+   paths (query the graph live, don't hardcode a list), run
+   `generate --physics-domain D --name-only` until extract returns 0
+   (no `--force`). Respect `-c` as a global cap across the loop.
+2. **Enrich phase.** Target `review_status IN {named, drafted}`
+   batched across domains. Batch by (physics_domain × unit) to align
+   with compose batching.
+3. **Review phase.** Run the 4-dim `--name-only` rubric on newly
+   composed/enriched names. Persist `reviewer_score` +
+   `reviewer_comments`.
+4. **Regen phase.** For names with `reviewer_score < threshold`
+   (default 0.5) that have not yet been regenerated (track via
+   `regen_count` property on StandardName; new field), reset to
+   `drafted` with `--include-review-feedback`, regenerate once.
+   Hard cap at `regen_count <= 1` to prevent infinite loops.
+5. **Stop conditions** (any triggers exit):
+   - Budget exhausted (`spend >= cost_limit`).
+   - A full extract→enrich→review→regen pass produces 0 changes.
+   - Manual Ctrl-C (checkpoint state to graph so a resumed run
+     continues from the same point).
+
+**State tracking.** New columns on StandardName:
+
+- `regen_count: int` — times this name has been through a
+  review→regen cycle (0 for fresh).
+- `regen_reason: str` — reviewer comments that triggered last regen.
+- `rotation_id: str` — UUID of the rotation run that last touched
+  this name, for audit.
+
+**Skip-by-design support.** The extract query already filters
+`node_category IN {quantity, geometry}` so structural/fit/metadata
+are skipped at DB level. Add two additional skip rules for SN-level
+policy that cannot be expressed via node_category:
+
+- **Configurable-meaning paths.** Paths where the semantic meaning
+  depends on a runtime configuration field (e.g., `radiation/process/*`
+  inside a `radiation/process/identifier` array — meaning depends on
+  which emission process is selected). Detect via the DD's
+  `coordinates` field referencing an identifier array in the same
+  array-of-structures chain.
+- **Changeable-dimension paths.** Paths whose data_type is
+  `FLT_ND` / `CPX_ND` where N is unbounded (e.g., the profile array
+  depends on `grid_type`). Already flagged as `representation` by the
+  DD builder in most cases; confirm coverage in Phase 1 audit.
+
+Persist the skip as `StandardNameSource.status = 'skip'` with
+`skip_reason` so rotations recognize them and don't re-extract.
+
+**Progress reporting.** The rotator writes one row per pass to a
+new `RotationRun` node, keyed by UUID, with fields:
+`started_at`, `ended_at`, `cost_spent`, `names_composed`,
+`names_enriched`, `names_reviewed`, `names_regenerated`,
+`domains_touched` (list), `stop_reason`. `sn status` gains a
+"Latest rotation" section summarizing the most recent RotationRun.
+
+**Deliverable:** `sn rotate` (or the `--until-complete` flag),
+schema additions, and a one-command path from "empty graph" to
+"DD complete" within a user-supplied budget.
+
+**Exit:** one end-to-end run on a fresh graph with `-c 50` hits
+≥ 60 % DD coverage with mean reviewer_score ≥ 0.7 and no infinite
+loops / duplicate regenerations observed.
+
+### Phase 4 schema additions (LinkML)
+
+Add to `imas_codex/schemas/standard_name.yaml`:
+
+```yaml
+StandardName:
+  attributes:
+    regen_count:
+      range: integer
+      ifabsent: int(0)
+    regen_reason:
+      range: string
+    rotation_id:
+      range: string
+
+RotationRun:
+  description: A single invocation of `sn rotate` / `sn generate --until-complete`
+  attributes:
+    id:
+      identifier: true
+    facility_id:
+      description: 'dd' (sentinel — RotationRuns are not facility-scoped yet)
+      required: true
+      range: Facility
+      annotations:
+        relationship_type: AT_FACILITY
+    started_at: { range: datetime, required: true }
+    ended_at: { range: datetime }
+    cost_spent: { range: float }
+    names_composed: { range: integer, ifabsent: int(0) }
+    names_enriched: { range: integer, ifabsent: int(0) }
+    names_reviewed: { range: integer, ifabsent: int(0) }
+    names_regenerated: { range: integer, ifabsent: int(0) }
+    domains_touched: { range: string, multivalued: true }
+    stop_reason: { range: string }
+```
+
+Rebuild models with `uv run build-models --force`.
+
+## Phase ordering + agent budget
+
+| Phase | Agent | Model | Est. cost |
+|-------|-------|-------|-----------|
+| 1 | node_category audit | opus-4.7 | < $2 |
+| 2 | A/B/C harness | opus-4.7 | < $10 (20-path × 3 × compose+review) |
+| 3 | implement winner | opus-4.7 | < $2 |
+| 4 | completion endpoint | opus-4.7 | < $2 (implementation; budget test separate) |
+
+Phases 1 & 4 are parallelizable. Phase 2 depends on Phase 1 only for
+confidence that the eval set is drawn from genuinely eligible paths;
+run concurrent if time-boxed. Phase 3 depends on Phase 2 result.
+
+## Outcome (TBD — filled after implementation)
+
+- Phase 1: _pending_
+- Phase 2: _pending_
+- Phase 3: _pending_
+- Phase 4: _pending_
