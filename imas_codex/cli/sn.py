@@ -39,6 +39,7 @@ def _run_rotator(
     per_domain_limit: int | None,
     dry_run: bool,
     quiet: bool,
+    only_domain: str | None = None,
 ) -> None:
     """Execute the DD completion rotator and render the summary."""
     import asyncio
@@ -66,6 +67,7 @@ def _run_rotator(
             plateau_passes=plateau_passes,
             per_domain_limit=per_domain_limit,
             dry_run=dry_run,
+            only_domain=only_domain,
         )
     )
     row = summary_table(summary)
@@ -372,6 +374,7 @@ def sn_generate(
             per_domain_limit=limit,
             dry_run=dry_run,
             quiet=quiet,
+            only_domain=domain_filter,
         )
         return
 

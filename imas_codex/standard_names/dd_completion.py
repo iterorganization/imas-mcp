@@ -41,7 +41,9 @@ class RotationSummary:
     pass_records: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _count_eligible_domains() -> list[dict[str, Any]]:
+def _count_eligible_domains(
+    only_domain: str | None = None,
+) -> list[dict[str, Any]]:
     """Return domains with extract-eligible DD paths, ordered by backlog size.
 
     An "eligible" path is one that:
@@ -72,7 +74,10 @@ def _count_eligible_domains() -> list[dict[str, Any]]:
         rows = list(gc.query(cypher, categories=list(SN_SOURCE_CATEGORIES)))
     # Drop empty/unclassified domain (the generate pipeline requires a
     # physics_domain filter; unclassified paths are named separately).
-    return [r for r in rows if r["domain"] and r["domain"] != "unclassified"]
+    filtered = [r for r in rows if r["domain"] and r["domain"] != "unclassified"]
+    if only_domain:
+        filtered = [r for r in filtered if r["domain"] == only_domain]
+    return filtered
 
 
 def _write_rotation_run(summary: RotationSummary) -> None:
@@ -112,6 +117,7 @@ async def run_dd_completion(
     per_domain_limit: int | None = None,
     concurrency: int = 2,
     dry_run: bool = False,
+    only_domain: str | None = None,
 ) -> RotationSummary:
     """Drive the DD naming exercise to completion.
 
@@ -146,7 +152,7 @@ async def run_dd_completion(
 
     if dry_run:
         # No LLM calls — just report what would run.
-        domains = _count_eligible_domains()
+        domains = _count_eligible_domains(only_domain=only_domain)
         summary.pass_records.append(
             {
                 "pass": 0,
@@ -169,7 +175,7 @@ async def run_dd_completion(
             pass_idx += 1
             summary.passes = pass_idx
 
-            domains = _count_eligible_domains()
+            domains = _count_eligible_domains(only_domain=only_domain)
             remaining_budget = cost_limit - summary.cost_spent
             if remaining_budget <= 0:
                 summary.stop_reason = "budget_exhausted"
@@ -192,7 +198,7 @@ async def run_dd_completion(
                     pass_idx,
                 )
                 # Pick currently-covered domains from the graph instead.
-                domains = _existing_domain_targets()
+                domains = _existing_domain_targets(only_domain=only_domain)
 
             if not domains:
                 plateau_count += 1
@@ -311,7 +317,9 @@ async def run_dd_completion(
     return summary
 
 
-def _existing_domain_targets() -> list[dict[str, Any]]:
+def _existing_domain_targets(
+    only_domain: str | None = None,
+) -> list[dict[str, Any]]:
     """Return domains that have un-enriched / un-reviewed / needs_revision names.
 
     Used when no extract-eligible paths remain: we still want to run
@@ -334,7 +342,10 @@ def _existing_domain_targets() -> list[dict[str, Any]]:
     """
     with GraphClient() as gc:
         rows = list(gc.query(cypher))
-    return [r for r in rows if r["domain"]]
+    filtered = [r for r in rows if r["domain"]]
+    if only_domain:
+        filtered = [r for r in filtered if r["domain"] == only_domain]
+    return filtered
 
 
 def summary_table(summary: RotationSummary) -> dict[str, Any]:
