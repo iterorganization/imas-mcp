@@ -53,6 +53,7 @@ class BenchmarkConfig:
     runs_per_model: int = 1
     temperature: float = 0.0  # pinned for reproducibility
     reviewer_model: str | None = None  # frontier model for quality scoring
+    force: bool = False  # re-run over already-processed paths
 
 
 @dataclass
@@ -506,6 +507,7 @@ def _extract_candidates(config: BenchmarkConfig) -> list[dict]:
         ids_filter=config.ids_filter,
         domain_filter=config.domain_filter,
         limit=config.max_candidates,
+        force=config.force,
     )
 
     # Convert ExtractionBatch to plain dicts

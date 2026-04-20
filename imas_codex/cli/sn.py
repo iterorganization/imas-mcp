@@ -289,14 +289,28 @@ def _run_rotator(
     ),
 )
 @click.option(
+    "--target",
+    type=click.Choice(["names", "docs", "full"], case_sensitive=False),
+    default=None,
+    help=(
+        "Which generation pass to run. 'names' runs the name-only compose "
+        "pass (grammar + unit only, wide batches). 'docs' routes through "
+        "the five-phase enrich pipeline to fill description/documentation "
+        "on already-named entries (EXTRACT→CONTEXTUALISE→DOCUMENT→VALIDATE"
+        "→PERSIST). 'full' (default) runs the compose pass that produces "
+        "both name and documentation in one shot. Takes precedence over "
+        "the back-compat --name-only alias."
+    ),
+)
+@click.option(
     "--name-only",
     is_flag=True,
     default=False,
     help=(
-        "Use the Workstream 2a name-only batching mode: group paths by "
-        "(physics_domain × unit) with larger batches and a lean user prompt "
-        "(no cluster siblings, exemplars, or review feedback). Trades per-item "
-        "context depth for ~70% fewer LLM calls during bootstrap."
+        "Back-compat alias for --target=names. Use the Workstream 2a "
+        "name-only batching mode: group paths by (physics_domain × unit) "
+        "with larger batches and a lean user prompt. --target takes "
+        "precedence if both are provided."
     ),
 )
 @click.option(
@@ -306,7 +320,28 @@ def _run_rotator(
     help=(
         "Max items per name-only batch. Defaults to "
         "[tool.imas-codex.sn-generate].name-only-batch-size in pyproject.toml "
-        "(50). Only meaningful when --name-only is set."
+        "(50). Only meaningful for --target=names."
+    ),
+)
+@click.option(
+    "--docs-status",
+    "docs_status_filter",
+    default="named",
+    show_default=True,
+    help=(
+        "Review status(es) to enrich from when --target=docs "
+        "(comma-separated or repeated). Ignored for other targets."
+    ),
+)
+@click.option(
+    "--docs-batch-size",
+    type=int,
+    default=None,
+    help=(
+        "LLM batch size for --target=docs. Defaults to "
+        "[tool.imas-codex.sn-generate].docs-batch-size in pyproject.toml "
+        "(12), then [tool.imas-codex.sn-enrich].batch-size as a fallback. "
+        "Ignored for other targets."
     ),
 )
 @click.option(
@@ -355,8 +390,11 @@ def sn_generate(
     retry_vocab_gap: bool,
     regen_only: bool,
     no_review_feedback: bool,
+    target: str | None,
     name_only: bool,
     name_only_batch_size: int | None,
+    docs_status_filter: str,
+    docs_batch_size: int | None,
     single_pass: bool,
     plateau_passes: int,
 ) -> None:
@@ -379,6 +417,37 @@ def sn_generate(
       imas-codex sn generate --reset-to drafted --reset-only
       imas-codex sn generate --reset-to drafted --below-score 0.6 --reset-only
     """
+    # --- Resolve --target (takes precedence over --name-only back-compat alias) ---
+    if target is not None:
+        target_normalized = target.lower()
+    elif name_only:
+        target_normalized = "names"
+    else:
+        target_normalized = "full"
+    # Sync name_only back to target for downstream compose routing.
+    name_only = target_normalized == "names"
+
+    # --target=docs routes through the five-phase enrich pipeline.
+    # The rotator and the compose single-pass do not produce docs on
+    # already-named entries; delegate to the enrich engine instead.
+    if target_normalized == "docs":
+        # Parse --physics-domain from domain_filter (single value) into the
+        # list[str] form the enrich pipeline expects.
+        _docs_domains: list[str] | None = [domain_filter] if domain_filter else None
+        _run_sn_docs_generation(
+            domain_list=_docs_domains,
+            status_filter=docs_status_filter,
+            cost_limit=cost_limit,
+            limit=limit,
+            batch_size=docs_batch_size,
+            dry_run=dry_run,
+            force=force,
+            model_override=compose_model,
+            verbose=verbose,
+            quiet=quiet,
+        )
+        return
+
     # Scope-routing: --paths → single-pass; else → rotator (unless --single-pass).
     # The rotator drives the full extract→enrich→review→regen rotation per domain
     # and persists a RotationRun audit node. --physics-domain is forwarded to scope
@@ -799,6 +868,16 @@ def sn_generate(
     default=None,
     help="Judge model for quality scoring. Defaults to [sn.benchmark].reviewer-model.",
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help=(
+        "Re-run against DD paths that already have a StandardNameSource. "
+        "Required when the target IDS has been fully processed (most of the "
+        "DD catalog in mature deployments)."
+    ),
+)
 def sn_benchmark(
     source: str,
     ids_filter: str | None,
@@ -811,6 +890,7 @@ def sn_benchmark(
     output: str | None,
     verbose: bool,
     reviewer_model: str | None,
+    force: bool,
 ) -> None:
     """Benchmark LLM models on standard name generation.
 
@@ -869,6 +949,7 @@ def sn_benchmark(
         runs_per_model=runs,
         temperature=temperature,
         reviewer_model=reviewer_model,
+        force=force,
     )
 
     console.print("[bold]SN Benchmark[/bold]")
@@ -2290,92 +2371,26 @@ def sn_review(
     asyncio.run(_run())
 
 
-@sn.command("enrich")
-@click.option(
-    "--physics-domain",
-    "--domain",
-    "domain",
-    type=_PHYSICS_DOMAIN_CHOICE,
-    multiple=True,
-    default=None,
-    help=(
-        "Filter by physics domain, repeatable (alias: --domain). "
-        "Example: --physics-domain equilibrium --physics-domain transport"
-    ),
-)
-@click.option(
-    "--status",
-    "status_filter",
-    default="named",
-    show_default=True,
-    help="Review status(es) to enrich from (comma-separated or repeated)",
-)
-@click.option(
-    "-c",
-    "--cost-limit",
-    type=float,
-    default=2.0,
-    show_default=True,
-    help="Maximum LLM spend in USD",
-)
-@click.option(
-    "--limit",
-    type=int,
-    default=None,
-    help="Cap total standard names to enrich",
-)
-@click.option(
-    "--batch-size",
-    type=int,
-    default=8,
-    show_default=True,
-    help="LLM batch size (names per request)",
-)
-@click.option("--dry-run", is_flag=True, help="Preview candidates without graph writes")
-@click.option(
-    "--force",
-    is_flag=True,
-    help="Re-enrich names already at review_status='enriched'",
-)
-@click.option(
-    "--model",
-    "model_override",
-    type=str,
-    default=None,
-    help="Override LLM model (default: sn-enrich from settings)",
-)
-@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
-@click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
-def sn_enrich(
-    domain: tuple[str, ...],
+def _run_sn_docs_generation(
+    *,
+    domain_list: list[str] | None,
     status_filter: str,
     cost_limit: float,
     limit: int | None,
-    batch_size: int,
+    batch_size: int | None,
     dry_run: bool,
     force: bool,
     model_override: str | None,
     verbose: bool,
     quiet: bool,
 ) -> None:
-    """Enrich existing standard names with documentation.
+    """Run the five-phase enrichment pipeline to fill docs on named SNs.
 
-    \b
-    Takes named standard names as input and generates documentation
-    fields (description, documentation, tags, links) using linked
-    DD paths as context.  Runs the five-phase pipeline:
-    EXTRACT → CONTEXTUALISE → DOCUMENT → VALIDATE → PERSIST.
-
-    \b
-    Does NOT change: name, grammar fields, kind, or unit.
-
-    \b
-    Examples:
-      imas-codex sn enrich --domain equilibrium -c 2.0
-      imas-codex sn enrich --domain transport --domain magnetics --limit 50 --dry-run
-      imas-codex sn enrich --force --model openrouter/anthropic/claude-opus-4.7
+    Shared between ``sn generate --target docs`` and ``sn enrich`` so the
+    docs-generation pathway has a single implementation. Does NOT change
+    name, grammar fields, kind, or unit — only description/documentation/
+    tags/links.
     """
-
     from imas_codex.discovery.base.llm import set_litellm_offline_env
 
     set_litellm_offline_env()
@@ -2388,8 +2403,16 @@ def sn_enrich(
         use_rich_output,
     )
 
-    # --- Parse domain / status lists ---
-    domain_list: list[str] | None = list(domain) if domain else None
+    # Resolve docs batch size from pyproject defaults when unspecified.
+    if batch_size is None:
+        from imas_codex.settings import _get_section
+
+        sn_generate_cfg = _get_section("sn-generate")
+        sn_enrich_cfg = _get_section("sn-enrich")
+        batch_size = int(
+            sn_generate_cfg.get("docs-batch-size", sn_enrich_cfg.get("batch-size", 8))
+        )
+
     # status_filter can be comma-separated or repeated
     statuses = [
         s.strip() for part in status_filter.split(",") for s in [part] if s.strip()
@@ -2399,7 +2422,7 @@ def sn_enrich(
     if not domain_list and limit is None:
         console.print(
             "[yellow]⚠ Enriching all named SNs — "
-            "use --domain or --limit to scope[/yellow]"
+            "use --physics-domain or --limit to scope[/yellow]"
         )
 
     use_rich = use_rich_output()
@@ -2513,6 +2536,110 @@ def sn_enrich(
             log_print("  (dry run — no LLM calls or graph writes)")
     elif not quiet:
         log_print("[yellow]No enrichment results returned[/yellow]")
+
+
+@sn.command("enrich")
+@click.option(
+    "--physics-domain",
+    "--domain",
+    "domain",
+    type=_PHYSICS_DOMAIN_CHOICE,
+    multiple=True,
+    default=None,
+    help=(
+        "Filter by physics domain, repeatable (alias: --domain). "
+        "Example: --physics-domain equilibrium --physics-domain transport"
+    ),
+)
+@click.option(
+    "--status",
+    "status_filter",
+    default="named",
+    show_default=True,
+    help="Review status(es) to enrich from (comma-separated or repeated)",
+)
+@click.option(
+    "-c",
+    "--cost-limit",
+    type=float,
+    default=2.0,
+    show_default=True,
+    help="Maximum LLM spend in USD",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Cap total standard names to enrich",
+)
+@click.option(
+    "--batch-size",
+    type=int,
+    default=8,
+    show_default=True,
+    help="LLM batch size (names per request)",
+)
+@click.option("--dry-run", is_flag=True, help="Preview candidates without graph writes")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Re-enrich names already at review_status='enriched'",
+)
+@click.option(
+    "--model",
+    "model_override",
+    type=str,
+    default=None,
+    help="Override LLM model (default: sn-enrich from settings)",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
+def sn_enrich(
+    domain: tuple[str, ...],
+    status_filter: str,
+    cost_limit: float,
+    limit: int | None,
+    batch_size: int,
+    dry_run: bool,
+    force: bool,
+    model_override: str | None,
+    verbose: bool,
+    quiet: bool,
+) -> None:
+    """Enrich existing standard names with documentation.
+
+    \b
+    Takes named standard names as input and generates documentation
+    fields (description, documentation, tags, links) using linked
+    DD paths as context.  Runs the five-phase pipeline:
+    EXTRACT → CONTEXTUALISE → DOCUMENT → VALIDATE → PERSIST.
+
+    \b
+    Does NOT change: name, grammar fields, kind, or unit.
+
+    \b
+    Back-compat alias for ``sn generate --target docs``. New code should
+    prefer the unified ``sn generate`` entry point.
+
+    \b
+    Examples:
+      imas-codex sn enrich --domain equilibrium -c 2.0
+      imas-codex sn enrich --domain transport --domain magnetics --limit 50 --dry-run
+      imas-codex sn enrich --force --model openrouter/anthropic/claude-opus-4.7
+    """
+    domain_list: list[str] | None = list(domain) if domain else None
+    _run_sn_docs_generation(
+        domain_list=domain_list,
+        status_filter=status_filter,
+        cost_limit=cost_limit,
+        limit=limit,
+        batch_size=batch_size,
+        dry_run=dry_run,
+        force=force,
+        model_override=model_override,
+        verbose=verbose,
+        quiet=quiet,
+    )
 
 
 @sn.command("rotate")
