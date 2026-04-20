@@ -77,6 +77,50 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
         _on_status("loading existing names…")
         existing = get_existing_standard_names()
 
+        # Regen-only mode: when --include-review-feedback is passed without a
+        # narrower source selector, re-queue exactly the sources whose linked
+        # StandardName has validation_status='needs_revision'. The subsequent
+        # feedback-injection block (below) then attaches reviewer_comments /
+        # tier / scores to each item so compose regenerates with critique
+        # in-prompt.
+        if state.is_regen_only_mode() and state.source == "dd":
+            from imas_codex.standard_names.graph_ops import (
+                fetch_needs_revision_sources,
+            )
+            from imas_codex.standard_names.sources.dd import extract_specific_paths
+
+            _on_status("loading needs_revision sources…")
+            regen_sources = fetch_needs_revision_sources(
+                domain=state.domain_filter,
+                ids=state.ids_filter,
+                limit=state.limit,
+                source_type="dd",
+            )
+            if not regen_sources:
+                wlog.info(
+                    "Regen-only mode (--include-review-feedback): no "
+                    "needs_revision sources found (domain=%s, ids=%s, limit=%s)",
+                    state.domain_filter,
+                    state.ids_filter,
+                    state.limit,
+                )
+                return []
+            wlog.info(
+                "Regen-only mode: %d needs_revision sources "
+                "(domain=%s, ids=%s, limit=%s)",
+                len(regen_sources),
+                state.domain_filter,
+                state.ids_filter,
+                state.limit,
+            )
+            paths = [r["source_id"] for r in regen_sources]
+            batches = extract_specific_paths(
+                paths=paths,
+                existing_names=existing,
+                on_status=_on_status,
+            )
+            return batches
+
         # Source-level skip for resumability (not in targeted mode)
         named_ids: set[str] = set()
         if not state.force and not state.paths_list:

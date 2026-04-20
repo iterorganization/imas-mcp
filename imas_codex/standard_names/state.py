@@ -107,3 +107,25 @@ class StandardNameBuildState(DiscoveryStateBase):
         if self.budget_exhausted:
             return True
         return False
+
+    # ------------------------------------------------------------------
+    # Mode helpers
+    # ------------------------------------------------------------------
+
+    def is_regen_only_mode(self) -> bool:
+        """Return True when extraction should be scoped to needs_revision SNs only.
+
+        Triggered by ``--include-review-feedback`` when no narrower
+        source-selection flag overrides the default extraction scope.
+        ``--paths`` (``paths_list``) and ``--from-model`` both narrow to an
+        explicit source set, so they short-circuit regen-only mode.
+        ``--domain`` / ``--ids`` / ``--limit`` are *narrowing* filters
+        within regen-only mode, not overrides.
+        """
+        if not self.include_review_feedback:
+            return False
+        if self.paths_list:
+            return False
+        if self.from_model:
+            return False
+        return True

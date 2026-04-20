@@ -245,6 +245,135 @@ def _get_rich_source_name_mapping() -> dict[str, dict]:
 # =============================================================================
 
 
+def fetch_needs_revision_sources(
+    *,
+    domain: str | None = None,
+    ids: str | None = None,
+    limit: int | None = None,
+    source_type: str = "dd",
+) -> list[dict[str, Any]]:
+    """Enumerate source entities whose linked StandardName is ``needs_revision``.
+
+    Walks ``(:IMASNode|:FacilitySignal)-[:HAS_STANDARD_NAME]->(:StandardName)``
+    and returns the originating source IDs along with the reviewer feedback
+    that caused the demotion. Used by the extract worker's regen-only mode
+    (``sn generate --include-review-feedback``) to re-queue the exact sources
+    that need rework instead of re-scanning the full DD.
+
+    Args:
+        domain: Optional physics-domain filter applied to the StandardName
+            (not the source entity), matching how review classified them.
+        ids: Optional IDS-name filter (DD source only; IMASNode -> IDS).
+        limit: Optional cap on the number of rows returned (ordered by
+            lowest reviewer_score first, i.e. "worst names first").
+        source_type: ``"dd"`` or ``"signals"`` — selects which entity label
+            to walk from.
+
+    Returns:
+        List of dicts, one per distinct ``source_id``, each with keys:
+
+        - ``source_id`` (str): the entity id (DD path or signal id)
+        - ``source_type`` (str): echo of input
+        - ``review_feedback`` (dict): full feedback payload matching
+          :func:`fetch_review_feedback_for_sources` for prompt injection.
+
+        Duplicates (a source with multiple linked SNs) are collapsed by
+        keeping the lowest-scoring entry, matching the feedback helper's
+        "worst-critique wins" semantics so the LLM sees the sharpest
+        criticism.
+    """
+    # Import lazily so the graph helper module doesn't require the generated
+    # models at import time (circular-import guard).
+    from imas_codex.graph.models import StandardNameValidationStatus
+
+    status_value = StandardNameValidationStatus.needs_revision.value
+
+    if source_type == "dd":
+        match_clause = "MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)"
+    elif source_type == "signals":
+        match_clause = (
+            "MATCH (src:FacilitySignal)-[:HAS_STANDARD_NAME]->(sn:StandardName)"
+        )
+    else:
+        raise ValueError(f"source_type must be 'dd' or 'signals', got {source_type!r}")
+
+    where_clauses = ["sn.validation_status = $status"]
+    params: dict[str, Any] = {"status": status_value}
+
+    if domain:
+        where_clauses.append("sn.physics_domain = $domain")
+        params["domain"] = domain
+
+    if ids and source_type == "dd":
+        match_clause += "\n            MATCH (src)-[:IN_IDS]->(ids_node:IDS)"
+        where_clauses.append("ids_node.id = $ids")
+        params["ids"] = ids
+
+    query = f"""
+        {match_clause}
+        WHERE {" AND ".join(where_clauses)}
+        RETURN src.id AS source_id,
+               sn.id AS previous_name,
+               sn.description AS previous_description,
+               sn.documentation AS previous_documentation,
+               sn.reviewer_score AS reviewer_score,
+               sn.review_tier AS review_tier,
+               sn.reviewer_comments AS reviewer_comments,
+               sn.reviewer_scores AS reviewer_scores_json,
+               sn.validation_status AS validation_status
+        ORDER BY coalesce(sn.reviewer_score, 1.0) ASC, src.id ASC
+    """
+    if limit is not None and limit > 0:
+        query += "\n        LIMIT $limit"
+        params["limit"] = int(limit)
+
+    with GraphClient() as gc:
+        rows = list(gc.query(query, **params))
+
+    # Collapse duplicates: keep the worst-scoring feedback per source_id.
+    by_source: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for row in rows:
+        sid = row.get("source_id")
+        if not sid:
+            continue
+        scores_json = row.get("reviewer_scores_json")
+        scores: dict[str, Any] | None = None
+        if scores_json:
+            try:
+                scores = json.loads(scores_json)
+            except (TypeError, ValueError):
+                scores = None
+        feedback = {
+            "previous_name": row.get("previous_name"),
+            "previous_description": row.get("previous_description"),
+            "previous_documentation": row.get("previous_documentation"),
+            "reviewer_score": row.get("reviewer_score"),
+            "review_tier": row.get("review_tier"),
+            "reviewer_comments": row.get("reviewer_comments"),
+            "reviewer_scores": scores,
+            "validation_status": row.get("validation_status"),
+        }
+        existing = by_source.get(sid)
+        if existing is None:
+            by_source[sid] = feedback
+            order.append(sid)
+        else:
+            prev = existing.get("reviewer_score")
+            cur = feedback.get("reviewer_score")
+            if prev is None or (cur is not None and cur < prev):
+                by_source[sid] = feedback
+
+    return [
+        {
+            "source_id": sid,
+            "source_type": source_type,
+            "review_feedback": by_source[sid],
+        }
+        for sid in order
+    ]
+
+
 def fetch_review_feedback_for_sources(
     source_ids: list[str] | set[str] | None,
 ) -> dict[str, dict[str, Any]]:
