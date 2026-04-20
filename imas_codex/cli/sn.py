@@ -987,6 +987,62 @@ def sn_status() -> None:
         skip_table.add_row("[bold]Total[/bold]", f"[bold]{skip_total}[/bold]")
         console.print(skip_table)
 
+    # Latest RotationRun (from sn generate --until-complete)
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            rr_rows = list(
+                gc.query(
+                    """
+                MATCH (rr:RotationRun)
+                RETURN rr.id AS id,
+                       rr.started_at AS started_at,
+                       rr.ended_at AS ended_at,
+                       rr.stop_reason AS stop_reason,
+                       rr.passes AS passes,
+                       rr.cost_spent AS cost_spent,
+                       rr.cost_limit AS cost_limit,
+                       rr.names_composed AS names_composed,
+                       rr.names_enriched AS names_enriched,
+                       rr.names_reviewed AS names_reviewed,
+                       rr.names_regenerated AS names_regenerated,
+                       rr.domains_touched AS domains_touched
+                ORDER BY rr.started_at DESC
+                LIMIT 1
+                """
+                )
+            )
+    except Exception as exc:  # pragma: no cover
+        rr_rows = []
+        logger.debug("Could not fetch latest RotationRun: %s", exc)
+
+    if rr_rows:
+        rr = rr_rows[0]
+        console.print()
+        console.print("[bold]Latest Rotation (sn generate --until-complete)[/bold]")
+        rr_table = Table(show_header=True)
+        rr_table.add_column("Field")
+        rr_table.add_column("Value")
+        rr_table.add_row("id", str(rr["id"]))
+        rr_table.add_row("started_at", str(rr["started_at"]))
+        rr_table.add_row("ended_at", str(rr["ended_at"] or "—"))
+        rr_table.add_row("stop_reason", str(rr["stop_reason"] or "—"))
+        rr_table.add_row("passes", str(rr["passes"] or 0))
+        rr_table.add_row(
+            "cost",
+            f"${float(rr['cost_spent'] or 0):.4f} / ${float(rr['cost_limit'] or 0):.2f}",
+        )
+        rr_table.add_row("names_composed", str(rr["names_composed"] or 0))
+        rr_table.add_row("names_enriched", str(rr["names_enriched"] or 0))
+        rr_table.add_row("names_reviewed", str(rr["names_reviewed"] or 0))
+        rr_table.add_row("names_regenerated", str(rr["names_regenerated"] or 0))
+        rr_table.add_row(
+            "domains_touched",
+            ", ".join(rr["domains_touched"] or []) or "—",
+        )
+        console.print(rr_table)
+
 
 @sn.command("gaps")
 @click.option(

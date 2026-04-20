@@ -82,6 +82,70 @@ def _apply_unit_overrides(
     return kept
 
 
+# Path segments indicating "configurable meaning" blocks where the concrete
+# physical quantity depends on runtime identifier selection (e.g., a generic
+# slot inside a /process/ array-of-structures that could hold radiation,
+# transport, or source terms depending on the identifier). These are poor
+# Standard Name candidates because the semantic label is set by sibling
+# identifier.index, not by the DD path itself. Skipped as 'configurable_meaning'.
+_CONFIGURABLE_PATH_SEGMENTS = ("/process/",)
+
+
+def _apply_skip_by_design(
+    results: list[dict],
+    *,
+    source_type: str = "dd",
+    write_skipped: bool = True,
+) -> list[dict]:
+    """Filter out paths that are semantically indeterminate by design.
+
+    Counterpart to :func:`_apply_unit_overrides` but for path-structure
+    based skips (not unit-config based). Writes StandardNameSource rows
+    with ``status='skipped'`` and ``skip_reason='configurable_meaning'``
+    so the audit layer can distinguish "we chose not to name" from
+    "we tried and failed".
+    """
+    kept: list[dict] = []
+    skip_records: list[dict] = []
+
+    for row in results:
+        path = row.get("path") or ""
+        if any(seg in path for seg in _CONFIGURABLE_PATH_SEGMENTS):
+            skip_records.append(
+                {
+                    "source_type": source_type,
+                    "source_id": path,
+                    "skip_reason": "configurable_meaning",
+                    "skip_reason_detail": (
+                        "Path inside a /process/ array-of-structures; "
+                        "concrete quantity is determined by sibling "
+                        "identifier.index at runtime, not by the DD path."
+                    ),
+                    "description": row.get("description") or "",
+                }
+            )
+            continue
+        kept.append(row)
+
+    if write_skipped and skip_records:
+        try:
+            from imas_codex.standard_names.graph_ops import write_skipped_sources
+
+            written = write_skipped_sources(skip_records)
+            logger.info(
+                "Recorded %d skip-by-design DD sources (configurable_meaning)",
+                written,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "Failed to write skip-by-design DD sources to graph: %s (%d records)",
+                exc,
+                len(skip_records),
+            )
+
+    return kept
+
+
 # Enriched extraction query — single Cypher surfacing all context.
 # LIMIT is applied on DISTINCT (n, ids) pairs first, then clusters/coords
 # are joined.  This guarantees $limit unique paths regardless of how many
@@ -255,6 +319,14 @@ def extract_dd_candidates(
         results = _apply_unit_overrides(results, source_type="dd")
         if not results:
             logger.info("No DD paths remain after unit override filtering")
+            return []
+
+        # Skip paths that are semantically indeterminate by design
+        # (e.g., /process/ slots where the concrete quantity is selected
+        # at runtime by a sibling identifier.index).
+        results = _apply_skip_by_design(results, source_type="dd")
+        if not results:
+            logger.info("No DD paths remain after skip-by-design filtering")
             return []
 
         # Collect cluster IDs for sibling lookup
@@ -447,6 +519,11 @@ def extract_specific_paths(
     results = _apply_unit_overrides(results, source_type="dd")
     if not results:
         logger.info("No targeted DD paths remain after unit override filtering")
+        return []
+
+    results = _apply_skip_by_design(results, source_type="dd")
+    if not results:
+        logger.info("No targeted DD paths remain after skip-by-design filtering")
         return []
 
     # Deduplicate rows (multi-cluster → multiple rows per path)
