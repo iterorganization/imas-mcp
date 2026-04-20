@@ -264,9 +264,36 @@ Phases 1 & 4 are parallelizable. Phase 2 depends on Phase 1 only for
 confidence that the eval set is drawn from genuinely eligible paths;
 run concurrent if time-boxed. Phase 3 depends on Phase 2 result.
 
-## Outcome (TBD — filled after implementation)
+## Outcome
 
-- Phase 1: _pending_
-- Phase 2: _pending_
-- Phase 3: _pending_
-- Phase 4: _pending_
+- **Phase 1 — node_category audit:** scaffolded. Read-only stratified-
+  sampling script landed at `scripts/one_offs/sample_node_category_audit.py`
+  (10 IDSs × 5 categories × 10 samples → JSON). Report template at
+  `plans/research/standard-names/node-category-audit.md` pending the
+  empirical review pass; the recommendation for changes to
+  `SN_SOURCE_CATEGORIES` in `imas_codex/core/node_categories.py` will
+  be made once the sampled rows have been reviewed.
+- **Phase 2 — prompt A/B/C bake-off:** scaffolded. Variant-C lean
+  prompt at `imas_codex/llm/prompts/sn/compose_dd_tool_calling.md`;
+  litellm tool schemas + dispatcher in
+  `imas_codex/standard_names/prompt_tools.py` (9 unit tests); 20-path
+  stratified eval set at
+  `tests/standard_names/eval_sets/prompt_ab_v1.json`; harness runner
+  at `scripts/prompt_ab.py` with dry-run plan generation and a runner
+  skeleton. Empirical A/B/C score comparison is a focused follow-up.
+- **Phase 3 — implement winner:** deferred pending Phase 2 empirical
+  results. The production path remains variant A (full-context
+  compose_dd); Phase 3 will be revisited once Phase 2 produces a
+  measured winner.
+- **Phase 4 — DD completion endpoint: shipped.** `sn generate
+  --until-complete` (with `--plateau-passes`, `--cost-limit`,
+  `--dry-run`) orchestrates per-domain rotations with fair-share
+  budgeting, plateau detection, and persisted `RotationRun` audit
+  nodes. `_apply_skip_by_design()` in
+  `imas_codex/standard_names/sources/dd.py` marks `/process/` paths as
+  `configurable_meaning` so they do not re-enter the candidate queue.
+  `sn status` surfaces the latest `RotationRun` alongside skipped
+  counts. 9 new tests in `tests/standard_names/test_dd_completion.py`
+  cover skip-by-design, the `RotationSummary` shape, and the four
+  stop conditions (dry_run / plateau / budget_exhausted / rotation_id
+  propagation). All 202 SN tests pass.

@@ -782,7 +782,7 @@ The LLM never provides the unit field.
 
 | Command | Purpose | Key Options |
 |---------|---------|-------------|
-| `sn generate` | Generate standard names from DD paths or facility signals via LLM pipeline | `--source {dd,signals}`, `--ids`, `--domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--name-only`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--include-review-feedback` |
+| `sn generate` | Generate standard names from DD paths or facility signals via LLM pipeline | `--source {dd,signals}`, `--ids`, `--domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--name-only`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--include-review-feedback`, `--until-complete`, `--plateau-passes` |
 | `sn review` | Score and tier existing valid standard names via batched reviewer LLM (1:1 scoring invariant, retry-unmatched) | `--ids`, `--domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force` |
 | `sn enrich` | Enrich existing standard names with documentation | `--ids`, `--domain`, `--status`, `-c/--cost-limit`, `--dry-run`, `--limit`, `--batch-size` |
 | `sn publish` | Export validated StandardName nodes to YAML catalog files | `--output-dir`, `--ids`, `--domain`, `--group-by {ids,domain,confidence}`, `--confidence-min`, `--catalog-dir`, `--create-pr` |
@@ -902,6 +902,14 @@ names produced by a specific model after benchmarking reveals a better alternati
 **`sn generate --name-only`** — Name-only composition mode. The compose prompt focuses exclusively
 on naming and grammar — no documentation, description, or enrichment fields are generated. Faster
 and cheaper for bulk naming passes where enrichment will be added later via `sn enrich`.
+
+**`sn generate --until-complete`** — DD-completion rotator. Iterates over physics domains that
+still have extract-eligible paths, running a per-domain `run_rotation` (generate→enrich→review→
+regen) with fair-share cost budgeting across remaining domains. Stops when every domain reports
+zero new names for `--plateau-passes` consecutive passes (default 2), when `--cost-limit` is
+exhausted, or on `Ctrl-C`. Writes a `RotationRun` audit node capturing cost, phase counters,
+domains touched, and `stop_reason`; `sn status` surfaces the most recent run. Mutually exclusive
+with `--physics-domain` / `--paths` / `--source signals` — DD completion is whole-DD only.
 
 ### Write Semantics
 
