@@ -36,7 +36,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from imas_codex.discovery.base.llm import call_llm_structured
+from imas_codex.discovery.base.llm import call_llm_structured, inject_cache_control
 from imas_codex.graph.client import GraphClient
 from imas_codex.settings import get_sn_benchmark_reviewer_model
 
@@ -281,11 +281,25 @@ def main() -> int:
     )
     ap.add_argument("--cost-cap", type=float, default=3.0)
     ap.add_argument("--model", type=str, default=None)
+    ap.add_argument(
+        "--variants",
+        type=str,
+        default="A,B,C",
+        help="Comma-separated subset of variants to run (e.g. 'A,C'). Default: A,B,C",
+    )
+    ap.add_argument(
+        "--output-suffix",
+        type=str,
+        default="v1",
+        help="Suffix for output filenames (e.g. 'v1', 'retest-cache'). Default: v1",
+    )
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     model = args.model or get_sn_benchmark_reviewer_model()
     args.output.mkdir(parents=True, exist_ok=True)
+    variants_to_run = [v.strip().upper() for v in args.variants.split(",")]
+    suffix = args.output_suffix
 
     # 1. Load + enrich
     eval_data = json.loads(args.eval_set.read_text())
@@ -298,32 +312,48 @@ def main() -> int:
 
     # 2. Compose per variant
     for variant in ["A", "B", "C"]:
+        if variant not in variants_to_run:
+            logger.info("Skipping variant %s (not in --variants)", variant)
+            continue
         if total_cost >= args.cost_cap:
             logger.warning(
                 "Cost cap %.2f hit; skipping variant %s", args.cost_cap, variant
             )
             continue
         user = USER_BUILDERS[variant](items)
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user},
+        ]
+        # Explicitly inject cache_control so the openrouter/ path preserves
+        # the breakpoint header; call_llm_structured will also do this internally,
+        # but explicit injection here ensures the harness matches production behaviour.
+        messages = inject_cache_control(messages)
         t0 = time.time()
-        parsed, cost, tokens = call_llm_structured(
+        llm_result = call_llm_structured(
             model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user},
-            ],
+            messages=messages,
             response_model=ComposeBatch,
             service="standard-names",
             max_tokens=4000,
             temperature=0.0,
         )
+        parsed = llm_result.parsed
+        cost = llm_result.cost
+        tokens = llm_result.tokens
+        cache_read = llm_result.cache_read_tokens
+        cache_creation = llm_result.cache_creation_tokens
         latency = time.time() - t0
         total_cost += cost
         logger.info(
-            "variant=%s compose  cost=$%.4f tokens=%d latency=%.1fs  total=$%.4f",
+            "variant=%s compose  cost=$%.4f tokens=%d latency=%.1fs "
+            "cache_read=%d cache_creation=%d  total=$%.4f",
             variant,
             cost,
             tokens,
             latency,
+            cache_read,
+            cache_creation,
             total_cost,
         )
         results[variant] = {
@@ -331,6 +361,8 @@ def main() -> int:
             "compose_cost": cost,
             "compose_tokens": tokens,
             "compose_latency": latency,
+            "compose_cache_read": cache_read,
+            "compose_cache_creation": cache_creation,
         }
 
     # 3. Review per variant
@@ -339,37 +371,50 @@ def main() -> int:
             logger.warning("Cost cap hit; skipping review for %s", variant)
             res["scores"] = []
             res["review_cost"] = 0.0
+            res["review_cache_read"] = 0
+            res["review_cache_creation"] = 0
             continue
         r_user = review_user(items, res["candidates"])
+        review_messages = [
+            {"role": "system", "content": REVIEW_SYSTEM},
+            {"role": "user", "content": r_user},
+        ]
+        review_messages = inject_cache_control(review_messages)
         t0 = time.time()
-        parsed, cost, _ = call_llm_structured(
+        llm_result = call_llm_structured(
             model=model,
-            messages=[
-                {"role": "system", "content": REVIEW_SYSTEM},
-                {"role": "user", "content": r_user},
-            ],
+            messages=review_messages,
             response_model=ReviewBatch,
             service="standard-names",
             max_tokens=4000,
             temperature=0.0,
         )
+        parsed = llm_result.parsed
+        cost = llm_result.cost
+        cache_read = llm_result.cache_read_tokens
+        cache_creation = llm_result.cache_creation_tokens
         total_cost += cost
         latency = time.time() - t0
         logger.info(
-            "variant=%s review   cost=$%.4f latency=%.1fs  total=$%.4f",
+            "variant=%s review   cost=$%.4f latency=%.1fs "
+            "cache_read=%d cache_creation=%d  total=$%.4f",
             variant,
             cost,
             latency,
+            cache_read,
+            cache_creation,
             total_cost,
         )
         res["scores"] = parsed.scores
         res["review_cost"] = cost
+        res["review_cache_read"] = cache_read
+        res["review_cache_creation"] = cache_creation
 
     # 4. Emit JSONL + CSV
     csv_rows: list[dict] = []
     for variant, res in results.items():
         by_path = {s.path: s for s in res.get("scores", [])}
-        out_jsonl = args.output / f"prompt-ab-v1.{variant}.jsonl"
+        out_jsonl = args.output / f"prompt-ab-{suffix}.{variant}.jsonl"
         with out_jsonl.open("w") as f:
             for c in res["candidates"]:
                 s = by_path.get(c.path)
@@ -385,7 +430,7 @@ def main() -> int:
                 f.write(json.dumps(row) + "\n")
                 csv_rows.append(row)
 
-    csv_path = args.output / "prompt-ab-v1.csv"
+    csv_path = args.output / f"prompt-ab-{suffix}.csv"
     with csv_path.open("w", newline="") as f:
         fieldnames = [
             "variant",
@@ -404,11 +449,21 @@ def main() -> int:
     summary = {
         "model": model,
         "total_cost_usd": round(total_cost, 4),
+        "variants_run": variants_to_run,
+        "output_suffix": suffix,
         "per_variant": {},
     }
     for variant, res in results.items():
         scores = [s.score for s in res.get("scores", [])]
         verdicts = [s.verdict for s in res.get("scores", [])]
+        compose_cache_read = res.get("compose_cache_read", 0)
+        compose_cache_creation = res.get("compose_cache_creation", 0)
+        compose_tokens = res["compose_tokens"]
+        cache_hit_rate = (
+            round(compose_cache_read / compose_tokens, 3)
+            if compose_tokens > 0
+            else None
+        )
         summary["per_variant"][variant] = {
             "mean_score": round(sum(scores) / len(scores), 3) if scores else None,
             "pass_at_1": round(
@@ -417,12 +472,17 @@ def main() -> int:
             if verdicts
             else None,
             "compose_cost": round(res["compose_cost"], 4),
-            "compose_tokens": res["compose_tokens"],
+            "compose_tokens": compose_tokens,
             "compose_latency_s": round(res["compose_latency"], 2),
+            "compose_cache_read_tokens": compose_cache_read,
+            "compose_cache_creation_tokens": compose_cache_creation,
+            "compose_cache_hit_rate": cache_hit_rate,
             "review_cost": round(res.get("review_cost", 0.0), 4),
+            "review_cache_read_tokens": res.get("review_cache_read", 0),
+            "review_cache_creation_tokens": res.get("review_cache_creation", 0),
             "n_candidates": len(res["candidates"]),
         }
-    summary_path = args.output / "prompt-ab-v1.summary.json"
+    summary_path = args.output / f"prompt-ab-{suffix}.summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
     logger.info("Summary: %s", json.dumps(summary["per_variant"], indent=2))
     logger.info("Total cost: $%.4f", total_cost)

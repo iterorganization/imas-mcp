@@ -1,0 +1,39 @@
+{
+  "model": "anthropic/claude-opus-4.6",
+  "total_cost_usd": 0.1637,
+  "variants_run": [
+    "A",
+    "C"
+  ],
+  "output_suffix": "retest-cache",
+  "per_variant": {
+    "A": {
+      "mean_score": 0.77,
+      "pass_at_1": 0.65,
+      "compose_cost": 0.0411,
+      "compose_tokens": 3852,
+      "compose_latency_s": 14.24,
+      "compose_cache_read_tokens": 0,
+      "compose_cache_creation_tokens": 0,
+      "compose_cache_hit_rate": 0.0,
+      "review_cost": 0.0431,
+      "review_cache_read_tokens": 0,
+      "review_cache_creation_tokens": 0,
+      "n_candidates": 20
+    },
+    "C": {
+      "mean_score": 0.755,
+      "pass_at_1": 0.65,
+      "compose_cost": 0.0364,
+      "compose_tokens": 3255,
+      "compose_latency_s": 12.49,
+      "compose_cache_read_tokens": 0,
+      "compose_cache_creation_tokens": 0,
+      "compose_cache_hit_rate": 0.0,
+      "review_cost": 0.0431,
+      "review_cache_read_tokens": 0,
+      "review_cache_creation_tokens": 0,
+      "n_candidates": 20
+    }
+  }
+}

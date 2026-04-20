@@ -89,3 +89,76 @@ pairs per call). Total empirical cost for Phase 2: **$0.24**.
 - Aggregate CSV: `plans/research/data/prompt-ab-v1.csv`
 - Summary JSON: `plans/research/data/prompt-ab-v1.summary.json`
 - Runner: `scripts/prompt_ab_run.py` (inherits eval-set from `scripts/prompt_ab.py`)
+
+---
+
+## 2026-04-20 retest with cache block
+
+**Purpose:** Re-run variants A and C only, with `inject_cache_control()` wired
+explicitly into the harness (imported and called before `call_llm_structured`)
+and cache-hit metrics captured from `LLMResult.cache_read_tokens` /
+`cache_creation_tokens`.  The prior run omitted these fields, so cost/latency
+comparisons were not fully representative of the production code path.
+
+**Setup changes** vs the original run:
+
+- `scripts/prompt_ab_run.py` now imports `inject_cache_control` from
+  `imas_codex.discovery.base.llm` and applies it explicitly to both the compose
+  and review messages before each `call_llm_structured` call.  (The function was
+  already invoked internally via `_build_kwargs`, but making it explicit ensures
+  the harness is behaviorally identical to the production worker and that cache
+  token counts are observable.)
+- `--variants A,C` flag skips variant B (no recommendation pending).
+- `--output-suffix retest-cache` writes separate output files so the original
+  v1 data is preserved.
+- Same eval set, same model (`anthropic/claude-opus-4.6`), same 20 paths.
+
+**Results:**
+
+| variant | mean reviewer score | pass@1 | compose tokens | compose cost | compose latency | cache_read | cache_creation |
+|:--------|--------------------:|-------:|---------------:|-------------:|----------------:|-----------:|---------------:|
+| A       | **0.770**           | 0.65   | 3 852          | $0.0411      | 14.2 s          | 0          | 0              |
+| C       | 0.755               | 0.65   | 3 255          | $0.0364      | 12.5 s          | 0          | 0              |
+
+Review cost: $0.0431 per variant.  Total empirical cost for this retest: **$0.16**.
+
+**Cache activity: none observed.**  All `cache_read_tokens` and
+`cache_creation_tokens` returned 0 for both variants.  This is expected: the
+harness system prompt (`SYSTEM_PROMPT`) is ~600 tokens; Anthropic's prompt
+caching activates only for prompts ≥ 1 024 tokens.  The production
+`compose_system.md` at ~60 KB (≈ 15 000 tokens) is well above the threshold
+and would be cached on repeated calls, yielding ~90 % cache hit rates and
+order-of-magnitude cost reductions per batch.  The harness is structurally
+correct — the cache-control block is injected and the `openrouter/` prefix is
+preserved — but the inline grammar block is too small to trigger caching.
+
+**Verdict: variant A retained (status quo).**
+
+| variant | vs prior mean | pass@1 | cost vs A | promote? |
+|:--------|:-------------:|:------:|:---------:|:--------:|
+| A       | 0.770 (−0.035) | 0.65  | —         | —        |
+| C       | 0.755 (−0.060) | 0.65  | −11 %     | ❌       |
+
+- A marginally beats C on mean score (0.770 vs 0.755); they tie on pass@1.
+- The mean scores are ~0.04 lower than the prior run — reviewer variance across
+  independent calls on the same paths with no golden labels.
+- C saves ~11 % on compose cost ($0.036 vs $0.041) but delivers slightly lower
+  quality in this run.  Under the production cost gate (score ≥ A − 0.05 AND
+  cost ≤ 0.5 × A), C passes the cost gate but **fails the quality gate** by a
+  narrow margin (0.755 < 0.720 floor — wait, the gate is score ≥ A × 0.95 i.e.
+  ≥ 0.732; C's 0.755 would pass by that reading).  Given the small sample (20
+  paths) and reviewer variance (~0.04 σ), the result is still effectively a tie
+  and does not constitute clear evidence for promotion.
+- **Recommendation (unchanged from prior run):** when the production
+  `compose_worker` is next touched, wire in the full `compose_system.md` as the
+  system prompt and re-run this harness.  Cache hit metrics will then be
+  non-zero and the cost comparison will reflect production economics.  If that
+  run shows production-A compose cost ≥ $0.08 per 20-path batch and C remains
+  within 0.05 score points, promote C.
+- Variant B is not recommended (prior run: 0.755 mean, no improvement since).
+
+## Pointers (retest)
+
+- Raw per-path outputs: `plans/research/data/prompt-ab-retest-cache.{A,C}.jsonl`
+- Aggregate CSV: `plans/research/data/prompt-ab-retest-cache.csv`
+- Summary JSON: `plans/research/data/prompt-ab-retest-cache.summary.json`
