@@ -189,3 +189,79 @@ class TestApplyUnitOverridesErrorHandling:
             "Failed to write skipped DD sources" in rec.message
             for rec in caplog.records
         )
+
+
+class TestUnparseableUnitCatchAll:
+    """Catch-all validation: DD-corrupted units are skipped upstream."""
+
+    def test_as_parent_level_2_skipped(self) -> None:
+        """``as_parent_level_2`` is not a valid SI unit → skip."""
+        rows = [
+            {
+                "path": "some/ggd/path/measure",
+                "unit": "as_parent_level_2",
+                "description": "inherited measure",
+            }
+        ]
+        kept = _apply_unit_overrides(rows, write_skipped=False)
+        assert kept == []
+
+    def test_m_dimension_skipped_via_rule(self) -> None:
+        """``m^dimension`` is caught by the explicit override rule, not the
+        catch-all. Verify it still works end-to-end."""
+        rows = [
+            {
+                "path": "equilibrium/time_slice/ggd/grid/space/"
+                "objects_per_dimension/object/measure",
+                "unit": "m^dimension",
+                "description": "",
+            }
+        ]
+        kept = _apply_unit_overrides(rows, write_skipped=False)
+        assert kept == []
+
+    def test_whitespace_unit_skipped(self) -> None:
+        """A unit string with whitespace (e.g. ``'kg m'``) → skip."""
+        rows = [
+            {
+                "path": "some/path/with/bad/unit",
+                "unit": "kg m",
+                "description": "",
+            }
+        ]
+        kept = _apply_unit_overrides(rows, write_skipped=False)
+        assert kept == []
+
+    def test_valid_unit_passes_through(self) -> None:
+        """``m^-3`` is a valid SI unit → kept."""
+        rows = [
+            {
+                "path": "core_profiles/profiles_1d/electrons/density",
+                "unit": "m^-3",
+                "description": "electron density",
+            }
+        ]
+        kept = _apply_unit_overrides(rows, write_skipped=False)
+        assert len(kept) == 1
+        assert kept[0]["unit"] == "m^-3"
+
+    def test_skip_reason_is_dd_unit_unresolvable(self) -> None:
+        """The skip record must carry ``skip_reason='dd_unit_unresolvable'``."""
+        rows = [
+            {
+                "path": "some/path",
+                "unit": "as_parent_level_2",
+                "description": "",
+            }
+        ]
+        with patch(
+            "imas_codex.standard_names.graph_ops.write_skipped_sources"
+        ) as mock_write:
+            mock_write.return_value = 1
+            _apply_unit_overrides(rows, write_skipped=True)
+
+        mock_write.assert_called_once()
+        records = mock_write.call_args[0][0]
+        assert len(records) == 1
+        assert records[0]["skip_reason"] == "dd_unit_unresolvable"
+        assert "as_parent_level_2" in records[0]["skip_reason_detail"]

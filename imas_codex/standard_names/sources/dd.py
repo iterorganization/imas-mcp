@@ -9,6 +9,7 @@ primary cluster selection, and global (cluster × unit) batching.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 
 from imas_codex.core.node_categories import SN_SOURCE_CATEGORIES
@@ -16,6 +17,37 @@ from imas_codex.standard_names.sources.base import ExtractionBatch
 from imas_codex.standard_names.unit_overrides import resolve_unit
 
 logger = logging.getLogger(__name__)
+
+
+def _is_unparseable_dd_unit(unit: str) -> bool:
+    """Return True if *unit* is a DD-corrupted string that cannot be parsed.
+
+    Catches three failure modes that escape the explicit rule-based override
+    engine in ``unit_overrides.yaml``:
+
+    1. Unit strings containing whitespace (e.g. ``"kg m"``).
+    2. Unit strings with non-numeric exponents (e.g. ``"m^dimension"``).
+    3. Unit tokens not in the SI/pint grammar (e.g. ``"as_parent_level_2"``).
+
+    Uses :func:`imas_codex.units.normalize_unit_symbol` — the same pint-based
+    parser backing the rest of the pipeline — so no logic is re-implemented.
+    """
+    if not unit or not unit.strip():
+        return True
+    unit = unit.strip()
+    # Dimensionless sentinels are valid
+    if unit in ("1", "dimensionless", "-", "mixed", "none"):
+        return False
+    # C1: whitespace in unit string
+    if re.search(r"\s", unit):
+        return True
+    # C2: non-numeric exponents (e.g. m^dimension)
+    if re.search(r"\^[a-zA-Z]", unit):
+        return True
+    # C3: attempt pint parse — catches everything else
+    from imas_codex.units import normalize_unit_symbol
+
+    return normalize_unit_symbol(unit) is None
 
 
 def _apply_unit_overrides(
@@ -31,6 +63,11 @@ def _apply_unit_overrides(
       records provenance on ``row['_unit_override']``.
     - Skip match: removes the row from the returned list and queues a
       ``StandardNameSource`` skip record.
+
+    After rule-based resolution, a catch-all check validates the effective
+    unit via :func:`_is_unparseable_dd_unit`. Units that fail are skipped
+    with ``skip_reason='dd_unit_unresolvable'`` — preventing downstream
+    Pydantic validation errors from quarantining the resulting StandardName.
 
     When ``write_skipped`` is True and there is at least one skipped row,
     the skip records are persisted via ``graph_ops.write_skipped_sources``.
@@ -60,6 +97,29 @@ def _apply_unit_overrides(
         if meta and meta.get("rule") == "override":
             row["unit"] = effective_unit
             row["_unit_override"] = meta
+
+        # Catch-all: if the (possibly overridden) unit is still unparseable,
+        # skip it upstream so it never reaches LLM composition or Pydantic
+        # validation.  This guards against DD-corrupted unit strings like
+        # 'as_parent_level_2', whitespace-containing units, and non-numeric
+        # exponents that are not covered by explicit rules.
+        final_unit = (
+            row.get("unit") if meta and meta.get("rule") == "override" else unit
+        )
+        if final_unit and _is_unparseable_dd_unit(final_unit):
+            skip_records.append(
+                {
+                    "source_type": source_type,
+                    "source_id": path,
+                    "skip_reason": "dd_unit_unresolvable",
+                    "skip_reason_detail": (
+                        f"Unit '{final_unit}' is not a valid SI expression "
+                        f"(failed pint/pre-check parse)"
+                    ),
+                    "description": row.get("description") or "",
+                }
+            )
+            continue
 
         kept.append(row)
 
