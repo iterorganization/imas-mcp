@@ -18,27 +18,17 @@
 Refactored after rubber-duck review, docs audit, and live MCP tool testing (2026-04-14).
 Plans validated against 62 existing standard names, current scoring architecture, and docs/ state.
 
-| Priority | Plan | Scope | Est. Agents |
-|----------|------|-------|-------------|
-| ~~**P1**~~ | [features/sn-bootstrap-loop.md](features/sn-bootstrap-loop.md) | ✅ Phase 1 (review CLI) complete, ✅ Phase 2 (bootstrap loop) complete, ⏳ Phase 3 blocked (needs ≥500 reviewed names) | 1 agent |
-| **P1.5** | [features/dd-rebuild.md](features/dd-rebuild.md) | Full DD rebuild: geometry classification, two-pass sonnet enrichment, `refined` status, refine_worker with sibling barrier, Bug 1-3 fixes, MCP tool augmentation (~$100). **Prerequisite for P1.6.** | 2-3 agents |
-| **P1.6** | [features/standard-names/28-sn-greenfield-pipeline.md](features/standard-names/28-sn-greenfield-pipeline.md) | Greenfield SN pipeline: NAME→ENRICH split, PRELINK/POSTLINK context retrieval, vector hierarchy (GROUP), documentation inheritance. Clears all existing SNs. | 2-3 agents |
+| Priority | Plan | Scope | Status |
+|----------|------|-------|--------|
+| **P1** | [features/standard-names/29-architectural-pivot.md](features/standard-names/29-architectural-pivot.md) | Authoritative SN roadmap: generate/enrich split, ISN grammar upgrade, schema evolution. Supersedes plan 28. | Living — most structural items shipped |
+| **P1a** | [features/standard-names/31-quality-bootstrap-v2.md](features/standard-names/31-quality-bootstrap-v2.md) | 7-workstream bootstrap loop driving rc14/rc15; quarantine-rate + description-coverage + reviewer-score targets. | Active rotation |
+| **P1b** | [features/standard-names/32-extraction-prompt-overhaul.md](features/standard-names/32-extraction-prompt-overhaul.md) | Extraction filter audit + compose-prompt A/B bake-off. | Phase 2 done (see `research/standard-names/prompt-ab-results.md`); Phase 4 deferred |
+| **P1c** | [research/standard-names/33-state-of-the-nation-2026-04-20.md](research/standard-names/33-state-of-the-nation-2026-04-20.md) | **Next-cycle direction:** grammar persistence, cross-family review, benchmark-set v1, ISN rc16 packaging. | New |
 | **P2** | [features/dd-server-cleanup.md](features/dd-server-cleanup.md) | 3 surgical fixes: truncation count, migration API, fuzzy matcher | 1-3 agents |
 | **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Careful ranking fixes (accessor de-ranking, IDS preference), evaluation alignment | 2 agents |
 | **P4** | [features/docs-refresh.md](features/docs-refresh.md) | Fix 7 stale docs, rewrite docs/README.md (17+ missing entries) | 1 agent |
-| **P5** | ~~features/sn-extraction-coverage-gaps.md~~ | ✅ **Completed** — StandardNameSource graph-primary architecture, naming standardization, extraction coverage gap fixes | — |
-| **P6** | ~~[features/standard-names/30-dd-semantic-categories.md](features/standard-names/30-dd-semantic-categories.md)~~ | ✅ **Completed** — `fit_artifact` & `representation` NodeCategory enums, DD classifier rules (F1/F2/R1/R2/R4), SN classifier simplified to S0+S1+S2, graph migration (269 fit_artifact, 2209 representation) | 1 agent |
-
-### Wave Implementation Order
-
-```
-Wave 1: sn-bootstrap-loop Phase 1 (review CLI)  ✅ complete
-Wave 2: dd-rebuild (classification + two-pass enrichment + model upgrade + full rebuild ~$100)
-Wave 3: sn-greenfield-pipeline (clear all SNs, run new multi-pass pipeline)
-Wave 4: dd-server-cleanup (all 3 fixes, parallel)
-Wave 5: search-quality-improvements (Phases 1-2)
-Wave 6: docs-refresh (fix stale docs after code changes land)
-```
+| ~~P5~~ | ~~features/sn-extraction-coverage-gaps.md~~ | ✅ Completed — StandardNameSource graph-primary architecture, naming standardization, extraction coverage gap fixes | — |
+| ~~P6~~ | ~~features/standard-names/30-dd-semantic-categories.md~~ | ✅ Completed — `fit_artifact` & `representation` NodeCategory enums, DD classifier rules (F1/F2/R1/R2/R4), SN classifier simplified to S0+S1+S2, graph migration (269 fit_artifact, 2209 representation) | — |
 
 ### Explicitly Removed / Deferred
 
