@@ -32,6 +32,66 @@ def sn() -> None:
     pass
 
 
+def _run_until_complete(
+    *,
+    cost_limit: float,
+    plateau_passes: int,
+    per_domain_limit: int | None,
+    dry_run: bool,
+    quiet: bool,
+) -> None:
+    """Execute ``sn generate --until-complete`` and render the summary."""
+    import asyncio
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from imas_codex.standard_names.dd_completion import (
+        run_dd_completion,
+        summary_table,
+    )
+
+    console = Console(quiet=quiet)
+
+    if not quiet:
+        console.print(
+            f"[bold]DD completion loop[/bold] "
+            f"(budget=${cost_limit:.2f}, plateau_passes={plateau_passes}"
+            f"{', dry-run' if dry_run else ''})"
+        )
+
+    summary = asyncio.run(
+        run_dd_completion(
+            cost_limit=cost_limit,
+            plateau_passes=plateau_passes,
+            per_domain_limit=per_domain_limit,
+            dry_run=dry_run,
+        )
+    )
+    row = summary_table(summary)
+
+    if quiet:
+        return
+
+    table = Table(title=f"Rotation {row['rotation_id'][:8]}…")
+    table.add_column("field", style="cyan")
+    table.add_column("value", style="white")
+    for key in (
+        "passes",
+        "stop_reason",
+        "cost_spent",
+        "cost_limit",
+        "names_composed",
+        "names_enriched",
+        "names_reviewed",
+        "names_regenerated",
+        "elapsed_s",
+    ):
+        table.add_row(key, str(row[key]))
+    table.add_row("domains_touched", ", ".join(row["domains_touched"]) or "—")
+    console.print(table)
+
+
 @sn.command("generate")
 @click.option(
     "--source",
@@ -230,6 +290,28 @@ def sn() -> None:
         "(50). Only meaningful when --name-only is set."
     ),
 )
+@click.option(
+    "--until-complete",
+    is_flag=True,
+    default=False,
+    help=(
+        "Loop extract → enrich → review → regen across every eligible "
+        "physics_domain until the budget is exhausted or consecutive "
+        "passes produce no net change (plateau). Writes a RotationRun "
+        "audit node. Mutually exclusive with --physics-domain; the "
+        "rotator picks domains automatically from live graph state."
+    ),
+)
+@click.option(
+    "--plateau-passes",
+    type=int,
+    default=1,
+    show_default=True,
+    help=(
+        "Consecutive zero-change passes before --until-complete exits. "
+        "Set higher than 1 to tolerate transient extraction stalls."
+    ),
+)
 def sn_generate(
     source: str,
     domain_filter: str | None,
@@ -256,6 +338,8 @@ def sn_generate(
     include_review_feedback: bool,
     name_only: bool,
     name_only_batch_size: int | None,
+    until_complete: bool,
+    plateau_passes: int,
 ) -> None:
     """Generate standard names from a source.
 
@@ -268,7 +352,36 @@ def sn_generate(
       imas-codex sn generate --paths "equilibrium/time_slice/profiles_1d/psi equilibrium/time_slice/profiles_1d/q"
       imas-codex sn generate --reset-to drafted --reset-only
       imas-codex sn generate --reset-to drafted --below-score 0.6 --reset-only
+      imas-codex sn generate --until-complete -c 50
     """
+    # --until-complete short-circuits the normal single-pass flow. It selects
+    # physics domains automatically, runs the full extract→enrich→review→regen
+    # rotation per domain, and persists a RotationRun audit node. --domain is
+    # incompatible because the rotator picks domains itself.
+    if until_complete:
+        if domain_filter:
+            raise click.UsageError(
+                "--until-complete is mutually exclusive with --physics-domain / --domain. "
+                "The rotator selects domains automatically from live graph state."
+            )
+        if source != "dd":
+            raise click.UsageError(
+                "--until-complete only supports --source dd (the DD naming exercise). "
+                "Use plain sn generate for signals-source extraction."
+            )
+        if paths_list:
+            raise click.UsageError(
+                "--until-complete cannot be combined with --paths (targeted regeneration)."
+            )
+        _run_until_complete(
+            cost_limit=cost_limit,
+            plateau_passes=plateau_passes,
+            per_domain_limit=limit,
+            dry_run=dry_run,
+            quiet=quiet,
+        )
+        return
+
     # --ids has been removed from this command; scope narrowing is domain-based
     # so it works uniformly across DD and facility-signals sources.
     ids_filter: str | None = None
