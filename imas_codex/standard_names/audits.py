@@ -686,7 +686,9 @@ def unit_dimension_check(candidate: dict[str, Any]) -> list[str]:
     return issues
 
 
-def name_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
+def name_unit_consistency_check(
+    candidate: dict[str, Any], source_path: str | None = None
+) -> list[str]:
     """Check that head-noun tokens in the *name* match the declared unit.
 
     Operates on the name alone (compose is always name-only per ADR-1).
@@ -698,6 +700,15 @@ def name_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
     also accepting units that *contain* an expected unit as a component. The
     failure is raised only when the name asserts a head dimension but the
     declared unit contains no compatible component.
+
+    Normalized (gyrokinetic) quantities are exempt: when the DD source path
+    contains ``_norm_`` or the name starts with / contains ``normalized``
+    (or ``normalised``), a dimensionless unit is physically correct — the
+    normalization divides out physical units.
+
+    Args:
+        candidate: Standard name candidate dict.
+        source_path: Original DD path (used to detect ``_norm_`` segments).
     """
     issues: list[str] = []
     name = (candidate.get("id") or candidate.get("standard_name") or "").lower()
@@ -708,6 +719,22 @@ def name_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
         dimensionless = True
     else:
         dimensionless = False
+
+    # Bypass for normalized/gyrokinetic quantities: a dimensionless unit is
+    # physically correct when the quantity has been normalized. Check the DD
+    # source path first (authoritative), then fall back to name tokens.
+    if dimensionless:
+        # DD path contains _norm_ (e.g. moments_norm_gyrocenter/pressure)
+        if source_path and "_norm_" in source_path.lower():
+            return issues
+        # Name starts with or contains normalization marker
+        if (
+            name.startswith("normalized_")
+            or name.startswith("normalised_")
+            or "_normalized_" in name
+            or "_normalised_" in name
+        ):
+            return issues
 
     name_tokens = set(re.findall(r"[a-z]+", name))
 
@@ -2212,7 +2239,7 @@ def run_audits(
     all_issues.extend(provenance_verb_check(candidate, source_path))
     all_issues.extend(synonym_check(candidate, existing_sns_in_domain or []))
     all_issues.extend(unit_dimension_check(candidate))
-    all_issues.extend(name_unit_consistency_check(candidate))
+    all_issues.extend(name_unit_consistency_check(candidate, source_path))
     all_issues.extend(multi_subject_check(candidate))
     all_issues.extend(cocos_specificity_check(candidate, source_cocos_type))
     all_issues.extend(representation_artifact_check(candidate, source_path))

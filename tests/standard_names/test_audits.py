@@ -1743,3 +1743,83 @@ class TestProcessQualifierCheck:
         )
         assert len(issues) == 1
         assert "process_qualifier_check" in issues[0]
+
+
+class TestNormalizedQuantityBypass:
+    """Normalized/gyrokinetic quantities must pass unit-dimensionality audit."""
+
+    def test_pass_normalized_pressure_moment_dimensionless(self):
+        """Name starting with ``normalized_`` + dimensionless unit → pass."""
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        assert (
+            name_unit_consistency_check(
+                {
+                    "id": "normalized_pressure_moment",
+                    "unit": "1",
+                    "description": "Normalized pressure moment",
+                }
+            )
+            == []
+        )
+
+    def test_fail_bare_pressure_dimensionless(self):
+        """``pressure`` without normalization marker + dimensionless → fail."""
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        issues = name_unit_consistency_check(
+            {
+                "id": "pressure",
+                "unit": "1",
+                "description": "Pressure in dimensionless units",
+            }
+        )
+        assert issues
+        assert "name_unit_consistency_check" in issues[0]
+
+    def test_pass_normalized_electron_temperature_pedestal(self):
+        """Normalized temperature with dimensionless unit → pass."""
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        assert (
+            name_unit_consistency_check(
+                {
+                    "id": "normalized_electron_temperature_pedestal",
+                    "unit": "1",
+                    "description": "Normalized electron temperature at the pedestal",
+                }
+            )
+            == []
+        )
+
+    def test_pass_norm_path_even_without_name_marker(self):
+        """DD path with ``_norm_`` segment → pass even if name lacks normalized."""
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        assert (
+            name_unit_consistency_check(
+                {
+                    "id": "gyrocenter_pressure_moment",
+                    "unit": "1",
+                    "description": "Gyrocenter pressure moment (normalized)",
+                },
+                source_path="gyrokinetics_local/linear/wavevector/eigenmode/"
+                "moments_norm_gyrocenter/pressure",
+            )
+            == []
+        )
+
+    def test_pass_normalised_british_spelling(self):
+        """British spelling ``normalised_`` prefix → pass."""
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        assert (
+            name_unit_consistency_check(
+                {
+                    "id": "normalised_energy",
+                    "unit": "1",
+                    "description": "Normalised energy",
+                }
+            )
+            == []
+        )
