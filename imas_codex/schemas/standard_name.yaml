@@ -23,7 +23,7 @@ description: >-
   shared vocabulary of physics concepts.
 
 license: MIT
-version: 0.8.0
+version: 0.9.0
 
 prefixes:
   linkml: https://w3id.org/linkml/
@@ -482,6 +482,19 @@ classes:
         description: >-
           Batch identifier grouping names enriched in the same run.
           Format: "enrich-{timestamp}" or user-supplied tag.
+      # --- Rotation provenance ---
+      last_rotation_id:
+        description: >-
+          UUID of the ``sn rotate`` invocation that last produced or
+          regenerated this name. Allows downstream review runs to
+          identify which rotation cycle created a name. Set on
+          generate and regen phases only.
+      last_rotation_at:
+        description: >-
+          ISO 8601 timestamp of the ``sn rotate`` invocation that last
+          produced or regenerated this name. Paired with
+          ``last_rotation_id`` for temporal queries.
+        range: datetime
       # --- REFERENCES relationship (enrich link graph) ---
       references:
         description: >-

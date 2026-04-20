@@ -2231,3 +2231,171 @@ def sn_enrich(
             log_print("  (dry run — no LLM calls or graph writes)")
     elif not quiet:
         log_print("[yellow]No enrichment results returned[/yellow]")
+
+
+@sn.command("rotate")
+@click.option(
+    "--domain",
+    required=True,
+    help="Physics domain scope (applied to all 4 phases)",
+)
+@click.option(
+    "-c",
+    "--cost-limit",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="TOTAL budget in USD, split across phases (40/20/20/20 default)",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Max paths per generate phase",
+)
+@click.option("--dry-run", is_flag=True, help="Plan only — no LLM calls")
+@click.option(
+    "--fail-fast",
+    is_flag=True,
+    help="Abort rotation on first phase error",
+)
+@click.option("--skip-generate", is_flag=True, help="Skip initial generate phase")
+@click.option("--skip-enrich", is_flag=True, help="Skip enrich phase")
+@click.option("--skip-review", is_flag=True, help="Skip review phase")
+@click.option("--skip-regen", is_flag=True, help="Skip regen phase")
+@click.option(
+    "--concurrency",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Parallel workers per phase",
+)
+def sn_rotate(
+    domain: str,
+    cost_limit: float,
+    limit: int | None,
+    dry_run: bool,
+    fail_fast: bool,
+    skip_generate: bool,
+    skip_enrich: bool,
+    skip_review: bool,
+    skip_regen: bool,
+    concurrency: int,
+) -> None:
+    """Run one full quality-improvement rotation cycle.
+
+    \b
+    Chains four phases in sequence:
+      1. generate  — extract + compose missing names
+      2. enrich    — populate documentation for valid names
+      3. review    — score valid names; demote poor/adequate to needs_revision
+      4. regen     — regenerate needs_revision names with reviewer feedback
+
+    \b
+    Budget is split 40/20/20/20 across (generate/enrich/review/regen).
+
+    \b
+    Examples:
+      imas-codex sn rotate --domain equilibrium --dry-run
+      imas-codex sn rotate --domain magnetics -c 10.0
+      imas-codex sn rotate --domain transport --skip-review --skip-regen
+      imas-codex sn rotate --domain equilibrium --fail-fast -c 3.0
+    """
+    import asyncio
+    import sys
+
+    from rich.table import Table
+
+    from imas_codex.standard_names.rotation import (
+        RotationConfig,
+        rotation_summary,
+        run_rotation,
+    )
+
+    cfg = RotationConfig(
+        domain=domain,
+        cost_limit=cost_limit,
+        limit=limit,
+        concurrency=concurrency,
+        dry_run=dry_run,
+        fail_fast=fail_fast,
+        skip_generate=skip_generate,
+        skip_enrich=skip_enrich,
+        skip_review=skip_review,
+        skip_regen=skip_regen,
+    )
+
+    # --- Header ---
+    console.print(
+        f"\n[bold]═══ SN Rotation [dim]{cfg.rotation_id[:8]}…[/dim] ═══[/bold]"
+    )
+    console.print(f"  Domain:     {domain}")
+    console.print(f"  Budget:     ${cost_limit:.2f}")
+    console.print(f"  Split:      {'/'.join(f'{s:.0%}' for s in cfg.split)}")
+    if limit:
+        console.print(f"  Limit:      {limit}")
+    if dry_run:
+        console.print("  Mode:       [yellow]dry run[/yellow]")
+    console.print("")
+
+    # --- Phase plan ---
+    phase_labels = ["generate", "enrich", "review", "regen"]
+    skips = [skip_generate, skip_enrich, skip_review, skip_regen]
+    plan_table = Table(title="Phase Plan", show_lines=False)
+    plan_table.add_column("#", style="dim", width=3)
+    plan_table.add_column("Phase", width=12)
+    plan_table.add_column("Budget", justify="right", width=10)
+    plan_table.add_column("Status", width=10)
+    for i, (label, skipped) in enumerate(zip(phase_labels, skips, strict=True)):
+        budget_str = f"${cfg.phase_budget(i):.2f}"
+        status = "[dim]skip[/dim]" if skipped else "[green]run[/green]"
+        plan_table.add_row(str(i + 1), label, budget_str, status)
+    console.print(plan_table)
+    console.print("")
+
+    if dry_run:
+        console.print("[yellow]Dry run — no LLM calls or graph writes[/yellow]")
+        sys.exit(0)
+
+    # --- Run rotation ---
+    results = asyncio.run(run_rotation(cfg))
+    summary = rotation_summary(results, cfg)
+
+    # --- Summary table ---
+    console.print("")
+    summary_table = Table(title="Rotation Summary", show_lines=True)
+    summary_table.add_column("Phase", width=12)
+    summary_table.add_column("Count", justify="right", width=8)
+    summary_table.add_column("Cost", justify="right", width=10)
+    summary_table.add_column("Elapsed", justify="right", width=10)
+    summary_table.add_column("Status", width=12)
+    for phase in summary["phases"]:
+        if phase["skipped"]:
+            status = "[dim]skipped[/dim]"
+        elif phase["exit_code"] == 0:
+            status = "[green]ok[/green]"
+        else:
+            status = f"[red]error ({phase['exit_code']})[/red]"
+
+        summary_table.add_row(
+            phase["name"],
+            str(phase["count"]),
+            f"${phase['cost']:.4f}",
+            f"{phase['elapsed']:.1f}s" if phase["elapsed"] > 0 else "—",
+            status,
+        )
+    console.print(summary_table)
+
+    console.print(
+        f"\n[bold]Total:[/bold] {summary['total_count']} items, "
+        f"${summary['total_cost']:.4f} / ${summary['cost_limit']:.2f}, "
+        f"{summary['total_elapsed']:.1f}s"
+    )
+    console.print(f"[dim]rotation_id: {cfg.rotation_id}[/dim]")
+
+    if summary["errors"]:
+        console.print("\n[red]Errors:[/red]")
+        for err in summary["errors"]:
+            console.print(f"  [{err['phase']}] {err['error']}")
+
+    sys.exit(summary["exit_code"])

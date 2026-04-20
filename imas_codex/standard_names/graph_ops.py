@@ -2623,3 +2623,42 @@ def get_standard_name_source_stats(
             **params,
         )
         return {r["status"]: r["count"] for r in result}
+
+
+def write_rotation_provenance(
+    name_ids: list[str],
+    rotation_id: str,
+) -> int:
+    """Stamp ``last_rotation_id`` and ``last_rotation_at`` on StandardName nodes.
+
+    Called by the rotation orchestrator after the generate and regen phases
+    to tag every produced/regenerated name with the current rotation UUID.
+
+    Args:
+        name_ids: StandardName ids to stamp.
+        rotation_id: UUID string identifying this rotation invocation.
+
+    Returns:
+        Number of nodes updated.
+    """
+    if not name_ids:
+        return 0
+
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).isoformat()
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $ids AS nid
+            MATCH (sn:StandardName {id: nid})
+            SET sn.last_rotation_id = $rid,
+                sn.last_rotation_at = datetime($ts)
+            RETURN count(sn) AS n
+            """,
+            ids=name_ids,
+            rid=rotation_id,
+            ts=now,
+        )
+        return result[0]["n"] if result else 0
