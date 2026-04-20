@@ -266,25 +266,32 @@ run concurrent if time-boxed. Phase 3 depends on Phase 2 result.
 
 ## Outcome
 
-- **Phase 1 — node_category audit:** scaffolded. Read-only stratified-
-  sampling script landed at `scripts/one_offs/sample_node_category_audit.py`
-  (10 IDSs × 5 categories × 10 samples → JSON). Report template at
-  `plans/research/standard-names/node-category-audit.md` pending the
-  empirical review pass; the recommendation for changes to
-  `SN_SOURCE_CATEGORIES` in `imas_codex/core/node_categories.py` will
-  be made once the sampled rows have been reviewed.
-- **Phase 2 — prompt A/B/C bake-off:** scaffolded. Variant-C lean
-  prompt at `imas_codex/llm/prompts/sn/compose_dd_tool_calling.md`;
-  litellm tool schemas + dispatcher in
-  `imas_codex/standard_names/prompt_tools.py` (9 unit tests); 20-path
-  stratified eval set at
-  `tests/standard_names/eval_sets/prompt_ab_v1.json`; harness runner
-  at `scripts/prompt_ab.py` with dry-run plan generation and a runner
-  skeleton. Empirical A/B/C score comparison is a focused follow-up.
-- **Phase 3 — implement winner:** deferred pending Phase 2 empirical
-  results. The production path remains variant A (full-context
-  compose_dd); Phase 3 will be revisited once Phase 2 produces a
-  measured winner.
+- **Phase 1 — node_category audit:** ✅ empirical. 105 paths (10 IDSs × 7
+  node_categories, stratified) scored by `anthropic/claude-opus-4.6` at
+  temperature 0.  FN rate 1 / 81 = 1.2 % (below the 2 % widening
+  threshold) — **`SN_SOURCE_CATEGORIES = {quantity, geometry}` retained**.
+  FP rate 4 / 24 = 16.7 % surfaces a separate `quantity` mis-labelling
+  tail (GGD containers, provenance timestamps, bare geometric
+  coordinates leaking in) that should be tackled as a follow-up ticket,
+  not in plan 32 scope. Results:
+  `plans/research/standard-names/node-category-audit.md`; raw data
+  `plans/research/data/node-category-samples{,-scored}.json`. Reviewer
+  cost $0.18.
+- **Phase 2 — prompt A/B/C bake-off:** ✅ empirical. 20-path eval set ×
+  3 variants × opus-4.6 (compose + review). Mean reviewer scores:
+  A = 0.805, B = 0.755, C = 0.815. pass@1: A = 0.75, B = 0.65, C = 0.75.
+  Compose cost per 20-path batch (harness-compressed A baseline):
+  A = $0.042, B = $0.036, C = $0.037. Results + discussion at
+  `plans/research/standard-names/prompt-ab-results.md`; raw data
+  `plans/research/data/prompt-ab-v1.*`. Runner
+  `scripts/prompt_ab_run.py`. Total Phase 2 cost $0.24.
+- **Phase 3 — implement winner:** ✅ closed — **status quo, variant A
+  retained**. Under the harness-compressed A baseline neither B nor C
+  passes the 50 %-of-A cost gate, so no promotion. Discussion section
+  of the Phase 2 report notes that with the production
+  `compose_system.md` cache block (~60 KB) in play, A's real cost is
+  5–10× the harness estimate and C would clearly pass the cost gate;
+  revisit when `compose_worker` is next touched.
 - **Phase 4 — DD completion endpoint: shipped.** `sn generate
   --until-complete` (with `--plateau-passes`, `--cost-limit`,
   `--dry-run`) orchestrates per-domain rotations with fair-share
