@@ -187,6 +187,21 @@ enums:
           Link resolution attempted multiple times and permanently failed.
           Terminal state — requires manual intervention or vocabulary update.
 
+  StandardNameReviewMode:
+    description: >-
+      Which LLM review rubric produced the most recent ``reviewer_score``.
+      ``full`` uses all six dimensions (grammar, semantic, documentation,
+      convention, completeness, compliance) normalised over 120 points.
+      ``name_only`` uses four dimensions (grammar, semantic, convention,
+      completeness) normalised over 80 points and is used for names
+      generated without rich descriptions, typically during
+      ``sn generate --name-only`` rotation cycles.
+    permissible_values:
+      full:
+        description: All six dimensions scored (default).
+      name_only:
+        description: Four dimensions scored — grammar, semantic, convention, completeness.
+
 # =============================================================================
 # Classes
 # =============================================================================
@@ -345,6 +360,15 @@ classes:
         description: >-
           Quality tier from review: outstanding, good, adequate, poor.
           Derived from reviewer_score thresholds.
+      review_mode:
+        description: >-
+          Which LLM review rubric produced reviewer_score. ``full`` uses
+          all six dimensions (grammar/semantic/documentation/convention/
+          completeness/compliance, normalised over 120). ``name_only``
+          uses four dimensions (grammar/semantic/convention/completeness,
+          normalised over 80). A ``name_only`` run must not overwrite a
+          prior ``full`` review unless ``--force`` is given.
+        range: StandardNameReviewMode
       validation_issues:
         description: >-
           ISN validation issues from three-layer validation
