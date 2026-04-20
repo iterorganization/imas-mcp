@@ -21,6 +21,7 @@ from imas_standard_names.grammar import (
     Subject,
     compose_standard_name,
 )
+from imas_standard_names.grammar.model_types import Region
 
 # ---------------------------------------------------------------------------
 # Helper: build a reference entry from grammar fields
@@ -236,14 +237,14 @@ REFERENCE_NAMES: dict[str, dict] = {
         {
             "physical_base": "temperature",
             "subject": Subject.ELECTRON,
-            "position": Position.EDGE_REGION,
+            "region": Region.EDGE_REGION,
         }
     ),
     "edge_profiles/profiles_1d/electrons/density": _ref(
         {
             "physical_base": "density",
             "subject": Subject.ELECTRON,
-            "position": Position.EDGE_REGION,
+            "region": Region.EDGE_REGION,
         }
     ),
 }
