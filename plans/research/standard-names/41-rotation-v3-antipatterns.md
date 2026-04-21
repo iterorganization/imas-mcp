@@ -113,8 +113,76 @@ Added poor-tier calibration entry for model-suffix anti-pattern.
 
 ## Review Results
 
-*(To be filled after running reviews)*
+### Review Cost Summary
+Total LLM spend: **$2.35** (of $20 cap)
+
+### Domains Reviewed
+
+| Domain | Names Scored | Tier Distribution | Cost |
+|--------|-------------|-------------------|------|
+| neutronics | 3 | 3 good | $0.08 |
+| plasma_measurement_diagnostics | 2+2=4 | 1 outstanding, 3 good | $0.14 |
+| magnetic_field_systems | 6 | 5 outstanding, 1 good | $0.12 |
+| fast_particles | 18 | 14 good, 4 adequate | $0.30 |
+| plasma_wall_interactions | 12 | 1 outstanding, 10 good, 1 adequate | $0.24 |
+| particle_measurement_diagnostics | 2 | 2 good | $0.07 |
+| general | 92 | 50 outstanding, 38 good, 3 adequate, 1 poor | $1.03 |
+| edge_plasma_physics | 22 | 7 outstanding, 10 good, 3 adequate, 2 poor | $0.45 |
+
+### Overall Post-Review State
+
+| Domain | Total | Scored | Avg% | Outstanding | Good | Adequate | Poor |
+|--------|-------|--------|------|-------------|------|----------|------|
+| magnetic_field_systems | 14 | 14 | 88.4 | 11 | 1 | 2 | 0 |
+| plasma_control | 25 | 25 | 93.6 | 23 | 0 | 2 | 0 |
+| equilibrium | 60 | 57 | 78.3 | 37 | 5 | 13 | 2 |
+| transport | 238 | 183 | 89.7 | 159 | 4 | 5 | 15 |
+| general | 170 | 130 | 87.6 | 86 | 38 | 5 | 1 |
+| edge_plasma_physics | 81 | 67 | 66.3 | 32 | 10 | 6 | 19 |
+| fast_particles | 40 | 27 | 74.8 | 8 | 15 | 4 | 0 |
+| neutronics | 6 | 3 | 70.8 | 0 | 3 | 0 | 0 |
+| plasma_wall_interactions | 21 | 16 | 73.1 | 3 | 10 | 2 | 1 |
+| particle_measurement_diagnostics | 31 | 17 | 90.6 | 12 | 4 | 0 | 1 |
+| plasma_measurement_diagnostics | 4 | 2 | 84.4 | 1 | 1 | 0 | 0 |
+| **Totals** | **920** | **702** | — | — | — | — | — |
+
+**Overall coverage: 76.3% scored (702/920)**
+
+### Score Outliers (flagged for investigation)
+
+- `ratio_of_critical_to_experimental_normalized_pressure_gradient_at_pedestal`: 0.51 → regenerate
+- `poloidal_component_of_current_density_due_to_anomalous`: 0.39 → poor, investigate
+- `toroidal_component_of_current_density_due_to_anomalous`: 0.39 → poor, investigate
+- `vertical_component_of_momentum_flux_limiter`: 0.42 → regenerate
+- `pedestal_fit_coefficients`: 0.56 → investigate
+- `bidirectional_reflectance_distribution_function_coefficient_at_wall`: 0.57 → verbose
 
 ## Post-fix Counts
 
-*(To be filled after applying graph corrections)*
+### Fixed
+- **7 duplicate-token names** deleted (all contained `_magnetic_magnetic_`)
+- **2 placeholder names** deleted (`constant_float_value`, `constant_integer_value`)
+- Classifier rule S3 added to prevent future placeholder names
+- Review prompt updated with [I1.7] model-suffix anti-pattern check
+- Calibration entry added for model-suffix anti-pattern (poor tier)
+
+### Residual (next cycle)
+- **4 model-suffix names** remain (`*_hager_bootstrap`, `*_sauter_bootstrap`) — need regeneration
+  without model suffixes
+- **2 poor edge_plasma names** (`*_due_to_anomalous`) truncated by LLM
+- `general` domain still acts as catch-all for 170 names (up from 142 after
+  reviews revised and reclassified some names)
+- edge_plasma_physics has highest poor-tier count (19) — many need revision
+
+### New Anti-patterns Discovered
+1. **Truncated names**: `poloidal_component_of_current_density_due_to_anomalous`
+   and `toroidal_component_of_current_density_due_to_anomalous` — the LLM
+   truncated `anomalous_transport` to just `anomalous`
+2. **Grammar parse failures**: `fast_ion_toroidal_current_density` fails grammar
+   (component must precede subject) — needs rewrite to
+   `toroidal_component_of_fast_ion_current_density`
+3. **Verbose compounds**: `bidirectional_reflectance_distribution_function_coefficient_at_wall`
+   (10+ tokens) — too long even for an open-vocabulary physical_base
+4. **COCOS type=one_like without integer**: Multiple names flagged with
+   `cocos_transformation_type='one_like'` but no COCOS integer — graph edge
+   creation skipped
