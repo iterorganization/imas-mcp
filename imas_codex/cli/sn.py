@@ -23,13 +23,11 @@ def sn() -> None:
     """Standard name generation and management.
 
     \b
-    Run (generate / enrich / review / regen):
+    Run (reconcile / generate / enrich / resolve-links / review / regen):
       sn run --source dd [--physics-domain NAME]
       sn run --source signals --facility NAME
-
-    \b
-    Links:
-      sn resolve-links
+      sn run --only resolve-links
+      sn run --skip-reconcile --skip-resolve-links
 
     \b
     Status:
@@ -48,9 +46,14 @@ def _run_sn_loop_cmd(
     verbose: bool = False,
     turn_number: int = 1,
     min_score: float | None = None,
+    skip_generate: bool = False,
     skip_enrich: bool = False,
     skip_review: bool = False,
     skip_regen: bool = False,
+    skip_reconcile: bool = False,
+    skip_resolve_links: bool = False,
+    source: str = "dd",
+    override_edits: list[str] | None = None,
 ) -> None:
     """Execute the DD completion loop and render the summary."""
     import asyncio
@@ -88,9 +91,14 @@ def _run_sn_loop_cmd(
             only_domain=only_domain,
             turn_number=turn_number,
             min_score=min_score,
+            skip_generate=skip_generate,
             skip_enrich=skip_enrich,
             skip_review=skip_review,
             skip_regen=skip_regen,
+            skip_reconcile=skip_reconcile,
+            skip_resolve_links=skip_resolve_links,
+            source=source,
+            override_edits=override_edits,
         )
     )
     row = summary_table(summary)
@@ -387,6 +395,47 @@ def _run_sn_loop_cmd(
         "and regression tests."
     ),
 )
+@click.option(
+    "--skip-reconcile/--no-skip-reconcile",
+    default=False,
+    help="Skip the reconcile phase (source re-linking).",
+)
+@click.option(
+    "--skip-resolve-links/--no-skip-resolve-links",
+    default=False,
+    help="Skip the resolve-links phase (dd→name link resolution).",
+)
+@click.option(
+    "--only",
+    "only_phase",
+    type=click.Choice(
+        [
+            "reconcile",
+            "extract",
+            "compose",
+            "validate",
+            "consolidate",
+            "persist",
+            "review",
+            "resolve-links",
+        ],
+        case_sensitive=False,
+    ),
+    default=None,
+    help=(
+        "Run only this phase — all others are skipped. "
+        "extract/compose/validate/consolidate/persist select the generate phase."
+    ),
+)
+@click.option(
+    "--override-edits",
+    multiple=True,
+    help=(
+        "Standard name IDs to bypass pipeline protection for. "
+        "Allows overwriting catalog-edited fields on these names only. "
+        "Repeatable: --override-edits foo --override-edits bar."
+    ),
+)
 def sn_run(
     source: str,
     domain_filter: str | None,
@@ -420,6 +469,10 @@ def sn_run(
     docs_status_filter: str,
     docs_batch_size: int | None,
     single_pass: bool,
+    skip_reconcile: bool,
+    skip_resolve_links: bool,
+    only_phase: str | None,
+    override_edits: tuple[str, ...],
 ) -> None:
     """Generate standard names from a source.
 
@@ -440,7 +493,32 @@ def sn_run(
       imas-codex sn run --reset-to drafted --reset-only
       imas-codex sn run --reset-to drafted --below-score 0.6 --reset-only
       imas-codex sn run --turn-number 2 --min-score 0.6 -c 5  # regen reviewed names below 0.6
+      imas-codex sn run --only resolve-links                   # resolve links only
+      imas-codex sn run --skip-reconcile --skip-resolve-links  # legacy pipeline
+      imas-codex sn run --override-edits foo --override-edits bar  # bypass protection on foo, bar
     """
+    # --- Apply --only overrides ---
+    if only_phase:
+        from imas_codex.standard_names.turn import skip_flags_from_only
+
+        overrides = skip_flags_from_only(only_phase)
+        if overrides.get("skip_reconcile", False):
+            skip_reconcile = True
+        if overrides.get("skip_generate", False):
+            # When --only skips generate, also skip related pre-processing
+            force = False
+        if overrides.get("skip_enrich", False):
+            skip_enrich = True
+        if overrides.get("skip_review", False):
+            skip_review = True
+        if overrides.get("skip_regen", False):
+            skip_regen = True
+        if overrides.get("skip_resolve_links", False):
+            skip_resolve_links = True
+        # skip_generate handled via the overrides dict below
+        skip_generate_from_only = overrides.get("skip_generate", False)
+    else:
+        skip_generate_from_only = False
     # --- Resolve --target ---
     target_normalized = target.lower()
     # Downstream compose routing uses a derived name_only boolean.
@@ -473,6 +551,9 @@ def sn_run(
     # the loop to a single domain (single-element iteration).
     use_loop = not single_pass and not paths_list and source == "dd"
 
+    # Coerce override_edits tuple to list for downstream
+    _override_edits = list(override_edits) if override_edits else None
+
     if use_loop:
         _run_sn_loop_cmd(
             cost_limit=cost_limit,
@@ -483,9 +564,14 @@ def sn_run(
             verbose=verbose,
             turn_number=turn_number,
             min_score=min_score,
+            skip_generate=skip_generate_from_only,
             skip_enrich=skip_enrich,
             skip_review=skip_review,
             skip_regen=skip_regen,
+            skip_reconcile=skip_reconcile,
+            skip_resolve_links=skip_resolve_links,
+            source=source,
+            override_edits=_override_edits,
         )
         return
 
@@ -2094,258 +2180,6 @@ def sn_clear(
     except Exception as e:
         console.print(f"[red]Clear error:[/red] {e}")
         raise SystemExit(1) from e
-
-
-@sn.command("reconcile")
-@click.option(
-    "--source",
-    "source_type",
-    type=click.Choice(["dd", "signals"]),
-    default="dd",
-    help="Source type to reconcile.",
-)
-def reconcile(source_type: str) -> None:
-    """Reconcile StandardNameSource nodes after DD/signal rebuild.
-
-    Re-links sources to upstream entities, marks missing as stale,
-    and revives previously-stale sources that reappear.
-    """
-    from imas_codex.standard_names.graph_ops import reconcile_standard_name_sources
-
-    console.print(f"Reconciling {source_type} sources...")
-
-    result = reconcile_standard_name_sources(source_type)
-
-    console.print(f"  Stale marked: {result['stale_marked']}")
-    console.print(f"  Revived: {result['revived']}")
-    console.print(f"  Re-linked: {result['relinked']}")
-    console.print("[green]Reconciliation complete[/green]")
-
-
-@sn.command("seed")
-@click.option(
-    "--source",
-    type=click.Choice(["isn", "west", "all"]),
-    default="all",
-    help="Which source to import: ISN reference examples, WEST catalog, or both",
-)
-@click.option(
-    "--west-dir",
-    type=click.Path(exists=True),
-    default=None,
-    help="Path to west-standard-names/standard_names (default: ~/Code/west-standard-names/standard_names)",
-)
-@click.option(
-    "--dry-run", is_flag=True, help="Validate and count but don't write to graph"
-)
-@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
-def sn_seed(
-    source: str,
-    west_dir: str | None,
-    dry_run: bool,
-    verbose: bool,
-) -> None:
-    """Seed the graph with reference standard names from external sources.
-
-    \b
-    Imports curated standard names from ISN reference examples (42 entries,
-    accepted) and/or the WEST catalog (~305 entries, drafted).
-
-    \b
-    ISN examples are shipped with imas-standard-names and serve as
-    calibration anchors. WEST entries receive physics_domain and tag
-    cleanup before ISN validation.
-
-    \b
-    Examples:
-      imas-codex sn seed                          # import both ISN + WEST
-      imas-codex sn seed --source isn --dry-run    # preview ISN only
-      imas-codex sn seed --source west --west-dir /path/to/standard_names
-    """
-    from pathlib import Path
-
-    if verbose:
-        logging.basicConfig(level=logging.DEBUG)
-
-    console.print("\n[bold]Standard Name Seed[/bold]")
-    if dry_run:
-        console.print("  Mode: [yellow]dry run[/yellow]")
-    console.print("")
-
-    try:
-        from imas_codex.standard_names.seed import seed_isn_examples, seed_west_catalog
-    except ImportError as e:
-        console.print(
-            f"[red]Missing dependency:[/red] {e}\n"
-            "Install with: uv pip install imas-standard-names"
-        )
-        raise SystemExit(1) from e
-
-    # -- ISN reference examples --
-    if source in ("isn", "all"):
-        console.print("[bold]ISN reference examples[/bold]")
-        try:
-            isn_result = seed_isn_examples(dry_run=dry_run)
-        except Exception as e:
-            console.print(f"  [red]Error:[/red] {e}")
-            raise SystemExit(1) from e
-
-        console.print(f"  Loaded:    {isn_result.loaded}")
-        console.print(f"  Validated: [green]{isn_result.validated}[/green]")
-
-        if isn_result.validation_errors:
-            console.print(
-                f"  Errors:    [red]{len(isn_result.validation_errors)}[/red]"
-            )
-            for err in isn_result.validation_errors[:5]:
-                console.print(f"    - {err}")
-            if len(isn_result.validation_errors) > 5:
-                console.print(
-                    f"    ... and {len(isn_result.validation_errors) - 5} more"
-                )
-
-        if isn_result.grammar_mismatches:
-            console.print(
-                f"  Grammar mismatches: [yellow]{len(isn_result.grammar_mismatches)}[/yellow]"
-            )
-            for m in isn_result.grammar_mismatches[:5]:
-                console.print(f"    ⚠ {m}")
-
-        action = "Would write" if dry_run else "Wrote"
-        written = isn_result.validated if dry_run else isn_result.written
-        console.print(f"  {action}:   [green]{written}[/green] entries")
-        console.print("")
-
-    # -- WEST catalog --
-    if source in ("west", "all"):
-        west_path = Path(west_dir) if west_dir else None
-        console.print("[bold]WEST catalog[/bold]")
-        if west_path:
-            console.print(f"  Directory: {west_path}")
-
-        try:
-            west_result = seed_west_catalog(west_dir=west_path, dry_run=dry_run)
-        except Exception as e:
-            console.print(f"  [red]Error:[/red] {e}")
-            raise SystemExit(1) from e
-
-        console.print(f"  Loaded:    {west_result.loaded}")
-        console.print(f"  Validated: [green]{west_result.validated}[/green]")
-
-        if west_result.validation_errors:
-            console.print(
-                f"  Errors:    [red]{len(west_result.validation_errors)}[/red]"
-            )
-            for err in west_result.validation_errors[:5]:
-                console.print(f"    - {err}")
-            if len(west_result.validation_errors) > 5:
-                console.print(
-                    f"    ... and {len(west_result.validation_errors) - 5} more"
-                )
-
-        if west_result.grammar_mismatches:
-            console.print(
-                f"  Grammar mismatches: [yellow]{len(west_result.grammar_mismatches)}[/yellow]"
-            )
-            for m in west_result.grammar_mismatches[:5]:
-                console.print(f"    ⚠ {m}")
-
-        action = "Would write" if dry_run else "Wrote"
-        written = west_result.validated if dry_run else west_result.written
-        console.print(f"  {action}:   [green]{written}[/green] entries")
-        console.print("")
-
-
-@sn.command("resolve-links")
-@click.option("--limit", type=int, default=50, help="Max names to process per round")
-@click.option(
-    "--rounds",
-    type=int,
-    default=3,
-    help="Number of resolution rounds (names may become resolvable between rounds)",
-)
-@click.option("--dry-run", is_flag=True, help="Check resolvability without writing")
-@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
-def sn_resolve_links(
-    limit: int,
-    rounds: int,
-    dry_run: bool,
-    verbose: bool,
-) -> None:
-    """Resolve dd: links to name: links in standard names.
-
-    \b
-    Links with dd: prefix point to DD paths that may now have standard names.
-    This command checks each unresolved link and replaces it with name: if
-    the target path has been named.
-
-    \b
-    Examples:
-      imas-codex sn resolve-links
-      imas-codex sn resolve-links --rounds 5 --limit 100
-    """
-    from imas_codex.cli.utils import setup_logging
-
-    setup_logging("DEBUG" if verbose else "WARNING")
-
-    from imas_codex.standard_names.graph_ops import (
-        claim_unresolved_links,
-        resolve_links_batch,
-    )
-
-    total_resolved = 0
-    total_unresolved = 0
-    total_failed = 0
-
-    for round_num in range(1, rounds + 1):
-        if dry_run:
-            # Just count unresolved
-            from imas_codex.graph.client import GraphClient
-
-            with GraphClient() as gc:
-                rows = list(
-                    gc.query(
-                        """
-                        MATCH (sn:StandardName)
-                        WHERE sn.link_status = 'unresolved'
-                        RETURN count(sn) AS count
-                        """
-                    )
-                )
-                count = rows[0]["count"] if rows else 0
-            console.print(
-                f"[dim]Round {round_num}:[/dim] {count} names with unresolved links"
-            )
-            break
-
-        items = claim_unresolved_links(limit=limit)
-        if not items:
-            console.print(
-                f"[dim]Round {round_num}:[/dim] No unresolved links remaining"
-            )
-            break
-
-        result = resolve_links_batch(items)
-        total_resolved += result["resolved"]
-        total_unresolved += result["unresolved"]
-        total_failed += result["failed"]
-
-        console.print(
-            f"[dim]Round {round_num}:[/dim] "
-            f"[green]{result['resolved']}[/green] resolved, "
-            f"[yellow]{result['unresolved']}[/yellow] still unresolved, "
-            f"[red]{result['failed']}[/red] failed"
-        )
-
-        if result["unresolved"] == 0:
-            break
-
-    console.print(
-        f"\n[bold]Total:[/bold] "
-        f"[green]{total_resolved}[/green] resolved, "
-        f"[yellow]{total_unresolved}[/yellow] unresolved, "
-        f"[red]{total_failed}[/red] failed"
-    )
 
 
 @sn.command("review")
