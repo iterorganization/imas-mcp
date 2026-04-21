@@ -716,6 +716,8 @@ is provided as context for your naming decisions.
 {% endfor %}
 {% endif %}
 
+{% include "sn/_preferred_bases.md" %}
+
 ## Composition Rules
 
 1. Every name MUST have either a `physical_base` or a `geometric_base` (never both)

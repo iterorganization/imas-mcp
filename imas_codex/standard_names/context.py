@@ -107,6 +107,15 @@ def build_compose_context() -> dict[str, Any]:
     # Bare enum lists (backward compat for user prompt)
     ctx.update(_build_enum_lists())
 
+    # Preferred physical_base anchors — curated ordering tiebreakers for the
+    # open physical_base segment. Mined from the graph's emergent vocabulary.
+    # See plans/research/standard-names/47-preferred-physical-bases.md.
+    from imas_codex.standard_names.preferred_bases import (
+        get_preferred_anchors_for_prompt,
+    )
+
+    ctx["preferred_bases"] = get_preferred_anchors_for_prompt()
+
     _CONTEXT_CACHE = ctx
     return ctx
 

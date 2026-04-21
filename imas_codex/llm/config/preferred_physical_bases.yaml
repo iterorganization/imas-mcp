@@ -1,0 +1,463 @@
+# Curated preferred physical_base anchors for standard name generation.
+#
+# These tokens resolve ordering ambiguities in the open-vocabulary
+# ``physical_base`` segment. When two grammatically-valid forms of a name
+# compete (e.g. ``plasma_boundary_gap_angle`` vs ``angle_of_plasma_boundary_gap``),
+# the one whose physical_base is on this anchor list wins.
+#
+# IMPORTANT: This is **NOT** a closed list. ``physical_base`` remains an open
+# vocabulary — new compound tokens may still be coined freely. The anchors
+# below are soft guidance derived from the graph's own emergent vocabulary
+# (most-used bases that survived review), used by the composer and reviewer
+# to keep the catalog self-consistent.
+#
+# Regenerate with: ``uv run imas-codex sn anchors mine``
+#
+# Selection rule: physical_base tokens with ``usage_count >= 2`` and
+# ``avg(review_mean_score) >= 0.75`` across StandardNames in the graph.
+
+version: 1
+last_updated: "2026-04-21"
+selection:
+  min_usage_count: 2
+  min_review_mean_score: 0.75
+anchors:
+  - token: major_radius
+    domain: auxiliary_heating
+    usage_count: 8
+    examples:
+      - major_radius_of_lower_hybrid_antenna_row
+      - major_radius_of_beam_tracing_beam
+      - major_radius_of_measurement_position
+  - token: temperature
+    domain: general
+    usage_count: 8
+    examples:
+      - electron_temperature_at_magnetic_axis
+      - electron_temperature_at_plasma_boundary
+      - electron_temperature_at_pedestal
+  - token: coordinate
+    domain: equilibrium
+    usage_count: 7
+    examples:
+      - vertical_coordinate_of_plasma_boundary
+      - vertical_coordinate_of_strike_point
+      - vertical_coordinate_of_x_point
+  - token: energy_flux
+    domain: transport
+    usage_count: 7
+    examples:
+      - poloidal_component_of_electron_energy_flux
+      - radial_component_of_electron_energy_flux
+      - poloidal_component_of_ion_energy_flux
+  - token: magnetic_field
+    domain: magnetic_field_systems
+    usage_count: 7
+    examples:
+      - radial_component_of_magnetic_field
+      - toroidal_component_of_magnetic_field
+      - vertical_component_of_magnetic_field
+  - token: momentum_convective_velocity
+    domain: edge_plasma_physics
+    usage_count: 6
+    examples:
+      - radial_component_of_ion_momentum_convective_velocity
+      - toroidal_component_of_ion_momentum_convective_velocity
+      - radial_component_of_electron_momentum_convective_velocity
+  - token: momentum_flux
+    domain: edge_plasma_physics
+    usage_count: 6
+    examples:
+      - poloidal_component_of_ion_momentum_flux
+      - parallel_component_of_ion_momentum_flux
+      - toroidal_component_of_ion_momentum_flux
+  - token: particle_flux
+    domain: transport
+    usage_count: 6
+    examples:
+      - electron_particle_flux
+      - radial_component_of_neutral_particle_flux
+      - radial_component_of_runaway_electron_particle_flux
+  - token: effective_charge
+    domain: general
+    usage_count: 5
+    examples:
+      - effective_charge_at_divertor_target
+      - effective_charge_at_magnetic_axis
+      - effective_charge_at_pedestal
+  - token: velocity
+    domain: transport
+    usage_count: 5
+    examples:
+      - parallel_component_of_electron_velocity
+      - parallel_component_of_neutral_velocity
+      - radial_component_of_electron_velocity
+  - token: wave_absorbed_power_inside_flux_surface_per_toroidal_mode
+    domain: waves
+    usage_count: 5
+    examples:
+      - fast_electron_wave_absorbed_power_inside_flux_surface_per_toroidal_mode
+      - thermal_electron_wave_absorbed_power_inside_flux_surface_per_toroidal_mode
+      - fast_ion_wave_absorbed_power_inside_flux_surface_per_toroidal_mode
+  - token: center_of_mass_velocity
+    domain: transport
+    usage_count: 4
+    examples:
+      - radial_component_of_center_of_mass_velocity
+      - vertical_component_of_center_of_mass_velocity
+      - toroidal_component_of_center_of_mass_velocity
+  - token: electric_field
+    domain: transport
+    usage_count: 4
+    examples:
+      - poloidal_component_of_electric_field
+      - radial_component_of_electric_field
+      - parallel_component_of_electric_field
+  - token: heating_power
+    domain: transport
+    usage_count: 4
+    examples:
+      - heating_power
+      - ion_heating_power
+      - heating_power_due_to_ohmic
+  - token: magnetic_vector_potential
+    domain: magnetic_field_systems
+    usage_count: 4
+    examples:
+      - radial_component_of_magnetic_vector_potential
+      - toroidal_component_of_magnetic_vector_potential
+      - poloidal_component_of_magnetic_vector_potential
+  - token: momentum_diffusivity
+    domain: edge_plasma_physics
+    usage_count: 4
+    examples:
+      - poloidal_component_of_ion_momentum_diffusivity
+      - radial_component_of_ion_momentum_diffusivity
+      - ion_momentum_diffusivity_due_to_diamagnetic_drift
+  - token: momentum_flux_due_to_diamagnetic_drift
+    domain: transport
+    usage_count: 4
+    examples:
+      - radial_component_of_ion_momentum_flux_due_to_diamagnetic_drift
+      - momentum_flux_due_to_diamagnetic_drift
+      - neutral_momentum_flux_due_to_diamagnetic_drift
+  - token: momentum_flux_limiter
+    domain: edge_plasma_physics
+    usage_count: 4
+    examples:
+      - parallel_component_of_momentum_flux_limiter
+      - toroidal_component_of_momentum_flux_limiter
+      - radial_component_of_neutral_momentum_flux_limiter
+  - token: momentum_source
+    domain: transport
+    usage_count: 4
+    examples:
+      - radial_component_of_ion_momentum_source
+      - toroidal_momentum_source
+      - poloidal_component_of_ion_momentum_source
+  - token: number_density
+    domain: general
+    usage_count: 4
+    examples:
+      - carbon_number_density_at_internal_transport_barrier
+      - electron_number_density_at_pedestal
+      - electron_number_density_at_separatrix
+  - token: wave_absorbed_power_density_per_toroidal_mode
+    domain: auxiliary_heating
+    usage_count: 4
+    examples:
+      - fast_ion_wave_absorbed_power_density_per_toroidal_mode
+      - thermal_ion_wave_absorbed_power_density_per_toroidal_mode
+      - wave_absorbed_power_density_per_toroidal_mode
+  - token: wave_absorbed_power_per_toroidal_mode
+    domain: auxiliary_heating
+    usage_count: 4
+    examples:
+      - wave_absorbed_power_per_toroidal_mode
+      - fast_ion_wave_absorbed_power_per_toroidal_mode
+      - thermal_ion_wave_absorbed_power_per_toroidal_mode
+  - token: angle
+    domain: radiation_measurement_diagnostics
+    usage_count: 3
+    examples:
+      - toroidal_angle_of_measurement_position
+      - toroidal_angle_of_langmuir_probe
+      - poloidal_angle_of_beam_tracing_beam
+  - token: current_density
+    domain: transport
+    usage_count: 3
+    examples:
+      - parallel_component_of_runaway_electron_current_density
+      - parallel_component_of_ion_current_density
+      - toroidal_component_of_current_density_at_wall
+  - token: current_density_due_to_perpendicular_viscosity
+    domain: transport
+    usage_count: 3
+    examples:
+      - vertical_component_of_current_density_due_to_perpendicular_viscosity
+      - toroidal_component_of_current_density_due_to_perpendicular_viscosity
+      - parallel_component_of_current_density_due_to_perpendicular_viscosity
+  - token: current_density_due_to_viscous_heat_flux
+    domain: transport
+    usage_count: 3
+    examples:
+      - radial_component_of_current_density_due_to_viscous_heat_flux
+      - vertical_component_of_current_density_due_to_viscous_heat_flux
+      - toroidal_component_of_current_density_due_to_viscous_heat_flux
+  - token: diamagnetic_drift_velocity
+    domain: transport
+    usage_count: 3
+    examples:
+      - toroidal_component_of_ion_diamagnetic_drift_velocity
+      - parallel_component_of_ion_diamagnetic_drift_velocity
+      - ion_diamagnetic_drift_velocity
+  - token: fast_ion_toroidal_current_density
+    domain: fast_particles
+    usage_count: 3
+    examples:
+      - co_passing_fast_ion_toroidal_current_density
+      - counter_passing_fast_ion_toroidal_current_density
+      - trapped_fast_ion_toroidal_current_density
+  - token: fast_particle_toroidal_angular_momentum_source
+    domain: fast_particles
+    usage_count: 3
+    examples:
+      - co_passing_fast_particle_toroidal_angular_momentum_source
+      - counter_passing_fast_particle_toroidal_angular_momentum_source
+      - trapped_fast_particle_toroidal_angular_momentum_source
+  - token: ion_number_density
+    domain: general
+    usage_count: 3
+    examples:
+      - boron_ion_number_density_at_pedestal
+      - argon_ion_number_density_at_pedestal
+      - argon_ion_number_density_at_separatrix
+  - token: lower_hybrid_electric_field
+    domain: radiation_measurement_diagnostics
+    usage_count: 3
+    examples:
+      - toroidal_component_of_lower_hybrid_electric_field
+      - radial_component_of_lower_hybrid_electric_field
+      - vertical_component_of_lower_hybrid_electric_field
+  - token: magnetic_field_at_ferritic_element_centroid
+    domain: magnetic_field_systems
+    usage_count: 3
+    examples:
+      - toroidal_component_of_magnetic_field_at_ferritic_element_centroid
+      - radial_component_of_magnetic_field_at_ferritic_element_centroid
+      - vertical_component_of_magnetic_field_at_ferritic_element_centroid
+  - token: particle_source
+    domain: transport
+    usage_count: 3
+    examples:
+      - electron_particle_source
+      - ion_particle_source
+      - neutral_particle_source
+  - token: plasma_current
+    domain: general
+    usage_count: 3
+    examples:
+      - plasma_current_due_to_runaway_electrons
+      - maximum_of_plasma_current_due_to_runaway_electrons
+      - plasma_current
+  - token: pressure
+    domain: transport
+    usage_count: 3
+    examples:
+      - ion_pressure
+      - fast_ion_pressure
+      - parallel_component_of_fast_ion_pressure
+  - token: radiated_power_density
+    domain: transport
+    usage_count: 3
+    examples:
+      - electron_radiated_power_density
+      - ion_radiated_power_density
+      - neutral_radiated_power_density
+  - token: radiated_power_inside_flux_surface
+    domain: transport
+    usage_count: 3
+    examples:
+      - neutral_radiated_power_inside_flux_surface
+      - electron_radiated_power_inside_flux_surface
+      - ion_radiated_power_inside_flux_surface
+  - token: boron_ion_number_density
+    domain: general
+    usage_count: 2
+    examples:
+      - boron_ion_number_density
+      - volume_averaged_boron_ion_number_density
+  - token: convective_velocity
+    domain: edge_plasma_physics
+    usage_count: 2
+    examples:
+      - poloidal_component_of_electron_convective_velocity
+      - radial_component_of_electron_convective_velocity
+  - token: current
+    domain: equilibrium
+    usage_count: 2
+    examples:
+      - plasma_filament_current
+      - passive_loop_current
+  - token: current_density_due_to_parallel_viscosity
+    domain: transport
+    usage_count: 2
+    examples:
+      - vertical_component_of_current_density_due_to_parallel_viscosity
+      - toroidal_component_of_current_density_due_to_parallel_viscosity
+  - token: density
+    domain: divertor_physics
+    usage_count: 2
+    examples:
+      - electron_density_at_divertor_target
+      - runaway_electron_density
+  - token: energy_radial_diffusivity
+    domain: transport
+    usage_count: 2
+    examples:
+      - electron_energy_radial_diffusivity
+      - ion_energy_radial_diffusivity
+  - token: energy_radial_diffusivity_on_ggd
+    domain: transport
+    usage_count: 2
+    examples:
+      - neutral_energy_radial_diffusivity_on_ggd
+      - ion_energy_radial_diffusivity_on_ggd
+  - token: energy_source
+    domain: transport
+    usage_count: 2
+    examples:
+      - electron_energy_source
+      - ion_energy_source
+  - token: halo_current
+    domain: magnetohydrodynamics
+    usage_count: 2
+    examples:
+      - toroidal_halo_current
+      - poloidal_halo_current
+  - token: hydrogen
+    domain: plasma_control
+    usage_count: 2
+    examples:
+      - ratio_of_hydrogen_to_deuterium_number_density
+      - ratio_of_hydrogen_to_electron_number_density
+  - token: hydrogen_ion_number_density
+    domain: general
+    usage_count: 2
+    examples:
+      - hydrogen_ion_number_density_at_divertor_target
+      - volume_averaged_hydrogen_ion_number_density
+  - token: inertial_current_density
+    domain: transport
+    usage_count: 2
+    examples:
+      - vertical_component_of_inertial_current_density
+      - toroidal_component_of_inertial_current_density
+  - token: iron_number_density
+    domain: general
+    usage_count: 2
+    examples:
+      - iron_number_density_at_magnetic_axis
+      - iron_number_density
+  - token: larmor_radius
+    domain: general
+    usage_count: 2
+    examples:
+      - electron_normalized_larmor_radius_at_pedestal_top_high_field_side
+      - electron_normalized_larmor_radius_at_pedestal_top_low_field_side
+  - token: magnetic_flux_of_halo_boundary
+    domain: magnetohydrodynamics
+    usage_count: 2
+    examples:
+      - toroidal_magnetic_flux_of_halo_boundary
+      - poloidal_magnetic_flux_of_halo_boundary
+  - token: magnetic_moment_of_ferritic_element_centroid
+    domain: magnetic_field_systems
+    usage_count: 2
+    examples:
+      - vertical_component_of_magnetic_moment_of_ferritic_element_centroid
+      - toroidal_component_of_magnetic_moment_of_ferritic_element_centroid
+  - token: orbit_frequency
+    domain: transport
+    usage_count: 2
+    examples:
+      - poloidal_orbit_frequency
+      - toroidal_orbit_frequency
+  - token: particle_flux_from_wall
+    domain: plasma_wall_interactions
+    usage_count: 2
+    examples:
+      - electron_particle_flux_from_wall
+      - neutral_particle_flux_from_wall
+  - token: particle_radial_diffusivity
+    domain: transport
+    usage_count: 2
+    examples:
+      - electron_particle_radial_diffusivity
+      - ion_particle_radial_diffusivity
+  - token: particle_radial_diffusivity_on_ggd
+    domain: transport
+    usage_count: 2
+    examples:
+      - ion_particle_radial_diffusivity_on_ggd
+      - neutral_particle_radial_diffusivity_on_ggd
+  - token: particle_source_inside_flux_surface
+    domain: transport
+    usage_count: 2
+    examples:
+      - electron_particle_source_inside_flux_surface
+      - ion_particle_source_inside_flux_surface
+  - token: pfirsch_schlueter_current_density
+    domain: transport
+    usage_count: 2
+    examples:
+      - poloidal_component_of_pfirsch_schlueter_current_density
+      - toroidal_component_of_pfirsch_schlueter_current_density
+  - token: power_flux_density
+    domain: plasma_wall_interactions
+    usage_count: 2
+    examples:
+      - maximum_of_power_flux_density_at_inner_divertor_target
+      - maximum_of_power_flux_density_at_outer_divertor_target
+  - token: scrape_off_layer_heat_flux_decay_length
+    domain: general
+    usage_count: 2
+    examples:
+      - electron_scrape_off_layer_heat_flux_decay_length
+      - ion_scrape_off_layer_heat_flux_decay_length
+  - token: state_radiated_power_density
+    domain: transport
+    usage_count: 2
+    examples:
+      - ion_state_radiated_power_density
+      - neutral_state_radiated_power_density
+  - token: state_radiated_power_inside_flux_surface
+    domain: transport
+    usage_count: 2
+    examples:
+      - ion_state_radiated_power_inside_flux_surface
+      - neutral_state_radiated_power_inside_flux_surface
+  - token: temperature_peaking_factor
+    domain: transport
+    usage_count: 2
+    examples:
+      - ion_temperature_peaking_factor
+      - electron_temperature_peaking_factor
+  - token: tendency_of_electron_velocity
+    domain: transport
+    usage_count: 2
+    examples:
+      - poloidal_component_of_tendency_of_electron_velocity
+      - toroidal_component_of_tendency_of_electron_velocity
+  - token: tendency_of_ion_velocity
+    domain: transport
+    usage_count: 2
+    examples:
+      - poloidal_component_of_tendency_of_ion_velocity
+      - toroidal_component_of_tendency_of_ion_velocity
+  - token: toroidal_flux_coordinate
+    domain: equilibrium
+    usage_count: 2
+    examples:
+      - normalized_toroidal_flux_coordinate_of_minimum_safety_factor
+      - normalized_toroidal_flux_coordinate

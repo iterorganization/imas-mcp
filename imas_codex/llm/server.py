@@ -3238,6 +3238,65 @@ class AgentsServer:
 
                 return _lgv(segment)
 
+            @self.mcp.tool()
+            def list_preferred_bases(domain: str | None = None) -> str:
+                """List curated preferred ``physical_base`` anchors.
+
+                The ISN ``physical_base`` segment is open vocabulary. The
+                anchors returned here are a curated subset of tokens
+                already used by multiple high-quality StandardNames in
+                the graph; composers and reviewers treat them as an
+                ordering tiebreaker when two grammatically-valid forms
+                compete for the same concept. This complements
+                ``list_grammar_vocabulary`` by exposing the *preferred*
+                subset rather than all observed tokens.
+
+                Args:
+                    domain: Optional primary-domain filter (e.g.
+                        ``"transport"``, ``"equilibrium"``).
+
+                Returns:
+                    Markdown table of anchors with domain, usage count,
+                    and example names.
+                """
+                from imas_codex.standard_names.preferred_bases import (
+                    load_preferred_bases,
+                )
+
+                data = load_preferred_bases()
+                anchors = data.get("anchors", [])
+                if domain:
+                    anchors = [a for a in anchors if a.get("domain") == domain]
+
+                if not anchors:
+                    return "## Preferred physical_base anchors\n\nNo anchors found" + (
+                        f" for domain `{domain}`." if domain else "."
+                    )
+
+                lines = [
+                    "## Preferred physical_base anchors",
+                    "",
+                    (
+                        f"{len(anchors)} anchors "
+                        f"(v{data.get('version', '?')}, "
+                        f"updated {data.get('last_updated', '?')})."
+                    ),
+                    "",
+                    "| Token | Domain | Usage | Examples |",
+                    "|-------|--------|------:|----------|",
+                ]
+                for a in anchors:
+                    examples = ", ".join(
+                        f"`{ex}`" for ex in (a.get("examples") or [])[:2]
+                    )
+                    lines.append(
+                        f"| `{a.get('token', '')}` | "
+                        f"{a.get('domain', '')} | "
+                        f"{a.get('usage_count', '')} | "
+                        f"{examples} |"
+                    )
+                return "\n".join(lines)
+
         if not self.read_only:
             # =====================================================================
             # Log Tools (Phase 3: MCP Logs)

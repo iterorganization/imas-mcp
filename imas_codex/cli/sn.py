@@ -3002,3 +3002,124 @@ def sn_rotate(
             console.print(f"  [{err['phase']}] {err['error']}")
 
     sys.exit(summary["exit_code"])
+
+
+# ---------------------------------------------------------------------------
+# Preferred physical_base anchors — ``sn anchors`` subcommand
+# ---------------------------------------------------------------------------
+
+
+@sn.group("anchors")
+def sn_anchors() -> None:
+    """Manage preferred ``physical_base`` anchors.
+
+    \b
+    Examples:
+      imas-codex sn anchors list
+      imas-codex sn anchors mine --min-usage 2 --min-score 0.75
+      imas-codex sn anchors mine --write  # regenerate committed YAML
+    """
+
+
+@sn_anchors.command("list")
+@click.option("--domain", default=None, help="Filter by primary domain")
+def sn_anchors_list(domain: str | None) -> None:
+    """Print the curated preferred ``physical_base`` anchors."""
+    from rich.table import Table
+
+    from imas_codex.standard_names.preferred_bases import load_preferred_bases
+
+    data = load_preferred_bases()
+    anchors = data.get("anchors", [])
+    if domain:
+        anchors = [a for a in anchors if a.get("domain") == domain]
+
+    table = Table(
+        title=(
+            f"Preferred physical_base anchors "
+            f"(v{data.get('version', '?')}, "
+            f"updated {data.get('last_updated', '?')})"
+        )
+    )
+    table.add_column("Token", style="cyan", no_wrap=True)
+    table.add_column("Domain", style="magenta")
+    table.add_column("Usage", justify="right")
+    table.add_column("Examples", style="dim")
+
+    for a in anchors:
+        examples = ", ".join((a.get("examples") or [])[:2])
+        table.add_row(
+            a.get("token", ""),
+            a.get("domain", ""),
+            str(a.get("usage_count", "")),
+            examples,
+        )
+
+    console.print(table)
+    console.print(f"[dim]{len(anchors)} anchors[/dim]")
+
+
+@sn_anchors.command("mine")
+@click.option(
+    "--min-usage",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Minimum distinct StandardName uses per token",
+)
+@click.option(
+    "--min-score",
+    type=float,
+    default=0.75,
+    show_default=True,
+    help="Minimum per-name review_mean_score",
+)
+@click.option("--limit", type=int, default=None, help="Cap on number of anchors")
+@click.option(
+    "--write",
+    is_flag=True,
+    help="Overwrite the committed preferred_physical_bases.yaml",
+)
+def sn_anchors_mine(
+    min_usage: int, min_score: float, limit: int | None, write: bool
+) -> None:
+    """Regenerate preferred physical_base anchors from the Neo4j graph.
+
+    Mines ``grammar_physical_base`` tokens that have been used by at
+    least ``--min-usage`` distinct StandardNames whose individual
+    ``review_mean_score`` is >= ``--min-score``. Prints the resulting
+    YAML to stdout by default, or writes it to the package config with
+    ``--write``.
+    """
+    import datetime
+    from pathlib import Path
+
+    import imas_codex.llm.config as config_pkg
+    from imas_codex.standard_names.preferred_bases import (
+        mine_preferred_bases,
+        render_yaml,
+    )
+
+    try:
+        anchors = mine_preferred_bases(
+            min_usage_count=min_usage,
+            min_review_mean_score=min_score,
+            limit=limit,
+        )
+    except Exception as e:
+        console.print(f"[red]Failed to mine anchors:[/red] {e}")
+        raise SystemExit(1) from e
+
+    today = datetime.date.today().isoformat()
+    yaml_text = render_yaml(anchors, last_updated=today)
+
+    if write:
+        dest = Path(config_pkg.__file__).parent / "preferred_physical_bases.yaml"
+        dest.write_text(yaml_text)
+        console.print(f"[green]Wrote {len(anchors)} anchors to[/green] {dest}")
+    else:
+        click.echo(yaml_text)
+        console.print(
+            f"[dim]{len(anchors)} anchors (dry-run — use --write to update)[/dim]",
+            err=True,
+        )
