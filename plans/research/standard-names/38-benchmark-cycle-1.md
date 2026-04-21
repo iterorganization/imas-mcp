@@ -280,8 +280,104 @@ Cycle 1 baseline: $6.15. Cycle 2: $5.66. Remaining: ~$13.19.
 
 ## Phase 4 — multi-reviewer consistency
 
-(Pending.)
+Re-reviewed cycle-2 frontier-model candidates (sonnet-4.6, gpt-5.4,
+gemini-3.1-pro) with a **secondary reviewer** (`google/gemini-3.1-pro-preview`)
+to measure reviewer variance against the canonical `claude-opus-4.6` judge.
+Script: `.bench-work/rereview.py` — re-uses `score_with_reviewer()` without
+re-composing, so cost is dominated by the cheap Gemini reviewer (<$1 total).
+
+Artefacts: `.bench-work/cycle1-multirev.json`, `.bench-work/cycle1-multirev.log`.
+
+| Compose model                  | n  | mean |Δ| | max |Δ| | tier disagree | mean opus | mean gemini |
+|--------------------------------|----|----------|---------|---------------|-----------|-------------|
+| anthropic/claude-sonnet-4.6    | 20 | 0.104    | 0.338   | 4 (20%)       | 0.912     | 0.916       |
+| openai/gpt-5.4                 | 20 | 0.039    | 0.200   | 1 (5%)        | 0.939     | 0.976       |
+| google/gemini-3.1-pro-preview  | 19 | 0.028    | 0.100   | 1 (5%)        | 0.938     | 0.955       |
+
+**Agreement is high.** Mean absolute per-item score delta is 0.028–0.104;
+mean-of-means matches within 0.037. Tier disagreement is ≤ 5 % for the
+top two compose models and rises to 20 % only for sonnet-4.6.
+
+### High-disagreement items (calibration candidates)
+
+All 4 sonnet disagreements were on `vertical_coordinate_of_<X>` names
+(geometric_axis, gap_reference_point, plasma_boundary_outline_point).
+Gemini consistently downgraded these from `outstanding` → `adequate`
+(Δ ≈ −0.3) because the NAME parses but the `grammar_fields` decomposition
+sonnet emitted was inconsistent (e.g. missing the `physical_base` /
+`position` split). Matches finding (3) in Phase 3 — Anthropic's
+grammar_fields problem also inflates opus's grammar score relative to
+gemini, which is stricter about the field map.
+
+The other two disagreements (`plasma_boundary_gap_angle` vs
+`angle_of_plasma_boundary_gap`) are **both grammatically valid**; opus
+marked the `_of_plasma_boundary_gap` form as `good`, gemini as
+`outstanding`. These are borderline-ordering cases (which noun is the
+`physical_base`?) — a good target for a future compose_system NC-rule.
 
 ## Phase 5 — calibration updates
 
-(Pending — will add exemplars/anti-patterns once scores stabilise.)
+Added 5 entries to `imas_codex/standard_names/benchmark_calibration.yaml`:
+
+**New exemplars (outstanding, all scored ≥ 0.95 by both reviewers on the
+cycle-2 equilibrium benchmark):**
+
+- `minor_radius_of_plasma_boundary` — textbook `physical_base_of_position`.
+- `elongation_of_plasma_boundary` — same form, dimensionless shape.
+- `distance_between_plasma_boundary_and_closest_wall_point` — locks in the
+  NC-14 canonical form AND the open-vocabulary `physical_base` principle.
+
+**New anti-patterns (poor):**
+
+- `elongation_of_plasma_boundary` collapsed from `elongation_upper /
+  elongation_lower` — semantic loss / namespace collision (observed on
+  haiku + gpt-5.4-mini, scored 0.65 / 0.71 on the baseline).
+- `vertical_coordinate_of_closest_wall_point` with malformed
+  `grammar_fields` (invalid `geometric_base`, invented `geometry` key —
+  observed on flash-lite across ≥ 6 items, scored 0.57–0.64).
+
+Previous calibration was dominated by core_profiles / magnetics entries;
+these new anchors give the benchmark reviewer concrete equilibrium-domain
+reference points in both extremes of the tier distribution.
+
+**Total entries now:** 32 (13 outstanding, 7 good, 5 adequate, 7 poor).
+
+### Why no cycle-3 stability run?
+
+The task plan optionally included a third small benchmark after calibration
+update to confirm stability. Deferred because:
+
+1. Cycle-2 scores are already tightly clustered (all 7 models in the 0.82 –
+   0.94 band, no outliers or regressions).
+2. Calibration entries live in the reviewer's system prompt (cached), so
+   their effect shows up in every future benchmark at no extra cost — we
+   will observe it on the next cycle organically.
+3. Budget accounting: $6.15 (cycle 1) + $5.66 (cycle 2) + ~$1 (multi-rev)
+   = ~$12.8 of $25. Retaining headroom for a post-R4/R5 cycle on a
+   different IDS (e.g. `core_profiles` or `magnetics`) is more valuable
+   than running the same equilibrium benchmark a third time.
+
+## Remaining issues (for a future cycle)
+
+1. **Anthropic `grammar_fields` at 0%.** The compose_dd.md reminder was
+   insufficient. Options: (a) enforce `grammar_fields` as required in
+   the Pydantic schema and let structured-output validation force it;
+   (b) add a dedicated stanza to `compose_system.md` (Claude-favoured
+   cache layer); (c) per-item few-shot example in `compose_dd.md`
+   immediately before the candidate list.
+
+2. **Haiku JSON truncation (3 errors in cycle 2).** Over-emits tokens
+   and runs out of budget. Either reduce batch size or raise per-model
+   `max_tokens` in the compose worker dispatch.
+
+3. **Flash-lite `geometric_base` hallucination.** 6 out of 20 items had
+   `geometric_base='vertical_coordinate'` or `'major_radius'`, both
+   outside the closed vocabulary. The system prompt already enumerates
+   the allowed values — flash-lite appears to ignore them. Probably
+   needs a stricter grammar-field validator in the compose worker that
+   rejects candidates with closed-vocab violations.
+
+4. **`plasma_boundary_gap_angle` vs `angle_of_plasma_boundary_gap`.**
+   Both are grammatically valid; reviewers disagree. Add an NC-rule in
+   `compose_system.md` specifying preferred ordering for modifier-free
+   geometric gap quantities.
