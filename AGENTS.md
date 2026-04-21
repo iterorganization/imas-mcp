@@ -974,9 +974,25 @@ Two distinct write paths with different semantics:
 
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
-| `search_standard_names` | Semantic + keyword search over StandardName descriptions | `query`, `kind`, `tags`, `review_status`, `cocos_type`, `k` |
+| `search_standard_names` | Semantic + keyword search over StandardName descriptions | `query`, `kind`, `tags`, `review_status`, `cocos_type`, `k`, `grammar_physical_base`, `grammar_subject`, `grammar_component`, `grammar_coordinate`, `grammar_transformation`, `grammar_position`, `grammar_process`, `grammar_object`, `grammar_geometry`, `grammar_geometric_base`, `grammar_device` |
 | `fetch_standard_names` | Fetch full entries by name ID | `names` (space/comma separated) |
 | `list_standard_names` | List with optional filters | `tag`, `kind`, `review_status`, `cocos_type` |
+| `list_grammar_vocabulary` | Distinct tokens + usage counts for a grammar segment | `segment` (one of: physical_base, subject, component, coordinate, transformation, position, process, geometry, object, geometric_base, device, region, secondary_base, binary_operator) |
+
+The `grammar_*` filters on `search_standard_names` post-filter the
+hybrid-search result set by exact (case-insensitive) match against the
+parsed `sn.grammar_<segment>` property. Use `list_grammar_vocabulary`
+to discover valid tokens before filtering — especially for the open
+`physical_base` slot, where the vocabulary is not a closed enum.
+
+**Open vs closed grammar segments.** Only `physical_base` is
+open-vocabulary by design (the ISN v0.7 `SEGMENT_TOKEN_MAP` exposes an
+empty token tuple for it). All other segments are closed against the
+ISN token lists. VocabGap reports on open segments and on the pseudo
+`grammar_ambiguity` segment are filtered out at write time
+(`imas_codex.standard_names.segments.filter_closed_segment_gaps`).
+Reviewers audit the `physical_base` slot separately via the
+decomposition rule (see `sn_review_criteria.yaml` I4.6).
 
 ### Schema
 
