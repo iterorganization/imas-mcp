@@ -89,3 +89,6 @@ imas_codex/graph/dd_models.py
 *.out
 # Search benchmark cache
 tests/search/.expected_paths_cache.json
+# SN benchmark work area
+.bench-work/
+
