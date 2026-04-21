@@ -46,6 +46,7 @@ def _run_rotator(
     dry_run: bool,
     quiet: bool,
     only_domain: str | None = None,
+    verbose: bool = False,
 ) -> None:
     """Execute the DD completion rotator and render the summary."""
     import asyncio
@@ -53,12 +54,19 @@ def _run_rotator(
     from rich.console import Console
     from rich.table import Table
 
+    from imas_codex.cli.discover.common import setup_logging
     from imas_codex.standard_names.dd_completion import (
         run_dd_completion,
         summary_table,
     )
 
     console = Console(quiet=quiet)
+
+    # Wire INFO-level logs to stderr so per-pass progress from run_dd_completion
+    # / run_rotation / workers is visible. Without this the user sees the
+    # "DD completion loop" header and then nothing for the whole run.
+    if not quiet:
+        setup_logging("sn", "sn-generate", use_rich=False, verbose=verbose)
 
     if not quiet:
         console.print(
@@ -110,7 +118,6 @@ def _run_rotator(
 )
 @click.option(
     "--physics-domain",
-    "--domain",
     "domain_filter",
     type=_PHYSICS_DOMAIN_CHOICE,
     default=None,
@@ -291,26 +298,16 @@ def _run_rotator(
 @click.option(
     "--target",
     type=click.Choice(["names", "docs", "full"], case_sensitive=False),
-    default=None,
+    default="full",
+    show_default=True,
     help=(
         "Which generation pass to run. 'names' runs the name-only compose "
-        "pass (grammar + unit only, wide batches). 'docs' routes through "
-        "the five-phase enrich pipeline to fill description/documentation "
-        "on already-named entries (EXTRACT→CONTEXTUALISE→DOCUMENT→VALIDATE"
-        "→PERSIST). 'full' (default) runs the compose pass that produces "
-        "both name and documentation in one shot. Takes precedence over "
-        "the back-compat --name-only alias."
-    ),
-)
-@click.option(
-    "--name-only",
-    is_flag=True,
-    default=False,
-    help=(
-        "Back-compat alias for --target=names. Use the Workstream 2a "
-        "name-only batching mode: group paths by (physics_domain × unit) "
-        "with larger batches and a lean user prompt. --target takes "
-        "precedence if both are provided."
+        "pass (grammar + unit only, wide batches: group paths by "
+        "physics_domain × unit with a lean user prompt). 'docs' routes "
+        "through the five-phase enrich pipeline to fill description/"
+        "documentation on already-named entries (EXTRACT→CONTEXTUALISE→"
+        "DOCUMENT→VALIDATE→PERSIST). 'full' (default) runs the compose "
+        "pass that produces both name and documentation in one shot."
     ),
 )
 @click.option(
@@ -390,8 +387,7 @@ def sn_generate(
     retry_vocab_gap: bool,
     regen_only: bool,
     no_review_feedback: bool,
-    target: str | None,
-    name_only: bool,
+    target: str,
     name_only_batch_size: int | None,
     docs_status_filter: str,
     docs_batch_size: int | None,
@@ -417,14 +413,9 @@ def sn_generate(
       imas-codex sn generate --reset-to drafted --reset-only
       imas-codex sn generate --reset-to drafted --below-score 0.6 --reset-only
     """
-    # --- Resolve --target (takes precedence over --name-only back-compat alias) ---
-    if target is not None:
-        target_normalized = target.lower()
-    elif name_only:
-        target_normalized = "names"
-    else:
-        target_normalized = "full"
-    # Sync name_only back to target for downstream compose routing.
+    # --- Resolve --target ---
+    target_normalized = target.lower()
+    # Downstream compose routing uses a derived name_only boolean.
     name_only = target_normalized == "names"
 
     # --target=docs routes through the five-phase enrich pipeline.
@@ -462,6 +453,7 @@ def sn_generate(
             dry_run=dry_run,
             quiet=quiet,
             only_domain=domain_filter,
+            verbose=verbose,
         )
         return
 
@@ -819,11 +811,10 @@ def sn_generate(
 )
 @click.option(
     "--physics-domain",
-    "--domain",
     "domain_filter",
     type=_PHYSICS_DOMAIN_CHOICE,
     default=None,
-    help="Filter to physics domain (alias: --domain).",
+    help="Filter to physics domain.",
 )
 @click.option(
     "--facility",
@@ -1346,13 +1337,11 @@ def sn_status() -> None:
 )
 @click.option(
     "--format",
-    "--export",
     "export_format",
     type=click.Choice(["table", "yaml"]),
     default="table",
     show_default=True,
-    help="Output format. --format yaml yields ISN-PR-ready snippets. "
-    "(--export is a backward-compatible alias.)",
+    help="Output format. --format yaml yields ISN-PR-ready snippets.",
 )
 def sn_gaps(
     direction: str,
@@ -1577,11 +1566,10 @@ def _emit_yaml_output(
 )
 @click.option(
     "--physics-domain",
-    "--domain",
     "domain_filter",
     type=_PHYSICS_DOMAIN_CHOICE,
     default=None,
-    help="Filter to physics domain — applied to tags (alias: --domain).",
+    help="Filter to physics domain — applied to tags.",
 )
 @click.option(
     "--output-dir",
@@ -2087,11 +2075,10 @@ def sn_clear(
 @sn.command("reconcile")
 @click.option(
     "--source",
-    "--source-type",
     "source_type",
     type=click.Choice(["dd", "signals"]),
     default="dd",
-    help="Source type to reconcile. (--source-type is a backward-compatible alias.)",
+    help="Source type to reconcile.",
 )
 def reconcile(source_type: str) -> None:
     """Reconcile StandardNameSource nodes after DD/signal rebuild.
@@ -2341,11 +2328,10 @@ def sn_resolve_links(
 @click.option("--ids", default=None, help="Scope to names linked to specific IDS")
 @click.option(
     "--physics-domain",
-    "--domain",
     "domain",
     type=_PHYSICS_DOMAIN_CHOICE,
     default=None,
-    help="Scope to physics domain (alias: --domain).",
+    help="Scope to physics domain.",
 )
 @click.option(
     "--status",
@@ -2362,9 +2348,6 @@ def sn_resolve_links(
     "--force",
     is_flag=True,
     help="Force re-review of already-scored names",
-)
-@click.option(
-    "--model", default=None, help="Override the canonical review model (legacy)"
 )
 @click.option(
     "--models",
@@ -2402,7 +2385,8 @@ def sn_resolve_links(
 @click.option(
     "--target",
     type=click.Choice(["names", "docs", "full"], case_sensitive=False),
-    default=None,
+    default="full",
+    show_default=True,
     help=(
         "Which review rubric to apply. 'names' → 4-dim name rubric "
         "(grammar/semantic/convention/completeness, /80). 'docs' → 4-dim "
@@ -2410,17 +2394,7 @@ def sn_resolve_links(
         "completeness/physics_accuracy, /80). 'full' → 6-dim full rubric "
         "(/120, default). A lower-fidelity target will not overwrite a "
         "higher-fidelity prior review unless --force. Fidelity rank: "
-        "names < docs < full. --target takes precedence over the "
-        "back-compat --name-only alias."
-    ),
-)
-@click.option(
-    "--name-only",
-    is_flag=True,
-    help=(
-        "Back-compat alias for --target=names. Score the name only using "
-        "the 4-dim name rubric (grammar/semantic/convention/completeness "
-        "over 80). --target takes precedence when both are provided."
+        "names < docs < full."
     ),
 )
 def sn_review(
@@ -2429,7 +2403,6 @@ def sn_review(
     status_filter: str,
     unreviewed: bool,
     force: bool,
-    model: str | None,
     models_override: str | None,
     batch_size: int,
     neighborhood: int,
@@ -2437,8 +2410,7 @@ def sn_review(
     dry_run: bool,
     skip_audit: bool,
     concurrency: int,
-    target: str | None,
-    name_only: bool,
+    target: str,
 ) -> None:
     """Review standard names with 3-layer pipeline.
 
@@ -2451,30 +2423,24 @@ def sn_review(
     Examples:
       imas-codex sn review --unreviewed --cost-limit 5.0
       imas-codex sn review --ids equilibrium --dry-run
-      imas-codex sn review --force --domain magnetics
+      imas-codex sn review --force --physics-domain magnetics
       imas-codex sn review --target names --unreviewed
-      imas-codex sn review --target docs --domain equilibrium
+      imas-codex sn review --target docs --physics-domain equilibrium
     """
     import asyncio
 
     from imas_codex.standard_names.review.budget import ReviewBudgetManager
     from imas_codex.standard_names.review.state import StandardNameReviewState
 
-    # Resolve --target (takes precedence over --name-only back-compat alias).
-    if target:
-        target_normalized = target.lower()
-    elif name_only:
-        target_normalized = "names"
-    else:
-        target_normalized = "full"
-    # Sync name_only so downstream state is consistent.
+    # Resolve --target.
+    target_normalized = target.lower()
+    # Downstream state uses a derived name_only boolean.
     name_only = target_normalized == "names"
 
     # Enforce batch-size cap
     batch_size = min(batch_size, 25)
 
-    # Load reviewer list (N>=1). CLI --models overrides pyproject, and
-    # --model overrides just the canonical entry.
+    # Load reviewer list (N>=1). CLI --models overrides pyproject.
     from imas_codex.settings import (
         get_sn_review_disagreement_threshold,
         get_sn_review_models,
@@ -2484,10 +2450,6 @@ def sn_review(
         review_models = [m.strip() for m in models_override.split(",") if m.strip()]
     else:
         review_models = get_sn_review_models()
-    if model and review_models:
-        review_models = [model, *review_models[1:]]
-    elif model and not review_models:
-        review_models = [model]
     disagreement_threshold = get_sn_review_disagreement_threshold()
 
     # Build state
@@ -2500,7 +2462,7 @@ def sn_review(
         unreviewed_only=unreviewed,
         force_review=force,
         skip_audit=skip_audit,
-        review_model=(review_models[0] if review_models else model),
+        review_model=(review_models[0] if review_models else None),
         batch_size=batch_size,
         neighborhood_k=neighborhood,
         concurrency=concurrency,
@@ -2882,118 +2844,13 @@ def _run_sn_docs_generation(
         log_print("[yellow]No enrichment results returned[/yellow]")
 
 
-@sn.command("enrich")
-@click.option(
-    "--physics-domain",
-    "--domain",
-    "domain",
-    type=_PHYSICS_DOMAIN_CHOICE,
-    multiple=True,
-    default=None,
-    help=(
-        "Filter by physics domain, repeatable (alias: --domain). "
-        "Example: --physics-domain equilibrium --physics-domain transport"
-    ),
-)
-@click.option(
-    "--status",
-    "status_filter",
-    default="named",
-    show_default=True,
-    help="Review status(es) to enrich from (comma-separated or repeated)",
-)
-@click.option(
-    "-c",
-    "--cost-limit",
-    type=float,
-    default=2.0,
-    show_default=True,
-    help="Maximum LLM spend in USD",
-)
-@click.option(
-    "--limit",
-    type=int,
-    default=None,
-    help="Cap total standard names to enrich",
-)
-@click.option(
-    "--batch-size",
-    type=int,
-    default=8,
-    show_default=True,
-    help="LLM batch size (names per request)",
-)
-@click.option("--dry-run", is_flag=True, help="Preview candidates without graph writes")
-@click.option(
-    "--force",
-    is_flag=True,
-    help="Re-enrich names already at review_status='enriched'",
-)
-@click.option(
-    "--model",
-    "model_override",
-    type=str,
-    default=None,
-    help="Override LLM model (default: sn-enrich from settings)",
-)
-@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
-@click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
-def sn_enrich(
-    domain: tuple[str, ...],
-    status_filter: str,
-    cost_limit: float,
-    limit: int | None,
-    batch_size: int,
-    dry_run: bool,
-    force: bool,
-    model_override: str | None,
-    verbose: bool,
-    quiet: bool,
-) -> None:
-    """Enrich existing standard names with documentation.
-
-    \b
-    Takes named standard names as input and generates documentation
-    fields (description, documentation, tags, links) using linked
-    DD paths as context.  Runs the five-phase pipeline:
-    EXTRACT → CONTEXTUALISE → DOCUMENT → VALIDATE → PERSIST.
-
-    \b
-    Does NOT change: name, grammar fields, kind, or unit.
-
-    \b
-    Back-compat alias for ``sn generate --target docs``. New code should
-    prefer the unified ``sn generate`` entry point.
-
-    \b
-    Examples:
-      imas-codex sn enrich --domain equilibrium -c 2.0
-      imas-codex sn enrich --domain transport --domain magnetics --limit 50 --dry-run
-      imas-codex sn enrich --force --model openrouter/anthropic/claude-opus-4.7
-    """
-    domain_list: list[str] | None = list(domain) if domain else None
-    _run_sn_docs_generation(
-        domain_list=domain_list,
-        status_filter=status_filter,
-        cost_limit=cost_limit,
-        limit=limit,
-        batch_size=batch_size,
-        dry_run=dry_run,
-        force=force,
-        model_override=model_override,
-        verbose=verbose,
-        quiet=quiet,
-    )
-
-
 @sn.command("rotate")
 @click.option(
     "--physics-domain",
-    "--domain",
     "domain",
     type=_PHYSICS_DOMAIN_CHOICE,
     required=True,
-    help="Physics domain scope, applied to all 4 phases (alias: --domain).",
+    help="Physics domain scope, applied to all 4 phases.",
 )
 @click.option(
     "-c",

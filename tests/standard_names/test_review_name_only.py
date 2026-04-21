@@ -1,4 +1,4 @@
-"""Tests for sn review --name-only mode.
+"""Tests for sn review --target=names mode.
 
 Covers:
 * StandardNameQualityScoreNameOnly total/score/tier arithmetic.

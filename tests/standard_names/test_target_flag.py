@@ -5,8 +5,6 @@ Validates that the unified ``--target`` flag routes correctly:
 * ``--target=names``  → single-pass compose with ``name_only=True``
 * ``--target=docs``   → five-phase enrich pipeline (via ``_run_sn_docs_generation``)
 * ``--target=full``   → default compose path (rotator or single-pass)
-* ``--name-only``     → back-compat alias, equivalent to ``--target=names``
-* ``--target`` takes precedence over ``--name-only`` when both are set
 
 No LLM calls — external dependencies are mocked.
 """
@@ -142,73 +140,11 @@ class TestTargetFullRouting:
             assert not mock_docs.called
 
     def test_default_target_routes_to_rotator(self, runner):
-        """No --target and no --name-only → rotator (full default)."""
+        """No --target → rotator (full default)."""
         with patch(_ROTATOR) as mock_rot, patch(_DOCS_HELPER) as mock_docs:
             runner.invoke(sn, ["generate", "-c", "0.01", "-q"])
             assert mock_rot.called
             assert not mock_docs.called
-
-
-class TestNameOnlyAlias:
-    """``--name-only`` remains a back-compat alias for ``--target=names``."""
-
-    def test_name_only_alias_routes_to_rotator_not_docs(self, runner):
-        """--name-only (no --paths) still hits the rotator path."""
-        with patch(_ROTATOR) as mock_rot, patch(_DOCS_HELPER) as mock_docs:
-            runner.invoke(sn, ["generate", "--name-only", "-c", "0.01", "-q"])
-            # Rotator short-circuit happens after target resolution; name_only
-            # is carried in state through the single-pass path, not rotator.
-            # Either way, the docs helper must NOT be called.
-            assert not mock_docs.called
-            assert (
-                mock_rot.called or not mock_rot.called
-            )  # tautology; we only care docs
-
-    def test_target_takes_precedence_over_name_only(self, runner):
-        """--target=docs wins over --name-only."""
-        with patch(_DOCS_HELPER) as mock_docs, patch(_ROTATOR) as mock_rot:
-            runner.invoke(
-                sn,
-                [
-                    "generate",
-                    "--target",
-                    "docs",
-                    "--name-only",
-                    "--physics-domain",
-                    "equilibrium",
-                    "--limit",
-                    "1",
-                    "-c",
-                    "0.01",
-                    "-q",
-                ],
-            )
-            assert mock_docs.called, "--target=docs must win over --name-only"
-            assert not mock_rot.called
-
-
-class TestEnrichBackCompat:
-    """``sn enrich`` remains a thin alias over ``_run_sn_docs_generation``."""
-
-    def test_sn_enrich_calls_docs_helper(self, runner):
-        with patch(_DOCS_HELPER) as mock_docs:
-            runner.invoke(
-                sn,
-                [
-                    "enrich",
-                    "--physics-domain",
-                    "equilibrium",
-                    "--limit",
-                    "1",
-                    "-c",
-                    "0.01",
-                    "-q",
-                ],
-            )
-            assert mock_docs.called
-            kwargs = mock_docs.call_args.kwargs
-            assert kwargs["domain_list"] == ["equilibrium"]
-            assert kwargs["limit"] == 1
 
 
 class TestTargetValidation:

@@ -5,7 +5,6 @@ Covers:
 * ``docs-batch-size`` resolves to the pyproject default (12) when
   ``--docs-batch-size`` is omitted and ``[sn-generate].docs-batch-size``
   is set.
-* ``sn enrich`` still forwards to the same helper with equivalent args.
 """
 
 from __future__ import annotations
@@ -129,25 +128,3 @@ def test_generate_target_docs_explicit_batch_size_overrides_pyproject() -> None:
         assert result.exit_code == 0, result.output
         kwargs = mock_docs.call_args.kwargs
         assert kwargs["batch_size"] == 7
-
-
-def test_sn_enrich_alias_still_forwards_to_docs_helper() -> None:
-    """sn enrich remains a thin back-compat alias for sn generate --target docs."""
-    runner = CliRunner()
-    with patch("imas_codex.cli.sn._run_sn_docs_generation") as mock_docs:
-        result = runner.invoke(
-            sn,
-            [
-                "enrich",
-                "--physics-domain",
-                "equilibrium",
-                "--limit",
-                "3",
-                "--dry-run",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        assert mock_docs.called
-        kwargs = mock_docs.call_args.kwargs
-        assert kwargs["domain_list"] == ["equilibrium"]
-        assert kwargs["limit"] == 3

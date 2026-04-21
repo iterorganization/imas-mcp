@@ -452,7 +452,7 @@ class TestGroupByConceptAndUnit:
 
 
 class TestGroupForNameOnly:
-    """Tests for coarse (physics_domain × unit) grouping used by --name-only."""
+    """Tests for coarse (physics_domain × unit) grouping used by --target=names."""
 
     def _enriched(self, **overrides) -> dict:
         base = {
