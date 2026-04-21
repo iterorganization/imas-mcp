@@ -99,11 +99,13 @@ The graph ↔ catalog round-trip is broken on multiple axes:
   `review_status` → `pipeline_status` with CLI/MCP alias for one
   release cycle; add catalog-authoritative `status` matching ISN
   enum.
-- **Source-agnostic provenance**: `source_paths` (already in graph,
-  prefix-encoded `dd:` / `<facility>:`) is the one authoritative
-  list; `dd_paths` is retired from the catalog model; import
-  reconstructs both `IMASNode` and `FacilitySignal` relationships
-  from prefixes.
+- **Source-agnostic provenance** (graph-only): `source_paths` (already in graph,
+  prefix-encoded `dd:` / `<facility>:`) stays graph-only; `dd_paths` is
+  removed from ISN entirely. Provenance (`SOURCE_DD_PATH` /
+  `SOURCE_SIGNAL` relationships and `source_paths` string list) is
+  managed by the extraction pipeline, never serialised to catalog YAML,
+  never read by import. Reviewers query the graph if they need
+  provenance; they do not see or edit it in catalog PRs.
 - **PR-driven round-trip with divergence protection**: the catalog is
   edited by humans via GitHub PRs against ISNC. Each graph node carries
   an `origin` flag (`pipeline` | `catalog_edit`) identifying which side
@@ -128,10 +130,10 @@ In:
 - **`sn publish` rewrite**: staging dir → ISNC repo git operation
   (commit/push or PR). No graph reads; transport only.
 - `sn import` rewrite: validate against new ISN model; derive
-  `physics_domain` from relative path; partition `source_paths` by
-  prefix to recreate `SOURCE_DD_PATH` / `SOURCE_SIGNAL`
-  relationships; recompute `grammar_*` from the name using the same
-  helper as the pipeline writes.
+  `physics_domain` from relative path; recompute `grammar_*` from
+  the name using the same helper as the pipeline writes. **Import
+  does not touch provenance** — `source_paths` / `SOURCE_DD_PATH` /
+  `SOURCE_SIGNAL` are owned by `sn run`.
 - Fold `reconcile` + `resolve-links` into `sn run`; delete
   `sn reconcile`, `sn resolve-links`, `sn seed` standalone commands.
 - **ISNC clean break**: on first `sn publish` with the new schema,
@@ -183,9 +185,6 @@ links:
   - name:electron_density
 
 # Physics semantics
-source_paths:                   # source-agnostic, prefix-encoded
-  - dd:core_profiles/profiles_1d/electrons/temperature
-  - tcv:thomson/temperature_e
 validity_domain: null
 constraints: []
 cocos_transformation_type: null # psi_like | ip_like | b0_like | ...
@@ -198,9 +197,14 @@ provenance:                     # ISN grammatical provenance; NOT pipeline
   operator_id: null
 ```
 
-**Not in per-name YAML** (derived on import):
+**Not in per-name YAML** (derived on import or graph-only):
 - `physics_domain` — from relative path `standard_names/<domain>/<name>.yml`
 - `grammar_*` (13 fields) — from ISN parser on name string
+- `source_paths` — **graph-only provenance** (see below). Pipeline writes
+  them from `SOURCE_DD_PATH` / `SOURCE_SIGNAL` relationships; catalog
+  reviewers do not edit provenance. Reviewers who want to trace a name
+  back to its DD path or facility signal query the graph (MCP or Neo4j
+  browser), not the catalog YAML.
 - Everything else listed under "graph-only" below.
 
 ### Catalog-level manifest: `catalog.yml` at **repo root**
@@ -241,8 +245,8 @@ it as an entry.
 | `unit` | ✓ | keep | |
 | `tags` | ✓ | keep | |
 | `links` | ✓ | keep | Emit as `name:x` strings |
-| `source_paths` | ✓ | keep | Replaces `dd_paths` in catalog |
-| `source_types` | ✗ | **keep** | Used by stats/filters; derivable but cached |
+| `source_paths` | ✗ | **keep** | Graph-only provenance. Pipeline writes from `SOURCE_DD_PATH`/`SOURCE_SIGNAL` relationships; never in catalog YAML. |
+| `source_types` | ✗ | **keep** | Graph-only; cached projection derivable from `source_paths`. |
 | `validity_domain` | ✓ | keep | |
 | `constraints` | ✓ | keep | |
 | `cocos_transformation_type` | ✓ | keep | Per-name physics semantics |
@@ -381,7 +385,6 @@ class StandardNameEntryBase(BaseModel):
     tags: list[str] = []
     links: list[Link] = []
 
-    source_paths: list[str] = []
     validity_domain: str | None = None
     constraints: list[str] = []
     cocos_transformation_type: str | None = None
@@ -402,15 +405,19 @@ class StandardNameCatalogManifest(BaseModel):
 ```
 
 **Breaking changes vs current ISN 0.7.x:**
-- `dd_paths` → `source_paths` (rename + semantics broaden)
-- `physics_domain` field removed (derived from path on load)
-- `provenance` meaning unchanged (grammatical); add `StandardNameCatalogManifest`
+- `dd_paths` **removed entirely** (no rename, no successor field in the
+  catalog schema). Provenance is now graph-only: codex writes
+  `SOURCE_DD_PATH` / `SOURCE_SIGNAL` relationships during extraction; the
+  ISN catalog carries editorial fields only. Catalog reviewers never edit
+  provenance.
+- `physics_domain` field removed (derived from path on load).
+- `provenance` meaning unchanged (grammatical); add `StandardNameCatalogManifest`.
 
-**Coordinated release strategy** (BLOCKER 10 from RD v1):
-Dual-loader in ISN 0.8.0 reads both `dd_paths` (legacy) and
-`source_paths` (new), normalising to `source_paths` internally. ISN
-0.9.0 drops `dd_paths` support entirely. This gives codex and
-imas-standard-names-catalog independent migration windows.
+**Coordinated release strategy**: clean break. ISN 0.8.0 drops `dd_paths`
+in a single release; no dual-loader, no deprecation window. ISNC is wiped
+and regenerated in Phase 8 from the post-Phase-2 graph, so there is no
+legacy catalog to migrate. Codex `pyproject.toml` pin advances to
+`v0.8.0rcN` once the rc smoke-test passes (Phase 1.5).
 
 ---
 
@@ -494,9 +501,9 @@ New graph-only field, enum `OriginType` (NOT serialised to catalog YAML — the 
 | Normalisation | Applied to |
 |---|---|
 | Missing key == `null` | all nullable scalar fields (`deprecates`, `superseded_by`, `validity_domain`, …) |
-| Missing key == `[]` | all list fields (`tags`, `links`, `source_paths`, …) |
+| Missing key == `[]` | all list fields (`tags`, `links`, `deprecates`, …) |
 | `.strip()` and collapse `\r\n` → `\n`, strip trailing newlines | multiline strings (`description`, `documentation`) |
-| Sort in-place | unordered lists declared so in schema: `tags`, `source_paths`, `deprecates` (not `links` — order is editorial) |
+| Sort in-place | unordered lists declared so in schema: `tags`, `deprecates` (not `links` — order is editorial) |
 | YAML-dump + re-parse (ruamel round-trip) | entire catalog entry before comparison, to normalise quoting and numeric-literal representation |
 
 Any field not listed retains original ordering/whitespace and is compared verbatim. The normaliser is implemented once in `catalog_import.canonicalise_entry()` and covered by `test_canonicalise_entry.py` (parametrised: each rule has a positive and a negative case).
@@ -623,7 +630,7 @@ Reclassified per RD finding #5:
 | `validity_domain`, `constraints` | **catalog-owned** | Editorial annotation | Protected |
 | `unit` | **validated on import** | DD/physics-authoritative; LLM never writes it anyway | Import rejects mismatch with DD unless `--accept-unit-override` is passed; not on the `origin` protection list |
 | `cocos_transformation_type` | **validated on import** | Physics-authoritative; manifest-level COCOS is already gated | Import rejects mismatch with graph COCOS FK unless override |
-| `source_paths` | **replace-on-import** | Provenance; catalog reflects pipeline's view at export; catalog edit REPLACES on import (not UNION). Removing a path in catalog is NOT persistent — pipeline re-adds on next `sn run` if extraction still produces it. To permanently suppress, fix extraction or apply graph-side surgery. Not on the `origin` protection list (pipeline re-populates naturally on next run). |
+| `source_paths` | **graph-only** | Provenance. Never in catalog YAML. Pipeline writes via `SOURCE_DD_PATH`/`SOURCE_SIGNAL` relationships during extraction (`sn run`). Catalog reviewers do not see or edit provenance; they query the graph if they need it. Eliminates REPLACE-vs-UNION divergence entirely. | N/A |
 | `cocos` (FK) | **graph-only** | Not serialised to catalog | N/A |
 
 ### Should we track this metadata?
@@ -639,25 +646,26 @@ Reclassified per RD finding #5:
 
 ---
 
-## Source-agnostic relationship writes
+## Source-agnostic provenance (graph-only)
 
-BLOCKER 4 from RD v1. On import, `catalog_import._import_relationships`
-partitions `source_paths` by prefix:
+Provenance (`source_paths`, `SOURCE_DD_PATH`, `SOURCE_SIGNAL`) lives
+exclusively in the graph. Neither `sn export` nor `sn import` reads or
+writes these fields in the catalog YAML.
 
-```python
-for sp in source_paths:
-    if sp.startswith('dd:'):
-        # MERGE (sn)-[:SOURCE_DD_PATH]->(dd:IMASNode {id: sp[3:]})
-    elif ':' in sp:
-        facility, signal_id = sp.split(':', 1)
-        # MERGE (sn)-[:SOURCE_SIGNAL]->(fs:FacilitySignal {id: sp})
-    else:
-        # log warning; strict mode: fail
-```
+**Pipeline writes** (unchanged from current behaviour):
+- `workers.py` extraction path: when a DD path or facility signal
+  produces a standard name, `MERGE (sn)-[:SOURCE_DD_PATH]->(dd)` or
+  `MERGE (sn)-[:SOURCE_SIGNAL]->(fs)` and append to `sn.source_paths`.
+- `resolve-links` (folded into `sn run` per Phase 5): refreshes
+  relationships from `source_paths` strings.
 
-Publish emits `source_paths` verbatim from the graph property (no
-relationship reconstruction needed — the property is the source of
-truth for ordering and completeness).
+**Catalog round-trip**: zero interaction. `sn export` skips the field on
+emit; `sn import` never touches `source_paths` or the relationships.
+Removing or adding a provenance path requires a graph-side action
+(`sn run` re-extracts; operator uses Cypher to hand-suppress).
+
+**Consequence**: the REPLACE-vs-UNION debate is deleted. The field is
+not a divergence surface.
 
 ---
 
@@ -852,20 +860,21 @@ Purpose: decide which fields to schema-drop vs keep (dead-but-retained).
 Files: `~/Code/imas-standard-names/src/imas_standard_names/models.py`, related validators/tests.
 
 1a. Rewrite `StandardNameEntry{Scalar,Vector,Metadata}` per §ISN rewrite:
-    - Replace `dd_paths` with `source_paths`.
+    - Remove `dd_paths` entirely; do **not** replace with `source_paths`
+      — provenance is graph-only (see §Source-agnostic provenance).
     - Add `status`, `deprecates`, `superseded_by`, `cocos_transformation_type`.
     - **Do NOT** add per-entry provenance fields (`exported_at`, `imported_at`,
       `catalog_commit_sha`, `catalog_pr_number`, `catalog_pr_url`, `origin`) to
       the ISN model — these are all graph-only (MED fix from RD v2). Per-entry
       timestamps in catalog YAML create noisy diffs on every export. Generation
       metadata belongs **only** in the manifest (see 1b).
-    - Drop: `dd_paths` (renamed), species/population/toroidal_mode/flux_surface_average (never were on the ISN model; confirm absent).
+    - Drop: `dd_paths`, species/population/toroidal_mode/flux_surface_average (never were on the ISN model; confirm absent).
 1b. Add `StandardNameCatalogManifest` model. Manifest carries ONLY run-level
     metadata: `schema_version`, `cocos`, `grammar_version`, `exported_at`,
     `min_score_applied`, `published_count`, `candidate_count`,
     `excluded_below_score_count`, `excluded_unreviewed_count`, `source_repo`,
     `source_commit_sha`.
-1c. Loader: accept `source_paths` only (clean break; no dual-loader — ISNC will be wiped and regenerated in Phase 8).
+1c. Loader: accept new schema only (`dd_paths` absent, `source_paths` absent; provenance is graph-only); clean break; no dual-loader — ISNC will be wiped and regenerated in Phase 8.
 1d. ISN tests: round-trip model dump/load; manifest construction.
 1e. Docs: update ISN README with new schema.
 1f. **Release**: `cd ~/Code/imas-standard-names && uv run standard-names release --bump minor -m "feat: rewrite StandardNameEntry for catalog schema v2"`. This cuts an rc (e.g. `v0.8.0rc1`) on origin (fork).
@@ -884,7 +893,7 @@ Files: `~/Code/imas-standard-names/src/imas_standard_names/models.py`, related v
 1.5c. `uv run imas-codex build-models --force`.
 1.5d. Quick smoke: `uv run python -c "from imas_standard_names.models import StandardNameEntryScalar; print(StandardNameEntryScalar.model_fields.keys())"` — confirm new fields.
 1.5e. Commit: `chore(deps): bump imas-standard-names to 0.8.0rcN for catalog schema v2`.
-1.5f. **Acceptance**: import succeeds; `source_paths` present; `dd_paths` absent; green worktree ready for Phase 2 dispatch.
+1.5f. **Acceptance**: import succeeds; new fields (`status`, `deprecates`, `superseded_by`, `cocos_transformation_type`) present; `dd_paths` and `source_paths` both absent from `StandardNameEntryScalar.model_fields` (provenance is graph-only); green worktree ready for Phase 2 dispatch.
 
 ### Phase 2 — Graph schema migration (imas-codex)
 
@@ -950,7 +959,8 @@ serialised with Phase 4 and Phase 5 to avoid `cli/sn.py` merge conflicts
 3a. Implement `sn export` (replaces current `publish` yaml generation):
     - Reads graph → writes staging dir `<staging>/standard_names/<domain>/<name>.yml` + `<staging>/catalog.yml`.
     - Emits `.yml` (not `.yaml`).
-    - Applies gate A (graph tests) + B (cross-field consistency: COCOS, grammar-version, source_paths resolve) + C (`--min-score`, `--include-unreviewed`, `--min-description-score`) + D (divergence detection — see §PR-driven round-trip).
+    - **Does not emit provenance fields** (`source_paths`, `SOURCE_DD_PATH`/`SOURCE_SIGNAL` relationships). Provenance stays in the graph.
+    - Applies gate A (graph tests) + B (cross-field consistency: COCOS matches manifest; grammar-version matches; all names parse; `SOURCE_DD_PATH`/`SOURCE_SIGNAL` targets exist in graph — graph-side only, not catalog-side) + C (`--min-score`, `--include-unreviewed`, `--min-description-score`) + D (divergence detection — see §PR-driven round-trip).
     - Flags: `--staging <dir>` (required), `--min-score <float>` (default 0.65), `--include-unreviewed`, `--min-description-score <float>`, `--force`, `--skip-gate`, `--gate-only`, `--gate-scope`, `--domain`, `--override-edits <name>...` (per-name; or `--override-edits all` explicit opt-in).
     - Writes `<staging>/.export_report.json` with gate results, divergence report, name counts per filter.
 3b. Implement `sn preview` as a thin wrapper that calls ISN `catalog-site serve` on the staging dir.
@@ -959,7 +969,7 @@ serialised with Phase 4 and Phase 5 to avoid `cli/sn.py` merge conflicts
     - Action: mirror into ISNC checkout, commit, push to origin (fork) or upstream per existing release conventions.
     - NO gate logic (already run at export).
     - Flags: `--isnc <path>`, `--push`, `--dry-run`.
-3d. Tests: gate pass/fail for each of A/B/C/D; divergence-detection unit test; export→staging→publish round trip (staging intermediates assertable); `test_source_paths_roundtrip.py` — mixed DD + signal refs preserve ordering and partitioning across export→import.
+3d. Tests: gate pass/fail for each of A/B/C/D; divergence-detection unit test; export→staging→publish round trip (staging intermediates assertable); `test_source_paths_not_in_yaml.py` — assert `sn export` output YAML contains neither `source_paths` nor `dd_paths` keys; assert `sn import` of a round-trip-edited YAML does not alter `SOURCE_DD_PATH`/`SOURCE_SIGNAL` relationships or the `source_paths` string list on the graph node.
 3e. **Acceptance**: `sn export`, `sn preview`, `sn publish` all functional independently; gate blocks catastrophic states; divergence report included in `.export_report.json`.
 
 ### Phase 4 — `sn import` rewrite + PR extraction (imas-codex)
@@ -972,14 +982,13 @@ CLI integration serialised with Phase 3 and Phase 5.
 4a. Accept new schema (no `dd_paths` fallback — clean break; Phase 8 regenerates ISNC).
 4b. Derive `physics_domain` from file path `standard_names/<domain>/<name>.yml`; refuse mismatches with loud error.
 4c. Call shared `decompose_name(name)` to repopulate `grammar_*`.
-4d. Partition `source_paths` by prefix and **REPLACE** existing graph values
-    (not UNION, per §Catalog-owned field classification — `source_paths` is
-    replace-on-import; removal in catalog is not persistent but does not
-    create a UNION sticky-divergence):
-    - `dd:<path>` → re-link via `SOURCE_DD_PATH` to `IMASNode`.
-    - `signal:<facility>:<id>` → `SOURCE_SIGNAL` to `FacilitySignal`.
-    - Existing relationships not present in the incoming list are DROPPED.
-    - Unknown prefixes logged + skipped (not fatal).
+4d. **Provenance is graph-only** — `sn import` does NOT read, partition, or
+    apply `source_paths` from catalog YAML. `SOURCE_DD_PATH` / `SOURCE_SIGNAL`
+    relationships and the `source_paths` property are owned by the extraction
+    pipeline (`sn run`) and are never touched by import. If a round-tripped
+    YAML contains a stray `source_paths` key (e.g. hand-added in a PR), the
+    loader rejects it with a clear error pointing users at `sn run` for
+    provenance management.
 4e. **Diff-based `origin` flip** (HIGH fix from RD v2): after normalising
     catalog-owned fields in the incoming entry (whitespace-trim, list-sort),
     compare against current graph values. Stamp `origin=catalog_edit` only
@@ -1155,19 +1164,17 @@ nice-to-have; the basic wipe+regen is correct without it.
 
 ## Open questions (for final rubber-duck round)
 
-1. **Migration dual-read window**: ISN 0.8.0 dual-loader supports
-   both `dd_paths` and `source_paths`. When does the window close?
-   Proposal: ISN 0.9.0 (one release later).
-2. **Publish gate performance**: running full corpus-health suite on
+1. **Publish gate performance**: running full corpus-health suite on
    every publish may be slow (the existing `corpus_health` marker is
    documented as "NOT part of default CI"). Do we default to a fast
    subset + opt-in full suite?
-3. **Grammar-version mismatch on import**: if `catalog.yml`
+2. **Grammar-version mismatch on import**: if `catalog.yml`
    `grammar_version` differs from the installed ISN version, is that
    a hard fail or a warning? Proposal: warning only; importing an
    older catalog under a newer ISN is fine as long as individual
    entries still validate.
-4. **`source_types` deprecation timeline**: keep graph-side as a
-   cached derived field for now. Schedule a follow-up plan to migrate
-   call sites to prefix queries on `source_paths`, then drop
-   `source_types` in a later cleanup.
+3. **`source_types` cleanup**: now that `source_paths` is graph-only
+   (not a catalog field), evaluate whether `source_types` is still
+   useful as a cached derivation. Schedule a follow-up plan to audit
+   call sites; if all queries can use prefix filters on `source_paths`
+   directly, drop `source_types` from the schema in a later cleanup.
