@@ -938,3 +938,81 @@ classes:
       tokens_out:
         description: Output tokens produced
         range: integer
+
+  PromotionCandidate:
+    description: >-
+      A grammar-vocabulary token proposed for addition to ISN's closed
+      vocabulary lists, detected by mining the graph for tokens that are
+      saturated — reused across multiple high-quality StandardNames.
+
+      Lifecycle:
+        1. ``sn vocab saturated`` mines candidates (multiple StandardName uses,
+           all with review_mean_score >= threshold, not already in ISN vocab).
+        2. ``sn vocab promote`` persists a ``PromotionCandidate`` node per
+           saturated token and prints an ISN-ready PR snippet.
+        3. When the ISN PR is opened, ``submitted_to_isn_at`` is recorded.
+        4. Once the token lands in an ISN release, ``imas_standard_names``
+           picks it up automatically on the next dependency bump — codex
+           does not own the vocabulary itself.
+
+      Each candidate is linked to the StandardNames that evidence its use
+      via the EVIDENCED_BY relationship.
+
+      Example Cypher:
+        MATCH (pc:PromotionCandidate {segment: 'physical_base'})
+        WHERE pc.submitted_to_isn_at IS NULL
+        RETURN pc.token, pc.uses, pc.min_review_score ORDER BY pc.uses DESC
+
+        MATCH (pc:PromotionCandidate)-[:EVIDENCED_BY]->(sn:StandardName)
+        RETURN pc.token, collect(sn.id) AS supporting_names
+    class_uri: sn:PromotionCandidate
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Format: promotion_candidate:{segment}:{token}
+          Example: promotion_candidate:physical_base:gap
+        required: true
+      segment:
+        description: >-
+          Grammar segment the token belongs to (e.g. ``physical_base``,
+          ``subject``). For V1 this is always ``physical_base`` since it
+          is the only open segment, but the field accommodates future
+          segments.
+        required: true
+      token:
+        description: The candidate vocabulary token
+        required: true
+      uses:
+        description: >-
+          Number of distinct StandardNames using this token in the named
+          segment slot at detection time.
+        range: integer
+      min_review_score:
+        description: >-
+          Minimum ``review_mean_score`` across the supporting StandardNames
+          at detection time. All supporting names must meet the threshold
+          (default 0.75) for the candidate to be emitted.
+        range: float
+      physics_domains:
+        description: >-
+          Comma-separated list of distinct ``physics_domain`` values covered
+          by the supporting StandardNames (evidence of cross-domain use).
+      detected_at:
+        description: ISO 8601 timestamp when this candidate was first detected
+        range: datetime
+      submitted_to_isn_at:
+        description: >-
+          ISO 8601 timestamp when a PR was opened against ISN for this
+          candidate. NULL means the candidate has not yet been submitted.
+        range: datetime
+      evidences:
+        description: >-
+          Supporting StandardNames whose segment slot contains this token.
+          Persisted as EVIDENCED_BY edges in the graph; LinkML does not
+          model edge properties.
+        multivalued: true
+        range: StandardName
+        inlined: false
+        annotations:
+          relationship_type: EVIDENCED_BY

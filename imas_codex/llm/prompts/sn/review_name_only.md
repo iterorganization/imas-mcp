@@ -55,8 +55,6 @@ When in doubt, remember: the benchmark runner independently calls
 `parse_standard_name` on every candidate and reports a `Valid %`. If that
 check passes, grammar is valid.
 
-{% include "sn/_preferred_bases.md" %}
-
 ## Scoring Dimensions
 
 Rate each dimension from 0 to 20. The total score is the sum (0-80).
@@ -99,16 +97,6 @@ grammar and convention scores.
 - Is segment ordering canonical (no reshuffled segments)?
 - Are abbreviations and redundancies avoided (e.g. no `electron_electron_temperature`)?
 - Does the name avoid model author surnames or model-specific identifiers as suffixes (e.g. `_sauter_bootstrap`, `_hager_bootstrap`)? Standard names must be model-agnostic — model provenance belongs in metadata. → **score ≤ 5**.
-- **Preferred-anchor tiebreaker:** when two grammatically-valid forms
-  could name the same concept, the form whose `physical_base` is on
-  the preferred-anchors list (above) is the canonical one. If the
-  candidate uses a suffix form `<X>_<anchor>` (e.g.
-  `plasma_boundary_gap_angle`) where `<anchor>` is on the list while
-  the anchor-led rewrite `<anchor>_of_<X>` (`angle_of_plasma_boundary_gap`)
-  would also parse, dock **−3 on this dimension** and propose the
-  anchor-led form as `revised_name`. Coining a brand-new physical_base
-  is still fine — this tiebreaker only applies when an anchor suffix
-  appears unnecessarily.
 
 ### 4. Completeness (0-20)
 - Are all physically relevant segments present (e.g. `component` supplied for vector quantities)?

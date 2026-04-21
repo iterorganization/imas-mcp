@@ -1280,20 +1280,69 @@ def sn_status() -> None:
 
 @sn.command("gaps")
 @click.option(
+    "--direction",
+    type=click.Choice(["missing", "saturated", "both"]),
+    default="both",
+    show_default=True,
+    help=(
+        "Which vocabulary gaps to report. 'missing' = tokens the LLM wanted "
+        "but ISN lacks. 'saturated' = open-segment tokens reused enough to "
+        "propose as new ISN anchors. 'both' shows the full ISN-PR picture."
+    ),
+)
+@click.option(
     "--segment",
     default=None,
-    help="Filter by grammar segment (e.g., transformation, process)",
+    help=(
+        "Filter by grammar segment (e.g., transformation, process, "
+        "physical_base). For --direction saturated, defaults to physical_base."
+    ),
 )
 @click.option(
     "--include-open-segments/--closed-only",
     "include_open",
     default=False,
     help=(
-        "Include gaps reported on open-vocabulary segments (e.g. "
-        "physical_base) and pseudo segments (grammar_ambiguity). "
-        "By default these are hidden because they are not real vocabulary "
-        "gaps — physical_base admits any compound token by design."
+        "Include missing-direction gaps on open-vocabulary segments "
+        "(e.g. physical_base) and pseudo segments (grammar_ambiguity). "
+        "Hidden by default because physical_base admits any compound "
+        "token by design — use --direction saturated instead to propose "
+        "common bases as ISN anchors."
     ),
+)
+@click.option(
+    "--min-uses",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Saturated-direction: minimum distinct supporting StandardNames.",
+)
+@click.option(
+    "--min-score",
+    type=float,
+    default=0.75,
+    show_default=True,
+    help="Saturated-direction: minimum review_mean_score on every "
+    "supporting name (quality gate).",
+)
+@click.option(
+    "--include-existing/--exclude-existing",
+    default=False,
+    show_default=True,
+    help="Saturated-direction: include tokens already in ISN's vocabulary.",
+)
+@click.option(
+    "--persist/--no-persist",
+    default=False,
+    show_default=True,
+    help="Saturated-direction: write PromotionCandidate nodes to the graph.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="Write YAML export to this path (default: stdout when --format yaml).",
 )
 @click.option(
     "--format",
@@ -1302,26 +1351,41 @@ def sn_status() -> None:
     type=click.Choice(["table", "yaml"]),
     default="table",
     show_default=True,
-    help="Output format (yaml for ISN issue filing). "
+    help="Output format. --format yaml yields ISN-PR-ready snippets. "
     "(--export is a backward-compatible alias.)",
 )
-def sn_gaps(segment: str | None, include_open: bool, export_format: str) -> None:
-    """List grammar vocabulary gaps identified during composition.
+def sn_gaps(
+    direction: str,
+    segment: str | None,
+    include_open: bool,
+    min_uses: int,
+    min_score: float,
+    include_existing: bool,
+    persist: bool,
+    output: str | None,
+    export_format: str,
+) -> None:
+    """Report vocabulary gaps for ISN issue filing.
 
-    VocabGap nodes record missing grammar tokens found when the LLM
-    could not compose a valid standard name.  By default, gaps on
-    open-vocabulary segments (``physical_base``) and pseudo segments
-    (``grammar_ambiguity``) are hidden — these are not real missing
-    tokens and should not be reported as vocab gaps.  Use
-    ``--include-open-segments`` for diagnostics.  Use ``--export yaml``
-    to generate ISN issue filing data.
+    Reports two complementary ISN-boundary flows:
+
+    * ``missing`` — VocabGap nodes recording tokens the LLM wanted but
+      ISN lacks (closed-segment gaps by default).
+    * ``saturated`` — open-segment tokens (``physical_base``) reused on
+      enough high-quality StandardNames to propose as new ISN anchors.
+
+    The default ``--direction both`` shows both: one table for missing
+    tokens to add, one for saturated tokens ready for promotion. Both
+    feed the same ISN grammar PR workflow.
 
     \b
     Examples:
-      imas-codex sn gaps
-      imas-codex sn gaps --segment transformation
-      imas-codex sn gaps --include-open-segments
-      imas-codex sn gaps --export yaml
+      imas-codex sn gaps                        # both directions, table
+      imas-codex sn gaps --direction missing    # tokens ISN should add
+      imas-codex sn gaps --direction saturated  # promotion candidates
+      imas-codex sn gaps --format yaml          # ISN PR snippet (both)
+      imas-codex sn gaps --direction saturated --persist --format yaml \\
+          --output promotions.yml               # persist + PR snippet
     """
     from rich.table import Table
 
@@ -1330,6 +1394,73 @@ def sn_gaps(segment: str | None, include_open: bool, export_format: str) -> None
         PSEUDO_SEGMENTS,
         open_segments,
     )
+
+    yaml_sections: list[str] = []
+
+    # ------------------------------------------------------------------
+    # Saturated direction — promotion candidates for open segments
+    # ------------------------------------------------------------------
+    if direction in ("saturated", "both"):
+        from imas_codex.standard_names.vocab_promotion import (
+            format_isn_pr_snippet,
+            mine_promotion_candidates,
+            persist_candidates,
+        )
+
+        sat_segment = segment or "physical_base"
+        candidates = mine_promotion_candidates(
+            segment=sat_segment,
+            min_usage_count=min_uses,
+            min_review_mean_score=min_score,
+            exclude_existing=not include_existing,
+        )
+
+        if persist and candidates:
+            try:
+                n = persist_candidates(candidates)
+                console.print(f"[green]Persisted {n} PromotionCandidate nodes.[/green]")
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[red]Failed to persist candidates:[/red] {exc}")
+
+        if export_format == "yaml":
+            if candidates:
+                yaml_sections.append(
+                    format_isn_pr_snippet(candidates, segment=sat_segment)
+                )
+        else:
+            console.print(
+                f"[bold]Saturated `{sat_segment}` tokens[/bold] "
+                f"(>= {min_uses} uses, all >= {min_score:.2f})"
+            )
+            if not candidates:
+                console.print(
+                    "[dim]No promotion candidates at current thresholds.[/dim]"
+                )
+            else:
+                table = Table(show_header=True, header_style="bold")
+                table.add_column("Token")
+                table.add_column("Uses", justify="right")
+                table.add_column("Min score", justify="right")
+                table.add_column("Domains")
+                table.add_column("Example name")
+                for c in candidates:
+                    example = (c.get("supporting_names") or [""])[0]
+                    table.add_row(
+                        c["token"],
+                        str(c["uses"]),
+                        f"{c['min_review_score']:.2f}",
+                        ", ".join((c.get("physics_domains") or [])[:3]),
+                        example,
+                    )
+                console.print(table)
+                console.print(f"[dim]{len(candidates)} candidate(s).[/dim]")
+
+    # ------------------------------------------------------------------
+    # Missing direction — VocabGap nodes for closed segments
+    # ------------------------------------------------------------------
+    if direction not in ("missing", "both"):
+        _emit_yaml_output(yaml_sections, export_format, output)
+        return
 
     with GraphClient() as gc:
         # Query VocabGap nodes with source counts
@@ -1367,51 +1498,73 @@ def sn_gaps(segment: str | None, include_open: bool, export_format: str) -> None
             )
         )
 
-    if not results:
-        console.print("[dim]No vocabulary gaps found.[/dim]")
-        if segment:
-            console.print(f"[dim]  (filtered by segment={segment})[/dim]")
-        return
-
     if export_format == "yaml":
-        import yaml
+        if results:
+            import yaml
 
-        export_data = []
-        for r in results:
-            entry = {
-                "segment": r["segment"],
-                "needed_token": r["needed_token"],
-                "example_count": r["example_count"] or r["source_count"],
-                "sources": r["source_types"],
-            }
-            export_data.append(entry)
-
-        console.print(yaml.dump(export_data, default_flow_style=False, sort_keys=False))
+            export_data = [
+                {
+                    "segment": r["segment"],
+                    "needed_token": r["needed_token"],
+                    "example_count": r["example_count"] or r["source_count"],
+                    "sources": r["source_types"],
+                }
+                for r in results
+            ]
+            yaml_sections.append(
+                "# Missing tokens (closed-segment vocab gaps)\n"
+                + yaml.dump(export_data, default_flow_style=False, sort_keys=False)
+            )
+        _emit_yaml_output(yaml_sections, export_format, output)
         return
 
     # Table format (default)
-    table = Table(title="Vocabulary Gaps")
-    table.add_column("Segment", style="cyan")
-    table.add_column("Needed Token", style="bold")
-    table.add_column("Sources", justify="right")
-    table.add_column("Example Count", justify="right")
-    table.add_column("First Seen")
-    table.add_column("Last Seen")
+    if not results:
+        console.print("[dim]No missing vocabulary gaps found.[/dim]")
+        if segment:
+            console.print(f"[dim]  (filtered by segment={segment})[/dim]")
+    else:
+        table = Table(title="Missing Vocabulary Tokens")
+        table.add_column("Segment", style="cyan")
+        table.add_column("Needed Token", style="bold")
+        table.add_column("Sources", justify="right")
+        table.add_column("Example Count", justify="right")
+        table.add_column("First Seen")
+        table.add_column("Last Seen")
 
-    for r in results:
-        first_seen = str(r["first_seen"])[:10] if r["first_seen"] else "—"
-        last_seen = str(r["last_seen"])[:10] if r["last_seen"] else "—"
-        table.add_row(
-            r["segment"],
-            r["needed_token"],
-            str(r["source_count"]),
-            str(r["example_count"] or "—"),
-            first_seen,
-            last_seen,
-        )
+        for r in results:
+            first_seen = str(r["first_seen"])[:10] if r["first_seen"] else "—"
+            last_seen = str(r["last_seen"])[:10] if r["last_seen"] else "—"
+            table.add_row(
+                r["segment"],
+                r["needed_token"],
+                str(r["source_count"]),
+                str(r["example_count"] or "—"),
+                first_seen,
+                last_seen,
+            )
 
-    console.print(table)
-    console.print(f"\n[dim]{len(results)} gaps found[/dim]")
+        console.print(table)
+        console.print(f"[dim]{len(results)} missing token(s).[/dim]")
+
+
+def _emit_yaml_output(
+    sections: list[str], export_format: str, output: str | None
+) -> None:
+    """Write combined YAML sections to stdout or file."""
+    if export_format != "yaml":
+        return
+    if not sections:
+        console.print("[dim]No vocabulary gaps to export.[/dim]")
+        return
+    combined = "\n".join(sections)
+    if output:
+        from pathlib import Path
+
+        Path(output).write_text(combined)
+        console.print(f"[green]Wrote ISN PR snippet to[/green] {output}")
+    else:
+        click.echo(combined)
 
 
 @sn.command("publish")
@@ -3002,124 +3155,3 @@ def sn_rotate(
             console.print(f"  [{err['phase']}] {err['error']}")
 
     sys.exit(summary["exit_code"])
-
-
-# ---------------------------------------------------------------------------
-# Preferred physical_base anchors — ``sn anchors`` subcommand
-# ---------------------------------------------------------------------------
-
-
-@sn.group("anchors")
-def sn_anchors() -> None:
-    """Manage preferred ``physical_base`` anchors.
-
-    \b
-    Examples:
-      imas-codex sn anchors list
-      imas-codex sn anchors mine --min-usage 2 --min-score 0.75
-      imas-codex sn anchors mine --write  # regenerate committed YAML
-    """
-
-
-@sn_anchors.command("list")
-@click.option("--domain", default=None, help="Filter by primary domain")
-def sn_anchors_list(domain: str | None) -> None:
-    """Print the curated preferred ``physical_base`` anchors."""
-    from rich.table import Table
-
-    from imas_codex.standard_names.preferred_bases import load_preferred_bases
-
-    data = load_preferred_bases()
-    anchors = data.get("anchors", [])
-    if domain:
-        anchors = [a for a in anchors if a.get("domain") == domain]
-
-    table = Table(
-        title=(
-            f"Preferred physical_base anchors "
-            f"(v{data.get('version', '?')}, "
-            f"updated {data.get('last_updated', '?')})"
-        )
-    )
-    table.add_column("Token", style="cyan", no_wrap=True)
-    table.add_column("Domain", style="magenta")
-    table.add_column("Usage", justify="right")
-    table.add_column("Examples", style="dim")
-
-    for a in anchors:
-        examples = ", ".join((a.get("examples") or [])[:2])
-        table.add_row(
-            a.get("token", ""),
-            a.get("domain", ""),
-            str(a.get("usage_count", "")),
-            examples,
-        )
-
-    console.print(table)
-    console.print(f"[dim]{len(anchors)} anchors[/dim]")
-
-
-@sn_anchors.command("mine")
-@click.option(
-    "--min-usage",
-    type=int,
-    default=2,
-    show_default=True,
-    help="Minimum distinct StandardName uses per token",
-)
-@click.option(
-    "--min-score",
-    type=float,
-    default=0.75,
-    show_default=True,
-    help="Minimum per-name review_mean_score",
-)
-@click.option("--limit", type=int, default=None, help="Cap on number of anchors")
-@click.option(
-    "--write",
-    is_flag=True,
-    help="Overwrite the committed preferred_physical_bases.yaml",
-)
-def sn_anchors_mine(
-    min_usage: int, min_score: float, limit: int | None, write: bool
-) -> None:
-    """Regenerate preferred physical_base anchors from the Neo4j graph.
-
-    Mines ``grammar_physical_base`` tokens that have been used by at
-    least ``--min-usage`` distinct StandardNames whose individual
-    ``review_mean_score`` is >= ``--min-score``. Prints the resulting
-    YAML to stdout by default, or writes it to the package config with
-    ``--write``.
-    """
-    import datetime
-    from pathlib import Path
-
-    import imas_codex.llm.config as config_pkg
-    from imas_codex.standard_names.preferred_bases import (
-        mine_preferred_bases,
-        render_yaml,
-    )
-
-    try:
-        anchors = mine_preferred_bases(
-            min_usage_count=min_usage,
-            min_review_mean_score=min_score,
-            limit=limit,
-        )
-    except Exception as e:
-        console.print(f"[red]Failed to mine anchors:[/red] {e}")
-        raise SystemExit(1) from e
-
-    today = datetime.date.today().isoformat()
-    yaml_text = render_yaml(anchors, last_updated=today)
-
-    if write:
-        dest = Path(config_pkg.__file__).parent / "preferred_physical_bases.yaml"
-        dest.write_text(yaml_text)
-        console.print(f"[green]Wrote {len(anchors)} anchors to[/green] {dest}")
-    else:
-        click.echo(yaml_text)
-        console.print(
-            f"[dim]{len(anchors)} anchors (dry-run — use --write to update)[/dim]",
-            err=True,
-        )

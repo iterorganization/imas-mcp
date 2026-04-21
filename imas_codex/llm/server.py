@@ -3239,61 +3239,90 @@ class AgentsServer:
                 return _lgv(segment)
 
             @self.mcp.tool()
-            def list_preferred_bases(domain: str | None = None) -> str:
-                """List curated preferred ``physical_base`` anchors.
+            def list_promotion_candidates(
+                segment: str | None = None,
+                status: str | None = None,
+            ) -> str:
+                """List grammar-vocabulary promotion candidates mined from the graph.
 
-                The ISN ``physical_base`` segment is open vocabulary. The
-                anchors returned here are a curated subset of tokens
-                already used by multiple high-quality StandardNames in
-                the graph; composers and reviewers treat them as an
-                ordering tiebreaker when two grammatically-valid forms
-                compete for the same concept. This complements
-                ``list_grammar_vocabulary`` by exposing the *preferred*
-                subset rather than all observed tokens.
+                Candidates are tokens that appear as the ``segment`` slot on
+                multiple high-quality StandardNames and are not yet in ISN's
+                closed vocabulary. Persisted as ``PromotionCandidate`` nodes
+                by ``imas-codex sn vocab promote``; this tool inspects what
+                has been detected so far.
 
                 Args:
-                    domain: Optional primary-domain filter (e.g.
-                        ``"transport"``, ``"equilibrium"``).
+                    segment: Optional grammar segment filter (e.g.
+                        ``"physical_base"``). If omitted, all segments.
+                    status: Optional lifecycle filter. ``"pending"`` returns
+                        candidates not yet submitted to ISN
+                        (``submitted_to_isn_at IS NULL``); ``"submitted"``
+                        returns only those already submitted.
 
                 Returns:
-                    Markdown table of anchors with domain, usage count,
-                    and example names.
+                    Markdown table with token, segment, uses, min review
+                    score, physics domains, detection timestamp, and
+                    submission state. Codex does not own the vocabulary —
+                    this tool only reports promotion candidates so ISN
+                    maintainers can prioritise PR work.
                 """
-                from imas_codex.standard_names.preferred_bases import (
-                    load_preferred_bases,
+                from imas_codex.graph.client import GraphClient
+
+                filters = []
+                params: dict[str, object] = {}
+                if segment:
+                    filters.append("pc.segment = $segment")
+                    params["segment"] = segment
+                if status == "pending":
+                    filters.append("pc.submitted_to_isn_at IS NULL")
+                elif status == "submitted":
+                    filters.append("pc.submitted_to_isn_at IS NOT NULL")
+
+                where = ("WHERE " + " AND ".join(filters)) if filters else ""
+                cypher = (
+                    "MATCH (pc:PromotionCandidate) "
+                    + where
+                    + " RETURN pc.token AS token, pc.segment AS segment, "
+                    "pc.uses AS uses, pc.min_review_score AS min_score, "
+                    "pc.physics_domains AS domains, "
+                    "pc.detected_at AS detected_at, "
+                    "pc.submitted_to_isn_at AS submitted_at "
+                    "ORDER BY pc.uses DESC, pc.token ASC"
                 )
+                with GraphClient() as gc:
+                    rows = gc.query(cypher, **params)
 
-                data = load_preferred_bases()
-                anchors = data.get("anchors", [])
-                if domain:
-                    anchors = [a for a in anchors if a.get("domain") == domain]
-
-                if not anchors:
-                    return "## Preferred physical_base anchors\n\nNo anchors found" + (
-                        f" for domain `{domain}`." if domain else "."
-                    )
+                if not rows:
+                    filt = []
+                    if segment:
+                        filt.append(f"segment=`{segment}`")
+                    if status:
+                        filt.append(f"status=`{status}`")
+                    suffix = f" ({', '.join(filt)})" if filt else ""
+                    return f"## Promotion candidates\n\nNone found{suffix}."
 
                 lines = [
-                    "## Preferred physical_base anchors",
+                    "## Promotion candidates",
                     "",
-                    (
-                        f"{len(anchors)} anchors "
-                        f"(v{data.get('version', '?')}, "
-                        f"updated {data.get('last_updated', '?')})."
-                    ),
+                    f"{len(rows)} candidate(s). "
+                    "Codex detects saturated grammar tokens; the "
+                    "vocabulary itself lives in `imas-standard-names`.",
                     "",
-                    "| Token | Domain | Usage | Examples |",
-                    "|-------|--------|------:|----------|",
+                    "| Token | Segment | Uses | Min score | Domains | Detected | Submitted |",
+                    "|-------|---------|-----:|----------:|---------|----------|-----------|",
                 ]
-                for a in anchors:
-                    examples = ", ".join(
-                        f"`{ex}`" for ex in (a.get("examples") or [])[:2]
+                for r in rows:
+                    submitted = r.get("submitted_at") or "—"
+                    min_score = r.get("min_score")
+                    min_score_s = (
+                        f"{float(min_score):.2f}" if min_score is not None else "—"
                     )
                     lines.append(
-                        f"| `{a.get('token', '')}` | "
-                        f"{a.get('domain', '')} | "
-                        f"{a.get('usage_count', '')} | "
-                        f"{examples} |"
+                        f"| `{r['token']}` | {r.get('segment', '')} | "
+                        f"{r.get('uses', '')} | {min_score_s} | "
+                        f"{r.get('domains', '') or ''} | "
+                        f"{str(r.get('detected_at', ''))[:19]} | "
+                        f"{str(submitted)[:19]} |"
                     )
                 return "\n".join(lines)
 
