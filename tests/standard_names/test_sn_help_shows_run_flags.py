@@ -25,7 +25,7 @@ class TestSnRunHelpShowsNewFlags:
         output = self._run_help()
         assert "--only" in output
         # Check at least a couple of valid choices are shown
-        assert "resolve-links" in output
+        assert "link" in output
         assert "reconcile" in output
 
     def test_override_edits_flag(self):
@@ -38,6 +38,6 @@ class TestSnRunHelpShowsNewFlags:
         assert "--skip-reconcile" not in output
 
     def test_no_skip_resolve_links_flag(self):
-        """--skip-resolve-links should no longer appear in help."""
+        """--skip-link should no longer appear in help."""
         output = self._run_help()
-        assert "--skip-resolve-links" not in output
+        assert "--skip-link" not in output

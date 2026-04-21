@@ -2,7 +2,7 @@
 
 Chains one full quality-improvement cycle for a single physics domain::
 
-    reconcile → generate → enrich → resolve-links → review → regen
+    reconcile → generate → enrich → link → review → regen
 
 Each phase delegates to the same library functions used by the individual
 ``sn run``, ``sn enrich``, and ``sn review`` CLI commands — no pipeline
@@ -38,7 +38,7 @@ TURN_PHASES: tuple[str, ...] = (
     "consolidate",
     "persist",
     "review",
-    "resolve-links",
+    "link",
 )
 
 # Maps an --only value to the set of turn-level phases to keep running.
@@ -51,10 +51,10 @@ _ONLY_TO_ACTIVE: dict[str, set[str]] = {
     "consolidate": {"generate"},
     "persist": {"generate"},
     "review": {"review"},
-    "resolve-links": {"resolve-links"},
+    "link": {"link"},
 }
 
-# Max resolve-links iterations per turn.
+# Max link-resolution iterations per turn.
 _MAX_RESOLVE_ROUNDS = 3
 _RESOLVE_BATCH_LIMIT = 50
 
@@ -99,7 +99,7 @@ class TurnConfig:
         """Return the cost budget allocated to LLM phase *index* (0–3).
 
         The four LLM phases (generate, enrich, review, regen) share the
-        cost budget.  Non-LLM phases (reconcile, resolve-links) have
+        cost budget.  Non-LLM phases (reconcile, link) have
         zero cost.
         """
         return self.cost_limit * self.split[index]
@@ -268,7 +268,7 @@ async def _run_enrich_phase(cfg: TurnConfig) -> PhaseResult:
     )
 
 
-async def _run_resolve_links_phase(
+async def _run_link_phase(
     cfg: TurnConfig,
     touched_names: set[str],
 ) -> PhaseResult:
@@ -276,11 +276,11 @@ async def _run_resolve_links_phase(
 
     Multi-round: loops until no unresolved links remain or
     ``_MAX_RESOLVE_ROUNDS`` iterations elapse.  When *touched_names*
-    is empty (e.g. ``--only resolve-links``), falls back to a global
+    is empty (e.g. ``--only link``), falls back to a global
     sweep of all unresolved names.
     """
     if cfg.dry_run:
-        return PhaseResult(name="resolve-links", count=0)
+        return PhaseResult(name="link", count=0)
 
     from imas_codex.standard_names.graph_ops import resolve_links_batch
 
@@ -311,7 +311,7 @@ async def _run_resolve_links_phase(
             total_failed += result["failed"]
 
             logger.info(
-                "resolve-links round %d: %d resolved, %d unresolved, %d failed",
+                "link round %d: %d resolved, %d unresolved, %d failed",
                 round_num,
                 result["resolved"],
                 result["unresolved"],
@@ -321,9 +321,9 @@ async def _run_resolve_links_phase(
             if result["unresolved"] == 0:
                 break
     except Exception as exc:
-        logger.error("Phase resolve-links failed: %s", exc, exc_info=True)
+        logger.error("Phase link failed: %s", exc, exc_info=True)
         return PhaseResult(
-            name="resolve-links",
+            name="link",
             exit_code=1,
             elapsed=time.monotonic() - t0,
             count=total_resolved,
@@ -331,7 +331,7 @@ async def _run_resolve_links_phase(
         )
 
     return PhaseResult(
-        name="resolve-links",
+        name="link",
         elapsed=time.monotonic() - t0,
         count=total_resolved,
     )
@@ -457,30 +457,30 @@ def skip_flags_from_only(only_phase: str | None) -> dict[str, bool]:
 
 
 async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
-    """Execute one full turn (reconcile → generate → enrich → resolve-links → review → regen).
+    """Execute one full turn (reconcile → generate → enrich → link → review → regen).
 
     Runs the six phases in sequence, respecting skip flags.  Returns
     a list of :class:`PhaseResult` for every phase (including skipped
     ones).  Names created/updated by generate are tracked and passed
-    to the resolve-links phase to scope link resolution.
+    to the link phase to scope link resolution.
     """
     results: list[PhaseResult] = []
     touched_names: set[str] = set()
 
-    # Determine which phases to skip.  reconcile and resolve-links are
+    # Determine which phases to skip.  reconcile and link are
     # always active unless ``--only`` restricts to a different phase.
     _only_active = _ONLY_TO_ACTIVE.get(cfg.only, set()) if cfg.only else None
     _skip_reconcile = _only_active is not None and "reconcile" not in _only_active
-    _skip_resolve = _only_active is not None and "resolve-links" not in _only_active
+    _skip_link = _only_active is not None and "link" not in _only_active
 
     phases: list[tuple[str, bool, Any]] = [
         ("reconcile", _skip_reconcile, lambda: _run_reconcile_phase(cfg)),
         ("generate", cfg.skip_generate, lambda: _run_generate_phase(cfg)),
         ("enrich", cfg.skip_enrich, lambda: _run_enrich_phase(cfg)),
         (
-            "resolve-links",
-            _skip_resolve,
-            lambda: _run_resolve_links_phase(cfg, touched_names),
+            "link",
+            _skip_link,
+            lambda: _run_link_phase(cfg, touched_names),
         ),
         ("review", cfg.skip_review, lambda: _run_review_phase(cfg)),
         (

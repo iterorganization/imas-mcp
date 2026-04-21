@@ -214,7 +214,7 @@ async def run_sn_loop(
                     summary.names_regenerated += phase.count
                 elif phase.name == "reconcile":
                     summary.sources_reconciled += phase.count
-                elif phase.name == "resolve-links":
+                elif phase.name == "link":
                     summary.links_resolved += phase.count
             summary.domains_touched.add(dom)
 

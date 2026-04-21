@@ -80,7 +80,7 @@ class TestFilterProtectedOverrideNames:
         assert skipped == []
 
 
-# ── TurnConfig + resolve-links integration ───────────────────────────
+# ── TurnConfig + link integration ───────────────────────────
 
 
 @pytest.mark.asyncio
@@ -89,10 +89,10 @@ class TestOverrideEditsInTurn:
 
     async def test_override_edits_passed_to_resolve_links(self):
         """override_edits from TurnConfig reaches resolve_links_batch."""
-        flags = skip_flags_from_only("resolve-links")
+        flags = skip_flags_from_only("link")
         cfg = TurnConfig(
             domain="equilibrium",
-            only="resolve-links",
+            only="link",
             override_edits=["foo", "bar"],
             **flags,
         )
@@ -117,10 +117,10 @@ class TestOverrideEditsInTurn:
 
     async def test_override_edits_none_when_empty(self):
         """When no override_edits, override_names is None."""
-        flags = skip_flags_from_only("resolve-links")
+        flags = skip_flags_from_only("link")
         cfg = TurnConfig(
             domain="equilibrium",
-            only="resolve-links",
+            only="link",
             **flags,
         )
 

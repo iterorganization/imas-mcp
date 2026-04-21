@@ -1,9 +1,9 @@
-"""Test ``sn run --only resolve-links`` invokes resolve-links and no other phase.
+"""Test ``sn run --only link`` invokes link and no other phase.
 
-Verifies that when ``--only resolve-links`` is set, only the resolve-links
+Verifies that when ``--only link`` is set, only the link
 phase runs; all others (reconcile, generate, enrich, review, regen) are
 skipped.  Also verifies scoping: when touched names are available from a
-prior generate phase, resolve-links limits its sweep to those names.
+prior generate phase, link limits its sweep to those names.
 """
 
 from __future__ import annotations
@@ -24,14 +24,14 @@ class TestSkipFlagsFromOnly:
     """Unit tests for the --only → skip_* mapping helper."""
 
     def test_resolve_links_only(self):
-        flags = skip_flags_from_only("resolve-links")
+        flags = skip_flags_from_only("link")
         assert flags["skip_generate"] is True
         assert flags["skip_enrich"] is True
         assert flags["skip_review"] is True
         assert flags["skip_regen"] is True
-        # reconcile and resolve-links are no longer in skip_flags_from_only
+        # reconcile and link are no longer in skip_flags_from_only
         assert "skip_reconcile" not in flags
-        assert "skip_resolve_links" not in flags
+        assert "skip_link" not in flags
 
     def test_none_returns_empty(self):
         assert skip_flags_from_only(None) == {}
@@ -49,29 +49,27 @@ class TestSkipFlagsFromOnly:
 
 @pytest.mark.asyncio
 class TestOnlyResolveLinks:
-    """run_turn with resolve-links-only config."""
+    """run_turn with link-only config."""
 
     async def test_only_resolve_links_runs_resolve_phase(self):
-        """Only the resolve-links phase should execute; others skipped."""
-        flags = skip_flags_from_only("resolve-links")
-        cfg = TurnConfig(
-            domain="equilibrium", dry_run=True, only="resolve-links", **flags
-        )
+        """Only the link phase should execute; others skipped."""
+        flags = skip_flags_from_only("link")
+        cfg = TurnConfig(domain="equilibrium", dry_run=True, only="link", **flags)
 
         results = await run_turn(cfg)
 
         phase_names = [r.name for r in results]
-        assert "resolve-links" in phase_names
+        assert "link" in phase_names
 
         # All other phases must be skipped
         for r in results:
-            if r.name != "resolve-links":
+            if r.name != "link":
                 assert r.skipped, f"Phase {r.name} should be skipped"
 
     async def test_resolve_links_scoped_to_touched_names(self):
-        """When no names are touched (--only), resolve-links does global sweep."""
-        flags = skip_flags_from_only("resolve-links")
-        cfg = TurnConfig(domain="equilibrium", only="resolve-links", **flags)
+        """When no names are touched (--only), link does global sweep."""
+        flags = skip_flags_from_only("link")
+        cfg = TurnConfig(domain="equilibrium", only="link", **flags)
 
         with patch(
             "imas_codex.standard_names.turn._fetch_unresolved_links",
@@ -85,8 +83,8 @@ class TestOnlyResolveLinks:
         assert call_args[0][0] is None  # name_ids is None → global sweep
 
     async def test_resolve_links_receives_touched_names_from_generate(self):
-        """When generate produces names, resolve-links is scoped to them."""
-        # Run generate + resolve-links only (no --only, so reconcile/resolve run)
+        """When generate produces names, link is scoped to them."""
+        # Run generate + link only (no --only, so reconcile/link run)
         cfg = TurnConfig(
             domain="equilibrium",
             skip_enrich=True,
@@ -118,7 +116,7 @@ class TestOnlyResolveLinks:
         ):
             await run_turn(cfg)
 
-        # resolve-links should receive the touched names
+        # link should receive the touched names
         mock_fetch.assert_called()
         call_args = mock_fetch.call_args
         name_ids = call_args[0][0]

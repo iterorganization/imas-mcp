@@ -23,10 +23,10 @@ def sn() -> None:
     """Standard name generation and management.
 
     \b
-    Run (reconcile / generate / enrich / resolve-links / review / regen):
+    Run (reconcile / generate / enrich / link / review / regen):
       sn run --source dd [--physics-domain NAME]
       sn run --source signals --facility NAME
-      sn run --only resolve-links
+      sn run --only link
 
     \b
     Status:
@@ -404,7 +404,7 @@ def _run_sn_loop_cmd(
             "consolidate",
             "persist",
             "review",
-            "resolve-links",
+            "link",
         ],
         case_sensitive=False,
     ),
@@ -478,7 +478,7 @@ def sn_run(
       imas-codex sn run --reset-to drafted --reset-only
       imas-codex sn run --reset-to drafted --below-score 0.6 --reset-only
       imas-codex sn run --turn-number 2 --min-score 0.6 -c 5  # regen reviewed names below 0.6
-      imas-codex sn run --only resolve-links                   # resolve links only
+      imas-codex sn run --only link                   # resolve links only
       imas-codex sn run --override-edits foo --override-edits bar  # bypass protection on foo, bar
     """
     # --- Apply --only overrides ---

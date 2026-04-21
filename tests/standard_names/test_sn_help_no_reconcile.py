@@ -1,4 +1,4 @@
-"""Test ``sn --help`` output contains no reconcile, resolve-links, seed tokens.
+"""Test ``sn --help`` output contains no reconcile, link, seed tokens.
 
 Verifies Phase 5 acceptance criterion: the standalone CLI verbs are removed
 and their functionality is reachable only via ``sn run``.
@@ -35,7 +35,7 @@ class TestSnHelpNoLegacyVerbs:
         runner = CliRunner()
         result = runner.invoke(sn, ["--help"])
         assert result.exit_code == 0
-        # Check there's no "resolve-links" as a top-level subcommand
+        # Check there's no "resolve-links" or "link" as a top-level subcommand
         lines = result.output.splitlines()
         command_lines = [ln.strip() for ln in lines if ln.strip().startswith("resolve")]
         # Should be empty — resolve-links is no longer a verb
