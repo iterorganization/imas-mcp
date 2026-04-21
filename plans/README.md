@@ -57,6 +57,10 @@ Notable recent completions:
 
 Partially implemented plans kept as reference for gap documents.
 
+| Plan | Scope | Status |
+|------|-------|--------|
+| [35-catalog-schema-redesign.md](features/standard-names/pending/35-catalog-schema-redesign.md) | Catalog schema v2: export/preview/publish/import round-trip, protection model, origin tracking | Phases 0-7 done; Phase 8 (ISNC clean-break regeneration) pending |
+
 ## Documentation Gaps
 
 Docs review (2026-04-14) found these gaps — addressed in P4 docs-refresh plan:
