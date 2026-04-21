@@ -27,7 +27,6 @@ def sn() -> None:
       sn run --source dd [--physics-domain NAME]
       sn run --source signals --facility NAME
       sn run --only resolve-links
-      sn run --skip-reconcile --skip-resolve-links
 
     \b
     Status:
@@ -50,10 +49,9 @@ def _run_sn_loop_cmd(
     skip_enrich: bool = False,
     skip_review: bool = False,
     skip_regen: bool = False,
-    skip_reconcile: bool = False,
-    skip_resolve_links: bool = False,
     source: str = "dd",
     override_edits: list[str] | None = None,
+    only: str | None = None,
 ) -> None:
     """Execute the DD completion loop and render the summary."""
     import asyncio
@@ -95,10 +93,9 @@ def _run_sn_loop_cmd(
             skip_enrich=skip_enrich,
             skip_review=skip_review,
             skip_regen=skip_regen,
-            skip_reconcile=skip_reconcile,
-            skip_resolve_links=skip_resolve_links,
             source=source,
             override_edits=override_edits,
+            only=only,
         )
     )
     row = summary_table(summary)
@@ -396,16 +393,6 @@ def _run_sn_loop_cmd(
     ),
 )
 @click.option(
-    "--skip-reconcile/--no-skip-reconcile",
-    default=False,
-    help="Skip the reconcile phase (source re-linking).",
-)
-@click.option(
-    "--skip-resolve-links/--no-skip-resolve-links",
-    default=False,
-    help="Skip the resolve-links phase (dd→name link resolution).",
-)
-@click.option(
     "--only",
     "only_phase",
     type=click.Choice(
@@ -469,8 +456,6 @@ def sn_run(
     docs_status_filter: str,
     docs_batch_size: int | None,
     single_pass: bool,
-    skip_reconcile: bool,
-    skip_resolve_links: bool,
     only_phase: str | None,
     override_edits: tuple[str, ...],
 ) -> None:
@@ -494,7 +479,6 @@ def sn_run(
       imas-codex sn run --reset-to drafted --below-score 0.6 --reset-only
       imas-codex sn run --turn-number 2 --min-score 0.6 -c 5  # regen reviewed names below 0.6
       imas-codex sn run --only resolve-links                   # resolve links only
-      imas-codex sn run --skip-reconcile --skip-resolve-links  # legacy pipeline
       imas-codex sn run --override-edits foo --override-edits bar  # bypass protection on foo, bar
     """
     # --- Apply --only overrides ---
@@ -502,8 +486,6 @@ def sn_run(
         from imas_codex.standard_names.turn import skip_flags_from_only
 
         overrides = skip_flags_from_only(only_phase)
-        if overrides.get("skip_reconcile", False):
-            skip_reconcile = True
         if overrides.get("skip_generate", False):
             # When --only skips generate, also skip related pre-processing
             force = False
@@ -513,8 +495,6 @@ def sn_run(
             skip_review = True
         if overrides.get("skip_regen", False):
             skip_regen = True
-        if overrides.get("skip_resolve_links", False):
-            skip_resolve_links = True
         # skip_generate handled via the overrides dict below
         skip_generate_from_only = overrides.get("skip_generate", False)
     else:
@@ -568,10 +548,9 @@ def sn_run(
             skip_enrich=skip_enrich,
             skip_review=skip_review,
             skip_regen=skip_regen,
-            skip_reconcile=skip_reconcile,
-            skip_resolve_links=skip_resolve_links,
             source=source,
             override_edits=_override_edits,
+            only=only_phase,
         )
         return
 

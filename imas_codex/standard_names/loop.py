@@ -111,10 +111,9 @@ async def run_sn_loop(
     skip_enrich: bool = False,
     skip_review: bool = False,
     skip_regen: bool = False,
-    skip_reconcile: bool = False,
-    skip_resolve_links: bool = False,
     source: str = "dd",
     override_edits: list[str] | None = None,
+    only: str | None = None,
 ) -> RunSummary:
     """Drive the ``sn run`` loop across physics domains.
 
@@ -197,10 +196,9 @@ async def run_sn_loop(
                 skip_enrich=skip_enrich,
                 skip_review=skip_review,
                 skip_regen=skip_regen or min_score is None,
-                skip_reconcile=skip_reconcile,
-                skip_resolve_links=skip_resolve_links,
                 source=source,
                 override_edits=override_edits,
+                only=only,
             )
             results = await run_turn(cfg)
 

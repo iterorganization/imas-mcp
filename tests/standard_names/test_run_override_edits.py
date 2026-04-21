@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from imas_codex.standard_names.protection import PROTECTED_FIELDS, filter_protected
-from imas_codex.standard_names.turn import TurnConfig, run_turn
+from imas_codex.standard_names.turn import TurnConfig, run_turn, skip_flags_from_only
 
 # ── filter_protected selective override tests ────────────────────────
 
@@ -89,14 +89,12 @@ class TestOverrideEditsInTurn:
 
     async def test_override_edits_passed_to_resolve_links(self):
         """override_edits from TurnConfig reaches resolve_links_batch."""
+        flags = skip_flags_from_only("resolve-links")
         cfg = TurnConfig(
             domain="equilibrium",
-            skip_reconcile=True,
-            skip_generate=True,
-            skip_enrich=True,
-            skip_review=True,
-            skip_regen=True,
+            only="resolve-links",
             override_edits=["foo", "bar"],
+            **flags,
         )
 
         with (
@@ -119,13 +117,11 @@ class TestOverrideEditsInTurn:
 
     async def test_override_edits_none_when_empty(self):
         """When no override_edits, override_names is None."""
+        flags = skip_flags_from_only("resolve-links")
         cfg = TurnConfig(
             domain="equilibrium",
-            skip_reconcile=True,
-            skip_generate=True,
-            skip_enrich=True,
-            skip_review=True,
-            skip_regen=True,
+            only="resolve-links",
+            **flags,
         )
 
         with (

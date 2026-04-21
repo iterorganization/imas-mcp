@@ -87,8 +87,7 @@ class TurnConfig:
     skip_enrich: bool = False
     skip_review: bool = False
     skip_regen: bool = False
-    skip_reconcile: bool = False
-    skip_resolve_links: bool = False
+    only: str | None = None
     split: tuple[float, float, float, float] = TURN_SPLIT
     run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     turn_number: int = 1
@@ -447,10 +446,8 @@ def skip_flags_from_only(only_phase: str | None) -> dict[str, bool]:
 
     active = _ONLY_TO_ACTIVE.get(only_phase, set())
     return {
-        "skip_reconcile": "reconcile" not in active,
         "skip_generate": "generate" not in active,
         "skip_enrich": "generate" not in active,  # enrich follows generate
-        "skip_resolve_links": "resolve-links" not in active,
         "skip_review": "review" not in active,
         "skip_regen": "generate" not in active,
     }
@@ -470,13 +467,19 @@ async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
     results: list[PhaseResult] = []
     touched_names: set[str] = set()
 
+    # Determine which phases to skip.  reconcile and resolve-links are
+    # always active unless ``--only`` restricts to a different phase.
+    _only_active = _ONLY_TO_ACTIVE.get(cfg.only, set()) if cfg.only else None
+    _skip_reconcile = _only_active is not None and "reconcile" not in _only_active
+    _skip_resolve = _only_active is not None and "resolve-links" not in _only_active
+
     phases: list[tuple[str, bool, Any]] = [
-        ("reconcile", cfg.skip_reconcile, lambda: _run_reconcile_phase(cfg)),
+        ("reconcile", _skip_reconcile, lambda: _run_reconcile_phase(cfg)),
         ("generate", cfg.skip_generate, lambda: _run_generate_phase(cfg)),
         ("enrich", cfg.skip_enrich, lambda: _run_enrich_phase(cfg)),
         (
             "resolve-links",
-            cfg.skip_resolve_links,
+            _skip_resolve,
             lambda: _run_resolve_links_phase(cfg, touched_names),
         ),
         ("review", cfg.skip_review, lambda: _run_review_phase(cfg)),

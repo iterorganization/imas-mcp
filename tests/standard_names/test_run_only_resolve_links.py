@@ -25,27 +25,25 @@ class TestSkipFlagsFromOnly:
 
     def test_resolve_links_only(self):
         flags = skip_flags_from_only("resolve-links")
-        assert flags["skip_reconcile"] is True
         assert flags["skip_generate"] is True
         assert flags["skip_enrich"] is True
         assert flags["skip_review"] is True
         assert flags["skip_regen"] is True
-        assert flags["skip_resolve_links"] is False
+        # reconcile and resolve-links are no longer in skip_flags_from_only
+        assert "skip_reconcile" not in flags
+        assert "skip_resolve_links" not in flags
 
     def test_none_returns_empty(self):
         assert skip_flags_from_only(None) == {}
 
     def test_reconcile_only(self):
         flags = skip_flags_from_only("reconcile")
-        assert flags["skip_reconcile"] is False
         assert flags["skip_generate"] is True
-        assert flags["skip_resolve_links"] is True
+        assert "skip_reconcile" not in flags
 
     def test_extract_maps_to_generate(self):
         flags = skip_flags_from_only("extract")
         assert flags["skip_generate"] is False
-        assert flags["skip_reconcile"] is True
-        assert flags["skip_resolve_links"] is True
         assert flags["skip_review"] is True
 
 
@@ -56,7 +54,9 @@ class TestOnlyResolveLinks:
     async def test_only_resolve_links_runs_resolve_phase(self):
         """Only the resolve-links phase should execute; others skipped."""
         flags = skip_flags_from_only("resolve-links")
-        cfg = TurnConfig(domain="equilibrium", dry_run=True, **flags)
+        cfg = TurnConfig(
+            domain="equilibrium", dry_run=True, only="resolve-links", **flags
+        )
 
         results = await run_turn(cfg)
 
@@ -71,7 +71,7 @@ class TestOnlyResolveLinks:
     async def test_resolve_links_scoped_to_touched_names(self):
         """When no names are touched (--only), resolve-links does global sweep."""
         flags = skip_flags_from_only("resolve-links")
-        cfg = TurnConfig(domain="equilibrium", **flags)
+        cfg = TurnConfig(domain="equilibrium", only="resolve-links", **flags)
 
         with patch(
             "imas_codex.standard_names.turn._fetch_unresolved_links",
@@ -86,10 +86,9 @@ class TestOnlyResolveLinks:
 
     async def test_resolve_links_receives_touched_names_from_generate(self):
         """When generate produces names, resolve-links is scoped to them."""
-        # Run generate + resolve-links only
+        # Run generate + resolve-links only (no --only, so reconcile/resolve run)
         cfg = TurnConfig(
             domain="equilibrium",
-            skip_reconcile=True,
             skip_enrich=True,
             skip_review=True,
             skip_regen=True,
@@ -102,6 +101,11 @@ class TestOnlyResolveLinks:
         )
 
         with (
+            patch(
+                "imas_codex.standard_names.turn._run_reconcile_phase",
+                new_callable=AsyncMock,
+                return_value=PhaseResult(name="reconcile", count=0),
+            ),
             patch(
                 "imas_codex.standard_names.turn._run_generate_phase",
                 new_callable=AsyncMock,
