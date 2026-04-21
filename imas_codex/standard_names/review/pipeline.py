@@ -1139,8 +1139,11 @@ async def _review_single_batch(
 
     total_cost = cost
     total_tokens = tokens
-    total_input_tokens = llm_out.input_tokens
-    total_output_tokens = llm_out.output_tokens
+    # llm_out is an LLMResult-like object carrying .input_tokens/.output_tokens;
+    # tolerate legacy tuple returns (some tests mock acall_llm_structured as a
+    # plain tuple) by falling back to 0.
+    total_input_tokens = getattr(llm_out, "input_tokens", 0) or 0
+    total_output_tokens = getattr(llm_out, "output_tokens", 0) or 0
     unscored_count = 0
 
     # --- Retry unmatched entries (once) --------------------------------------
