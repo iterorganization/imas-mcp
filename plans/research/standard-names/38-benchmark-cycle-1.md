@@ -189,7 +189,94 @@ if it persists in cycle 2.
 
 ## Phase 3 — applied changes and re-benchmark
 
-(To be filled in after applying fixes and re-running.)
+### Commits
+
+- `fix(sn): use name-only rubric in benchmark when compose output is name-only`
+  (R1) — `BenchmarkConfig.review_target` defaults to `"names"`, so benchmark
+  now scores against the 4-dim `sn/review_name_only` rubric (0–80, normalised
+  /80). `--review-target full` opts back into the 6-dim rubric for post-enrich
+  runs.
+- `fix(sn): teach reviewer that open-vocabulary physical_base compounds are
+  grammar-valid` (R2) — added a "Open-Vocabulary `physical_base`" section at
+  the top of `sn/review_name_only.md` and `sn/review.md` anchoring grammar
+  validity to the `parse → compose` round-trip.
+- `fix(sn): require compose models to populate grammar_fields with worked
+  examples` (R3) — added "Grammar Fields — MANDATORY" section to
+  `sn/compose_dd.md` with 5 worked decomposition examples.
+
+### Re-benchmark results
+
+Command:
+
+```
+uv run imas-codex sn benchmark --ids equilibrium --max-candidates 20 --force \
+    --output .bench-work/cycle1-after.json
+```
+
+Total run cost: **$5.66**. Per-dim scores now on 0–20 scale (grammar, semantic,
+convention, completeness), normalised total /80.
+
+| Model                                | cost   | avg quality | grammar | semantic | convention | complete | fields pop% | errors |
+|--------------------------------------|--------|-------------|---------|----------|------------|----------|-------------|--------|
+| anthropic/claude-sonnet-4.6          | $0.43  | 0.912       | 18.8    | 18.5     | 18.1       | 17.7     | 0%          | 0      |
+| anthropic/claude-haiku-4.5           | $1.13  | 0.846       | 18.9    | 16.0     | 17.2       | 15.6     | 0%          | 3      |
+| openai/gpt-5.4                       | $1.48  | **0.939**   | **19.6**| **19.2** | **18.6**   | 17.6     | 30%         | 0      |
+| openai/gpt-5.4-mini                  | $1.50  | 0.884       | 18.8    | 17.6     | 17.6       | 16.8     | 30%         | 0      |
+| google/gemini-3.1-pro-preview        | $1.03  | 0.938       | 19.4    | 19.1     | 18.4       | **18.2** | 29%         | 0      |
+| google/gemini-3-flash-preview        | $0.06  | 0.882       | 16.8    | 18.6     | 17.6       | 17.6     | 26%         | 0      |
+| google/gemini-3.1-flash-lite-preview | $0.03  | 0.818       | 14.6    | 18.1     | 15.8       | 16.9     | 23%         | 0      |
+
+### Delta (cycle 2 − cycle 1, avg quality)
+
+| Model                                | cycle 1 | cycle 2 | Δ       |
+|--------------------------------------|---------|---------|---------|
+| anthropic/claude-sonnet-4.6          | 0.439   | 0.912   | +0.474  |
+| anthropic/claude-haiku-4.5           | 0.359   | 0.846   | +0.486  |
+| openai/gpt-5.4                       | 0.469   | 0.939   | +0.470  |
+| openai/gpt-5.4-mini                  | 0.418   | 0.884   | +0.466  |
+| google/gemini-3.1-pro-preview        | 0.474   | 0.938   | +0.464  |
+| google/gemini-3-flash-preview        | 0.445   | 0.882   | +0.437  |
+| google/gemini-3.1-flash-lite-preview | 0.422   | 0.818   | +0.396  |
+
+### Observations
+
+1. **R1 (rubric switch) accounts for most of the Δ.** Dropping two
+   inapplicable dimensions (documentation, compliance) roughly doubles every
+   normalised score, and legitimate score headroom now lives in semantic and
+   completeness (where the worst model is still ≥ 14.6/20 on grammar).
+
+2. **R2 (open-vocabulary anchor) removes the "distance_between_X_and_Y"
+   false-positive penalty.** Grammar scores now cluster at 18–19.6/20 for
+   frontier models, vs the cycle-1 pattern where the reviewer marked perfectly
+   parse-valid compounds as "unparseable".
+
+3. **R3 (grammar_fields) partial success.** OpenAI and Gemini models now
+   populate `grammar_fields` in 23–30% of candidates (up from 10–23%).
+   **Anthropic models remain at 0%** — the `compose_dd.md` reminder does not
+   overcome whatever default suppresses grammar_fields for Claude. Needs a
+   deeper fix: either a schema-level `min_items` / required-field constraint
+   on `grammar_fields`, or reinforcement inside `compose_system.md` itself.
+
+4. **Frontier:** `openai/gpt-5.4` (75.2/80) and `google/gemini-3.1-pro-preview`
+   (75.1/80) are statistically tied at the top. `claude-sonnet-4.6` close
+   behind (73.0/80). `gemini-3.1-flash-lite-preview` (65.4/80) is the weakest
+   but still "good"-tier.
+
+5. **Haiku JSON truncation.** Haiku hit three `Invalid JSON` errors in this
+   run (trailing comma at col 64225; EOF while parsing at cols 120599 and
+   159461). Symptom is the same as before: Haiku over-emits tokens and hits
+   the response budget. Orthogonal to the prompt fixes. Should be tracked
+   separately — likely needs per-model `max_tokens` in the compose worker
+   dispatch, or a smaller batch size for Haiku specifically.
+
+6. **Gemini-flash grammar=16.8, flash-lite=14.6.** These two still produce
+   some parse-invalid names; inspect individual items in
+   `.bench-work/cycle1-after.json` during calibration (Phase 5) to decide
+   whether to add them as anti-patterns or upstream with a targeted NC-rule.
+
+### Budget
+
+Cycle 1 baseline: $6.15. Cycle 2: $5.66. Remaining: ~$13.19.
 
 ## Phase 4 — multi-reviewer consistency
 
