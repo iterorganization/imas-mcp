@@ -30,6 +30,25 @@ Every name MUST have either a `physical_base` (open vocabulary) or a `geometric_
 - **object**: device component ({{ objects | join(', ') }})
 - **binary_operator**: for compound names ({{ binary_operators | join(', ') }})
 
+## Open-Vocabulary `physical_base` — do not flag parse-valid compounds
+
+`physical_base` is an **open vocabulary**: any lowercase snake_case token is
+admissible if the name round-trips through
+`parse_standard_name → compose_standard_name`. This means compounds like
+`distance_between_plasma_boundary_and_closest_wall_point`,
+`gap_angle_of_plasma_boundary`, or `minor_radius_of_plasma_boundary` all parse
+successfully — the whole compound lands in `physical_base` (with `position`
+captured when an `_of_<position>` suffix matches the closed `positions`
+vocabulary).
+
+You **must not** mark such a compound as "unparseable grammar" or penalise the
+grammar / convention dimensions on that basis alone. Use the semantic and
+convention dimensions to judge whether the compound is *well-chosen*
+(e.g. NC-14: `distance_between_X_and_Y` is the canonical form for separation
+between two named features; NC-8: names must be self-describing, not a bare
+generic noun). Grammar correctness = does it round-trip; it does not require
+every token to come from a closed vocabulary.
+
 ## Scoring Dimensions
 
 Rate each dimension from 0 to 20. The total score is the sum (0-120).
