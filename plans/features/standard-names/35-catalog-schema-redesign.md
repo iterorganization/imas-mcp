@@ -104,6 +104,14 @@ The graph ↔ catalog round-trip is broken on multiple axes:
   list; `dd_paths` is retired from the catalog model; import
   reconstructs both `IMASNode` and `FacilitySignal` relationships
   from prefixes.
+- **PR-driven round-trip with divergence protection**: the catalog is
+  edited by humans via GitHub PRs against ISNC. Each graph node carries
+  an `origin` flag (`pipeline` | `catalog_edit`) identifying which side
+  last wrote catalog-owned fields. When `origin=catalog_edit`, the
+  pipeline is structurally prevented from overwriting those fields
+  until an explicit `--override-edits` flag is passed. PR provenance
+  (`catalog_pr_number`, `catalog_pr_url`) is extracted from the merge
+  commit on import for auditability. See §PR-driven round-trip.
 
 ## Scope
 
@@ -259,12 +267,16 @@ it as an entry.
 | `claimed_at`, `claim_token` | ✗ | keep | Worker coordination |
 | `last_run_id`, `last_run_at`, `last_turn_number` | ✗ | keep | Run audit |
 | `regen_count`, `regen_reason` | ✗ | keep | |
-| `imported_at`, `catalog_commit_sha` | ✗ | keep | Set by import |
+| `imported_at`, `catalog_commit_sha` | ✗ | keep | Set by `sn import` |
+| `catalog_pr_number`, `catalog_pr_url` (new) | ✗ | **add** | Set by `sn import`; null if import not from a merge commit |
+| `exported_at` (new) | ✗ | **add** | Set by `sn export` when this name is emitted to staging |
+| `origin` (new) | ✗ | **add** | `pipeline` \| `catalog_edit`; tracks which side last wrote catalog-owned fields |
 | `created_at` | ✗ | keep | |
 
 **Net schema delta (to be audited before finalising):**
 - **Rename**: `review_status` → `pipeline_status`.
-- **Add**: `status`, `deprecates`, `superseded_by`.
+- **Add**: `status`, `deprecates`, `superseded_by`, `origin`,
+  `catalog_pr_number`, `catalog_pr_url`, `exported_at`.
 - **Drop** (pending audit, only if 0/925 populated): `reviewer_*_secondary`
   (already marked deprecated), legacy grammar fields if confirmed dead.
 - **Keep schema-side (catalog-excluded)**: `cocos` + `HAS_COCOS`,
@@ -431,6 +443,113 @@ Values: `draft | active | deprecated | superseded` (ISN-authoritative).
 
 ---
 
+## PR-driven round-trip and provenance
+
+### Canonical round-trip flow
+
+```
+imas-codex graph ──► sn export ──► staging dir ──► sn publish ──► ISNC main
+                                                                   │
+                                                                   │ (human fork,
+                                                                   │  edits foo.yml,
+                                                                   │  opens PR)
+                                                                   ▼
+                                                          ISNC PR reviewed + merged
+                                                                   │
+                                                                   ▼
+imas-codex graph ◄── sn import ◄──────────────────────── ISNC main (post-merge)
+```
+
+Two authorship channels feed the graph:
+1. **Pipeline** — `sn run` writes new or regenerates existing names from DD/signals.
+2. **Catalog edit** — human PRs to ISNC (typo fixes, description polish, unit corrections, status promotions). `sn import` pulls the merged edits back into the graph.
+
+Without provenance tracking, the pipeline will silently overwrite human edits on the next `sn export`. This must not happen.
+
+### `origin` state machine
+
+New graph field, enum `OriginType`:
+
+```
+          ┌─────────────┐
+created ─►│  pipeline   │◄──── sn export (successful, origin preserved if already pipeline)
+          └──────┬──────┘
+                 │
+                 │ sn import (name was touched by the import)
+                 ▼
+          ┌─────────────┐
+          │catalog_edit │◄──── sn import (re-imports keep origin=catalog_edit)
+          └──────┬──────┘
+                 │
+                 │ sn run --override-edits <name>   (explicit re-take)
+                 │ OR sn clear followed by sn run
+                 ▼
+           pipeline
+```
+
+Semantics:
+- `origin=pipeline` — pipeline owns **all** fields. Regeneration is free.
+- `origin=catalog_edit` — **catalog-owned fields are protected**: pipeline may update only the graph-only fields (embedding, reviewer_*, model, cost tracking, validation_*, claim_*, regen_*). Catalog-owned fields (`description`, `documentation`, `unit`, `kind`, `tags`, `links`, `deprecates`, `superseded_by`, `status`, `cocos_transformation_type`, `validity_domain`, `constraints`, `source_paths`) are read-only for the pipeline until `origin` is reset.
+
+### PR provenance extraction
+
+On `sn import`, extract merge-commit metadata from the ISNC checkout:
+
+1. `catalog_commit_sha` ← `git -C <isnc> rev-parse HEAD`
+2. Walk commits reachable from HEAD that are **not** in the state at the previous `imported_at` watermark (stored per-graph in a singleton `ImportWatermark` node). For each touched file in that commit range:
+   - Find the most recent merge commit that introduced the file's current content: `git log --merges --first-parent -n 1 -- <file>`
+   - Parse subject for `Merge pull request #(\d+) from` → `catalog_pr_number`
+   - Compose URL: `catalog_pr_url = f"{isnc_repo_url}/pull/{N}"`
+   - If no merge commit found (direct push to main or squash merge without conventional subject), set both to null and log a warning.
+3. Stamp per touched name: `origin = "catalog_edit"`, `catalog_commit_sha`, `catalog_pr_number`, `catalog_pr_url`, `imported_at = now()`.
+4. After the full import, update `ImportWatermark.last_commit_sha = HEAD`, `last_imported_at = now()`.
+
+**Squash-merge handling**: GitHub's default squash merge produces a single commit with subject `<PR title> (#123)`. Regex covers both: `r"(?:Merge pull request #|\(#)(\d+)"`.
+
+**Tarball import fallback**: if `.git` is absent, skip PR extraction; set only `imported_at` and `origin=catalog_edit`. Log a `PR provenance unavailable` warning. The `--catalog-repo <url>` flag on `sn import` can accept a URL + commit SHA; the importer will then fall back to GitHub API if a token is in the env.
+
+### Divergence detection in `sn export`
+
+Before writing the staging tree, `sn export` computes a divergence report:
+
+```
+For each graph SN where origin = "catalog_edit":
+  Load the catalog YAML from ISNC at imported_catalog_commit_sha (if checkout is git).
+  Compare catalog-owned fields between graph and that YAML snapshot.
+  If graph has diverged (pipeline touched a protected field despite the rule):
+    report as INVARIANT_VIOLATION.
+```
+
+This should be empty in normal operation because protection is enforced at the write side. A non-empty report indicates a bug in the pipeline (some code path bypasses the protection) and is a hard fail of the export gate (not maskable by `--force`).
+
+### Pipeline protection enforcement
+
+Single choke-point: `graph_ops.write_standard_names()` (the coalesce-based build-path writer).
+
+- Inspect each incoming batch item: if graph currently has `origin=catalog_edit` for that name, drop the catalog-owned fields from the write before executing the merge. Log a `PROTECTED` line per dropped name.
+- Graph-only fields proceed normally.
+- Behaviour is overridable only via an explicit `override_protected=True` kwarg passed from `sn run --override-edits <name>` (the CLI flag surfaces as a scope list, not a blanket override).
+
+**Tests to add**:
+- `test_origin_protection_write.py` — assert that pipeline rewriting `description` for a `catalog_edit` name does NOT change the stored `description`.
+- `test_origin_protection_override.py` — assert that `override_protected=True` DOES change it.
+- `test_import_stamps_origin.py` — assert `sn import` flips `origin` to `catalog_edit` on every touched name.
+- `test_import_pr_extraction.py` — parametrised: merge-commit subject → expected PR number (GitHub merge, squash merge, direct push/null).
+
+### Should we track this metadata?
+
+**Yes**, for three reasons:
+
+1. **Correctness** — without `origin`, there is no mechanism to stop the pipeline from silently clobbering human PR edits. This is the catalog's primary use-case; it must work.
+2. **Auditability** — answering "who last wrote this description and in which PR?" is a reasonable question for a catalog reviewer. `(origin, catalog_pr_url)` answers it in one line.
+3. **Cost trivial** — adds 4 nullable fields per node (~925 × 4 = 3700 nullable cells). No index needed; not query-hot.
+
+**Non-goals** (explicit outs):
+- We do NOT track GitHub actor / author identity. That's in the PR URL; pulling it into the graph is a GDPR risk for no operational benefit.
+- We do NOT track the full commit chain per name (only the most recent merge commit). If a name passed through 5 PRs, only the latest is in the graph. Older provenance is in git history.
+
+---
+
 ## Source-agnostic relationship writes
 
 BLOCKER 4 from RD v1. On import, `catalog_import._import_relationships`
@@ -560,93 +679,207 @@ comparisons (not byte-for-byte).
 
 ## Phases
 
-### Phase 1 — ISN schema (ISN repo, coordinated release)
+### Multi-agent coordination
 
-1a. Rewrite `imas_standard_names.models.StandardNameEntry{Scalar,Vector,Metadata}` per §ISN rewrite.
-1b. Add `StandardNameCatalogManifest` model.
-1c. Add dual-loader: accept `dd_paths` (legacy) or `source_paths`
-    (canonical); normalise to `source_paths` in-memory; warn on legacy.
-1d. Update ISN validator/loader for new schema + manifest awareness.
-1e. ISN tests.
-1f. Cut `imas-standard-names` 0.8.0rc1.
+This plan spans **three repositories**. Phase ordering reflects cross-repo dependencies; parallelisable work is marked.
 
-### Phase 2 — imas-codex graph schema migration
+**Dependency graph**:
 
-2a. Audit dead fields. Query the live graph for `physical_base`,
-    `subject`, `component`, `coordinate`, `position`, `process`
-    population counts. Schema-drop only if 0/925 populated.
-2b. `imas_codex/schemas/standard_name.yaml`:
+```
+Phase 1 (ISN)    Phase 0 (codex audit) ──┐
+    │                    │               │
+    │                    ▼               │
+    │             Phase 2 (codex schema) │
+    │                    │               │
+    ▼                    ▼               │
+Phase 1.5 (codex pyproject bump + uv sync)│
+    │                                    │
+    ▼                                    ▼
+Phase 3 (sn export)  ┃  Phase 4 (sn import)  ┃  Phase 5 (CLI fold)
+(can run in parallel on separate agents after 1.5)
+    │         │              │
+    └────┬────┴──────────────┘
+         ▼
+    Phase 6 (tests) — consolidates all phase-level tests
+         │
+         ▼
+    Phase 7 (docs)
+         │
+         ▼
+    Phase 8 (ISNC clean-break regen + PR)
+```
+
+**Repo ownership per phase**:
+
+| Phase | Repo | Agent type |
+|---|---|---|
+| 0 | imas-codex | @engineer (audit-only, read queries) |
+| 1 | imas-standard-names | @architect (schema rewrite) |
+| 1.5 | imas-codex | @engineer (pyproject pin + build-models + sync) |
+| 2 | imas-codex | @architect (schema migration spans 8+ files) |
+| 3 | imas-codex | @architect (export + gate + divergence detection) |
+| 4 | imas-codex | @architect (import + PR extraction + origin stamping) |
+| 5 | imas-codex | @engineer (CLI fold + deletions) |
+| 6 | imas-codex | @engineer (tests per phase, consolidated) |
+| 7 | imas-codex + ISN + ISNC | @engineer (docs) |
+| 8 | imas-standard-names-catalog | @engineer (clean-break regen + PR) |
+
+Phases 3, 4, 5 can be dispatched to separate agents in parallel once 1.5 is landed. Phases 1 and 2 are both blocking on ancestor work but can start concurrently (phase 0 audit informs phase 2 field-drop decisions but not phase 1).
+
+### Phase 0 — Codex-side field audit (parallel with Phase 1)
+
+Purpose: decide which fields to schema-drop vs keep (dead-but-retained).
+
+0a. Query graph for population counts on every candidate-drop field:
+    `physical_base`, `subject`, `component`, `coordinate`, `position`, `process`, `reviewer_*_secondary`, plus the 4 explicitly listed dead fields (`species`, `population`, `toroidal_mode`, `flux_surface_average`).
+0b. Produce `files/schema-drop-audit.md` with counts + recommendation per field.
+0c. **Acceptance**: report committed to session files; ready for Phase 2 consumer.
+
+### Phase 1 — ISN schema rewrite + rc cut (ISN repo)
+
+Files: `~/Code/imas-standard-names/src/imas_standard_names/models.py`, related validators/tests.
+
+1a. Rewrite `StandardNameEntry{Scalar,Vector,Metadata}` per §ISN rewrite:
+    - Replace `dd_paths` with `source_paths`.
+    - Add `status`, `deprecates`, `superseded_by`, `cocos_transformation_type`.
+    - Add `exported_at`, `imported_at`, `catalog_commit_sha`, `catalog_pr_number`, `catalog_pr_url`.
+    - **Do NOT** add `origin` to the ISN model — it is graph-only (no catalog serialisation needed; catalog YAMLs are always by definition the `catalog_edit` side).
+    - Drop: `dd_paths` (renamed), species/population/toroidal_mode/flux_surface_average (never were on the ISN model; confirm absent).
+1b. Add `StandardNameCatalogManifest` model (schema_version, cocos, grammar_version, exported_at, min_score_applied, published_count, candidate_count, excluded_below_score_count, excluded_unreviewed_count, source_repo, source_commit_sha).
+1c. Loader: accept `source_paths` only (clean break; no dual-loader — ISNC will be wiped and regenerated in Phase 8).
+1d. ISN tests: round-trip model dump/load; manifest construction.
+1e. Docs: update ISN README with new schema.
+1f. **Release**: `cd ~/Code/imas-standard-names && uv run standard-names release --bump minor -m "feat: rewrite StandardNameEntry for catalog schema v2"`. This cuts an rc (e.g. `v0.8.0rc1`) on origin (fork).
+1g. **Acceptance**: rc tag visible on ISN origin; ISN tests green on fork CI.
+
+### Phase 1.5 — Codex ISN dep bump + model regen (imas-codex)
+
+**Blocking on Phase 1 rc being available on PyPI or via direct git ref.**
+
+1.5a. In `pyproject.toml`: pin ISN dep to the new rc version.
+1.5b. `uv sync --extra test`.
+1.5c. `uv run imas-codex build-models --force`.
+1.5d. Quick smoke: `uv run python -c "from imas_standard_names.models import StandardNameEntryScalar; print(StandardNameEntryScalar.model_fields.keys())"` — confirm new fields.
+1.5e. Commit: `chore(deps): bump imas-standard-names to 0.8.0rcN for catalog schema v2`.
+1.5f. **Acceptance**: import succeeds; `source_paths` present; `dd_paths` absent; green worktree ready for parallel Phase 3/4/5 dispatch.
+
+### Phase 2 — Graph schema migration (imas-codex)
+
+Files: `imas_codex/schemas/standard_name.yaml`, `imas_codex/standard_names/graph_ops.py`, `imas_codex/standard_names/models.py`, call-sites of `review_status`.
+
+Consumes Phase 0 audit report.
+
+2a. Edit LinkML schema:
     - Rename `review_status` → `pipeline_status`.
-    - Add `status` (ISN enum), `deprecates`, `superseded_by`.
-    - Drop only audit-confirmed dead fields (including
-      `reviewer_*_secondary`).
-    - Keep `cocos`, `HAS_COCOS`, `species`, `population`,
-      `toroidal_mode`, `flux_surface_average`, `source_types`.
-2c. `uv run build-models --force`.
-2d. Inline Cypher migration (via `graph shell` per project rules):
-    - rename property `review_status` → `pipeline_status` on all nodes
-    - `SET sn.status = 'draft'` where null
-    - schema-drop via `REMOVE sn.field` only for audit-confirmed fields
-2e. Enumerate every call site referencing renamed/dropped fields
-    (`grep -rn "review_status"` across imas-codex,
-    `imas-standard-names`, `imas-standard-names-catalog`). Update.
-2f. Add backward-compat alias in CLI & MCP tools for `review_status`
-    parameter (one release window); emit `DeprecationWarning`.
+    - Add `status` (enum: draft/active/deprecated/superseded; default draft).
+    - Add `deprecates` (list[str]), `superseded_by` (str|null).
+    - Add `origin` (enum: pipeline/catalog_edit; default pipeline).
+    - Add `catalog_pr_number` (int|null), `catalog_pr_url` (str|null), `exported_at` (datetime|null).
+    - Drop fields confirmed dead by Phase 0 audit (including `reviewer_*_secondary`).
+    - Keep per §disposition: `cocos`, `HAS_COCOS`, `species`, `population`, `toroidal_mode`, `flux_surface_average`, `source_types`.
+    - Add `ImportWatermark` node type (singleton; `last_commit_sha`, `last_imported_at`, `repo_url`).
+2b. `uv run build-models --force`.
+2c. Inline Cypher migration via `graph shell`:
+    ```cypher
+    MATCH (sn:StandardName)
+    SET sn.pipeline_status = sn.review_status
+    REMOVE sn.review_status
+    SET sn.status = coalesce(sn.status, 'draft')
+    SET sn.origin = coalesce(sn.origin, 'pipeline')
+    // schema-drop REMOVEs per Phase 0 audit
+    ```
+2d. Update all call sites: `grep -rn "review_status" imas_codex/` → rename.
+2e. CLI + MCP parameter alias: `--review-status` emits DeprecationWarning but still accepts old value during one release window.
+2f. Update `graph_ops.write_standard_names()` — implement catalog-owned-field protection when `origin=catalog_edit` (see §PR-driven round-trip §Pipeline protection enforcement).
+2g. Tests: `test_origin_protection_write.py`, `test_origin_protection_override.py`.
+2h. **Acceptance**: `uv run pytest tests/graph/` green; migration Cypher shows expected row counts.
 
-### Phase 3 — `sn publish` rewrite
+### Phase 3 — `sn export` + publish gate + divergence report (imas-codex)
 
-3a. Rewrite `publish.generate_yaml_entry` to use ISN `StandardNameEntry`
-    directly: construct model → `model_dump(mode='json', exclude_none=True)` →
-    `yaml.safe_dump`.
-3b. Emit `.yml` extension (not `.yaml`).
-3c. Write `catalog.yml` manifest at repo root once per publish run.
-3d. Remove the spurious `provenance` block that encoded pipeline data.
-3e. Implement pre-publish gate (§Publish gate A+B+C+D).
-3f. Flags: `--force`, `--skip-gate`, `--gate-only`, `--gate-scope`.
-3g. Unit + integration tests.
+Files: new `imas_codex/standard_names/export.py`, rewritten `imas_codex/standard_names/publish.py` (transport), `imas_codex/cli/sn.py` (new `export`, new `preview`, rewritten `publish`).
 
-### Phase 4 — `sn import` rewrite
+**Parallel-safe with Phase 4 and Phase 5 after Phase 1.5.**
 
-4a. Bump `imas-standard-names` dep to 0.8.0rc1+.
-4b. `catalog_import._catalog_entry_to_dict`: accept new field names;
-    drop `extra:` special-case handling.
-4c. Derive `physics_domain` from input file's relative path; validate
-    `standard_names/<domain>/<name>.yml` convention; refuse mismatches.
-4d. Partition `source_paths` by prefix to recreate
-    `SOURCE_DD_PATH` / `SOURCE_SIGNAL` relationships.
-4e. Call `decompose_name(name)` to repopulate `grammar_*`.
-4f. Read `catalog.yml` at repo root; warn on COCOS/grammar-version
-    mismatches in `--check`.
-4g. Verify `_write_catalog_entries` coalesce preserves all graph-only
-    fields on update path (assertion tests).
+3a. Implement `sn export` (replaces current `publish` yaml generation):
+    - Reads graph → writes staging dir `<staging>/standard_names/<domain>/<name>.yml` + `<staging>/catalog.yml`.
+    - Emits `.yml` (not `.yaml`).
+    - Applies gate A (graph tests) + B (cross-field consistency: COCOS, grammar-version, source_paths resolve) + C (`--min-score`, `--include-unreviewed`, `--min-description-score`) + D (divergence detection — see §PR-driven round-trip).
+    - Flags: `--staging <dir>` (required), `--min-score <float>` (default 0.65), `--include-unreviewed`, `--min-description-score <float>`, `--force`, `--skip-gate`, `--gate-only`, `--gate-scope`, `--domain`, `--override-edits <name>...` (per-name; or `--override-edits all` explicit opt-in).
+    - Writes `<staging>/.export_report.json` with gate results, divergence report, name counts per filter.
+3b. Implement `sn preview` as a thin wrapper that calls ISN `catalog-site serve` on the staging dir.
+3c. Rewrite `sn publish` to transport only:
+    - Input: staging dir from 3a.
+    - Action: mirror into ISNC checkout, commit, push to origin (fork) or upstream per existing release conventions.
+    - NO gate logic (already run at export).
+    - Flags: `--isnc <path>`, `--push`, `--dry-run`.
+3d. Tests: gate pass/fail for each of A/B/C/D; divergence-detection unit test; export→staging→publish round trip (staging intermediates assertable).
+3e. **Acceptance**: `sn export`, `sn preview`, `sn publish` all functional independently; gate blocks catastrophic states; divergence report included in `.export_report.json`.
 
-### Phase 5 — Fold standalone commands into `sn run`
+### Phase 4 — `sn import` rewrite + PR extraction (imas-codex)
 
-5a. `turn.py`: add `reconcile` pre-extract phase (honours `--source
-    {dd,signals}` scope), `resolve-links` after persist before review
-    (multi-round, scoped to this turn's names).
-5b. Add `--skip-reconcile`, `--skip-resolve-links`, `--only` to `sn run`.
-5c. Delete `sn reconcile`, `sn resolve-links`, `sn seed` CLI commands.
-5d. Delete `imas_codex/standard_names/seed.py`.
+Files: `imas_codex/standard_names/catalog_import.py`, `imas_codex/cli/sn.py` (`import` command).
 
-### Phase 6 — Tests (see §Round-trip test strategy)
+**Parallel-safe with Phase 3 and Phase 5 after Phase 1.5.**
+
+4a. Accept new schema (no `dd_paths` fallback — clean break; Phase 8 regenerates ISNC).
+4b. Derive `physics_domain` from file path `standard_names/<domain>/<name>.yml`; refuse mismatches with loud error.
+4c. Call shared `decompose_name(name)` to repopulate `grammar_*`.
+4d. Partition `source_paths` by prefix:
+    - `dd:<path>` → re-link via `SOURCE_DD_PATH` to `IMASNode`.
+    - `signal:<facility>:<id>` → `SOURCE_SIGNAL` to `FacilitySignal`.
+    - Unknown prefixes logged + skipped (not fatal).
+4e. Stamp `origin=catalog_edit`, `imported_at`, `catalog_commit_sha`, and extract PR metadata per §PR-driven round-trip §PR provenance extraction.
+4f. Update/create `ImportWatermark` singleton.
+4g. Verify `_write_catalog_entries` coalesce preserves graph-only fields (embedding, reviewer_*, etc.).
+4h. Tests: `test_import_stamps_origin.py`, `test_import_pr_extraction.py` (parametrised on merge-commit types), `test_import_watermark.py`.
+4i. **Acceptance**: importing a seeded ISNC checkout flips `origin` to `catalog_edit` on touched names; pipeline-only fields untouched; PR numbers extracted where present.
+
+### Phase 5 — Fold `reconcile` + `resolve-links` into `sn run`, delete `seed` (imas-codex)
+
+Files: `imas_codex/standard_names/turn.py`, `imas_codex/cli/sn.py`, delete `imas_codex/standard_names/seed.py`.
+
+**Parallel-safe with Phase 3 and Phase 4 after Phase 1.5.**
+
+5a. `turn.py`: add `reconcile` pre-extract phase honouring `--source {dd,signals}` scope.
+5b. `turn.py`: add `resolve-links` after persist, before review; multi-round; scoped to this turn's touched names (not global sweep).
+5c. `sn run` flags: `--skip-reconcile`, `--skip-resolve-links`, `--only {extract,compose,validate,consolidate,persist,review,resolve-links,reconcile}`.
+5d. Delete `sn reconcile`, `sn resolve-links`, `sn seed` CLI verbs.
+5e. Delete `imas_codex/standard_names/seed.py`.
+5f. Tests: `sn run --only resolve-links` touches only named-this-turn nodes; `--skip-reconcile` skips cleanly.
+5g. **Acceptance**: `sn --help` shows no `reconcile`/`resolve-links`/`seed`; functionality reachable via `sn run`; CI green.
+
+### Phase 6 — Consolidated test pass (imas-codex)
+
+Runs after Phases 2–5 all merge.
+
+6a. Full round-trip: seed small fixture graph → `sn export <staging>` → manual YAML tweak in staging → `sn publish` to mock ISNC → `sn import` from mock ISNC → assert `origin=catalog_edit` + edit preserved.
+6b. Regression: rerun pipeline (`sn run`) after import; assert edited `description` unchanged (protection working); assert embedding refreshed (graph-only update passes through).
+6c. Divergence injection: manually bypass protection → assert `sn export` divergence report flags it.
+6d. Gate matrix: all permutations of `--min-score`, `--include-unreviewed`, `--min-description-score`, `--force`.
+6e. PR extraction: fixture git repo with merge commit, squash commit, direct push; assert extraction correctness on each.
+6f. **Acceptance**: full `pytest tests/standard_names/ tests/graph/` green.
 
 ### Phase 7 — Documentation
 
-7a. AGENTS.md: CLI table update; StandardName schema update;
-    `pipeline_status` vs `status` distinction; catalog manifest + COCOS
-    handling; publish gate description.
-7b. Update plan 34 if it references `dd_paths` / old schema.
-7c. Update imas-standard-names-catalog README with new schema + manifest.
+7a. `AGENTS.md`:
+    - CLI table: `sn export`, `sn preview`, `sn publish`, `sn import`. Drop `seed`, `reconcile`, `resolve-links`.
+    - Schema: note `pipeline_status` vs `status`; introduce `origin`.
+    - §PR-driven round-trip section summarising the protection model and override mechanism.
+7b. ISN README: new `StandardNameEntry` schema + manifest.
+7c. ISNC README: clean-break notice; layout (`standard_names/<domain>/<name>.yml`); PR workflow; `--min-score` gate context; link to preview site.
+7d. `plans/README.md`: move plan 35 to pending/ or delete on full implementation.
 
-### Phase 8 — Catalog repo update
+### Phase 8 — ISNC clean-break regeneration (imas-standard-names-catalog)
 
-8a. Bump imas-standard-names-catalog's ISN dep to 0.8.0.
-8b. Migration script: rewrite existing `.yml` entries to new schema
-    (add `status: draft` where missing; `dd_paths` → `source_paths`
-    with `dd:` prefix; strip any now-forbidden fields).
-8c. Regenerate catalog via `sn publish` after graph migration.
-8d. Open catalog repo PR.
+**Blocking on Phases 2–7 merged.**
+
+8a. Bump ISNC's ISN dep to 0.8.0 (or final of rc series after RC bake-out).
+8b. Remove all existing `.yml` entries in ISNC (clean break — graph is authoritative).
+8c. `sn export --staging /tmp/isnc-staging/ --min-score 0.65` from imas-codex.
+8d. `sn publish --staging /tmp/isnc-staging/ --isnc ~/Code/imas-standard-names-catalog --push`.
+8e. Open ISNC PR: "feat!: catalog schema v2 — clean-break regeneration from imas-codex graph at schema v2".
+8f. Verify GitHub Pages deploy of preview via ISN `catalog-site deploy` (triggered by ISNC CI on merge).
+8g. **Acceptance**: ISNC main reflects new schema; preview site renders; first `sn import` from ISNC main is a no-op (origin stays pipeline because files match graph verbatim).
 
 ---
 
