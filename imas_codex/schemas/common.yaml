@@ -537,8 +537,20 @@ classes:
       Any node that passes through an LLM (scoring, enrichment, mapping, etc.)
       can compose this mixin to track cost at the individual node level.
       For batch operations, cost is distributed as cost_per_node = batch_cost / batch_size.
-      Enables cost aggregation queries with Cypher MATCH n WHERE n.llm_cost IS NOT NULL
-      RETURN type, sum(n.llm_cost) AS cost ORDER BY cost DESC.
+
+      Eight fields enable cross-label aggregation with a single Cypher query:
+
+        MATCH (n) WHERE n.llm_service IS NOT NULL
+        RETURN labels(n)[0] AS label, n.llm_service AS service,
+               n.llm_model AS model, count(*) AS calls,
+               sum(n.llm_cost) AS total_cost,
+               sum(n.llm_tokens_in) AS tokens_in,
+               sum(n.llm_tokens_out) AS tokens_out,
+               sum(n.llm_tokens_cached_read) AS cached_read,
+               CASE WHEN sum(n.llm_tokens_in) > 0
+                    THEN toFloat(sum(n.llm_tokens_cached_read)) / sum(n.llm_tokens_in)
+                    ELSE 0 END AS cache_hit_rate
+        ORDER BY total_cost DESC
     mixin: true
     class_uri: common:LLMOperation
     attributes:
@@ -553,6 +565,16 @@ classes:
       llm_tokens_out:
         description: "Output tokens generated (for batches: batch_tokens / batch_size)"
         range: integer
+      llm_tokens_cached_read:
+        description: Cached input tokens (prompt cache hit). Useful for measuring cache efficiency.
+        range: integer
+      llm_tokens_cached_write:
+        description: Cached tokens written to prompt cache on this call.
+        range: integer
+      llm_service:
+        description: >-
+          Service tag used for cost attribution (e.g. standard-names, facility-discovery).
+          Mirrors the OpenRouter X-Title header.
       llm_at:
         description: When LLM operation was performed
         range: datetime

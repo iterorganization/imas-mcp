@@ -233,6 +233,8 @@ classes:
 
       Example: plasma_current, electron_density_core, major_radius
     class_uri: sn:StandardName
+    mixins:
+      - LLMOperation
     attributes:
       id:
         identifier: true
@@ -536,18 +538,9 @@ classes:
           physical quantity.
         range: boolean
       # --- Enrichment provenance ---
-      enrich_model:
-        description: >-
-          LLM model used by sn enrich to generate documentation,
-          description, and links (e.g., "openrouter/anthropic/claude-sonnet-4.6").
       enriched_at:
         description: ISO 8601 timestamp when enrichment completed
         range: datetime
-      enrich_cost_usd:
-        description: >-
-          USD cost of the LLM enrichment call for this name.
-          Tracked for per-name budget accounting.
-        range: float
       enrich_tokens:
         description: >-
           Total token count (prompt + completion) of the enrichment call.
@@ -887,8 +880,10 @@ classes:
 
       Example Cypher:
         MATCH (sn:StandardName {id: 'electron_temperature'})<-[:REVIEWS]-(r:Review)
-        RETURN r.model, r.score, r.tier, r.is_canonical, r.reviewed_at
+        RETURN r.llm_model, r.score, r.tier, r.is_canonical, r.reviewed_at
     class_uri: sn:Review
+    mixins:
+      - LLMOperation
     attributes:
       id:
         identifier: true
@@ -929,15 +924,6 @@ classes:
       reviewed_at:
         description: ISO 8601 timestamp when the review completed
         range: datetime
-      cost_usd:
-        description: LLM cost in USD for this review
-        range: float
-      tokens_in:
-        description: Input tokens consumed
-        range: integer
-      tokens_out:
-        description: Output tokens produced
-        range: integer
 
   PromotionCandidate:
     description: >-
