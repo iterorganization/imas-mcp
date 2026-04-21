@@ -52,8 +52,8 @@ def _make_item(name: str, **overrides: Any) -> dict[str, Any]:
         "validation_status": "valid",
         "validation_issues": [],
         # Enrichment provenance
-        "enrich_model": "test-enrich-model",
-        "enrich_cost_usd": 0.005,
+        "llm_model": "test-enrich-model",
+        "llm_cost": 0.005,
         "enrich_tokens": 500,
         # Embedding (set by embed step)
         "embedding": [0.1] * 384,
@@ -118,8 +118,8 @@ class TestPersistEnrichedBatch:
         assert b["documentation"] == item["enriched_documentation"]
         assert b["embedding"] == item["embedding"]
         assert b["review_status"] == "enriched"
-        assert b["enrich_model"] == "test-enrich-model"
-        assert b["enrich_cost_usd"] == 0.005
+        assert b["llm_model"] == "test-enrich-model"
+        assert b["llm_cost"] == 0.005
         assert b["enrich_tokens"] == 500
         assert b["validation_status"] == "valid"
 

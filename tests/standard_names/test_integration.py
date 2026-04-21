@@ -154,12 +154,13 @@ class TestEmbeddingCoverage:
         )
 
     def test_embedding_field_not_in_write_batch(self) -> None:
-        """Batch dicts passed to gc.query by write_standard_names must not contain 'embedding'.
+        """write_standard_names must never clobber existing embeddings.
 
-        This ensures that even if the caller accidentally includes an
-        'embedding' key, the write function strips it before sending to the
-        graph.  More importantly it confirms the build pipeline cannot
-        null-out embeddings via this code path.
+        The batch dict MAY contain an ``embedding`` key (possibly None)
+        because the write function now uses ``coalesce(b.embedding,
+        sn.embedding)`` in Cypher — a None value preserves the existing
+        graph embedding rather than overwriting it.  This test verifies
+        the coalesce pattern, which is the true semantic guarantee.
         """
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
@@ -178,13 +179,16 @@ class TestEmbeddingCoverage:
         ]
         _call_write(names, mock_gc)
 
-        batch = _merge_batch(mock_gc)
-
-        for item in batch:
-            assert "embedding" not in item, (
-                f"Batch item for '{item.get('id')}' must not contain 'embedding' key; "
-                "write_standard_names must never touch embedding data"
-            )
+        cypher = _merge_cypher(mock_gc)
+        assert "coalesce(b.embedding, sn.embedding)" in cypher, (
+            "write_standard_names Cypher must use "
+            "coalesce(b.embedding, sn.embedding) to preserve existing "
+            "embeddings"
+        )
+        assert "coalesce(b.embedded_at, sn.embedded_at)" in cypher, (
+            "write_standard_names Cypher must use "
+            "coalesce(b.embedded_at, sn.embedded_at)"
+        )
 
 
 # =============================================================================

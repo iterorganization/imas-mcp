@@ -780,7 +780,7 @@ class TestCalibrationDataset:
 
         entries = load_calibration_entries()
         assert isinstance(entries, list)
-        assert len(entries) == 27, f"Expected 27 entries, got {len(entries)}"
+        assert len(entries) == 33, f"Expected 33 entries, got {len(entries)}"
 
     def test_calibration_tiers(self):
         from imas_codex.standard_names.benchmark import load_calibration_entries
@@ -790,7 +790,7 @@ class TestCalibrationDataset:
         for entry in entries:
             tier = entry["tier"]
             tiers[tier] = tiers.get(tier, 0) + 1
-        assert tiers == {"outstanding": 10, "good": 7, "adequate": 5, "poor": 5}
+        assert tiers == {"outstanding": 13, "good": 7, "adequate": 5, "poor": 8}
 
     def test_calibration_required_keys(self):
         from imas_codex.standard_names.benchmark import load_calibration_entries
@@ -830,12 +830,19 @@ class TestCalibrationDataset:
         assert not failures, "Round-trip failures:\n" + "\n".join(failures)
 
     def test_calibration_fields_compose_to_name(self):
-        """compose_standard_name(StandardName(**fields)) == name for each entry."""
+        """compose_standard_name(StandardName(**fields)) == name for each entry.
+
+        Entries marked ``fields_valid: false`` are skipped — these document
+        intentional field/name inconsistencies (anti-patterns) so they must
+        not be required to round-trip.
+        """
         from imas_codex.standard_names.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
         failures = []
         for entry in entries:
+            if entry.get("fields_valid") is False:
+                continue
             try:
                 sn = imas_standard_names.grammar.StandardName(**entry["fields"])
                 composed = compose_standard_name(sn)
@@ -864,11 +871,19 @@ class TestCalibrationDataset:
             )
 
     def test_calibration_no_duplicate_names(self):
+        """Entries may share a name to demonstrate tier-graded treatments
+        (e.g. ``elongation_of_plasma_boundary`` appears at ``outstanding``,
+        ``outstanding`` cycle-2, and ``poor`` to illustrate the collapse
+        anti-pattern). Uniqueness is therefore enforced on the
+        ``(name, tier, reason)`` triple, not on ``name`` alone.
+        """
         from imas_codex.standard_names.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
-        names = [e["name"] for e in entries]
-        assert len(names) == len(set(names)), "Duplicate names in calibration dataset"
+        signatures = [(e["name"], e["tier"], e.get("reason", "")) for e in entries]
+        assert len(signatures) == len(set(signatures)), (
+            "Duplicate (name, tier, reason) in calibration dataset"
+        )
 
     def test_reviewer_config_field(self):
         from imas_codex.standard_names.benchmark import BenchmarkConfig

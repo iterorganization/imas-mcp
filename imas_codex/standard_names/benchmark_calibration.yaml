@@ -394,9 +394,9 @@ entries:
     tags: [geometry, equilibrium, time-dependent]
     fields:
       physical_base: minor_radius
-      position: plasma_boundary
+      geometry: plasma_boundary
     reason: >-
-      Cycle-2 frontier exemplar. Scored 0.983 averaged across gpt-5.4, gemini-3.1-pro, sonnet-4.6 on the equilibrium benchmark. Textbook `physical_base_of_position` form with position drawn from the closed vocabulary. Cleanly separates the geometric quantity (minor_radius) from the locus where it is evaluated (plasma_boundary). Preferred over `geometric_minor_radius` (poor anti-pattern) and over bare `minor_radius`.
+      Cycle-2 frontier exemplar. Scored 0.983 averaged across gpt-5.4, gemini-3.1-pro, sonnet-4.6 on the equilibrium benchmark. Textbook `physical_base_of_geometry` form with geometry drawn from the closed vocabulary. Cleanly separates the geometric quantity (minor_radius) from the locus where it is evaluated (plasma_boundary). Preferred over `geometric_minor_radius` (poor anti-pattern) and over bare `minor_radius`.
 
   - name: elongation_of_plasma_boundary
     tier: outstanding
@@ -413,9 +413,9 @@ entries:
     tags: [shape, equilibrium, time-dependent]
     fields:
       physical_base: elongation
-      position: plasma_boundary
+      geometry: plasma_boundary
     reason: >-
-      Cycle-2 frontier exemplar. Scored 0.987 averaged across frontier models. Demonstrates that dimensionless shape descriptors follow the same `physical_base_of_position` form as metric quantities. Importantly, when a DD path carries an `upper`/`lower` subpath, the half-plane variants (`upper_elongation_of_plasma_boundary`) must be used — collapsing `elongation_upper` and `elongation_lower` into a single `elongation_of_plasma_boundary` is a semantic error (see anti-pattern below).
+      Cycle-2 frontier exemplar. Scored 0.987 averaged across frontier models. Demonstrates that dimensionless shape descriptors follow the same `physical_base_of_geometry` form as metric quantities. Importantly, when a DD path carries an `upper`/`lower` subpath, the half-plane variants (`upper_elongation_of_plasma_boundary`) must be used — collapsing `elongation_upper` and `elongation_lower` into a single `elongation_of_plasma_boundary` is a semantic error (see anti-pattern below).
 
   - name: distance_between_plasma_boundary_and_closest_wall_point
     tier: outstanding
@@ -846,7 +846,7 @@ entries:
     tags: []
     fields:
       physical_base: elongation
-      position: plasma_boundary
+      geometry: plasma_boundary
     reason: >-
       Cycle-2 anti-pattern. Semantic error observed on claude-haiku-4.5 and gpt-5.4-mini: the source path `elongation_upper` / `elongation_lower` was mapped to the same generic `elongation_of_plasma_boundary`, losing the upper/lower distinction and creating a name collision. Correct form: `upper_elongation_of_plasma_boundary` / `lower_elongation_of_plasma_boundary`. Reviewers should dock the semantic and convention dimensions (not grammar — the name itself round-trips).
 
@@ -859,6 +859,7 @@ entries:
     unit: m
     kind: scalar
     tags: []
+    fields_valid: false  # Intentionally invalid — documents the anti-pattern below.
     fields:
       geometric_base: vertical_coordinate  # INVALID: not in closed vocabulary
       geometry: plasma_boundary            # INVALID: not a recognised grammar segment

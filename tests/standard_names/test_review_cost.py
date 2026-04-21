@@ -33,9 +33,9 @@ def test_build_review_record_preserves_cost_and_tokens() -> None:
         tokens_out=891,
     )
     assert rec, "expected a non-empty record"
-    assert rec["cost_usd"] == 0.0123
-    assert rec["tokens_in"] == 4567
-    assert rec["tokens_out"] == 891
+    assert rec["llm_cost"] == 0.0123
+    assert rec["llm_tokens_in"] == 4567
+    assert rec["llm_tokens_out"] == 891
     assert rec["model"] == "anthropic/claude-opus-4.6"
 
 
@@ -55,6 +55,9 @@ def test_write_reviews_forwards_cost_and_tokens() -> None:
             "cost_usd": 0.0123,
             "tokens_in": 4567,
             "tokens_out": 891,
+            "llm_cost": 0.0123,
+            "llm_tokens_in": 4567,
+            "llm_tokens_out": 891,
         }
     ]
 
@@ -66,14 +69,14 @@ def test_write_reviews_forwards_cost_and_tokens() -> None:
     call = MockGC.return_value.__enter__.return_value.query.call_args
     cypher = call.args[0] if call.args else call.kwargs["query"]
     # Cypher must still SET the three fields
-    assert "r.cost_usd" in cypher
-    assert "r.tokens_in" in cypher
-    assert "r.tokens_out" in cypher
+    assert "r.llm_cost" in cypher
+    assert "r.llm_tokens_in" in cypher
+    assert "r.llm_tokens_out" in cypher
     # And the UNWIND batch passes them through
     batch = call.kwargs.get("batch") or call.args[1]
-    assert batch[0]["cost_usd"] == 0.0123
-    assert batch[0]["tokens_in"] == 4567
-    assert batch[0]["tokens_out"] == 891
+    assert batch[0]["llm_cost"] == 0.0123
+    assert batch[0]["llm_tokens_in"] == 4567
+    assert batch[0]["llm_tokens_out"] == 891
 
 
 def test_build_review_record_defaults_are_none() -> None:
@@ -84,6 +87,6 @@ def test_build_review_record_defaults_are_none() -> None:
         is_canonical=False,
         reviewed_at="2026-04-21T00:00:00+00:00",
     )
-    assert rec["cost_usd"] is None
-    assert rec["tokens_in"] is None
-    assert rec["tokens_out"] is None
+    assert rec["llm_cost"] is None
+    assert rec["llm_tokens_in"] is None
+    assert rec["llm_tokens_out"] is None

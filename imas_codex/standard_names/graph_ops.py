@@ -829,8 +829,9 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
     - ``score`` (float 0-1), ``scores_json`` (str), ``tier`` (str)
     - ``reviewed_at`` (str ISO 8601)
 
-    Optional: ``comments`` (str), ``cost_usd`` (float),
-    ``tokens_in`` (int), ``tokens_out`` (int).
+    Optional: ``comments`` (str), ``llm_cost`` (float),
+    ``llm_tokens_in`` (int), ``llm_tokens_out`` (int),
+    ``llm_model`` (str), ``llm_at`` (str), ``llm_service`` (str).
 
     MERGE-by-``id`` semantics make re-runs idempotent when the same
     model reviews the same name at the same timestamp.
@@ -857,9 +858,12 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
                 r.tier = b.tier,
                 r.comments = b.comments,
                 r.reviewed_at = b.reviewed_at,
-                r.cost_usd = b.cost_usd,
-                r.tokens_in = b.tokens_in,
-                r.tokens_out = b.tokens_out
+                r.llm_model = b.llm_model,
+                r.llm_cost = b.llm_cost,
+                r.llm_tokens_in = b.llm_tokens_in,
+                r.llm_tokens_out = b.llm_tokens_out,
+                r.llm_at = b.llm_at,
+                r.llm_service = b.llm_service
             WITH r, b
             MATCH (sn:StandardName {id: b.standard_name_id})
             MERGE (r)-[:REVIEWS]->(sn)
@@ -876,9 +880,12 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
                     "tier": r.get("tier") or "unknown",
                     "comments": r.get("comments") or "",
                     "reviewed_at": r.get("reviewed_at"),
-                    "cost_usd": r.get("cost_usd"),
-                    "tokens_in": r.get("tokens_in"),
-                    "tokens_out": r.get("tokens_out"),
+                    "llm_model": r.get("llm_model"),
+                    "llm_cost": r.get("llm_cost"),
+                    "llm_tokens_in": r.get("llm_tokens_in"),
+                    "llm_tokens_out": r.get("llm_tokens_out"),
+                    "llm_at": r.get("llm_at"),
+                    "llm_service": r.get("llm_service"),
                 }
                 for r in valid
             ],
@@ -1222,8 +1229,8 @@ def persist_enriched_batch(items: list[dict[str, Any]]) -> int:
     Called by the enrich pipeline PERSIST worker after validation and
     embedding.  Each item dict must have at minimum ``id`` and
     ``enriched_description``.  Optional: ``enriched_documentation``,
-    ``enriched_links``, ``enriched_tags``, ``embedding``, ``enrich_model``,
-    ``enrich_cost_usd``, ``enrich_tokens``, ``validation_status``,
+    ``enriched_links``, ``enriched_tags``, ``embedding``, ``llm_model``,
+    ``llm_cost``, ``enrich_tokens``, ``validation_status``,
     ``validation_issues``.
 
     The Cypher MERGE preserves existing values for identity fields
@@ -1263,8 +1270,9 @@ def persist_enriched_batch(items: list[dict[str, Any]]) -> int:
                 "tags": merged_tags,
                 "review_status": "enriched",
                 "enriched_at": now,
-                "enrich_model": item.get("enrich_model"),
-                "enrich_cost_usd": item.get("enrich_cost_usd"),
+                "llm_model": item.get("llm_model") or item.get("enrich_model"),
+                "llm_cost": item.get("llm_cost") or item.get("enrich_cost_usd"),
+                "llm_service": item.get("llm_service"),
                 "enrich_tokens": item.get("enrich_tokens"),
                 "validation_status": item.get("validation_status"),
                 "validation_issues": item.get("validation_issues") or None,
@@ -1287,8 +1295,9 @@ def persist_enriched_batch(items: list[dict[str, Any]]) -> int:
                 sn.tags = coalesce(b.tags, sn.tags),
                 sn.review_status = b.review_status,
                 sn.enriched_at = datetime(b.enriched_at),
-                sn.enrich_model = coalesce(b.enrich_model, sn.enrich_model),
-                sn.enrich_cost_usd = coalesce(b.enrich_cost_usd, sn.enrich_cost_usd),
+                sn.llm_model = coalesce(b.llm_model, sn.llm_model),
+                sn.llm_cost = coalesce(b.llm_cost, sn.llm_cost),
+                sn.llm_service = coalesce(b.llm_service, sn.llm_service),
                 sn.enrich_tokens = coalesce(b.enrich_tokens, sn.enrich_tokens),
                 sn.validation_status = coalesce(b.validation_status, sn.validation_status),
                 sn.validation_issues = coalesce(b.validation_issues, sn.validation_issues),

@@ -198,8 +198,8 @@ class TestSearchStandardNames:
                     "tags": [],
                     "review_status": "drafted",
                     "documentation": None,
-                    "physical_base": "temperature",
-                    "subject": "electron",
+                    "grammar_physical_base": "temperature",
+                    "grammar_subject": "electron",
                     "score": 0.92,
                 }
             ]

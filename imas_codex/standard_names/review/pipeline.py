@@ -108,9 +108,12 @@ def _build_review_record(
         )
         or "",
         "reviewed_at": reviewed_at,
-        "cost_usd": cost_usd,
-        "tokens_in": tokens_in,
-        "tokens_out": tokens_out,
+        "llm_model": model,
+        "llm_cost": cost_usd,
+        "llm_tokens_in": tokens_in,
+        "llm_tokens_out": tokens_out,
+        "llm_at": reviewed_at,
+        "llm_service": "standard-names",
     }
 
 

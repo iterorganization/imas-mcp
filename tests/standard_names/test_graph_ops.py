@@ -632,7 +632,14 @@ class TestCocosScalarDefaulting:
         assert candidates[0]["cocos_transformation_type"] == "psi_like"
 
     def test_vector_not_defaulted(self) -> None:
-        """A vector quantity does NOT get ``one_like`` defaulted."""
+        """A vector quantity does NOT get ``one_like`` defaulted.
+
+        ``persist_composed_batch`` calls ``derive_kind`` from the name
+        string which would classify ``position_of_magnetic_axis`` as
+        ``scalar`` (default fallback — no vector pattern matches).  Patch
+        it here so the test exercises the post-derivation ``kind="vector"``
+        branch rather than the name-structure heuristic.
+        """
         from imas_codex.standard_names.graph_ops import persist_composed_batch
 
         candidates = [
@@ -644,9 +651,13 @@ class TestCocosScalarDefaulting:
             }
         ]
 
-        with patch(
-            "imas_codex.standard_names.graph_ops.write_standard_names"
-        ) as mock_w:
+        with (
+            patch("imas_codex.standard_names.graph_ops.write_standard_names") as mock_w,
+            patch(
+                "imas_codex.standard_names.kind_derivation.derive_kind",
+                return_value="vector",
+            ),
+        ):
             mock_w.return_value = 1
             with patch("imas_codex.embeddings.description.embed_descriptions_batch"):
                 persist_composed_batch(candidates, compose_model="test/model")

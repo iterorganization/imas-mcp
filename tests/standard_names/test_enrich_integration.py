@@ -23,6 +23,10 @@ import pytest
 # =============================================================================
 
 TEST_PREFIX = "test_integration_sn_"
+# Use a physics_domain with no production data so claim-safety tests isolate
+# themselves from the live graph. ``runaway_electrons`` has 0 ``review_status='named'``
+# nodes; using a real enum value keeps schema-compliance tests happy.
+_TEST_PHYSICS_DOMAIN = "runaway_electrons"
 
 
 def _make_sn(suffix: str | int, **overrides: Any) -> dict[str, Any]:
@@ -59,8 +63,8 @@ def _make_enriched_item(item: dict[str, Any]) -> dict[str, Any]:
     item["enriched_tags"] = ["spatial-profile"]
     item["validation_status"] = "valid"
     item["validation_issues"] = []
-    item["enrich_model"] = "test-enrich-model"
-    item["enrich_cost_usd"] = 0.003
+    item["llm_model"] = "test-enrich-model"
+    item["llm_cost"] = 0.003
     item["enrich_tokens"] = 200
     item["embedding"] = [0.1] * 384
     return item
@@ -114,7 +118,7 @@ class TestRoundTripMocked:
 
         state = StandardNameEnrichState(
             facility="dd",
-            domain="transport",
+            domain=_TEST_PHYSICS_DOMAIN,
             cost_limit=5.0,
             dry_run=False,
         )
@@ -442,9 +446,13 @@ class TestFailureIsolation:
 
         assert state.validate_phase.done
 
-        # Batch 0 items have no enriched_description → pending
+        # Batch 0 items have no enriched_description AND no pre-existing
+        # description/documentation → quarantined (P0.1: prevents empty-doc
+        # leaks into the valid pool). The validation_issues record captures
+        # the reason for downstream triage.
         for item in state.batches[0]["items"]:
-            assert item["validation_status"] == "pending"
+            assert item["validation_status"] == "quarantined"
+            assert "empty_documentation" in (item.get("validation_issues") or [])
         # Batch 1 items were validated
         for item in state.batches[1]["items"]:
             assert item["validation_status"] in ("valid", "quarantined")
@@ -515,8 +523,11 @@ class TestFailureIsolation:
             await enrich_validate_worker(state)
 
         assert state.validate_phase.done
-        # Failed item has no enriched_description → skipped (pending)
-        assert item_failed["validation_status"] == "pending"
+        # Failed item has no enriched_description AND no pre-existing
+        # description/documentation → quarantined with ``empty_documentation``
+        # (P0.1: empty-doc leak guard).
+        assert item_failed["validation_status"] == "quarantined"
+        assert "empty_documentation" in (item_failed.get("validation_issues") or [])
         # Good item validated
         assert item_ok["validation_status"] == "valid"
 
@@ -603,7 +614,7 @@ def _create_test_nodes(names: list[str]) -> None:
                 SET sn.review_status = 'named',
                     sn.kind = 'scalar',
                     sn.unit = 'eV',
-                    sn.physics_domain = 'transport',
+                    sn.physics_domain = $domain,
                     sn.physical_base = 'temperature',
                     sn.subject = 'electron',
                     sn.tags = ['transport'],
@@ -614,6 +625,7 @@ def _create_test_nodes(names: list[str]) -> None:
                     sn.enrich_claim_token = null
                 """,
                 name=name,
+                domain=_TEST_PHYSICS_DOMAIN,
                 path=f"transport_solver_numerics/time_slice/profiles_1d/{name}",
             )
 
@@ -659,7 +671,7 @@ class TestDryRunIntegration:
 
         state = StandardNameEnrichState(
             facility="dd",
-            domain="transport",
+            domain=_TEST_PHYSICS_DOMAIN,
             cost_limit=0.10,
             dry_run=True,
         )
@@ -735,12 +747,16 @@ class TestClaimSafetyConcurrent:
         _create_test_nodes(names)
 
         # Engine 1: claim all 5
-        token1, items1 = claim_names_for_enrichment(limit=5, domain="transport")
+        token1, items1 = claim_names_for_enrichment(
+            limit=5, domain=_TEST_PHYSICS_DOMAIN
+        )
         assert len(items1) == 5
 
         try:
             # Engine 2: try to claim — should get 0 (all held)
-            token2, items2 = claim_names_for_enrichment(limit=5, domain="transport")
+            token2, items2 = claim_names_for_enrichment(
+                limit=5, domain=_TEST_PHYSICS_DOMAIN
+            )
 
             assert len(items2) == 0, (
                 f"Expected 0 items (all held by engine 1), got {len(items2)}"
@@ -753,7 +769,9 @@ class TestClaimSafetyConcurrent:
             release_enrichment_claims(token1)
 
         # After release, a new claim should succeed
-        token3, items3 = claim_names_for_enrichment(limit=5, domain="transport")
+        token3, items3 = claim_names_for_enrichment(
+            limit=5, domain=_TEST_PHYSICS_DOMAIN
+        )
         assert len(items3) == 5
         release_enrichment_claims(token3)
 
@@ -780,7 +798,7 @@ class TestClaimSafetyConcurrent:
         async def _claim(idx: int):
             await barrier.wait()
             token, _items = await asyncio.to_thread(
-                claim_names_for_enrichment, limit=10, domain="transport"
+                claim_names_for_enrichment, limit=10, domain=_TEST_PHYSICS_DOMAIN
             )
             tokens.append(token)
 
@@ -844,7 +862,7 @@ class TestStaleClaimRecovery:
         # Run engine — should reclaim the stale node
         state = StandardNameEnrichState(
             facility="dd",
-            domain="transport",
+            domain=_TEST_PHYSICS_DOMAIN,
             cost_limit=0.10,
             dry_run=True,  # dry_run to avoid LLM
             limit=1,
@@ -891,7 +909,7 @@ class TestFullPipelineSmoke:
 
         state = StandardNameEnrichState(
             facility="dd",
-            domain="transport",
+            domain=_TEST_PHYSICS_DOMAIN,
             cost_limit=0.20,
             dry_run=False,
             limit=3,

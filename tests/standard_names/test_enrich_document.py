@@ -104,7 +104,7 @@ def _make_enrich_result(*names: str) -> StandardNameEnrichBatch:
             standard_name=name,
             description=f"One-sentence description of {name}.",
             documentation=f"# {name}\n\nDetailed documentation for {name} with $T_e$ LaTeX.",
-            tags=["equilibrium", "kinetics"],
+            tags=["measured", "time-dependent"],
             links=["ion_temperature"],
             validity_domain="Tokamak core plasma",
             constraints=["Must be positive"],
@@ -167,8 +167,8 @@ async def test_document_enriches_items():
         == "One-sentence description of electron_temperature."
     )
     assert "LaTeX" in items[0]["enriched_documentation"]
-    assert items[0]["enriched_tags"] == ["equilibrium", "kinetics"]
-    assert items[0]["enriched_links"] == ["ion_temperature"]
+    assert items[0]["enriched_tags"] == ["measured", "time-dependent"]
+    assert items[0]["enriched_links"] == ["name:ion_temperature"]
     assert items[0]["enriched_validity_domain"] == "Tokamak core plasma"
     assert items[0]["enriched_constraints"] == ["Must be positive"]
 

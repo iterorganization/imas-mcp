@@ -21,6 +21,19 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _mock_version_resolver():
+    """Make ``_resolve_grammar_token_version`` return a fixed version so
+    ``_write_segment_edges`` proceeds past its early-return guard without
+    consuming mock_gc.query side_effect entries.
+    """
+    with patch(
+        "imas_codex.standard_names.graph_ops._resolve_grammar_token_version",
+        return_value="0.7.0rc16",
+    ):
+        yield
+
+
 @pytest.fixture()
 def mock_gc():
     """A mock GraphClient that records query calls."""
@@ -42,7 +55,13 @@ def _patch_isn():
 
 def _call_write(names: list[dict], mock_gc: MagicMock) -> int:
     """Call write_standard_names with a mocked GraphClient."""
-    with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
+    with (
+        patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC,
+        patch(
+            "imas_codex.standard_names.graph_ops._resolve_grammar_token_version",
+            return_value="0.7.0rc16",
+        ),
+    ):
         MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
         MockGC.return_value.__exit__ = MagicMock(return_value=False)
         from imas_codex.standard_names.graph_ops import write_standard_names
@@ -140,7 +159,7 @@ class TestSegmentEdgeWriting:
             assert isinstance(e["segment"], str)
 
     def test_isn_version_passed_to_cypher(self, mock_gc: MagicMock) -> None:
-        """The ISN version should be passed as a parameter for GrammarToken matching."""
+        """The token_version should be passed as a parameter for GrammarToken matching."""
         mock_gc.query.return_value = []
 
         names = [
@@ -155,10 +174,11 @@ class TestSegmentEdgeWriting:
         merge_calls = _find_merge_segment_calls(mock_gc)
         assert len(merge_calls) >= 1
 
-        # Verify isn_version parameter is set
-        isn_version = merge_calls[0][1].get("isn_version")
-        assert isn_version is not None
-        assert isinstance(isn_version, str)
+        # Verify token_version parameter is set (renamed from isn_version
+        # in commit ac761175 — now a fallback-aware resolved version)
+        token_version = merge_calls[0][1].get("token_version")
+        assert token_version is not None
+        assert isinstance(token_version, str)
 
 
 # ---------------------------------------------------------------------------

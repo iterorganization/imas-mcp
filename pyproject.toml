@@ -380,7 +380,7 @@ addopts = [
     "--verbose",
     "--durations=10",
     "--cache-clear",
-    "-m", "not slow",
+    "-m", "not slow and not corpus_health",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"

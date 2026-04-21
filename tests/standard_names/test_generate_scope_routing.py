@@ -23,6 +23,14 @@ def runner():
 
 # Patch target for the rotator entrypoint in the CLI module.
 _ROTATOR = "imas_codex.cli.sn._run_rotator"
+# The single-pass path reaches ``run_sn_generate_engine`` via a local import
+# inside the CLI function.  Patching the source module also blocks it
+# effectively because the import resolves each invocation.
+_SINGLE_PASS = "imas_codex.standard_names.pipeline.run_sn_generate_engine"
+
+
+async def _async_noop(*args, **kwargs):  # pragma: no cover - test helper
+    return None
 
 
 class TestScopeRouting:
@@ -36,11 +44,10 @@ class TestScopeRouting:
 
     def test_paths_routes_to_single_pass(self, runner):
         """--paths supplied → single-pass pipeline (not rotator)."""
-        # When --paths is given the function falls through to the single-pass
-        # path which does lazy imports.  We only need to verify the rotator
-        # was NOT called — let the single-pass path fail naturally (exit != 0
-        # is fine, we check mock_rot.called).
-        with patch(_ROTATOR) as mock_rot:
+        with (
+            patch(_ROTATOR) as mock_rot,
+            patch(_SINGLE_PASS, side_effect=_async_noop) as mock_sp,
+        ):
             runner.invoke(
                 sn,
                 [
@@ -53,6 +60,8 @@ class TestScopeRouting:
                 ],
             )
             assert not mock_rot.called, "Rotator should NOT be called with --paths"
+            # Single-pass engine is expected to be invoked
+            assert mock_sp.called, "Single-pass engine should be called with --paths"
 
     def test_physics_domain_routes_to_rotator(self, runner):
         """--physics-domain without --paths → rotator (scoped single-domain)."""
@@ -67,7 +76,7 @@ class TestScopeRouting:
 
     def test_single_pass_flag_overrides_rotator(self, runner):
         """--single-pass forces single-pass even without --paths."""
-        with patch(_ROTATOR) as mock_rot:
+        with patch(_ROTATOR) as mock_rot, patch(_SINGLE_PASS, side_effect=_async_noop):
             runner.invoke(
                 sn,
                 [
@@ -86,7 +95,7 @@ class TestScopeRouting:
 
     def test_signals_source_routes_to_single_pass(self, runner):
         """--source signals → single-pass (rotator is DD-only)."""
-        with patch(_ROTATOR) as mock_rot:
+        with patch(_ROTATOR) as mock_rot, patch(_SINGLE_PASS, side_effect=_async_noop):
             runner.invoke(
                 sn,
                 [
