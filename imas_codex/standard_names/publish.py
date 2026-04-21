@@ -1,44 +1,281 @@
-"""Publish validated standard names to YAML catalog files.
+"""Transport staging directory to an ISNC (imas-standard-names-catalog) checkout.
 
-Converts validated StandardName graph nodes into YAML files matching
-the ``imas-standard-names-catalog`` format.  Supports batching by IDS,
-domain, or confidence tier, and optional GitHub PR creation via ``gh``.
+This module is the second half of the two-step export→publish flow.
+It takes a staging directory produced by ``export.py`` and mirrors it
+into an ISNC git checkout, creating a commit and optionally pushing.
 
-Usage (from CLI)::
+**No gate logic** — that already ran during ``sn export``.
 
-    imas-codex sn publish --output-dir sn_catalog_output
-    imas-codex sn publish --group-by ids --dry-run
-    imas-codex sn publish --create-pr --catalog-repo org/repo
+See plan 35 §Phase 3 (3c).
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from imas_codex.standard_names.models import (
-    StandardNameProvenance,
-    StandardNamePublishBatch,
-    StandardNamePublishEntry,
-)
-
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Confidence tier classification
+# Report model
 # =============================================================================
+
+
+@dataclass
+class PublishReport:
+    """Result of a publish operation."""
+
+    staging_dir: str = ""
+    isnc_path: str = ""
+    files_copied: int = 0
+    commit_sha: str | None = None
+    pushed: bool = False
+    dry_run: bool = False
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "staging_dir": self.staging_dir,
+            "isnc_path": self.isnc_path,
+            "files_copied": self.files_copied,
+            "commit_sha": self.commit_sha,
+            "pushed": self.pushed,
+            "dry_run": self.dry_run,
+            "errors": self.errors,
+        }
+
+
+# =============================================================================
+# Validation helpers
+# =============================================================================
+
+
+def _validate_staging_dir(staging_dir: Path) -> list[str]:
+    """Validate that the staging directory is well-formed.
+
+    Returns a list of error strings (empty if valid).
+    """
+    errors: list[str] = []
+
+    if not staging_dir.is_dir():
+        errors.append(f"Staging directory does not exist: {staging_dir}")
+        return errors
+
+    manifest = staging_dir / "catalog.yml"
+    if not manifest.is_file():
+        errors.append(f"Missing manifest: {manifest}")
+    else:
+        try:
+            data = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                errors.append("catalog.yml is not a YAML mapping")
+            elif "catalog_name" not in data:
+                errors.append("catalog.yml missing required field 'catalog_name'")
+        except Exception as exc:
+            errors.append(f"catalog.yml parse error: {exc}")
+
+    sn_dir = staging_dir / "standard_names"
+    if not sn_dir.is_dir():
+        errors.append(f"Missing standard_names directory: {sn_dir}")
+    else:
+        yml_files = list(sn_dir.rglob("*.yml"))
+        if not yml_files:
+            errors.append("standard_names/ contains no .yml files")
+
+    return errors
+
+
+def _get_codex_commit_sha() -> str:
+    """Get the current imas-codex git commit SHA (short)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+# =============================================================================
+# Main publish function
+# =============================================================================
+
+
+def run_publish(
+    staging_dir: str | Path,
+    isnc_path: str | Path,
+    *,
+    push: bool = False,
+    dry_run: bool = False,
+) -> PublishReport:
+    """Transport a staging directory to an ISNC checkout.
+
+    Parameters
+    ----------
+    staging_dir:
+        Path to the staging directory produced by ``sn export``.
+    isnc_path:
+        Path to a local clone of the imas-standard-names-catalog repo.
+    push:
+        If ``True``, push the commit to origin after creating it.
+    dry_run:
+        If ``True``, validate and report without modifying ISNC.
+
+    Returns
+    -------
+    PublishReport with commit SHA, file counts, and any errors.
+    """
+    staging = Path(staging_dir)
+    isnc = Path(isnc_path)
+    report = PublishReport(
+        staging_dir=str(staging),
+        isnc_path=str(isnc),
+        dry_run=dry_run,
+    )
+
+    # ── 1. Validate staging directory ───────────────────────────
+    errors = _validate_staging_dir(staging)
+    if errors:
+        report.errors.extend(errors)
+        logger.error("Staging validation failed: %s", errors)
+        return report
+
+    # ── 2. Validate ISNC path ──────────────────────────────────
+    if not isnc.is_dir():
+        report.errors.append(f"ISNC path does not exist: {isnc}")
+        return report
+
+    git_dir = isnc / ".git"
+    if not git_dir.exists():
+        report.errors.append(f"ISNC path is not a git repository: {isnc}")
+        return report
+
+    if dry_run:
+        # Count files that would be copied
+        yml_files = list((staging / "standard_names").rglob("*.yml"))
+        report.files_copied = len(yml_files) + 1  # +1 for catalog.yml
+        logger.info("[dry-run] Would copy %d files to %s", report.files_copied, isnc)
+        return report
+
+    # ── 3. Clear ISNC standard_names tree ──────────────────────
+    isnc_sn_dir = isnc / "standard_names"
+    if isnc_sn_dir.exists():
+        shutil.rmtree(isnc_sn_dir)
+        logger.debug("Cleared %s", isnc_sn_dir)
+
+    # ── 4. Mirror staging → ISNC ───────────────────────────────
+    staging_sn_dir = staging / "standard_names"
+    shutil.copytree(staging_sn_dir, isnc_sn_dir)
+
+    staging_manifest = staging / "catalog.yml"
+    isnc_manifest = isnc / "catalog.yml"
+    shutil.copy2(staging_manifest, isnc_manifest)
+
+    yml_files = list(isnc_sn_dir.rglob("*.yml"))
+    report.files_copied = len(yml_files) + 1  # +1 for catalog.yml
+    logger.info("Copied %d files to %s", report.files_copied, isnc)
+
+    # ── 5. Git commit ──────────────────────────────────────────
+    codex_sha = _get_codex_commit_sha()
+    commit_msg = f"chore(catalog): sync from imas-codex {codex_sha}"
+
+    try:
+        # Stage all changes
+        subprocess.run(
+            ["git", "add", "standard_names/", "catalog.yml"],
+            cwd=isnc,
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+
+        # Check if there are changes to commit
+        status = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=isnc,
+            capture_output=True,
+            timeout=10,
+        )
+
+        if status.returncode == 0:
+            logger.info("No changes to commit in ISNC")
+            return report
+
+        # Commit
+        subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=isnc,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        logger.info("Committed: %s", commit_msg)
+
+        # Get commit SHA
+        sha_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=isnc,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        report.commit_sha = sha_result.stdout.strip()
+
+    except subprocess.CalledProcessError as exc:
+        report.errors.append(f"Git commit failed: {exc.stderr}")
+        logger.error("Git commit failed: %s", exc.stderr)
+        return report
+
+    # ── 6. Optionally push ─────────────────────────────────────
+    if push:
+        try:
+            subprocess.run(
+                ["git", "push", "origin"],
+                cwd=isnc,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            report.pushed = True
+            logger.info("Pushed to origin")
+        except subprocess.CalledProcessError as exc:
+            report.errors.append(f"Git push failed: {exc.stderr}")
+            logger.error("Git push failed: %s", exc.stderr)
+
+    return report
+
+
+# =============================================================================
+# Legacy backward-compatible re-exports
+# =============================================================================
+# These functions are from the pre-Phase-3 publish module and are kept
+# temporarily for backward compatibility with cli/sn.py and existing
+# tests. They will be removed by the CLI integration task.
 
 _HIGH_THRESHOLD = 0.8
 _MEDIUM_THRESHOLD = 0.5
 
 
 def confidence_tier(confidence: float) -> str:
-    """Classify a confidence score into high / medium / low."""
+    """Classify a confidence score into high / medium / low.
+
+    .. deprecated:: Phase 3
+        Legacy function. Use ``export.py`` gate C instead.
+    """
     if confidence >= _HIGH_THRESHOLD:
         return "high"
     if confidence >= _MEDIUM_THRESHOLD:
@@ -46,17 +283,13 @@ def confidence_tier(confidence: float) -> str:
     return "low"
 
 
-# =============================================================================
-# YAML generation
-# =============================================================================
-
-
-def generate_yaml_entry(entry: StandardNamePublishEntry) -> str:
+def generate_yaml_entry(
+    entry: Any,
+) -> str:
     """Generate YAML content for a single standard name entry.
 
-    Returns a YAML string formatted to match the
-    ``imas-standard-names-catalog`` convention.  All rich fields are
-    included; empty/None optional fields are omitted.
+    .. deprecated:: Phase 3
+        Use ``export.py::run_export`` instead.
     """
     doc: dict[str, Any] = {
         "name": entry.name,
@@ -73,15 +306,15 @@ def generate_yaml_entry(entry: StandardNamePublishEntry) -> str:
         doc["documentation"] = entry.documentation
     if entry.links:
         doc["links"] = [{"name": link} for link in entry.links]
-    if entry.dd_paths:
+    if getattr(entry, "dd_paths", None):
         doc["dd_paths"] = entry.dd_paths
     if entry.constraints:
         doc["constraints"] = entry.constraints
     if entry.validity_domain:
         doc["validity_domain"] = entry.validity_domain
-    if entry.cocos_transformation_type:
+    if getattr(entry, "cocos_transformation_type", None):
         doc["cocos_transformation_type"] = entry.cocos_transformation_type
-    if entry.cocos is not None:
+    if getattr(entry, "cocos", None) is not None:
         doc["cocos"] = entry.cocos
     doc["provenance"] = {
         "source": entry.provenance.source,
@@ -96,23 +329,21 @@ def generate_yaml_entry(entry: StandardNamePublishEntry) -> str:
 
 
 def generate_catalog_files(
-    entries: list[StandardNamePublishEntry],
+    entries: list[Any],
     output_dir: Path,
 ) -> list[Path]:
-    """Write YAML files to *output_dir*, grouped by primary tag into subdirectories.
+    """Write YAML files to *output_dir*.
 
-    File names are ``{tag}/{name}.yaml`` (e.g. ``equilibrium/electron_temperature.yaml``).
-    Entries without tags go into ``unscoped/``.
-    Returns list of written file paths.
+    .. deprecated:: Phase 3
+        Use ``export.py::run_export`` instead.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     written: list[Path] = []
     for entry in entries:
-        # Group by physics_domain when available, fall back to first tag
         subdir = (
-            entry.physics_domain
+            getattr(entry, "physics_domain", None)
             or (entry.tags[0] if entry.tags else None)
             or "unscoped"
         )
@@ -123,44 +354,26 @@ def generate_catalog_files(
         content = generate_yaml_entry(entry)
         filepath.write_text(content + "\n", encoding="utf-8")
         written.append(filepath)
-        logger.debug("Wrote %s", filepath)
 
-    logger.info("Generated %d YAML catalog files in %s", len(written), output_dir)
     return written
 
 
-# =============================================================================
-# Batching
-# =============================================================================
-
-
 def batch_by_group(
-    entries: list[StandardNamePublishEntry],
+    entries: list[Any],
     group_by: str = "ids",
-) -> dict[str, list[StandardNamePublishEntry]]:
+) -> dict[str, list[Any]]:
     """Group entries into PR batches.
 
-    Parameters
-    ----------
-    entries:
-        Publish entries to group.
-    group_by:
-        Grouping strategy — ``"ids"`` groups by IDS name from provenance,
-        ``"domain"`` groups by first tag, ``"confidence"`` groups by
-        confidence tier.
-
-    Returns
-    -------
-    dict mapping group key → entries in that group.
+    .. deprecated:: Phase 3
     """
-    groups: dict[str, list[StandardNamePublishEntry]] = {}
+    groups: dict[str, list[Any]] = {}
 
     for entry in entries:
         if group_by == "ids":
             key = entry.provenance.ids_name or "unscoped"
         elif group_by == "domain":
             key = (
-                entry.physics_domain
+                getattr(entry, "physics_domain", None)
                 or (entry.tags[0] if entry.tags else None)
                 or "unscoped"
             )
@@ -175,14 +388,18 @@ def batch_by_group(
 
 
 def make_publish_batches(
-    entries: list[StandardNamePublishEntry],
+    entries: list[Any],
     group_by: str = "ids",
-) -> list[StandardNamePublishBatch]:
-    """Create :class:`StandardNamePublishBatch` objects from grouped entries."""
+) -> list[Any]:
+    """Create publish batch objects from grouped entries.
+
+    .. deprecated:: Phase 3
+    """
+    from imas_codex.standard_names.models import StandardNamePublishBatch
+
     groups = batch_by_group(entries, group_by)
-    batches: list[StandardNamePublishBatch] = []
+    batches = []
     for key, group_entries in sorted(groups.items()):
-        # Determine overall confidence tier for the batch
         avg_conf = (
             sum(e.provenance.confidence for e in group_entries) / len(group_entries)
             if group_entries
@@ -198,29 +415,19 @@ def make_publish_batches(
     return batches
 
 
-# =============================================================================
-# Duplicate checking
-# =============================================================================
-
-
 def check_catalog_duplicates(
-    entries: list[StandardNamePublishEntry],
+    entries: list[Any],
     catalog_dir: Path | None = None,
-) -> tuple[list[StandardNamePublishEntry], list[StandardNamePublishEntry]]:
+) -> tuple[list[Any], list[Any]]:
     """Check for duplicates against an existing catalog directory.
 
-    Scans ``catalog_dir`` recursively for ``.yaml`` files (including
-    subdirectories created by tag-based grouping) and reads the ``name``
-    field from each.  Also detects duplicates within *entries* itself.
-
-    Returns ``(new_entries, duplicate_entries)``.
+    .. deprecated:: Phase 3
     """
     existing_names: set[str] = set()
 
     if catalog_dir is not None:
         catalog_path = Path(catalog_dir)
         if catalog_path.is_dir():
-            # Scan both top-level and subdirectory YAML files
             for yaml_file in catalog_path.rglob("*.yaml"):
                 try:
                     with open(yaml_file, encoding="utf-8") as f:
@@ -228,10 +435,10 @@ def check_catalog_duplicates(
                     if isinstance(doc, dict) and "name" in doc:
                         existing_names.add(doc["name"])
                 except Exception:
-                    logger.debug("Could not parse %s", yaml_file)
+                    pass
 
-    new: list[StandardNamePublishEntry] = []
-    duplicates: list[StandardNamePublishEntry] = []
+    new: list[Any] = []
+    duplicates: list[Any] = []
     seen: set[str] = set()
 
     for entry in entries:
@@ -241,39 +448,28 @@ def check_catalog_duplicates(
             new.append(entry)
             seen.add(entry.name)
 
-    if duplicates:
-        logger.info(
-            "Found %d duplicates (%d existing catalog, %d within batch)",
-            len(duplicates),
-            sum(1 for d in duplicates if d.name in existing_names),
-            sum(1 for d in duplicates if d.name in seen),
-        )
-
     return new, duplicates
-
-
-# =============================================================================
-# Graph → StandardNamePublishEntry conversion
-# =============================================================================
 
 
 def graph_records_to_entries(
     records: list[dict[str, Any]],
-) -> list[StandardNamePublishEntry]:
-    """Convert raw graph query dicts to :class:`StandardNamePublishEntry` objects.
+) -> list[Any]:
+    """Convert raw graph query dicts to publish entry objects.
 
-    Handles both schema-canonical properties (``source_types``, ``source_path``,
-    ``unit``) and legacy write properties (``source_type``,
-    ``source_id``, ``units``).  Carries through all rich fields:
-    documentation, links, dd_paths, constraints, validity_domain, kind.
+    .. deprecated:: Phase 3
+        Use ``export.py::run_export`` instead.
     """
-    entries: list[StandardNamePublishEntry] = []
+    from imas_codex.standard_names.models import (
+        StandardNameProvenance,
+        StandardNamePublishEntry,
+    )
+
+    entries = []
     for rec in records:
         name = rec.get("name") or rec.get("id", "")
         if not name:
             continue
 
-        # Source type (read from graph as 'source_types' list or legacy 'source')
         source_types = rec.get("source_types") or []
         source = (
             source_types[0]
@@ -281,25 +477,19 @@ def graph_records_to_entries(
             else (rec.get("source") or rec.get("source_type") or "dd")
         )
 
-        # Resolve source ID (schema: source_path, legacy: source_id)
         source_id = rec.get("source_path") or rec.get("source_id") or ""
-
         unit = rec.get("unit")
-
-        # IDS name from graph traversal
         ids_name = rec.get("ids_name")
 
-        # Confidence: from node or default 1.0 for grammar-validated names
         confidence = rec.get("confidence")
         if confidence is None:
             confidence = 1.0
 
         description = rec.get("description") or ""
-
-        # Rich fields
         documentation = rec.get("documentation")
         kind = rec.get("kind") or "scalar"
         links_raw = rec.get("links") or []
+
         from imas_codex.standard_names.source_paths import strip_dd_prefix
 
         dd_paths_raw = [strip_dd_prefix(p) for p in rec.get("source_paths") or []]
@@ -308,12 +498,10 @@ def graph_records_to_entries(
         cocos_transformation_type = rec.get("cocos_transformation_type")
         cocos = rec.get("cocos")
 
-        # Build tags from available context
         tags: list[str] = list(rec.get("tags") or [])
         if not tags and ids_name:
             tags.append(ids_name)
 
-        # Physics domain
         physics_domain = rec.get("physics_domain")
 
         provenance = StandardNameProvenance(
@@ -348,68 +536,31 @@ def graph_records_to_entries(
     return entries
 
 
-# =============================================================================
-# PR generation (stub for gh CLI)
-# =============================================================================
-
-
 def create_catalog_pr(
-    batch: StandardNamePublishBatch,
+    batch: Any,
     catalog_repo: str,
     branch_name: str,
     yaml_files: list[Path],
     dry_run: bool = False,
 ) -> str | None:
-    """Create a PR via ``gh`` CLI.  Returns PR URL or ``None`` in dry-run.
+    """Create a PR via ``gh`` CLI.
 
-    Parameters
-    ----------
-    batch:
-        The publish batch (used for PR title/body).
-    catalog_repo:
-        GitHub repo slug (e.g. ``"iterorganization/imas-standard-names-catalog"``).
-    branch_name:
-        Branch to create for the PR.
-    yaml_files:
-        YAML files to include in the PR.
-    dry_run:
-        If ``True``, print what would happen without creating the PR.
+    .. deprecated:: Phase 3
+        Use ``run_publish`` with ``push=True`` instead.
     """
-    # Build summary table for PR body
-    lines = [
-        f"## Standard Name Candidates — {batch.group_key}",
-        "",
-        f"Confidence tier: **{batch.confidence_tier}**",
-        f"Entries: **{len(batch.entries)}**",
-        "",
-        "| Name | Unit | Source | Confidence |",
-        "|------|------|--------|------------|",
-    ]
-    for entry in batch.entries:
-        unit = entry.unit or "—"
-        src = entry.provenance.source_id or entry.provenance.source
-        conf = f"{entry.provenance.confidence:.2f}"
-        lines.append(f"| `{entry.name}` | {unit} | {src} | {conf} |")
-    lines.append("")
-    lines.append("Generated by `imas-codex sn publish`.")
-
     pr_title = (
         f"feat(sn): add {len(batch.entries)} standard name candidates "
         f"({batch.group_key})"
     )
-    pr_body = "\n".join(lines)
 
     if dry_run:
         logger.info(
-            "[dry-run] Would create PR on %s:\n  branch: %s\n  title: %s\n  files: %d",
+            "[dry-run] Would create PR on %s: %s",
             catalog_repo,
-            branch_name,
             pr_title,
-            len(yaml_files),
         )
         return None
 
-    # Attempt to create PR via gh CLI
     try:
         result = subprocess.run(
             [
@@ -423,18 +574,12 @@ def create_catalog_pr(
                 "--title",
                 pr_title,
                 "--body",
-                pr_body,
+                "Generated by imas-codex sn publish.",
             ],
             capture_output=True,
             text=True,
             check=True,
         )
-        pr_url = result.stdout.strip()
-        logger.info("Created PR: %s", pr_url)
-        return pr_url
-    except FileNotFoundError:
-        logger.error("gh CLI not found — install GitHub CLI to create PRs")
-        return None
-    except subprocess.CalledProcessError as e:
-        logger.error("PR creation failed: %s", e.stderr)
+        return result.stdout.strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
         return None
