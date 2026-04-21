@@ -119,6 +119,8 @@ class LLMResult:
         "parsed",
         "cost",
         "tokens",
+        "input_tokens",
+        "output_tokens",
         "cache_read_tokens",
         "cache_creation_tokens",
     )
@@ -130,10 +132,17 @@ class LLMResult:
         tokens: int,
         cache_read_tokens: int = 0,
         cache_creation_tokens: int = 0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
     ) -> None:
         self.parsed = parsed
         self.cost = cost
         self.tokens = tokens
+        # Split prompt/completion counts. When the caller doesn't provide
+        # them (backward-compat), default to 0 — consumers that need the
+        # split should read these fields rather than unpacking the tuple.
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
         self.cache_read_tokens = cache_read_tokens
         self.cache_creation_tokens = cache_creation_tokens
 
@@ -938,9 +947,17 @@ def call_llm_structured(
             total_tokens = (
                 response.usage.prompt_tokens + response.usage.completion_tokens
             )
+            input_tokens = response.usage.prompt_tokens or 0
+            output_tokens = response.usage.completion_tokens or 0
             cache_read, cache_creation = extract_cache_tokens(response)
             return LLMResult(
-                parsed, total_cost, total_tokens, cache_read, cache_creation
+                parsed,
+                total_cost,
+                total_tokens,
+                cache_read,
+                cache_creation,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
 
         except Exception as e:
@@ -1047,9 +1064,17 @@ async def acall_llm_structured(
             total_tokens = (
                 response.usage.prompt_tokens + response.usage.completion_tokens
             )
+            input_tokens = response.usage.prompt_tokens or 0
+            output_tokens = response.usage.completion_tokens or 0
             cache_read, cache_creation = extract_cache_tokens(response)
             return LLMResult(
-                parsed, total_cost, total_tokens, cache_read, cache_creation
+                parsed,
+                total_cost,
+                total_tokens,
+                cache_read,
+                cache_creation,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
 
         except Exception as e:

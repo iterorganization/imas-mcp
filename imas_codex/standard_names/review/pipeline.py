@@ -495,6 +495,8 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 )
                 batch_cost = batch_scored.pop("_cost", 0.0)
                 batch_tokens = batch_scored.pop("_tokens", 0)
+                batch_input_tokens = batch_scored.pop("_input_tokens", 0)
+                batch_output_tokens = batch_scored.pop("_output_tokens", 0)
                 batch_revised = batch_scored.pop("_revised", 0)
                 batch_items = batch_scored.pop("_items", [])
                 batch_unscored = batch_scored.pop("_unscored", 0)
@@ -529,14 +531,25 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                     [state.review_model] if state.review_model else []
                 )
                 if models and batch_items:
-                    # Canonical model (models[0]) — items already scored above
+                    # Canonical model (models[0]) — items already scored above.
+                    # Amortize batch-level cost/tokens across items so each
+                    # Review node records its fair share.
                     canonical_ts = datetime.now(UTC).isoformat()
+                    n_items = max(len(batch_items), 1)
+                    per_cost = batch_cost / n_items
+                    per_in = batch_input_tokens // n_items if batch_input_tokens else 0
+                    per_out = (
+                        batch_output_tokens // n_items if batch_output_tokens else 0
+                    )
                     for item in batch_items:
                         rec = _build_review_record(
                             item,
                             model=models[0],
                             is_canonical=True,
                             reviewed_at=canonical_ts,
+                            cost_usd=per_cost,
+                            tokens_in=per_in,
+                            tokens_out=per_out,
                         )
                         if rec:
                             batch_review_records.append(rec)
@@ -563,11 +576,21 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                             )
                             sec_items = sec_result.get("_items", [])
                             sec_cost = sec_result.get("_cost", 0.0)
+                            sec_input_tokens = sec_result.get("_input_tokens", 0)
+                            sec_output_tokens = sec_result.get("_output_tokens", 0)
                             total_cost += sec_cost
                             state.review_stats.cost += sec_cost
 
                             sec_ts = datetime.now(UTC).isoformat()
                             sec_by_id = {s["id"]: s for s in sec_items if "id" in s}
+                            n_sec = max(len(sec_items), 1)
+                            sec_per_cost = sec_cost / n_sec
+                            sec_per_in = (
+                                sec_input_tokens // n_sec if sec_input_tokens else 0
+                            )
+                            sec_per_out = (
+                                sec_output_tokens // n_sec if sec_output_tokens else 0
+                            )
                             for item in batch_items:
                                 sec = sec_by_id.get(item.get("id", ""))
                                 if sec is None:
@@ -577,7 +600,9 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                                     model=sec_model,
                                     is_canonical=False,
                                     reviewed_at=sec_ts,
-                                    cost_usd=sec_cost / max(len(sec_items), 1),
+                                    cost_usd=sec_per_cost,
+                                    tokens_in=sec_per_in,
+                                    tokens_out=sec_per_out,
                                 )
                                 if rec:
                                     batch_review_records.append(rec)
@@ -1099,12 +1124,13 @@ async def _review_single_batch(
         {"role": "user", "content": user_prompt},
     ]
 
-    result, cost, tokens = await acall_llm_structured(
+    llm_out = await acall_llm_structured(
         model=model,
         messages=messages,
         response_model=response_model,
         service="standard-names",
     )
+    result, cost, tokens = llm_out
 
     # --- Match reviews to original entries -----------------------------------
     scored, unmatched, revised_count = _match_reviews_to_entries(
@@ -1113,6 +1139,8 @@ async def _review_single_batch(
 
     total_cost = cost
     total_tokens = tokens
+    total_input_tokens = llm_out.input_tokens
+    total_output_tokens = llm_out.output_tokens
     unscored_count = 0
 
     # --- Retry unmatched entries (once) --------------------------------------
@@ -1144,6 +1172,8 @@ async def _review_single_batch(
         scored.extend(retry_result.get("_items", []))
         total_cost += retry_result.get("_cost", 0.0)
         total_tokens += retry_result.get("_tokens", 0)
+        total_input_tokens += retry_result.get("_input_tokens", 0)
+        total_output_tokens += retry_result.get("_output_tokens", 0)
         revised_count += retry_result.get("_revised", 0)
         unscored_count = retry_result.get("_unscored", 0)
     elif unmatched:
@@ -1161,6 +1191,8 @@ async def _review_single_batch(
         "_items": scored,
         "_cost": total_cost,
         "_tokens": total_tokens,
+        "_input_tokens": total_input_tokens,
+        "_output_tokens": total_output_tokens,
         "_revised": revised_count,
         "_unscored": unscored_count,
     }
