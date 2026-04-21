@@ -6,7 +6,7 @@ After Plan 30, the DD graph's ``node_category`` owns all semantic
 classification (fit_artifact, representation, coordinate, structural,
 error, metadata, identifier).  The SN extractor's ``SN_SOURCE_CATEGORIES``
 filter ({quantity, geometry}) pre-excludes those categories, so this
-classifier only handles two SN-level policies that DD cannot express:
+classifier only handles a few SN-level policies that DD cannot express:
 
 - **S0 string type defensive**: skip ``STR_*`` data types (name,
   description, etc.) in case they reach the pipeline.
@@ -14,6 +14,8 @@ classifier only handles two SN-level policies that DD cannot express:
   but peer IDSs expose the same concept at better granularity.
 - **S2 error defensive**: catch ``_error_*`` suffixes in case the
   extractor's DD-level filter missed one.
+- **S3 placeholder skip**: skip generic constant-value containers
+  (e.g. ``constant_float_value``) that describe data types, not physics.
 
 Returns ``"quantity"`` (proceed to SN extraction) or ``"skip"``
 (do not extract).
@@ -21,6 +23,7 @@ Returns ``"quantity"`` (proceed to SN extraction) or ``"skip"``
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 # Type alias for the binary classification.
@@ -28,6 +31,13 @@ Scope = Literal["quantity", "skip"]
 
 #: Suffixes in path segments that indicate error companion fields.
 ERROR_SUFFIXES: tuple[str, ...] = ("_error_upper", "_error_lower", "_error_index")
+
+#: Pattern matching placeholder / generic-container leaf names that
+#: describe data types rather than physics quantities.
+_PLACEHOLDER_RE = re.compile(
+    r"^constant_(float|integer|boolean|string)_value$"
+    r"|^generic_(float|integer)$"
+)
 
 
 def classify_path(node: dict) -> Scope:
@@ -73,9 +83,26 @@ def classify_path(node: dict) -> Scope:
     if _is_error_field(path):
         return "skip"
 
+    # ------------------------------------------------------------------
+    # S3: Placeholder / generic-container leaves → skip.
+    #
+    # Paths like ``summary/local/parameter/*/value`` store typed
+    # constants (``constant_float_value``, ``constant_integer_value``).
+    # These describe data containers, not measurable physics quantities,
+    # and should never become standard names.
+    # ------------------------------------------------------------------
+    if _is_placeholder(path):
+        return "skip"
+
     return "quantity"
 
 
 def _is_error_field(path: str) -> bool:
     """Return True if *path* contains an error-field suffix."""
     return any(suffix in path for suffix in ERROR_SUFFIXES)
+
+
+def _is_placeholder(path: str) -> bool:
+    """Return True if the leaf segment is a generic container name."""
+    leaf = path.rsplit("/", 1)[-1]
+    return bool(_PLACEHOLDER_RE.match(leaf))

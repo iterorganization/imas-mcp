@@ -107,6 +107,7 @@ grammar and convention scores.
 - **[I1.2]** Is the name a synonym/duplicate of an existing standard name? (e.g., `poloidal_flux` when `poloidal_magnetic_flux` exists) → **score 0**.
 - **[I1.5]** Does the name contain processing verbs (`reconstructed_`, `measured_`, `calculated_`, `fitted_`, `averaged_` unless it's a valid `transformation` segment like `flux_surface_averaged_`)?
 - **[I1.6]** Does the name leak DD organizational structure (`geometric_`, `radial_profile_of_`, IDS name as prefix)? → **score 0**.
+- **[I1.7]** Does the name end with a model author surname or model-specific identifier (e.g. `_sauter_bootstrap`, `_hager_bootstrap`, `_hahm`, `_chang`)? Standard names must be model-agnostic — the same physical quantity computed by different models should share one standard name. Model provenance belongs in metadata, not the name. → **score ≤ 5**.
 - **[I1.3]** Are boundary quantities consistently suffixed with `_of_plasma_boundary`?
 
 **20**: Follows best practices, concise, unambiguous, no synonyms, no DD leakage.

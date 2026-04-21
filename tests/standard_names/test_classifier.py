@@ -1,9 +1,10 @@
 """Tests for naming-scope classifier.
 
-After Plan 30, the SN classifier has three defensive rules:
+After Plan 30, the SN classifier has four defensive rules:
 - S0: STR_* data types → skip (string-typed leaves are never standard names)
 - S1: core_instant_changes IDS → skip (dedup policy)
 - S2: _error_* suffix → skip (defensive)
+- S3: placeholder containers → skip (constant_float_value, etc.)
 
 All other semantic filtering is owned by DD node_category
 (the extractor's SN_SOURCE_CATEGORIES pre-filter excludes
@@ -15,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 from imas_codex.standard_names.classifier import (
+    _PLACEHOLDER_RE,
     ERROR_SUFFIXES,
     Scope,
     classify_path,
@@ -75,6 +77,11 @@ GOLD_SET: list[tuple[str, Scope]] = [
     ("equilibrium/time_slice/profiles_1d/psi_error_lower", "skip"),
     ("equilibrium/time_slice/profiles_1d/psi_error_index", "skip"),
     ("core_profiles/profiles_1d/electrons/temperature_error_upper", "skip"),
+    # -----------------------------------------------------------------------
+    # skip — S3: placeholder containers
+    # -----------------------------------------------------------------------
+    ("summary/local/parameter/value/constant_float_value", "skip"),
+    ("summary/local/parameter/value/constant_integer_value", "skip"),
 ]
 
 # S0 cases need data_type override, tested separately in TestS0StringTypes
@@ -187,3 +194,91 @@ class TestConstants:
     def test_error_suffixes(self) -> None:
         assert len(ERROR_SUFFIXES) == 3
         assert "_error_upper" in ERROR_SUFFIXES
+
+    def test_placeholder_regex_importable(self) -> None:
+        assert _PLACEHOLDER_RE is not None
+
+
+# ============================================================================
+# Focused unit tests — S3 (placeholder containers)
+# ============================================================================
+
+
+class TestS3Placeholders:
+    """S3: Generic constant-value containers → skip."""
+
+    @pytest.mark.parametrize(
+        "leaf",
+        [
+            "constant_float_value",
+            "constant_integer_value",
+            "constant_boolean_value",
+            "constant_string_value",
+            "generic_float",
+            "generic_integer",
+        ],
+    )
+    def test_placeholder_leaf_skip(self, leaf: str) -> None:
+        node = _node(f"summary/local/parameter/{leaf}")
+        assert classify_path(node) == "skip"
+
+    @pytest.mark.parametrize(
+        "leaf",
+        [
+            "constant_pressure",
+            "temperature",
+            "float_value",
+            "constant_density",
+        ],
+    )
+    def test_non_placeholder_leaf_passes(self, leaf: str) -> None:
+        """Physics-sounding leaves must not be caught by S3."""
+        node = _node(f"some_ids/some_section/{leaf}")
+        assert classify_path(node) == "quantity"
+
+    def test_placeholder_in_middle_of_path_not_caught(self) -> None:
+        """S3 only checks the leaf segment."""
+        node = _node("summary/constant_float_value/subsection/temperature")
+        assert classify_path(node) == "quantity"
+
+
+# ============================================================================
+# Smoke test — duplicate token detection regex
+# ============================================================================
+
+
+class TestDuplicateTokenDetection:
+    """Verify regex-based duplicate-token detection catches known anti-patterns."""
+
+    #: Regex matching consecutive repeated tokens in standard names.
+    _DUPE_RE = r".*_([a-z]+)_\1_.*"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "fall_time_of_magnetic_magnetic_field_probe",
+            "rise_time_of_magnetic_magnetic_field_probe",
+            "poloidal_magnetic_magnetic_field_probe_voltage",
+            "fall_time_of_magnetic_magnetic_magnetic_field_probe",
+        ],
+    )
+    def test_known_duplicates_detected(self, name: str) -> None:
+        """Known duplicate-token names must match the detection regex."""
+        import re
+
+        assert re.match(self._DUPE_RE, name), f"{name!r} not caught by dupe regex"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "electron_temperature",
+            "plasma_current",
+            "poloidal_magnetic_field",
+            "toroidal_magnetic_flux",
+        ],
+    )
+    def test_clean_names_not_flagged(self, name: str) -> None:
+        """Normal names must not be flagged as duplicates."""
+        import re
+
+        assert not re.match(self._DUPE_RE, name), f"{name!r} false-flagged as dupe"

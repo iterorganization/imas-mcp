@@ -83,6 +83,7 @@ grammar and convention scores.
 - Does it follow snake_case consistently?
 - Is segment ordering canonical (no reshuffled segments)?
 - Are abbreviations and redundancies avoided (e.g. no `electron_electron_temperature`)?
+- Does the name avoid model author surnames or model-specific identifiers as suffixes (e.g. `_sauter_bootstrap`, `_hager_bootstrap`)? Standard names must be model-agnostic — model provenance belongs in metadata. → **score ≤ 5**.
 
 ### 4. Completeness (0-20)
 - Are all physically relevant segments present (e.g. `component` supplied for vector quantities)?

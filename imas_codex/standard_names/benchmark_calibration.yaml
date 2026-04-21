@@ -864,3 +864,17 @@ entries:
       geometry: plasma_boundary            # INVALID: not a recognised grammar segment
     reason: >-
       Cycle-2 anti-pattern. The standard name is correct, but `grammar_fields` falsifies the decomposition: it uses `vertical_coordinate` as a `geometric_base` (closed-vocab violation) and invents a `geometry` key that does not exist in the grammar. Reviewers should dock the grammar dimension specifically for this field-map inconsistency — the name round-trips, but the declared decomposition contradicts the closed vocabularies. Correct decomposition: `physical_base: vertical_coordinate`, `position: closest_wall_point`.
+
+  - name: critical_normalized_pressure_gradient_at_pedestal_hager_bootstrap
+    tier: poor
+    expected_score: 30
+    description: "Critical normalized pressure gradient at the pedestal top calculated using the Hager bootstrap current model."
+    documentation: >-
+      Critical normalised pressure gradient $\alpha_{\mathrm{crit}}$ at the pedestal top, evaluated with the Hager bootstrap current model.
+    unit: "-"
+    kind: scalar
+    tags: [equilibrium]
+    fields:
+      physical_base: critical_normalized_pressure_gradient_at_pedestal_hager_bootstrap
+    reason: >-
+      Cycle-3 anti-pattern — model-specific suffix. The `_hager_bootstrap` suffix embeds a model author name into the standard name. Standard names must be model-agnostic: `critical_normalized_pressure_gradient_at_pedestal` is the physics quantity; the Hager vs Sauter model choice is provenance metadata. Duplicating the name per model creates namespace bloat (one standard name per author × quantity combination). Grammar parses but the physical_base is unreasonably long (10+ tokens). Convention score 0 for model leakage. Correct form: single `critical_normalized_pressure_gradient_at_pedestal` with model provenance in metadata.
