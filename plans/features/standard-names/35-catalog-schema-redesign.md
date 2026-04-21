@@ -31,56 +31,109 @@ The graph ↔ catalog round-trip is broken on multiple axes:
 
 ## Goals
 
-- **Lossless round-trip for catalog-owned fields**: `publish → clear →
-  import` reproduces the YAML's catalog subset exactly on a re-publish.
+- **Graph is authoritative**: the catalog repo is a thin sink of
+  data exported from the graph. No migration of the existing catalog
+  is needed — on first publish with the new schema, the catalog is
+  wiped and regenerated from the graph. Rollback is a git revert on
+  the catalog repo.
+- **Responsibility split** (hard boundaries):
+  - **ISN** — grammar, vocabulary, shared enums (`PhysicsDomain`),
+    `StandardNameEntry` Pydantic model (catalog schema), catalog-site
+    rendering machinery (`catalog-site serve` for local preview,
+    `catalog-site deploy` for MkDocs→GitHub-Pages). Dependency-free
+    of ISNC and the graph: ISN does not know ISNC exists as a git
+    repo, and has no Neo4j driver.
+  - **imas-codex** — graph is source of truth; owns pipeline
+    metadata (`pipeline_status`, `reviewer_score`, `model`, …); owns
+    graph↔disk transport: `sn export`, `sn publish`, `sn import`.
+    Depends on ISN for schema + local preview (via `sn preview` thin
+    wrapper).
+  - **ISNC** (imas-standard-names-catalog) — thin repo that
+    receives published data; no logic; just versioned YAML + git
+    history. A GitHub Action on ISNC pushes triggers ISN
+    `catalog-site deploy` to publish the rendered docs site,
+    decoupled from imas-codex.
+  - **Rationale for publish in codex, not ISN**: (a) symmetry with
+    `sn import` which must live in codex since the graph is the
+    destination; (b) codex already has the staging tree, gate
+    results, and graph provenance at hand, so the commit message
+    writes itself; (c) ISN stays free of any repo-writing logic.
+
+    history.
+- **Two-step export → preview → publish**:
+  1. `sn export` — graph → local staging directory of YAML files +
+     `catalog.yml` manifest. Runs the full publish gate. Output is a
+     ready-to-publish tree, but nothing is pushed anywhere.
+  2. **Preview** — user runs `imas-standard-names catalog-site serve
+     <staging-dir>` to render and browse the proposed catalog in a
+     browser before committing to publish. Iterate on the graph side
+     and re-export as needed.
+  3. `sn publish` — local staging tree → ISNC repo (git commit +
+     push or PR). No regeneration at this step; publish is a
+     transport operation only, so what the user previewed is exactly
+     what lands in the catalog.
+- **Lossless round-trip for catalog-owned fields**: `export → clear →
+  import` reproduces the YAML's catalog subset exactly on a
+  re-export.
 - **Graph-only fields preserved on re-import**: coalesce pattern
-  protects pipeline metadata when importing onto an existing node. A
-  `clear`-then-`import` flow is explicitly destructive by design — not
-  in scope to preserve ephemeral pipeline state across destructive
-  clears.
+  protects pipeline metadata when importing onto an existing node.
+  A `clear`-then-`import` flow is explicitly destructive by design —
+  not in scope to preserve ephemeral pipeline state across
+  destructive clears.
 - **Graph-retain ≠ catalog-emit**: fields excluded from the catalog
-  stay in the graph schema (user rule). Only truly dead fields (0/925
-  populated today) may be schema-dropped, and only after an explicit
-  audit.
-- **Publish is gated**: `sn publish` runs the existing SN graph test
-  suites and a set of catalog-specific integrity checks before opening
-  the export gate. Failures block export unless `--force` is passed.
-- **Single catalog COCOS**: catalog manifest declares one convention;
-  graph keeps per-name `cocos` FK and `HAS_COCOS` edges (useful for
-  queries). Publish gate asserts every non-null graph `cocos`
-  matches the manifest value.
+  stay in the graph schema (user rule). Only truly dead fields
+  (0/925 populated today) may be schema-dropped, and only after an
+  explicit audit.
+- **Export is gated**: the gate runs in `sn export` (not `sn
+  publish`), because the gate validates the graph state that
+  produced the YAML. The YAML on disk between export and publish is
+  assumed trustworthy. `sn publish` only verifies that the staging
+  directory is well-formed (manifest present, structure valid) and
+  that its manifest matches the `catalog.yml` already in the ISNC
+  repo (compatibility check).
+- **Single catalog COCOS**: catalog manifest declares one
+  convention; graph keeps per-name `cocos` FK and `HAS_COCOS` edges
+  (useful for queries). Export gate asserts every non-null graph
+  `cocos` matches the manifest value.
 - **Clean pipeline/vocabulary lifecycle separation**: rename graph
   `review_status` → `pipeline_status` with CLI/MCP alias for one
   release cycle; add catalog-authoritative `status` matching ISN
   enum.
 - **Source-agnostic provenance**: `source_paths` (already in graph,
-  prefix-encoded `dd:` / `<facility>:`) is the one authoritative list;
-  `dd_paths` is retired from the catalog model; import reconstructs
-  both `IMASNode` and `FacilitySignal` relationships from prefixes.
+  prefix-encoded `dd:` / `<facility>:`) is the one authoritative
+  list; `dd_paths` is retired from the catalog model; import
+  reconstructs both `IMASNode` and `FacilitySignal` relationships
+  from prefixes.
 
 ## Scope
 
 In:
-- ISN `StandardNameEntry` model rewrite, new `StandardNameCatalogManifest`
-  model; coordinated ISN release (new rc).
-- Catalog repo update (imas-standard-names-catalog): bump ISN dep;
-  migrate existing entries to new schema (add missing `status`;
-  rename `dd_paths` → `source_paths` with `dd:` prefix; strip any
-  stray fields).
-- imas-codex schema delta: rename `review_status` → `pipeline_status`;
-  add `status` / `deprecates` / `superseded_by`; drop only verified-dead
-  fields after audit.
-- `sn publish` rewrite: Pydantic-driven emission; pre-publish gate
-  invoking existing graph test suites + new catalog integrity checks.
+- ISN `StandardNameEntry` model rewrite, new
+  `StandardNameCatalogManifest` model; coordinated ISN release (new
+  rc).
+- imas-codex schema delta: rename `review_status` →
+  `pipeline_status`; add `status` / `deprecates` / `superseded_by`;
+  drop only verified-dead fields after audit.
+- **New `sn export` command**: graph → local staging directory
+  (YAML + manifest), pre-export gate (graph suites + catalog
+  integrity checks), `--min-score` filter.
+- **`sn publish` rewrite**: staging dir → ISNC repo git operation
+  (commit/push or PR). No graph reads; transport only.
 - `sn import` rewrite: validate against new ISN model; derive
   `physics_domain` from relative path; partition `source_paths` by
-  prefix to recreate `SOURCE_DD_PATH` / `SOURCE_SIGNAL` relationships;
-  recompute `grammar_*` from the name using the same helper as the
-  pipeline writes.
+  prefix to recreate `SOURCE_DD_PATH` / `SOURCE_SIGNAL`
+  relationships; recompute `grammar_*` from the name using the same
+  helper as the pipeline writes.
 - Fold `reconcile` + `resolve-links` into `sn run`; delete
   `sn reconcile`, `sn resolve-links`, `sn seed` standalone commands.
-- Test suite: unit tests (model/normalizer), plus `@pytest.mark.graph`
-  integration tests that reuse the existing live-Neo4j gating pattern.
+- **ISNC clean break**: on first `sn publish` with the new schema,
+  existing ISNC contents are wiped in the publish commit and
+  replaced with the freshly exported tree. No in-place migration
+  script is written. Rollback is a git revert in ISNC.
+- Test suite: unit tests (model/normalizer), plus
+  `@pytest.mark.graph` integration tests that reuse the existing
+  live-Neo4j gating pattern, plus an export → preview → import
+  round-trip test against a test catalog repo.
 
 Out:
 - Parametrised-name design (species / population / toroidal_mode /
@@ -89,8 +142,12 @@ Out:
 - Any change to COCOS nodes or `COCOS`-singleton semantics. Graph
   keeps them untouched.
 - Vocabulary lifecycle promotion (`draft → active` in the catalog
-  repo) — that's a human PR workflow in ISNC, not an automated codex
-  transition.
+  repo) — that's a human PR workflow in ISNC, not an automated
+  codex transition.
+- Preserving the current ISNC directory names (`ic-heating`,
+  `thomson-scattering`, …). They will be replaced by ISN
+  `PhysicsDomain` enum values on the first new-schema publish; no
+  migration tooling is written.
 
 ---
 
@@ -216,12 +273,15 @@ it as an entry.
 
 ---
 
-## Publish gate
+## Export gate
 
-Before emitting any YAML, `sn publish` runs the following gate. Any
-failure blocks the export unless `--force` is passed, in which case
-failures are written to a `.publish_gate_report.json` alongside the
-catalog for post-hoc review.
+Before writing any YAML to the staging tree, `sn export` runs the
+following gate. Any failure blocks the export unless `--force` is
+passed, in which case failures are written to
+`<staging>/.export_gate_report.json` alongside the catalog for
+post-hoc review. `sn publish` is not gated (transport only) — it
+only runs a structural check that the staging tree is well-formed
+(manifest present, no stray files, manifest schema valid).
 
 ### A. Reused existing test suites (already live-graph-gated)
 
@@ -231,7 +291,7 @@ catalog for post-hoc review.
 | `tests/graph/test_grammar_graph_compliance.py` | `graph`, `integration` | Grammar graph matches ISN `SEGMENT_ORDER` |
 | `tests/standard_names/test_corpus_health.py` | `corpus_health` | Corpus health gates (dup names, orphan links, unit coverage) |
 
-Publish invokes these via an in-process pytest runner with the
+Export invokes these via an in-process pytest runner with the
 `graph or corpus_health` marker expression.
 
 ### B. New catalog-integrity checks (added in this plan)
@@ -253,17 +313,17 @@ Applied to the **candidate set** (post `--min-score` filter).
 
 ### C. Domain scoping
 
-When `sn publish` is called with `--domain <d>` (or equivalent scope
-filter), gate **B** scopes to the named domain; gate **A** runs
-globally unless `--gate-scope=domain` is passed. Rationale: partial
-publishes can still benefit from global integrity checks, but users
-iterating on one domain should be able to bypass corpus-wide gates
-with an explicit flag.
+When `sn export` is called with `--domain <d>`, gate **B** scopes
+to the named domain; gate **A** runs globally unless
+`--gate-scope=domain` is passed. Rationale: partial exports can
+still benefit from global integrity checks, but users iterating on
+one domain should be able to bypass corpus-wide gates with an
+explicit flag.
 
-### D. Gate flags
+### D. Gate flags (`sn export`)
 
-- `--force`: emit catalog despite gate failures; write
-  `.publish_gate_report.json`.
+- `--force`: write staging tree despite gate failures; emit
+  `.export_gate_report.json`.
 - `--skip-gate`: skip gate entirely (requires `--force`).
 - `--gate-only`: run the gate and report, do not emit.
 - `--gate-scope {global,domain}`: default `global`.
@@ -415,7 +475,9 @@ should not silently land malformed entries.
 | `sn review` | Unchanged. |
 | `sn clear` | Unchanged. |
 | `sn status` | Unchanged. |
-| `sn publish` | **Rewritten**: Pydantic emission, gated by A+B checks. Flags: `--min-score <float>` (default 0.65), `--include-unreviewed`, `--min-description-score <float>`, `--force`, `--skip-gate`, `--gate-only`, `--gate-scope {global,domain}`, `--domain <d>`, `--dry-run`. |
+| `sn export` | **New**. Graph → local staging dir. Runs gate A+B. Flags: `--output <dir>` (default `./build/catalog/`), `--min-score <float>` (default 0.65), `--include-unreviewed`, `--min-description-score <float>`, `--domain <d>`, `--force`, `--skip-gate`, `--gate-only`, `--gate-scope {global,domain}`. Writes `<output>/standard_names/<domain>/<name>.yml` + `<output>/catalog.yml`. |
+| `sn preview` | **New, thin wrapper**. Delegates to `imas-standard-names catalog-site serve <staging-dir>` with the staging dir as the default argument. Exists so users don't have to switch CLIs; ISN owns the rendering. Flags pass-through. |
+| `sn publish` | **Rewritten as transport-only**: staging dir → ISNC repo. No graph reads, no gate (gate ran at export). Flags: `--staging <dir>` (default `./build/catalog/`), `--catalog-repo <path-or-url>`, `--mode {commit,pr}` (default `commit` for a local checkout, `pr` for a remote URL), `--branch <name>`, `--message <str>`, `--dry-run`. Structural check: manifest present + parseable, no stray files outside `standard_names/` and `catalog.yml`, manifest schema valid. |
 | `sn import` | **Rewritten**: strict ISN validation, path-derived `physics_domain`, prefix-partitioned relationship writes, shared grammar helper, `--check` validates without writing. |
 | `sn benchmark` | Unchanged. |
 | `sn gaps` | Unchanged. |
@@ -423,7 +485,29 @@ should not silently land malformed entries.
 | `sn reconcile` | **Deleted** (folded into `run`). |
 | `sn resolve-links` | **Deleted** (folded into `run`). |
 
-Final surface: **8 commands** (down from 11).
+Final surface: **10 commands** (was 11; split publish into export + publish + preview-wrapper, deleted 3 legacy commands, net −1).
+
+### Two-step flow in practice
+
+```
+# 1. Export (graph → local, gated)
+uv run imas-codex sn export --output ./build/catalog/
+
+# 2. Preview (local → browser, via ISN machinery)
+uv run imas-codex sn preview ./build/catalog/
+#   ↳ equivalent to: uv run imas-standard-names catalog-site serve ./build/catalog/
+
+# 3. Publish (local → ISNC git repo)
+uv run imas-codex sn publish \
+    --staging ./build/catalog/ \
+    --catalog-repo ~/Code/imas-standard-names-catalog \
+    --mode commit \
+    --message "catalog: republish from graph @ $(cd ~/Code/imas-codex && git rev-parse --short HEAD)"
+```
+
+The two-step split guarantees that what the user saw in the preview
+is exactly what lands in the catalog repo. The export tree is a
+committable artefact; `sn publish` does not re-read the graph.
 
 ---
 
@@ -568,136 +652,95 @@ comparisons (not byte-for-byte).
 
 ---
 
-## Catalog file layout (evaluation + proposal)
+## Catalog file layout (clean break)
 
-### Current state
-- **Catalog**: 309 `.yml` files, one per name, grouped under
-  `standard_names/<domain>/<name>.yml`. 23 domain directories. ~27
-  lines/file average, 1.18 MB total. Largest domain: `equilibrium`
-  (71 files, 2210 lines).
-- **Graph**: 925 StandardName nodes across 28 `physics_domain` values
-  (e.g. `transport`, `edge_plasma_physics`, `magnetohydrodynamics`).
-- **Taxonomy drift**: the catalog uses human-curated groupings
-  (`ic-heating`, `thomson-scattering`, `interferometry`,
-  `coils-and-control`) while the graph `physics_domain` comes from
-  the ISN `PhysicsDomain` enum (`auxiliary_heating`,
-  `electromagnetic_wave_diagnostics`, `magnetic_field_systems`).
-  These do NOT map 1:1. This is an independent problem surfaced here.
+### Layout
 
-### Options evaluated
+- **Source of truth**: `standard_names/<physics_domain>/<name>.yml`
+  — one file per name, directory matches **ISN `PhysicsDomain` enum
+  verbatim** (underscores, not dashes).
+  - `imas_standard_names.grammar.tag_types.PhysicsDomain` is the
+    authoritative shared taxonomy; imas-codex re-exports it via
+    `imas_codex.core.physics_domain`; graph `physics_domain` is
+    populated from it. The catalog follows the same enum.
+  - 34 values: `equilibrium`, `transport`, `core_plasma_physics`,
+    `turbulence`, `magnetohydrodynamics`, `auxiliary_heating`,
+    `current_drive`, `waves`, `edge_plasma_physics`,
+    `plasma_wall_interactions`, `divertor_physics`, `fueling`,
+    `fast_particles`, `runaway_electrons`,
+    `particle_measurement_diagnostics`,
+    `electromagnetic_wave_diagnostics`,
+    `radiation_measurement_diagnostics`,
+    `magnetic_field_diagnostics`,
+    `mechanical_measurement_diagnostics`,
+    `plasma_measurement_diagnostics`, `spectroscopy`, `neutronics`,
+    `plasma_control`, `machine_operations`, `plasma_initiation`,
+    `magnetic_field_systems`, `structural_components`,
+    `plant_systems`, `data_management`, `computational_workflow`,
+    `general`, `gyrokinetics` (+ any additions in the ISN release
+    cut for this plan).
+  - Diagnostic sub-taxonomies (thomson-scattering vs
+    interferometry) move into `tags` on the individual entry — they
+    were never proper physics domains.
+- **Manifest**: `catalog.yml` at repo root (NOT under
+  `standard_names/`, so importer's recursive scan never mis-parses
+  it).
+- **Generated bundle**: `dist/standard_names.bundle.yml` produced
+  by `imas-standard-names catalog bundle` in CI on tag push.
+  Consumers pin to a release and load the single bundle.
 
-| Dimension | One-file-per-name (current) | One-file-per-domain | Single super-file |
+### Clean-break strategy (no migration tooling)
+
+The catalog repo is a thin sink of data exported from the
+authoritative graph. There is no in-place migration script. On
+first `sn publish` with the new ISN model:
+
+1. `sn export` writes a fresh staging tree using ISN-enum domain
+   names.
+2. `sn publish` commits to ISNC by:
+   - `rm -rf standard_names/ dist/` in the working tree
+   - copying the staging tree into `standard_names/` +
+     `catalog.yml` at root
+   - `git add -A && git commit -m "catalog: republish from graph @
+     <short-sha>"` or open a PR with that commit
+3. Rollback is a `git revert` of that single commit. Old catalog
+   contents remain reachable in git history.
+
+This is a **one-time wipe+regen**, not a recurring pattern:
+subsequent publishes write a fresh staging tree from the graph, so
+the graph always wins. Hand-edits in ISNC are either (a) import-ed
+back into the graph first (round-trip path), or (b) lost on next
+publish. This must be documented in ISNC README.
+
+### Rationale for one-file-per-name
+
+| Dimension | One-file-per-name (chosen) | One-file-per-domain | Single super-file |
 |---|---|---|---|
-| Files at 925 names | ~925, ~30 dirs | ~30 files | 1 file |
-| Largest file today | 34 lines | ~2200 lines (equilibrium) | ~8500 lines |
 | PR diff per name add | 1 new file, +25 lines | 1 file, +25 lines | 1 file, +25 lines |
-| PR merge-conflict risk | near zero | medium (any two PRs on same domain) | very high (every PR conflicts) |
-| GitHub review UX | excellent — file-level diffs, 1 name per reviewable unit | acceptable — YAML renders fine but long scrolls | poor — GitHub collapses huge diffs; navigation is painful |
-| Rename / deprecate | `git mv old.yml new.yml` keeps history | edit-in-place, history intact but grep trickier | edit-in-place, entire file churns |
-| Bulk domain refactor | multi-file PR | single-file PR | single-file PR |
-| Cross-name consistency check | filesystem scan, easy to parallelise | in-file grep, trivial | in-file grep, trivial |
-| CODEOWNERS granularity | per-domain dir or per-name glob | per-domain file | single owner |
-| Consumer bundle | must scan tree | already bundled | already bundled |
-| Parse cost for tools | 925 fs reads ≈ 50 ms cold | 30 fs reads, parse 30× larger docs | 1 fs read, parse 1 × huge doc |
+| PR merge-conflict risk | near zero | medium (concurrent PRs on same domain file) | very high |
+| GitHub review UX | excellent — file-level diffs, one reviewable unit per name | acceptable for small domains, poor at 2000+ lines | collapsed diffs, painful |
+| Rename / move domain | `git mv` preserves history | edit in place | edit in place |
+| Cross-name consistency checks | filesystem scan | in-file grep | in-file grep |
+| Consumer bundle | separate generated artefact (`dist/`) | already bundled but coarse | already bundled |
 
-### Weighing
+GitHub review is the primary consumer of ISNC. One-file-per-name
+gives each review a bounded surface. Per-domain punishes concurrent
+authorship via file-level conflicts. Super-file makes every publish
+land on the same file and guarantees conflicts.
 
-**GitHub review** is the primary consumer of this repo. Catalog PRs
-come from:
-- humans proposing new names
-- humans fixing typos / units / descriptions
-- codex publishing batches after pipeline runs
+The "consumer ergonomics" argument for a single file is solved by
+the generated bundle in `dist/` — source-of-truth and release
+artefact can differ.
 
-All three benefit from **small, file-scoped diffs**. One-file-per-name
-gives each review a bounded surface. One-file-per-domain punishes
-parallel authorship via merge conflicts on the same file. Super-file
-makes every pipeline publish land on the same file, which guarantees
-conflicts when two domains are regenerated concurrently.
+### `git mv` discipline on re-publish
 
-**Maintainability** tilts toward per-name when there are many
-contributors; per-domain when contributors are few and bulk edits
-dominate. Today the pipeline publishes in batches grouped by domain,
-so per-domain would make each publish a one-file PR. BUT: reviewers
-then face ~1500-line-diff PRs that are hard to read name-by-name on
-GitHub, and any manual fix to one name forces the reviewer to scroll
-through the rest.
-
-**Consumer ergonomics** tilt toward a **single bundled artefact** for
-programmatic consumption (load 1 file, parse, done), not toward the
-source-of-truth layout.
-
-### Proposal
-
-**Keep one-file-per-name authoring.** Add a **generated bundle** as a
-release artefact.
-
-1. **Source of truth**: `standard_names/<domain>/<name>.yml` — unchanged
-   layout. Authored by hand + pipeline. GitHub-reviewed at file
-   granularity.
-2. **Release artefact**: `dist/standard_names.bundle.yml` (or
-   `.ndjson`) generated by ISN's `imas-sn catalog bundle` command (or
-   equivalent). CI regenerates on every tag; consumers pin to a
-   release and load the single bundle for programmatic use.
-3. **Manifest**: `catalog.yml` at repo root (unchanged from §
-   Catalog-level manifest above). Declares `cocos_convention`,
-   `grammar_version`, etc.
-4. **Taxonomy drift fix**: the ISN `PhysicsDomain` enum
-   (`imas_standard_names.grammar.tag_types.PhysicsDomain`, 34 values
-   including `equilibrium`, `transport`, `auxiliary_heating`,
-   `electromagnetic_wave_diagnostics`, …) is the **authoritative
-   shared taxonomy** — imas-codex re-exports it via
-   `imas_codex.core.physics_domain`, and graph `physics_domain` is
-   populated from it. The catalog repo has drifted to a hand-curated
-   set (`ic-heating`, `thomson-scattering`, `interferometry`,
-   `coils-and-control`, …) that does not match ISN. The catalog must
-   **adopt the ISN enum verbatim** for its directory names. Rename
-   catalog dirs in a migration PR:
-   - `ic-heating` / `ec-heating` / `lh-heating` / `nbi` →
-     `auxiliary_heating`
-   - `thomson-scattering` / `interferometry` / `reflectometry` →
-     `particle_measurement_diagnostics` /
-     `electromagnetic_wave_diagnostics` (per-signal ISN classification)
-   - `radiation-diagnostics` → `radiation_measurement_diagnostics`
-   - `mhd` → `magnetohydrodynamics`
-   - `core-physics` → `core_plasma_physics`
-   - `edge-physics` → `edge_plasma_physics`
-   - `fast-particles` → `fast_particles`
-   - `coils-and-control` → `magnetic_field_systems` +
-     `plasma_control` (split by purpose)
-   - `data-products` → `data_management` or `computational_workflow`
-   - dash → underscore everywhere
-   - keep: `equilibrium`, `transport`, `spectroscopy`, `neutronics`,
-     `turbulence`, `fueling` (already match)
-   - add missing: `gyrokinetics`, `runaway_electrons`,
-     `divertor_physics`, `plasma_wall_interactions`,
-     `magnetic_field_diagnostics`, `plasma_measurement_diagnostics`,
-     `mechanical_measurement_diagnostics`, `machine_operations`,
-     `plasma_initiation`, `structural_components`, `plant_systems`,
-     `current_drive`, `waves`, `general`
-   Drop the human-curated diagnostic sub-groupings from directories;
-   they belong in `tags` (e.g. `tags: [thomson-scattering,
-   interferometry]`). This makes publish and import round-trip
-   cleanly on `physics_domain` with zero mapping tables, and keeps
-   ISN, codex, and catalog in lockstep.
-5. **`git mv` discipline**: when a name is renamed or moved between
-   domains (e.g. after a `physics_domain` change upstream), use
-   `git mv old new` so history follows. Enforce via a publish-time
-   check: emit a lint warning if a file exists in the catalog under
-   a different domain than the graph's current `physics_domain` for
-   that name.
-
-### Implications for plan 35
-
-- Per-name YAML schema unchanged from §Catalog schema (new).
-- Manifest location at repo root (unchanged; already specified).
-- **Taxonomy migration** becomes a prerequisite: imas-standard-names-catalog
-  directory rename PR must land before `sn publish` can use
-  path-authoritative `physics_domain` (§Publish / §Import).
-- **Bundle generation** is additive: one script in the catalog repo,
-  runs in CI on release-tag push. No change to the authoring
-  workflow.
-- **CODEOWNERS**: can now assign per-directory to domain experts
-  using the ISN enum names.
+When `sn publish` writes the fresh tree, it can detect renames
+(graph name unchanged, `physics_domain` changed) and use `git mv`
+instead of delete+add to preserve blame history. Implementation:
+before the wipe, read the existing tree into memory, compute the
+rename set from `(old_domain, name) → (new_domain, name)` pairs,
+issue `git mv` for each, then overwrite remaining files. This is a
+nice-to-have; the basic wipe+regen is correct without it.
 
 ---
 
