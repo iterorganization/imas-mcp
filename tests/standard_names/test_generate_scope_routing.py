@@ -39,7 +39,7 @@ class TestScopeRouting:
     def test_default_routes_to_rotator(self, runner):
         """No --paths, no --single-pass → rotator."""
         with patch(_ROTATOR) as mock_rot:
-            result = runner.invoke(sn, ["generate", "-c", "0.01", "-q"])
+            result = runner.invoke(sn, ["run", "-c", "0.01", "-q"])
             assert mock_rot.called, f"Rotator not called. Output: {result.output}"
 
     def test_paths_routes_to_single_pass(self, runner):
@@ -51,7 +51,7 @@ class TestScopeRouting:
             runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--paths",
                     "equilibrium/time_slice/profiles_1d/psi",
                     "-c",
@@ -68,7 +68,7 @@ class TestScopeRouting:
         with patch(_ROTATOR) as mock_rot:
             result = runner.invoke(
                 sn,
-                ["generate", "--physics-domain", "equilibrium", "-c", "0.01", "-q"],
+                ["run", "--physics-domain", "equilibrium", "-c", "0.01", "-q"],
             )
             assert mock_rot.called, (
                 f"Rotator not called with --physics-domain. Output: {result.output}"
@@ -80,7 +80,7 @@ class TestScopeRouting:
             runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--single-pass",
                     "--physics-domain",
                     "equilibrium",
@@ -99,7 +99,7 @@ class TestScopeRouting:
             runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--source",
                     "signals",
                     "--facility",

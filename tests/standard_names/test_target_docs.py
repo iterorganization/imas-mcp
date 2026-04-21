@@ -23,7 +23,7 @@ def test_generate_target_docs_invokes_docs_helper() -> None:
         result = runner.invoke(
             sn,
             [
-                "generate",
+                "run",
                 "--target",
                 "docs",
                 "--physics-domain",
@@ -54,7 +54,7 @@ def test_generate_target_docs_picks_up_docs_batch_size_from_pyproject() -> None:
         result = runner.invoke(
             sn,
             [
-                "generate",
+                "run",
                 "--target",
                 "docs",
                 "--physics-domain",
@@ -113,7 +113,7 @@ def test_generate_target_docs_explicit_batch_size_overrides_pyproject() -> None:
         result = runner.invoke(
             sn,
             [
-                "generate",
+                "run",
                 "--target",
                 "docs",
                 "--physics-domain",

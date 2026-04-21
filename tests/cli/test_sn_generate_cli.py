@@ -37,7 +37,7 @@ class TestGenerateHelpShowsNewFlags:
     """Confirm --help shows all new flags."""
 
     def test_help_shows_new_flags(self, runner: CliRunner) -> None:
-        result = runner.invoke(sn, ["generate", "--help"])
+        result = runner.invoke(sn, ["run", "--help"])
         assert result.exit_code == 0
         for flag in [
             "--reset-only",
@@ -58,7 +58,7 @@ class TestResetOnly:
 
     def test_reset_only_without_reset_to_raises(self, runner: CliRunner) -> None:
         """--reset-only without --reset-to should error."""
-        result = runner.invoke(sn, ["generate", "--reset-only"])
+        result = runner.invoke(sn, ["run", "--reset-only"])
         assert result.exit_code != 0
         assert "--reset-only requires --reset-to" in result.output
 
@@ -70,9 +70,7 @@ class TestResetOnly:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
 
-            result = runner.invoke(
-                sn, ["generate", "--reset-to", "drafted", "--reset-only"]
-            )
+            result = runner.invoke(sn, ["run", "--reset-to", "drafted", "--reset-only"])
 
         assert result.exit_code == 0
         assert "--reset-only:" in result.output
@@ -87,7 +85,7 @@ class TestResetOnly:
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
 
             result = runner.invoke(
-                sn, ["generate", "--reset-to", "extracted", "--reset-only"]
+                sn, ["run", "--reset-to", "extracted", "--reset-only"]
             )
 
         assert result.exit_code == 0
@@ -106,7 +104,7 @@ class TestFilterPlumbing:
             result = runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--reset-to",
                     "drafted",
                     "--since",
@@ -128,7 +126,7 @@ class TestFilterPlumbing:
             result = runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--reset-to",
                     "drafted",
                     "--below-score",
@@ -153,7 +151,7 @@ class TestFilterPlumbing:
             result = runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--reset-to",
                     "drafted",
                     "--retry-quarantined",
@@ -173,7 +171,7 @@ class TestFilterPlumbing:
             result = runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--reset-to",
                     "drafted",
                     "--regen-only",
@@ -193,7 +191,7 @@ class TestFilterPlumbing:
             result = runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--reset-to",
                     "drafted",
                     "--regen-only",
@@ -216,7 +214,7 @@ class TestFilterPlumbing:
             result = runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--reset-to",
                     "drafted",
                     "--regen-only",
@@ -237,7 +235,7 @@ class TestFilterPlumbing:
             result = runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--reset-to",
                     "extracted",
                     "--before",
@@ -278,7 +276,7 @@ class TestBackwardCompatibility:
         ):
             result = runner.invoke(
                 sn,
-                ["generate", "--reset-to", "drafted", "--dry-run"],
+                ["run", "--reset-to", "drafted", "--dry-run"],
             )
         # Should not crash — the pipeline may print stats or not, but exit 0
         assert result.exit_code == 0, result.output

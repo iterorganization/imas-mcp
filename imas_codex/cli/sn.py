@@ -23,17 +23,17 @@ def sn() -> None:
     """Standard name generation and management.
 
     \b
-    Generate:
-      imas-codex sn generate --source dd [--physics-domain NAME]
-      imas-codex sn generate --source signals --facility NAME
+    Run (generate / enrich / review / regen):
+      sn run --source dd [--physics-domain NAME]
+      sn run --source signals --facility NAME
 
     \b
     Links:
-      imas-codex sn resolve-links
+      sn resolve-links
 
     \b
     Status:
-      imas-codex sn status
+      sn status
     """
     pass
 
@@ -108,7 +108,7 @@ def _run_rotator(
     console.print(table)
 
 
-@sn.command("generate")
+@sn.command("run")
 @click.option(
     "--source",
     type=click.Choice(["dd", "signals"]),
@@ -362,7 +362,7 @@ def _run_rotator(
         "Ignored under --single-pass."
     ),
 )
-def sn_generate(
+def sn_run(
     source: str,
     domain_filter: str | None,
     facility: str | None,
@@ -404,14 +404,14 @@ def sn_generate(
 
     \b
     Examples:
-      imas-codex sn generate -c 50                            # rotator over all domains
-      imas-codex sn generate --physics-domain equilibrium -c 5 # rotator, one domain
-      imas-codex sn generate --physics-domain magnetics --dry-run
-      imas-codex sn generate --source signals --facility tcv --physics-domain magnetics
-      imas-codex sn generate --paths equilibrium/time_slice/profiles_1d/psi --paths equilibrium/time_slice/profiles_1d/q
-      imas-codex sn generate --single-pass --paths equilibrium/time_slice/profiles_1d/psi -c 1  # single compose pass on explicit paths
-      imas-codex sn generate --reset-to drafted --reset-only
-      imas-codex sn generate --reset-to drafted --below-score 0.6 --reset-only
+      imas-codex sn run -c 50                                 # rotator over all domains
+      imas-codex sn run --physics-domain equilibrium -c 5     # rotator, one domain
+      imas-codex sn run --physics-domain magnetics --dry-run
+      imas-codex sn run --source signals --facility tcv --physics-domain magnetics
+      imas-codex sn run --paths equilibrium/time_slice/profiles_1d/psi --paths equilibrium/time_slice/profiles_1d/q
+      imas-codex sn run --single-pass --paths equilibrium/time_slice/profiles_1d/psi -c 1  # single compose pass on explicit paths
+      imas-codex sn run --reset-to drafted --reset-only
+      imas-codex sn run --reset-to drafted --below-score 0.6 --reset-only
     """
     # --- Resolve --target ---
     target_normalized = target.lower()
@@ -1088,7 +1088,7 @@ def sn_status() -> None:
         skip_table.add_row("[bold]Total[/bold]", f"[bold]{skip_total}[/bold]")
         console.print(skip_table)
 
-    # Latest RotationRun (from sn generate rotator)
+    # Latest RotationRun (from sn run rotator)
     try:
         from imas_codex.graph.client import GraphClient
 
@@ -1121,7 +1121,7 @@ def sn_status() -> None:
     if rr_rows:
         rr = rr_rows[0]
         console.print()
-        console.print("[bold]Latest Rotation (sn generate)[/bold]")
+        console.print("[bold]Latest Rotation (sn run)[/bold]")
         rr_table = Table(show_header=True)
         rr_table.add_column("Field")
         rr_table.add_column("Value")
@@ -2692,7 +2692,7 @@ def _run_sn_docs_generation(
 ) -> None:
     """Run the five-phase enrichment pipeline to fill docs on named SNs.
 
-    Shared between ``sn generate --target docs`` and ``sn enrich`` so the
+    Shared by ``sn run --target docs`` so the
     docs-generation pathway has a single implementation. Does NOT change
     name, grammar fields, kind, or unit — only description/documentation/
     tags/links.

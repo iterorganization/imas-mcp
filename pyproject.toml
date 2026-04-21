@@ -167,6 +167,9 @@ Documentation = "https://github.com/iterorganization/imas-codex#readme"
 
 [project.scripts]
 imas-codex = "imas_codex.cli:main"
+sn = "imas_codex.cli.sn:sn"
+discover = "imas_codex.cli.discover:discover"
+imas = "imas_codex.cli.imas_dd:imas"
 dd-version = "scripts.dd_version:main"
 build-schemas = "scripts.build_schemas:build_schemas"
 map-ids-domains = "scripts.map_ids_domains:map_ids_domains"

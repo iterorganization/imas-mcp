@@ -38,7 +38,7 @@ class TestTargetDocsRouting:
             result = runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--target",
                     "docs",
                     "--physics-domain",
@@ -61,7 +61,7 @@ class TestTargetDocsRouting:
             runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--target",
                     "docs",
                     "--physics-domain",
@@ -86,7 +86,7 @@ class TestTargetDocsRouting:
             runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--target",
                     "docs",
                     "--docs-status",
@@ -109,7 +109,7 @@ class TestTargetDocsRouting:
             runner.invoke(
                 sn,
                 [
-                    "generate",
+                    "run",
                     "--target",
                     "docs",
                     "--docs-batch-size",
@@ -134,7 +134,7 @@ class TestTargetFullRouting:
         with patch(_ROTATOR) as mock_rot, patch(_DOCS_HELPER) as mock_docs:
             runner.invoke(
                 sn,
-                ["generate", "--target", "full", "-c", "0.01", "-q"],
+                ["run", "--target", "full", "-c", "0.01", "-q"],
             )
             assert mock_rot.called
             assert not mock_docs.called
@@ -142,7 +142,7 @@ class TestTargetFullRouting:
     def test_default_target_routes_to_rotator(self, runner):
         """No --target → rotator (full default)."""
         with patch(_ROTATOR) as mock_rot, patch(_DOCS_HELPER) as mock_docs:
-            runner.invoke(sn, ["generate", "-c", "0.01", "-q"])
+            runner.invoke(sn, ["run", "-c", "0.01", "-q"])
             assert mock_rot.called
             assert not mock_docs.called
 
@@ -151,8 +151,6 @@ class TestTargetValidation:
     """Invalid --target values fail click validation."""
 
     def test_invalid_target_rejected(self, runner):
-        result = runner.invoke(
-            sn, ["generate", "--target", "bogus", "-c", "0.01", "-q"]
-        )
+        result = runner.invoke(sn, ["run", "--target", "bogus", "-c", "0.01", "-q"])
         assert result.exit_code != 0
         assert "bogus" in result.output.lower() or "invalid" in result.output.lower()
