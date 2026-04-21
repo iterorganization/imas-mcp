@@ -1358,6 +1358,25 @@ def sn_status() -> None:
         console.print(cm_table)
 
 
+def _emit_yaml_output(
+    sections: list[str], export_format: str, output: str | None
+) -> None:
+    """Write combined YAML sections to stdout or file (used by sn gaps)."""
+    if export_format != "yaml":
+        return
+    if not sections:
+        console.print("[dim]No vocabulary gaps to export.[/dim]")
+        return
+    combined = "\n".join(sections)
+    if output:
+        from pathlib import Path
+
+        Path(output).write_text(combined)
+        console.print(f"[green]Wrote ISN PR snippet to[/green] {output}")
+    else:
+        click.echo(combined)
+
+
 @sn.command("gaps")
 @click.option(
     "--direction",
@@ -1626,393 +1645,431 @@ def sn_gaps(
         console.print(f"[dim]{len(results)} missing token(s).[/dim]")
 
 
-def _emit_yaml_output(
-    sections: list[str], export_format: str, output: str | None
-) -> None:
-    """Write combined YAML sections to stdout or file."""
-    if export_format != "yaml":
-        return
-    if not sections:
-        console.print("[dim]No vocabulary gaps to export.[/dim]")
-        return
-    combined = "\n".join(sections)
-    if output:
-        from pathlib import Path
+# =============================================================================
+# Export / Preview / Publish / Import — Phase 3+4 CLI integration
+# =============================================================================
 
-        Path(output).write_text(combined)
-        console.print(f"[green]Wrote ISN PR snippet to[/green] {output}")
-    else:
-        click.echo(combined)
+
+@sn.command("export")
+@click.option(
+    "--staging",
+    type=click.Path(),
+    required=True,
+    help="Output staging directory for YAML files",
+)
+@click.option(
+    "--min-score",
+    type=float,
+    default=0.65,
+    show_default=True,
+    help="Minimum reviewer_score for inclusion",
+)
+@click.option(
+    "--include-unreviewed",
+    is_flag=True,
+    help="Include names without a reviewer_score",
+)
+@click.option(
+    "--min-description-score",
+    type=float,
+    default=None,
+    help="Secondary threshold on description sub-score",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite non-empty staging directory without prompting",
+)
+@click.option(
+    "--skip-gate",
+    is_flag=True,
+    help="Skip all quality gates (debugging only)",
+)
+@click.option(
+    "--gate-only",
+    is_flag=True,
+    help="Run quality gates and report without emitting YAML",
+)
+@click.option(
+    "--gate-scope",
+    type=click.Choice(["all", "a", "b", "c", "d"], case_sensitive=False),
+    default="all",
+    show_default=True,
+    help="Which gates to run",
+)
+@click.option(
+    "--domain",
+    type=str,
+    default=None,
+    help="Filter export to a single physics domain",
+)
+@click.option(
+    "--override-edits",
+    type=str,
+    multiple=True,
+    help="Name(s) to reset from catalog_edit to pipeline origin (repeatable; or 'all')",
+)
+def sn_export(
+    staging: str,
+    min_score: float,
+    include_unreviewed: bool,
+    min_description_score: float | None,
+    force: bool,
+    skip_gate: bool,
+    gate_only: bool,
+    gate_scope: str,
+    domain: str | None,
+    override_edits: tuple[str, ...],
+) -> None:
+    """Export validated standard names from graph to a staging directory.
+
+    \b
+    Reads StandardName nodes, applies quality gates (A/B/C/D),
+    and writes YAML files to <staging>/standard_names/<domain>/<name>.yml.
+
+    \b
+    Examples:
+      imas-codex sn export --staging ./staging
+      imas-codex sn export --staging ./staging --gate-only
+      imas-codex sn export --staging ./staging --domain equilibrium
+      imas-codex sn export --staging ./staging --min-score 0.8 --force
+    """
+    from pathlib import Path
+
+    from rich.table import Table
+
+    from imas_codex.standard_names.export import run_export
+
+    edits_list = list(override_edits) if override_edits else None
+
+    console.print("\n[bold]Standard Name Export[/bold]")
+    console.print(f"  Staging: {staging}")
+    console.print(f"  Min score: {min_score}")
+    if domain:
+        console.print(f"  Domain: {domain}")
+    if gate_only:
+        console.print("  Mode: [yellow]gate-only (no YAML output)[/yellow]")
+    if skip_gate:
+        console.print("  Gates: [yellow]skipped[/yellow]")
+    if edits_list:
+        console.print(f"  Override edits: {', '.join(edits_list)}")
+    console.print("")
+
+    try:
+        report = run_export(
+            staging_dir=Path(staging),
+            min_score=min_score,
+            include_unreviewed=include_unreviewed,
+            min_description_score=min_description_score,
+            domain=domain,
+            force=force,
+            skip_gate=skip_gate,
+            gate_only=gate_only,
+            gate_scope=gate_scope,
+            override_edits=edits_list,
+        )
+    except FileExistsError as exc:
+        console.print(f"[red]Precondition failure:[/red] {exc}")
+        console.print("[dim]Use --force to overwrite.[/dim]")
+        raise SystemExit(2) from exc
+    except Exception as exc:
+        console.print(f"[red]Export error:[/red] {exc}")
+        raise SystemExit(3) from exc
+
+    # ── Summary table ──────────────────────────────────────
+    table = Table(title="Export Summary")
+    table.add_column("metric", style="cyan")
+    table.add_column("value", style="white")
+    table.add_row("total candidates", str(report.total_candidates))
+    table.add_row("exported", str(report.exported_count))
+    table.add_row("excluded (below score)", str(report.excluded_below_score))
+    table.add_row("excluded (unreviewed)", str(report.excluded_unreviewed))
+    table.add_row("excluded (domain)", str(report.excluded_by_domain))
+    console.print(table)
+
+    # ── Gate results ───────────────────────────────────────
+    if report.gate_results:
+        console.print("\n[bold]Gate Results[/bold]")
+        for gr in report.gate_results:
+            status = "[green]PASS[/green]" if gr.passed else "[red]FAIL[/red]"
+            if gr.skipped:
+                status = "[dim]SKIP[/dim]"
+            issues = f" ({len(gr.issues)} issue(s))" if gr.issues else ""
+            console.print(f"  {gr.gate}: {status}{issues}")
+
+    # ── Divergence entries ─────────────────────────────────
+    if report.divergence_entries:
+        console.print(
+            f"\n[yellow]Divergence:[/yellow] {len(report.divergence_entries)} entries"
+        )
+        for de in report.divergence_entries[:10]:
+            console.print(f"  ~ {de.name} ({de.field}): {de.detail}")
+        if len(report.divergence_entries) > 10:
+            console.print(f"  ... and {len(report.divergence_entries) - 10} more")
+
+    # ── Exit code ──────────────────────────────────────────
+    if not report.all_gates_passed:
+        failed_gates = [g.gate for g in report.gate_results if not g.passed]
+        console.print(
+            f"\n[red]✗ Blocking gate failure(s):[/red] {', '.join(failed_gates)}"
+        )
+        raise SystemExit(1)
+
+    console.print("\n[green]✓ Export complete[/green]")
+
+
+@sn.command("preview")
+@click.option(
+    "--staging",
+    type=click.Path(exists=True),
+    required=True,
+    help="Staging directory to preview",
+)
+@click.option(
+    "--port",
+    type=int,
+    default=None,
+    help="Port for the local preview server (default: 8000)",
+)
+def sn_preview(
+    staging: str,
+    port: int | None,
+) -> None:
+    """Preview a staging directory in the browser via ISN catalog-site.
+
+    \b
+    Launches a local MkDocs dev server. Press Ctrl-C to stop.
+
+    \b
+    Examples:
+      imas-codex sn preview --staging ./staging
+      imas-codex sn preview --staging ./staging --port 9090
+    """
+    from imas_codex.standard_names.preview import run_preview
+
+    console.print("\n[bold]Standard Name Preview[/bold]")
+    console.print(f"  Staging: {staging}")
+    if port:
+        console.print(f"  Port: {port}")
+    console.print("")
+
+    try:
+        handle = run_preview(staging, port=port)
+    except FileNotFoundError as exc:
+        console.print(f"[red]Precondition failure:[/red] {exc}")
+        raise SystemExit(2) from exc
+    except Exception as exc:
+        console.print(f"[red]Preview error:[/red] {exc}")
+        raise SystemExit(3) from exc
+
+    if handle.process is None:
+        console.print(
+            "[red]Could not start preview server.[/red]\n"
+            "Ensure imas-standard-names is installed: "
+            "uv pip install imas-standard-names"
+        )
+        raise SystemExit(3)
+
+    console.print(f"  Preview URL: [link={handle.url}]{handle.url}[/link]")
+    console.print("  Press [bold]Ctrl-C[/bold] to stop.\n")
+
+    try:
+        handle.process.wait()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Shutting down preview server...[/dim]")
+    finally:
+        handle.stop()
 
 
 @sn.command("publish")
 @click.option(
-    "--ids",
-    "ids_filter",
-    type=str,
-    default=None,
-    help="Filter to specific IDS name",
+    "--staging",
+    type=click.Path(exists=True),
+    required=True,
+    help="Staging directory produced by 'sn export'",
 )
 @click.option(
-    "--physics-domain",
-    "domain_filter",
-    type=_PHYSICS_DOMAIN_CHOICE,
-    default=None,
-    help="Filter to physics domain — applied to tags.",
+    "--isnc",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to local imas-standard-names-catalog git checkout",
 )
 @click.option(
-    "--output-dir",
-    type=click.Path(),
-    default="sn_catalog_output",
-    help="Directory for YAML files",
+    "--push/--no-push",
+    default=False,
+    show_default=True,
+    help="Push the commit to origin after creating it",
 )
 @click.option(
-    "--group-by",
-    type=click.Choice(["ids", "domain", "confidence"]),
-    default="ids",
-    help="Batching strategy for PR grouping",
+    "--dry-run", is_flag=True, help="Validate and report without modifying ISNC"
 )
-@click.option(
-    "--confidence-min",
-    type=float,
-    default=0.0,
-    help="Minimum confidence threshold (0.0-1.0)",
-)
-@click.option(
-    "--catalog-dir",
-    type=click.Path(exists=False),
-    default=None,
-    help="Existing catalog directory for duplicate checking",
-)
-@click.option(
-    "--create-pr",
-    is_flag=True,
-    help="Create GitHub PR (requires gh CLI)",
-)
-@click.option(
-    "--catalog-repo",
-    type=str,
-    default="iterorganization/imas-standard-names-catalog",
-    help="Target GitHub repo for PR creation",
-)
-@click.option("--dry-run", is_flag=True, help="Preview without writing files")
-@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 def sn_publish(
-    ids_filter: str | None,
-    domain_filter: str | None,
-    output_dir: str,
-    group_by: str,
-    confidence_min: float,
-    catalog_dir: str | None,
-    create_pr: bool,
-    catalog_repo: str,
+    staging: str,
+    isnc: str,
+    push: bool,
     dry_run: bool,
-    verbose: bool,
 ) -> None:
-    """Publish validated standard names to YAML catalog files.
+    """Transport a staging directory to an ISNC checkout.
 
     \b
-    Reads StandardName nodes from the graph, converts them to YAML
-    files matching the imas-standard-names-catalog format, and
-    optionally creates batched GitHub pull requests.
+    Mirrors the staging directory (from 'sn export') into an ISNC git
+    checkout, creates a commit, and optionally pushes to origin.
+    No quality gates are re-run — they already ran at export time.
 
     \b
     Examples:
-      imas-codex sn publish --dry-run
-      imas-codex sn publish --ids equilibrium --output-dir catalog/
-      imas-codex sn publish --group-by confidence --confidence-min 0.8
-      imas-codex sn publish --create-pr --catalog-repo org/repo
+      imas-codex sn publish --staging ./staging --isnc ../isnc
+      imas-codex sn publish --staging ./staging --isnc ../isnc --push
+      imas-codex sn publish --staging ./staging --isnc ../isnc --dry-run
     """
-    from pathlib import Path
+    from rich.table import Table
 
-    if verbose:
-        logging.basicConfig(level=logging.DEBUG)
+    from imas_codex.standard_names.publish import run_publish
 
     console.print("\n[bold]Standard Name Publish[/bold]")
-    if ids_filter:
-        console.print(f"  IDS filter: {ids_filter}")
-    if domain_filter:
-        console.print(f"  Domain filter: {domain_filter}")
-    console.print(f"  Output: {output_dir}")
-    console.print(f"  Group by: {group_by}")
-    console.print(f"  Confidence min: {confidence_min}")
+    console.print(f"  Staging: {staging}")
+    console.print(f"  ISNC: {isnc}")
+    if push:
+        console.print("  Push: [green]yes[/green]")
     if dry_run:
         console.print("  Mode: [yellow]dry run[/yellow]")
     console.print("")
 
-    # Step 1: Load validated names from graph
     try:
-        from imas_codex.standard_names.graph_ops import get_validated_standard_names
-
-        records = get_validated_standard_names(
-            ids_filter=ids_filter,
-            confidence_min=confidence_min,
+        report = run_publish(
+            staging_dir=staging,
+            isnc_path=isnc,
+            push=push,
+            dry_run=dry_run,
         )
-    except Exception as e:
-        console.print(f"[red]Error reading from graph:[/red] {e}")
-        raise SystemExit(1) from e
+    except Exception as exc:
+        console.print(f"[red]Publish error:[/red] {exc}")
+        raise SystemExit(3) from exc
 
-    if not records:
-        console.print("[yellow]No validated standard names found in graph.[/yellow]")
-        return
+    if report.errors:
+        console.print(f"[red]Errors: {len(report.errors)}[/red]")
+        for err in report.errors[:10]:
+            console.print(f"  - {err}")
+        if len(report.errors) > 10:
+            console.print(f"  ... and {len(report.errors) - 10} more")
+        raise SystemExit(2)
 
-    console.print(f"  Loaded [bold]{len(records)}[/bold] validated names from graph")
+    # ── Summary ────────────────────────────────────────────
+    table = Table(title="Publish Summary")
+    table.add_column("metric", style="cyan")
+    table.add_column("value", style="white")
+    table.add_row("files copied", str(report.files_copied))
+    table.add_row("commit SHA", report.commit_sha or "(no changes)")
+    table.add_row("pushed", "yes" if report.pushed else "no")
+    table.add_row("dry run", "yes" if report.dry_run else "no")
+    console.print(table)
 
-    # Step 2: Convert to publish entries
-    from imas_codex.standard_names.publish import (
-        check_catalog_duplicates,
-        create_catalog_pr,
-        generate_catalog_files,
-        graph_records_to_entries,
-        make_publish_batches,
-    )
-
-    entries = graph_records_to_entries(records)
-
-    # Apply domain filter on tags if specified
-    if domain_filter:
-        entries = [e for e in entries if domain_filter in e.tags]
-        console.print(f"  After domain filter: [bold]{len(entries)}[/bold] entries")
-
-    if not entries:
-        console.print("[yellow]No entries after filtering.[/yellow]")
-        return
-
-    # Step 3: Check for duplicates
-    catalog_path = Path(catalog_dir) if catalog_dir else None
-    new_entries, duplicates = check_catalog_duplicates(entries, catalog_path)
-
-    if duplicates:
-        console.print(f"  Skipping [yellow]{len(duplicates)}[/yellow] duplicate(s)")
-    entries = new_entries
-
-    if not entries:
-        console.print(
-            "[yellow]All entries are duplicates — nothing to publish.[/yellow]"
-        )
-        return
-
-    # Step 4: Create batches
-    batches = make_publish_batches(entries, group_by)
-
-    # Step 5: Print summary table
-    console.print(f"\n[bold]Publish Summary[/bold] ({len(entries)} entries)")
-    console.print("")
-    for batch in batches:
-        console.print(
-            f"  [bold]{batch.group_key}[/bold]: "
-            f"{len(batch.entries)} entries "
-            f"(confidence: {batch.confidence_tier})"
-        )
-        if verbose:
-            for entry in batch.entries:
-                conf = f"{entry.provenance.confidence:.2f}"
-                console.print(f"    - {entry.name} [{conf}]")
-
-    # Step 6: Generate YAML files
-    if dry_run:
-        console.print(
-            f"\n[yellow]Dry run — would write {len(entries)} files to {output_dir}[/yellow]"
-        )
-    else:
-        out = Path(output_dir)
-        written = generate_catalog_files(entries, out)
-        console.print(f"\n[green]Wrote {len(written)} YAML files to {out}[/green]")
-
-        # Step 6b: Update pipeline_status in graph
-        from imas_codex.standard_names.graph_ops import update_review_status
-
-        published_names = [e.name for e in entries]
-        updated = update_review_status(published_names, status="published")
-        console.print(
-            f"  Updated [bold]{updated}[/bold] names to pipeline_status='published'"
-        )
-
-    # Step 7: Optionally create PRs
-    if create_pr:
-        for batch in batches:
-            branch = f"sn/{batch.group_key}/{batch.confidence_tier}"
-            branch = branch.replace(" ", "-").lower()
-            yaml_files = (
-                [Path(output_dir) / f"{e.name}.yaml" for e in batch.entries]
-                if not dry_run
-                else []
-            )
-            pr_url = create_catalog_pr(
-                batch=batch,
-                catalog_repo=catalog_repo,
-                branch_name=branch,
-                yaml_files=yaml_files,
-                dry_run=dry_run,
-            )
-            if pr_url:
-                console.print(f"  PR: {pr_url}")
-            elif dry_run:
-                console.print(
-                    f"  [yellow]Would create PR for {batch.group_key}[/yellow]"
-                )
+    console.print("\n[green]✓ Publish complete[/green]")
 
 
 @sn.command("import")
 @click.option(
-    "--catalog-dir",
+    "--isnc",
     type=click.Path(exists=True),
     required=True,
-    help="Path to catalog directory containing YAML entries",
+    help="Path to ISNC repository root (containing standard_names/ subtree)",
 )
-@click.option("--tags", type=str, default=None, help="Comma-separated tag filter")
-@click.option("--dry-run", is_flag=True, help="Preview without writing to graph")
 @click.option(
-    "--check",
-    "check_mode",
+    "--accept-unit-override",
     is_flag=True,
-    help="Compare catalog vs graph without importing; report sync status",
+    help="Accept unit mismatches against DD values",
 )
-@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+@click.option(
+    "--accept-cocos-override",
+    is_flag=True,
+    help="Accept COCOS transformation type mismatches against graph",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Parse and validate without writing to graph"
+)
 def sn_import(
-    catalog_dir: str,
-    tags: str | None,
+    isnc: str,
+    accept_unit_override: bool,
+    accept_cocos_override: bool,
     dry_run: bool,
-    check_mode: bool,
-    verbose: bool,
 ) -> None:
-    """Import reviewed catalog entries into the graph.
+    """Import reviewed catalog entries from ISNC into the graph.
 
     \b
-    Reads YAML files from the catalog directory, validates them against
-    the imas-standard-names catalog model, derives grammar fields, and
-    MERGEs into the graph with pipeline_status='accepted'.
-
-    \b
-    Use --check to compare catalog vs graph without importing.
+    Reads YAML files from the ISNC standard_names/ subtree, validates
+    them, derives grammar fields, applies diff-based origin tracking,
+    and MERGEs into the graph with pipeline_status='accepted'.
 
     \b
     Examples:
-      imas-codex sn import --catalog-dir ../imas-standard-names-catalog/standard_names
-      imas-codex sn import --catalog-dir <path> --dry-run
-      imas-codex sn import --catalog-dir <path> --tags equilibrium,core-physics
-      imas-codex sn import --catalog-dir <path> --check
+      imas-codex sn import --isnc ../imas-standard-names-catalog
+      imas-codex sn import --isnc ../isnc --dry-run
+      imas-codex sn import --isnc ../isnc --accept-unit-override
     """
     from pathlib import Path
 
-    if verbose:
-        logging.basicConfig(level=logging.DEBUG)
+    from rich.table import Table
 
-    tag_filter = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+    from imas_codex.standard_names.catalog_import import run_import
 
-    # -- Check mode --
-    if check_mode:
-        console.print("\n[bold]Standard Name Catalog Check[/bold]")
-        console.print(f"  Catalog: {catalog_dir}")
-        if tag_filter:
-            console.print(f"  Tag filter: {', '.join(tag_filter)}")
-        console.print("")
-
-        try:
-            from imas_codex.standard_names.catalog_import import check_catalog
-
-            cr = check_catalog(
-                catalog_dir=Path(catalog_dir),
-                tag_filter=tag_filter,
-            )
-        except ImportError as e:
-            console.print(
-                f"[red]Missing dependency:[/red] {e}\n"
-                "Install with: uv pip install imas-standard-names"
-            )
-            raise SystemExit(1) from e
-        except Exception as e:
-            console.print(f"[red]Check error:[/red] {e}")
-            raise SystemExit(1) from e
-
-        # Print check results
-        if cr.catalog_commit_sha:
-            console.print(f"  Catalog SHA: {cr.catalog_commit_sha[:12]}")
-        if cr.graph_commit_sha:
-            console.print(f"  Graph SHA:   {cr.graph_commit_sha[:12]}")
-        if cr.catalog_commit_sha and cr.graph_commit_sha:
-            if cr.catalog_commit_sha == cr.graph_commit_sha:
-                console.print("  [green]SHAs match[/green]")
-            else:
-                console.print("  [yellow]SHAs differ[/yellow]")
-        console.print("")
-
-        console.print(f"  In sync: [green]{cr.in_sync}[/green]")
-        if cr.only_in_catalog:
-            console.print(
-                f"  Only in catalog: [yellow]{len(cr.only_in_catalog)}[/yellow]"
-            )
-            for name in cr.only_in_catalog[:10]:
-                console.print(f"    + {name}")
-            if len(cr.only_in_catalog) > 10:
-                console.print(f"    ... and {len(cr.only_in_catalog) - 10} more")
-        if cr.only_in_graph:
-            console.print(f"  Only in graph: [yellow]{len(cr.only_in_graph)}[/yellow]")
-            for name in cr.only_in_graph[:10]:
-                console.print(f"    - {name}")
-            if len(cr.only_in_graph) > 10:
-                console.print(f"    ... and {len(cr.only_in_graph) - 10} more")
-        if cr.diverged:
-            console.print(f"  Diverged: [red]{len(cr.diverged)}[/red]")
-            for item in cr.diverged[:10]:
-                fields = ", ".join(item["fields"].keys())
-                console.print(f"    ~ {item['name']} ({fields})")
-            if len(cr.diverged) > 10:
-                console.print(f"    ... and {len(cr.diverged) - 10} more")
-        if not cr.only_in_catalog and not cr.only_in_graph and not cr.diverged:
-            console.print("\n  [green]✓ Catalog and graph are in sync[/green]")
-        return
-
-    console.print("\n[bold]Standard Name Catalog Import[/bold]")
-    console.print(f"  Catalog: {catalog_dir}")
-    if tag_filter:
-        console.print(f"  Tag filter: {', '.join(tag_filter)}")
+    console.print("\n[bold]Standard Name Import[/bold]")
+    console.print(f"  ISNC: {isnc}")
+    if accept_unit_override:
+        console.print("  Unit override: [yellow]accepted[/yellow]")
+    if accept_cocos_override:
+        console.print("  COCOS override: [yellow]accepted[/yellow]")
     if dry_run:
         console.print("  Mode: [yellow]dry run[/yellow]")
     console.print("")
 
     try:
-        from imas_codex.standard_names.catalog_import import import_catalog
-
-        result = import_catalog(
-            catalog_dir=Path(catalog_dir),
+        report = run_import(
+            catalog_dir=Path(isnc),
             dry_run=dry_run,
-            tag_filter=tag_filter,
+            accept_unit_override=accept_unit_override,
+            accept_cocos_override=accept_cocos_override,
         )
-    except ImportError as e:
-        console.print(
-            f"[red]Missing dependency:[/red] {e}\n"
-            "Install with: uv pip install imas-standard-names"
-        )
-        raise SystemExit(1) from e
-    except Exception as e:
-        console.print(f"[red]Import error:[/red] {e}")
-        raise SystemExit(1) from e
+    except Exception as exc:
+        console.print(f"[red]Import error:[/red] {exc}")
+        raise SystemExit(3) from exc
 
-    # Print results
-    if result.catalog_commit_sha:
-        console.print(f"  Catalog SHA: {result.catalog_commit_sha[:12]}")
+    # ── Errors ─────────────────────────────────────────────
+    if report.errors:
+        console.print(f"[red]Errors: {len(report.errors)}[/red]")
+        for err in report.errors[:10]:
+            console.print(f"  - {err}")
+        if len(report.errors) > 10:
+            console.print(f"  ... and {len(report.errors) - 10} more")
 
-    if result.errors:
-        console.print(f"  [red]Errors: {len(result.errors)}[/red]")
-        for err in result.errors[:10]:
-            console.print(f"    - {err}")
-        if len(result.errors) > 10:
-            console.print(f"    ... and {len(result.errors) - 10} more")
-
-    if result.skipped:
-        console.print(f"  [yellow]Skipped: {result.skipped}[/yellow] (tag filter)")
-
+    # ── Summary table ──────────────────────────────────────
     action = "Would import" if dry_run else "Imported"
-    console.print(f"\n  [green]{action}: {result.imported}[/green] entries")
+    table = Table(title=f"Import Summary ({action})")
+    table.add_column("metric", style="cyan")
+    table.add_column("value", style="white")
+    table.add_row("imported", str(report.imported))
+    table.add_row("created", str(report.created))
+    table.add_row("updated", str(report.updated))
+    table.add_row("skipped", str(report.skipped))
+    table.add_row("errors", str(len(report.errors)))
+    if report.catalog_commit_sha:
+        table.add_row("catalog SHA", report.catalog_commit_sha[:12])
+    if report.pr_numbers:
+        table.add_row("PR numbers", ", ".join(f"#{n}" for n in report.pr_numbers))
+    table.add_row("watermark advanced", "yes" if report.watermark_advanced else "no")
+    console.print(table)
 
-    if dry_run and result.entries:
-        console.print("\n  [bold]Preview:[/bold]")
-        for entry in result.entries[:20]:
-            units = f" [{entry.get('units', '')}]" if entry.get("units") else ""
-            console.print(f"    - {entry['id']}{units}")
-        if len(result.entries) > 20:
-            console.print(f"    ... and {len(result.entries) - 20} more")
+    if dry_run and report.entries:
+        console.print("\n[bold]Preview:[/bold]")
+        for entry in report.entries[:20]:
+            units = f" [{entry.get('unit', '')}]" if entry.get("unit") else ""
+            console.print(f"  - {entry.get('id', '?')}{units}")
+        if len(report.entries) > 20:
+            console.print(f"  ... and {len(report.entries) - 20} more")
+
+    if report.errors and not dry_run:
+        raise SystemExit(2)
+
+    console.print(f"\n[green]✓ {action}: {report.imported} entries[/green]")
 
 
 @sn.command("clear")
