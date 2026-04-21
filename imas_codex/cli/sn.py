@@ -878,6 +878,18 @@ def sn_generate(
         "DD catalog in mature deployments)."
     ),
 )
+@click.option(
+    "--review-target",
+    type=click.Choice(["names", "full"]),
+    default="names",
+    show_default=True,
+    help=(
+        "Reviewer rubric. 'names' uses the 4-dim name-only rubric "
+        "(sn/review_name_only, 0-80) matching the compose-stage output. "
+        "'full' uses the 6-dim rubric (sn/review, 0-120) — only meaningful "
+        "when compose output includes documentation."
+    ),
+)
 def sn_benchmark(
     source: str,
     ids_filter: str | None,
@@ -891,6 +903,7 @@ def sn_benchmark(
     verbose: bool,
     reviewer_model: str | None,
     force: bool,
+    review_target: str,
 ) -> None:
     """Benchmark LLM models on standard name generation.
 
@@ -950,6 +963,7 @@ def sn_benchmark(
         temperature=temperature,
         reviewer_model=reviewer_model,
         force=force,
+        review_target=review_target,
     )
 
     console.print("[bold]SN Benchmark[/bold]")

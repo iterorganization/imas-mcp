@@ -54,6 +54,13 @@ class BenchmarkConfig:
     temperature: float = 0.0  # pinned for reproducibility
     reviewer_model: str | None = None  # frontier model for quality scoring
     force: bool = False  # re-run over already-processed paths
+    # Rubric target for reviewer scoring. "names" → 4-dimensional
+    # sn/review_name_only (grammar, semantic, convention, completeness) —
+    # matches name-only compose output. "full" → 6-dimensional sn/review
+    # with documentation and compliance dimensions (only meaningful when
+    # compose output includes rich documentation, which the current
+    # StandardNameCandidate schema does not).
+    review_target: str = "names"
 
 
 @dataclass
@@ -264,21 +271,42 @@ async def score_with_reviewer(
     candidates: list[dict],
     reviewer_model: str,
     calibration_entries: list[dict],
+    target: str = "names",
 ) -> list[dict]:
-    """Score candidates using unified 6-dimensional quality review.
+    """Score candidates using the rubric matching the compose output fidelity.
 
-    Each candidate is scored across six dimensions (0-20 each):
-    grammar, semantic, documentation, convention, completeness, compliance.
-    Score is normalized (0-1).
+    target="names" (default) — uses the 4-dimensional ``sn/review_name_only``
+        rubric (grammar, semantic, convention, completeness; 0-80 total,
+        normalised to 0-1). Appropriate for name-only compose output, which is
+        what :class:`StandardNameCandidate` produces today.
+    target="full" — uses the 6-dimensional ``sn/review`` rubric (adds
+        documentation and compliance dimensions, 0-120 total). Only
+        meaningful when compose output carries rich documentation (i.e.
+        post-enrich cycles, not the default benchmark).
 
-    Returns list of dicts with: name, quality_tier, score,
-    grammar_score, semantic_score, documentation_score,
-    convention_score, completeness_score, compliance_score, reasoning.
+    Returns list of dicts with: name, quality_tier, score, and per-dimension
+    scores keyed ``<dim>_score``. Dimensions not present in the chosen rubric
+    are left unset (so downstream averaging skips them rather than counting
+    a spurious zero).
     """
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.standard_names.context import build_compose_context
-    from imas_codex.standard_names.models import StandardNameQualityReviewBatch
+    from imas_codex.standard_names.models import (
+        StandardNameQualityReviewBatch,
+        StandardNameQualityReviewNameOnlyBatch,
+    )
+
+    if target == "names":
+        prompt_name = "sn/review_name_only"
+        response_model: type = StandardNameQualityReviewNameOnlyBatch
+    elif target == "full":
+        prompt_name = "sn/review"
+        response_model = StandardNameQualityReviewBatch
+    else:
+        raise ValueError(
+            f"Unknown review target {target!r}; expected 'names' or 'full'."
+        )
 
     # Get compose context (includes grammar enums + shared include variables)
     compose_ctx = build_compose_context()
@@ -300,13 +328,15 @@ async def score_with_reviewer(
 
     # System prompt: rubric + calibration (cached across batches)
     system_prompt = render_prompt(
-        "sn/review",
+        prompt_name,
         {
             **compose_ctx,
             "calibration_entries": calibration_entries,
             "items": [],
             "existing_names": [],
             "batch_context": "",
+            "nearby_existing_names": [],
+            "audit_findings": [],
             **grammar_enums,
         },
     )
@@ -323,7 +353,7 @@ async def score_with_reviewer(
                 {
                     "standard_name": c.get("standard_name", ""),
                     "source_id": c.get("source_id", ""),
-                    "description": c.get("description", ""),
+                    "description": c.get("description", "") or "",
                     "documentation": (c.get("documentation", "") or "")[:500],
                     "unit": c.get("unit", "N/A"),
                     "kind": c.get("kind", "N/A"),
@@ -334,13 +364,15 @@ async def score_with_reviewer(
             )
 
         user_prompt = render_prompt(
-            "sn/review",
+            prompt_name,
             {
                 **compose_ctx,
                 "calibration_entries": calibration_entries,
                 "items": batch_items,
                 "existing_names": [],
                 "batch_context": "",
+                "nearby_existing_names": [],
+                "audit_findings": [],
                 **grammar_enums,
             },
         )
@@ -354,22 +386,24 @@ async def score_with_reviewer(
             result, _, _ = await acall_llm_structured(
                 model=reviewer_model,
                 messages=messages,
-                response_model=StandardNameQualityReviewBatch,
+                response_model=response_model,
                 service="standard-names",
             )
             for r in result.reviews:
-                review_dict = {
+                review_dict: dict[str, Any] = {
                     "name": r.standard_name,
                     "quality_tier": r.scores.tier,
                     "score": r.scores.score,
                     "grammar_score": r.scores.grammar,
                     "semantic_score": r.scores.semantic,
-                    "documentation_score": r.scores.documentation,
                     "convention_score": r.scores.convention,
                     "completeness_score": r.scores.completeness,
-                    "compliance_score": r.scores.compliance,
                     "reasoning": r.reasoning,
                 }
+                # 6-dim rubric adds two dimensions
+                if target == "full":
+                    review_dict["documentation_score"] = r.scores.documentation
+                    review_dict["compliance_score"] = r.scores.compliance
                 all_reviews.append(review_dict)
         except Exception as e:
             logger.warning("Reviewer scoring failed for batch: %s", e)
@@ -448,6 +482,7 @@ async def run_benchmark(
                     result.candidates,
                     config.reviewer_model,
                     calibration_entries,
+                    target=config.review_target,
                 )
                 result.quality_scores = reviews
                 # Compute distribution
