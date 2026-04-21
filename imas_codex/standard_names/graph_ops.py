@@ -2253,6 +2253,7 @@ def resolve_links_batch(
     items: list[dict[str, Any]],
     *,
     override: bool = False,
+    override_names: set[str] | None = None,
 ) -> dict[str, Any]:
     """Resolve dd: links to name: links for a batch of names.
 
@@ -2263,11 +2264,16 @@ def resolve_links_batch(
     ----------
     override:
         When ``True``, bypass pipeline protection on catalog-edited names.
+    override_names:
+        Selective override — set of name IDs that should bypass protection
+        even if they have ``origin='catalog_edit'``.
     """
     # Pipeline protection — links is a protected field
     from imas_codex.standard_names.protection import filter_protected
 
-    items, skipped = filter_protected(items, override=override)
+    items, skipped = filter_protected(
+        items, override=override, override_names=override_names
+    )
     if skipped:
         logger.warning(
             "resolve_links_batch: stripped protected fields from %d name(s): %s",

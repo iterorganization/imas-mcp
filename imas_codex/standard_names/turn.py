@@ -2,7 +2,7 @@
 
 Chains one full quality-improvement cycle for a single physics domain::
 
-    generate → enrich → review → regen
+    reconcile → generate → enrich → resolve-links → review → regen
 
 Each phase delegates to the same library functions used by the individual
 ``sn run``, ``sn enrich``, and ``sn review`` CLI commands — no pipeline
@@ -25,9 +25,38 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Default cost-budget split across the four phases.
+# Default cost-budget split across the four LLM phases.
 # Values must sum to 1.0.
 TURN_SPLIT: tuple[float, float, float, float] = (0.40, 0.20, 0.20, 0.20)
+
+# Valid --only phase choices (CLI enforces this set).
+TURN_PHASES: tuple[str, ...] = (
+    "reconcile",
+    "extract",
+    "compose",
+    "validate",
+    "consolidate",
+    "persist",
+    "review",
+    "resolve-links",
+)
+
+# Maps an --only value to the set of turn-level phases to keep running.
+# Everything outside the set is skipped.
+_ONLY_TO_ACTIVE: dict[str, set[str]] = {
+    "reconcile": {"reconcile"},
+    "extract": {"generate"},
+    "compose": {"generate"},
+    "validate": {"generate"},
+    "consolidate": {"generate"},
+    "persist": {"generate"},
+    "review": {"review"},
+    "resolve-links": {"resolve-links"},
+}
+
+# Max resolve-links iterations per turn.
+_MAX_RESOLVE_ROUNDS = 3
+_RESOLVE_BATCH_LIMIT = 50
 
 
 @dataclass
@@ -41,11 +70,12 @@ class PhaseResult:
     count: int = 0
     error: str | None = None
     skipped: bool = False
+    touched_names: list[str] = field(default_factory=list)
 
 
 @dataclass
 class TurnConfig:
-    """Configuration for a single turn (one domain × four phases)."""
+    """Configuration for a single turn (one domain × six phases)."""
 
     domain: str
     cost_limit: float = 5.0
@@ -57,14 +87,57 @@ class TurnConfig:
     skip_enrich: bool = False
     skip_review: bool = False
     skip_regen: bool = False
+    skip_reconcile: bool = False
+    skip_resolve_links: bool = False
     split: tuple[float, float, float, float] = TURN_SPLIT
     run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     turn_number: int = 1
     min_score: float | None = None
+    source: str = "dd"
+    override_edits: list[str] | None = None
 
     def phase_budget(self, index: int) -> float:
-        """Return the cost budget allocated to phase *index* (0–3)."""
+        """Return the cost budget allocated to LLM phase *index* (0–3).
+
+        The four LLM phases (generate, enrich, review, regen) share the
+        cost budget.  Non-LLM phases (reconcile, resolve-links) have
+        zero cost.
+        """
         return self.cost_limit * self.split[index]
+
+
+# ── Phase implementations ─────────────────────────────────────────────
+
+
+async def _run_reconcile_phase(cfg: TurnConfig) -> PhaseResult:
+    """Reconcile StandardNameSource nodes after upstream DD/signal rebuild.
+
+    Re-links sources, marks stale, and revives previously-stale sources
+    that reappear.  Scoped by ``cfg.source`` (``dd`` or ``signals``).
+    """
+    if cfg.dry_run:
+        return PhaseResult(name="reconcile", count=0)
+
+    from imas_codex.standard_names.graph_ops import reconcile_standard_name_sources
+
+    t0 = time.monotonic()
+    try:
+        result = await asyncio.to_thread(reconcile_standard_name_sources, cfg.source)
+    except Exception as exc:
+        logger.error("Phase reconcile failed: %s", exc, exc_info=True)
+        return PhaseResult(
+            name="reconcile",
+            exit_code=1,
+            elapsed=time.monotonic() - t0,
+            error=str(exc),
+        )
+
+    total = sum(result.values())
+    return PhaseResult(
+        name="reconcile",
+        elapsed=time.monotonic() - t0,
+        count=total,
+    )
 
 
 async def _run_generate_phase(
@@ -144,6 +217,7 @@ async def _run_generate_phase(
         cost=compose_cost,
         elapsed=elapsed,
         count=compose_count,
+        touched_names=persisted_ids,
     )
 
 
@@ -192,6 +266,75 @@ async def _run_enrich_phase(cfg: TurnConfig) -> PhaseResult:
         cost=state.total_cost,
         elapsed=elapsed,
         count=state.stats.get("persist_written", 0),
+    )
+
+
+async def _run_resolve_links_phase(
+    cfg: TurnConfig,
+    touched_names: set[str],
+) -> PhaseResult:
+    """Resolve ``dd:`` links to ``name:`` links on touched names.
+
+    Multi-round: loops until no unresolved links remain or
+    ``_MAX_RESOLVE_ROUNDS`` iterations elapse.  When *touched_names*
+    is empty (e.g. ``--only resolve-links``), falls back to a global
+    sweep of all unresolved names.
+    """
+    if cfg.dry_run:
+        return PhaseResult(name="resolve-links", count=0)
+
+    from imas_codex.standard_names.graph_ops import resolve_links_batch
+
+    override_names = set(cfg.override_edits) if cfg.override_edits else None
+
+    total_resolved = 0
+    total_unresolved = 0
+    total_failed = 0
+
+    t0 = time.monotonic()
+    try:
+        for round_num in range(1, _MAX_RESOLVE_ROUNDS + 1):
+            items = await asyncio.to_thread(
+                _fetch_unresolved_links,
+                touched_names if touched_names else None,
+                _RESOLVE_BATCH_LIMIT,
+            )
+            if not items:
+                break
+
+            result = await asyncio.to_thread(
+                resolve_links_batch,
+                items,
+                override_names=override_names,
+            )
+            total_resolved += result["resolved"]
+            total_unresolved += result["unresolved"]
+            total_failed += result["failed"]
+
+            logger.info(
+                "resolve-links round %d: %d resolved, %d unresolved, %d failed",
+                round_num,
+                result["resolved"],
+                result["unresolved"],
+                result["failed"],
+            )
+
+            if result["unresolved"] == 0:
+                break
+    except Exception as exc:
+        logger.error("Phase resolve-links failed: %s", exc, exc_info=True)
+        return PhaseResult(
+            name="resolve-links",
+            exit_code=1,
+            elapsed=time.monotonic() - t0,
+            count=total_resolved,
+            error=str(exc),
+        )
+
+    return PhaseResult(
+        name="resolve-links",
+        elapsed=time.monotonic() - t0,
+        count=total_resolved,
     )
 
 
@@ -249,17 +392,93 @@ async def _run_review_phase(cfg: TurnConfig) -> PhaseResult:
     )
 
 
-async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
-    """Execute one full turn (generate → enrich → review → regen).
+# ── Helpers ────────────────────────────────────────────────────────────
 
-    Runs the four phases in sequence, respecting skip flags. Returns
+
+def _fetch_unresolved_links(
+    name_ids: set[str] | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Fetch StandardName nodes with unresolved links.
+
+    When *name_ids* is provided, scopes to only those names.
+    When ``None``, performs a global sweep.
+    """
+    from imas_codex.graph.client import GraphClient
+
+    with GraphClient() as gc:
+        if name_ids:
+            rows = gc.query(
+                """
+                MATCH (sn:StandardName)
+                WHERE sn.id IN $names
+                  AND sn.link_status = 'unresolved'
+                RETURN sn.id AS id, sn.links AS links,
+                       coalesce(sn.link_retry_count, 0) AS retry_count
+                LIMIT $limit
+                """,
+                names=list(name_ids),
+                limit=limit,
+            )
+        else:
+            rows = gc.query(
+                """
+                MATCH (sn:StandardName)
+                WHERE sn.link_status = 'unresolved'
+                RETURN sn.id AS id, sn.links AS links,
+                       coalesce(sn.link_retry_count, 0) AS retry_count
+                LIMIT $limit
+                """,
+                limit=limit,
+            )
+    return [dict(r) for r in rows]
+
+
+def skip_flags_from_only(only_phase: str | None) -> dict[str, bool]:
+    """Derive per-phase skip flags from an ``--only`` selection.
+
+    Returns a dict of ``skip_*`` keys (matching :class:`TurnConfig`
+    field names) that should be set to ``True`` when *only_phase* is
+    active.  When *only_phase* is ``None``, returns an empty dict
+    (no overrides).
+    """
+    if only_phase is None:
+        return {}
+
+    active = _ONLY_TO_ACTIVE.get(only_phase, set())
+    return {
+        "skip_reconcile": "reconcile" not in active,
+        "skip_generate": "generate" not in active,
+        "skip_enrich": "generate" not in active,  # enrich follows generate
+        "skip_resolve_links": "resolve-links" not in active,
+        "skip_review": "review" not in active,
+        "skip_regen": "generate" not in active,
+    }
+
+
+# ── Turn runner ────────────────────────────────────────────────────────
+
+
+async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
+    """Execute one full turn (reconcile → generate → enrich → resolve-links → review → regen).
+
+    Runs the six phases in sequence, respecting skip flags.  Returns
     a list of :class:`PhaseResult` for every phase (including skipped
-    ones).
+    ones).  Names created/updated by generate are tracked and passed
+    to the resolve-links phase to scope link resolution.
     """
     results: list[PhaseResult] = []
+    touched_names: set[str] = set()
+
     phases: list[tuple[str, bool, Any]] = [
+        ("reconcile", cfg.skip_reconcile, lambda: _run_reconcile_phase(cfg)),
         ("generate", cfg.skip_generate, lambda: _run_generate_phase(cfg)),
         ("enrich", cfg.skip_enrich, lambda: _run_enrich_phase(cfg)),
+        (
+            "resolve-links",
+            cfg.skip_resolve_links,
+            lambda: _run_resolve_links_phase(cfg, touched_names),
+        ),
         ("review", cfg.skip_review, lambda: _run_review_phase(cfg)),
         (
             "regen",
@@ -277,6 +496,10 @@ async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
         logger.info("Starting phase: %s", name)
         result = await fn()
         results.append(result)
+
+        # Accumulate touched names for downstream scoping
+        if result.touched_names:
+            touched_names.update(result.touched_names)
 
         if result.exit_code != 0 and cfg.fail_fast:
             logger.error(
@@ -320,9 +543,8 @@ def turn_summary(
                 "elapsed": r.elapsed,
                 "count": r.count,
                 "error": r.error,
-                "budget": cfg.phase_budget(i),
             }
-            for i, r in enumerate(results)
+            for r in results
         ],
         "total_cost": total_cost,
         "total_elapsed": total_elapsed,

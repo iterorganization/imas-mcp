@@ -38,6 +38,7 @@ def filter_protected(
     items: list[dict[str, Any]],
     *,
     override: bool = False,
+    override_names: set[str] | None = None,
     protected_names: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Strip protected editorial fields from catalog-edited items.
@@ -48,6 +49,10 @@ def filter_protected(
         Dicts to filter. Each must have an ``"id"`` key (the standard name).
     override:
         When ``True``, bypass protection — all fields pass through.
+    override_names:
+        Selective override — set of standard name IDs that should bypass
+        protection even if they have ``origin='catalog_edit'``.  Other
+        names remain protected.  Ignored when ``override=True``.
     protected_names:
         Pre-fetched set of standard name IDs whose ``origin`` is
         ``'catalog_edit'``. If ``None``, queries the graph to determine
@@ -72,6 +77,11 @@ def filter_protected(
         protected_names = _fetch_catalog_edit_names(
             [it["id"] for it in items if "id" in it]
         )
+
+    # Selective per-name override: remove explicitly overridden names
+    # from the protected set so their fields pass through.
+    if override_names:
+        protected_names = protected_names - override_names
 
     filtered: list[dict[str, Any]] = []
     skipped: list[str] = []

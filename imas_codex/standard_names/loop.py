@@ -36,6 +36,8 @@ class RunSummary:
     names_enriched: int = 0
     names_reviewed: int = 0
     names_regenerated: int = 0
+    sources_reconciled: int = 0
+    links_resolved: int = 0
     domains_touched: set[str] = field(default_factory=set)
     stop_reason: str = "completed"
     pass_records: list[dict[str, Any]] = field(default_factory=list)
@@ -109,6 +111,10 @@ async def run_sn_loop(
     skip_enrich: bool = False,
     skip_review: bool = False,
     skip_regen: bool = False,
+    skip_reconcile: bool = False,
+    skip_resolve_links: bool = False,
+    source: str = "dd",
+    override_edits: list[str] | None = None,
 ) -> RunSummary:
     """Drive the ``sn run`` loop across physics domains.
 
@@ -191,6 +197,10 @@ async def run_sn_loop(
                 skip_enrich=skip_enrich,
                 skip_review=skip_review,
                 skip_regen=skip_regen or min_score is None,
+                skip_reconcile=skip_reconcile,
+                skip_resolve_links=skip_resolve_links,
+                source=source,
+                override_edits=override_edits,
             )
             results = await run_turn(cfg)
 
@@ -204,6 +214,10 @@ async def run_sn_loop(
                     summary.names_reviewed += phase.count
                 elif phase.name == "regen":
                     summary.names_regenerated += phase.count
+                elif phase.name == "reconcile":
+                    summary.sources_reconciled += phase.count
+                elif phase.name == "resolve-links":
+                    summary.links_resolved += phase.count
             summary.domains_touched.add(dom)
 
             summary.pass_records.append(
@@ -285,6 +299,8 @@ def summary_table(summary: RunSummary) -> dict[str, Any]:
         "names_enriched": summary.names_enriched,
         "names_reviewed": summary.names_reviewed,
         "names_regenerated": summary.names_regenerated,
+        "sources_reconciled": summary.sources_reconciled,
+        "links_resolved": summary.links_resolved,
         "domains_touched": sorted(summary.domains_touched),
         "stop_reason": summary.stop_reason,
     }
