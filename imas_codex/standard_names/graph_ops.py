@@ -1341,6 +1341,23 @@ def write_vocab_gaps(
 
     from datetime import UTC, datetime
 
+    from imas_codex.standard_names.segments import filter_closed_segment_gaps
+
+    # Drop gaps reported against open-vocabulary segments (e.g. physical_base)
+    # and pseudo segments (grammar_ambiguity) — they are not missing tokens.
+    gaps, dropped = filter_closed_segment_gaps(gaps)
+    if dropped:
+        from collections import Counter
+
+        drop_hist = Counter(g.get("segment") for g in dropped)
+        logger.info(
+            "write_vocab_gaps: skipped %d gaps on open/pseudo segments (%s)",
+            len(dropped),
+            ", ".join(f"{seg}={n}" for seg, n in drop_hist.most_common()),
+        )
+    if not gaps:
+        return 0
+
     now = datetime.now(UTC).isoformat()
 
     # Build deduplicated gap nodes and relationship batch

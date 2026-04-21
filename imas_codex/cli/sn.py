@@ -1161,6 +1161,17 @@ def sn_status() -> None:
     help="Filter by grammar segment (e.g., transformation, process)",
 )
 @click.option(
+    "--include-open-segments/--closed-only",
+    "include_open",
+    default=False,
+    help=(
+        "Include gaps reported on open-vocabulary segments (e.g. "
+        "physical_base) and pseudo segments (grammar_ambiguity). "
+        "By default these are hidden because they are not real vocabulary "
+        "gaps — physical_base admits any compound token by design."
+    ),
+)
+@click.option(
     "--format",
     "--export",
     "export_format",
@@ -1170,30 +1181,45 @@ def sn_status() -> None:
     help="Output format (yaml for ISN issue filing). "
     "(--export is a backward-compatible alias.)",
 )
-def sn_gaps(segment: str | None, export_format: str) -> None:
+def sn_gaps(segment: str | None, include_open: bool, export_format: str) -> None:
     """List grammar vocabulary gaps identified during composition.
 
     VocabGap nodes record missing grammar tokens found when the LLM
-    could not compose a valid standard name. Use --export yaml to
-    generate ISN issue filing data.
+    could not compose a valid standard name.  By default, gaps on
+    open-vocabulary segments (``physical_base``) and pseudo segments
+    (``grammar_ambiguity``) are hidden — these are not real missing
+    tokens and should not be reported as vocab gaps.  Use
+    ``--include-open-segments`` for diagnostics.  Use ``--export yaml``
+    to generate ISN issue filing data.
 
     \b
     Examples:
       imas-codex sn gaps
       imas-codex sn gaps --segment transformation
+      imas-codex sn gaps --include-open-segments
       imas-codex sn gaps --export yaml
     """
     from rich.table import Table
 
     from imas_codex.graph.client import GraphClient
+    from imas_codex.standard_names.segments import (
+        PSEUDO_SEGMENTS,
+        open_segments,
+    )
 
     with GraphClient() as gc:
         # Query VocabGap nodes with source counts
         params: dict = {}
-        where_clause = ""
+        where_clauses: list[str] = []
         if segment:
-            where_clause = "WHERE vg.segment = $segment"
+            where_clauses.append("vg.segment = $segment")
             params["segment"] = segment
+        if not include_open:
+            excluded = sorted(open_segments() | PSEUDO_SEGMENTS)
+            if excluded:
+                where_clauses.append("NOT (vg.segment IN $excluded_segments)")
+                params["excluded_segments"] = excluded
+        where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
         results = list(
             gc.query(

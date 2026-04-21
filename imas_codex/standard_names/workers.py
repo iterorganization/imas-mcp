@@ -739,15 +739,31 @@ def _update_sources_after_attach(
 def _update_sources_after_vocab_gap(
     vocab_gaps: list[dict], source: str, wlog: logging.LoggerAdapter
 ) -> None:
-    """Update StandardNameSource nodes to 'vocab_gap' status."""
+    """Update StandardNameSource nodes to 'vocab_gap' status.
+
+    Gaps reported on open/pseudo segments (e.g. ``physical_base``,
+    ``grammar_ambiguity``) are ignored — they are not real vocabulary gaps
+    and must not retire the source from future composition attempts.
+    """
     from imas_codex.graph.client import GraphClient
+    from imas_codex.standard_names.segments import is_open_segment
 
     source_type = "dd" if source == "dd" else "signals"
     source_ids = []
+    skipped_open = 0
     for vg in vocab_gaps:
+        if is_open_segment(vg.get("segment")):
+            skipped_open += 1
+            continue
         sid = vg.get("source_id")
         if sid:
             source_ids.append(f"{source_type}:{sid}")
+
+    if skipped_open:
+        wlog.debug(
+            "Skipped vocab_gap status update for %d open-segment gaps",
+            skipped_open,
+        )
 
     if not source_ids:
         return

@@ -376,6 +376,29 @@ class StandardNameComposeBatch(BaseModel):
 (e.g. a new particle species). These are logged and tracked for vocabulary
 extension.
 
+### Open vs Closed Segments
+
+The ISN grammar distinguishes **closed-vocabulary** segments (fixed token
+lists — `transformation`, `subject`, `position`, `component`, `coordinate`,
+`object`, `geometry`, `process`, `device`, `geometric_base`, `region`) from
+**open-vocabulary** segments (free-form compounds — `physical_base`). The LLM
+composer may incidentally report a "missing token" against the open
+`physical_base` segment when it packs a compound (e.g.
+`electron_temperature`, `parallel_component_of_ion_momentum_diffusivity`)
+into that slot — but by design *any* snake_case compound is admissible there.
+
+Such reports are **not real vocabulary gaps**: they would pollute the
+`VocabGap` node population and drown out genuine closed-segment gaps during
+release filtering.  The single source of truth for segment openness lives in
+`imas_codex/standard_names/segments.py`:
+
+- `open_segments()` — derived from `imas_standard_names.grammar.constants.SEGMENT_TOKEN_MAP` (any segment with an empty token list).
+- `PSEUDO_SEGMENTS` — `{"grammar_ambiguity"}`, a composer-reported structural finding that is not a real segment.
+- `is_open_segment(seg)` — unified predicate used by `write_vocab_gaps()` and `_update_sources_after_vocab_gap()` to drop non-gaps before persistence.
+
+`sn gaps` hides open/pseudo segments by default; pass
+`--include-open-segments` for diagnostics.
+
 ## Graph Persistence
 
 **Module:** `imas_codex/standard_names/graph_ops.py`
