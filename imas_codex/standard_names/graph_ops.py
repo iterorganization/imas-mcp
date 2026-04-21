@@ -2648,12 +2648,12 @@ def mark_sources_composed(
             """
             UNWIND $source_ids AS sid
             MATCH (sns:StandardNameSource {id: sid, claim_token: $token})
+            MATCH (sn:StandardName {id: $sn_id})
             SET sns.status = 'composed',
                 sns.composed_at = datetime(),
                 sns.claimed_at = null,
-                sns.claim_token = null
-            WITH sns
-            MATCH (sn:StandardName {id: $sn_id})
+                sns.claim_token = null,
+                sns.produced_sn_id = sn.id
             MERGE (sns)-[:PRODUCED_NAME]->(sn)
             RETURN count(sns) AS affected
             """,
@@ -2680,12 +2680,12 @@ def mark_sources_attached(
             """
             UNWIND $source_ids AS sid
             MATCH (sns:StandardNameSource {id: sid, claim_token: $token})
+            MATCH (sn:StandardName {id: $sn_id})
             SET sns.status = 'attached',
                 sns.composed_at = datetime(),
                 sns.claimed_at = null,
-                sns.claim_token = null
-            WITH sns
-            MATCH (sn:StandardName {id: $sn_id})
+                sns.claim_token = null,
+                sns.produced_sn_id = sn.id
             MERGE (sns)-[:PRODUCED_NAME]->(sn)
             RETURN count(sns) AS affected
             """,

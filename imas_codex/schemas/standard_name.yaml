@@ -784,6 +784,14 @@ classes:
         range: StandardName
         annotations:
           relationship_type: PRODUCED_NAME
+      produced_sn_id:
+        description: >-
+          ID of the StandardName this source produced (composed or
+          auto-attached). Scalar property mirror of the PRODUCED_NAME
+          relationship — set in the same transaction the edge is MERGEd.
+          Enables recovery of the edge if MERGE fails silently (e.g. when
+          the target StandardName was not persisted) and simplifies
+          bulk queries that only need the target id.
       embedding:
         description: Vector embedding for semantic search
         multivalued: true

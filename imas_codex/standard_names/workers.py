@@ -678,19 +678,28 @@ def _update_sources_after_compose(
 
     try:
         with GraphClient() as gc:
-            gc.query(
+            result = gc.query(
                 """
                 UNWIND $batch AS b
                 MATCH (sns:StandardNameSource {id: b.sns_id})
-                SET sns.status = 'composed',
-                    sns.composed_at = datetime()
-                WITH sns, b
                 MATCH (sn:StandardName {id: b.sn_id})
+                SET sns.status = 'composed',
+                    sns.composed_at = datetime(),
+                    sns.produced_sn_id = sn.id
                 MERGE (sns)-[:PRODUCED_NAME]->(sn)
+                RETURN count(sns) AS linked
                 """,
                 batch=batch,
             )
-        wlog.debug("Updated %d StandardNameSource nodes to composed", len(batch))
+            linked = result[0]["linked"] if result else 0
+        if linked < len(batch):
+            wlog.warning(
+                "Compose-linking gap: %d/%d sources had no matching "
+                "StandardName (edge not written, source still 'extracted')",
+                len(batch) - linked,
+                len(batch),
+            )
+        wlog.debug("Updated %d StandardNameSource nodes to composed", linked)
     except Exception:
         wlog.warning("Failed to update StandardNameSource status", exc_info=True)
 
@@ -717,19 +726,28 @@ def _update_sources_after_attach(
 
     try:
         with GraphClient() as gc:
-            gc.query(
+            result = gc.query(
                 """
                 UNWIND $batch AS b
                 MATCH (sns:StandardNameSource {id: b.sns_id})
-                SET sns.status = 'attached',
-                    sns.composed_at = datetime()
-                WITH sns, b
                 MATCH (sn:StandardName {id: b.sn_id})
+                SET sns.status = 'attached',
+                    sns.composed_at = datetime(),
+                    sns.produced_sn_id = sn.id
                 MERGE (sns)-[:PRODUCED_NAME]->(sn)
+                RETURN count(sns) AS linked
                 """,
                 batch=batch,
             )
-        wlog.debug("Updated %d StandardNameSource nodes to attached", len(batch))
+            linked = result[0]["linked"] if result else 0
+        if linked < len(batch):
+            wlog.warning(
+                "Attach-linking gap: %d/%d sources had no matching "
+                "StandardName (edge not written, source still 'extracted')",
+                len(batch) - linked,
+                len(batch),
+            )
+        wlog.debug("Updated %d StandardNameSource nodes to attached", linked)
     except Exception:
         wlog.warning(
             "Failed to update StandardNameSource attachment status", exc_info=True
