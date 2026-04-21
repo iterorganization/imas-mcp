@@ -377,6 +377,64 @@ entries:
     reason: >-
       ISN reference entry. Diagnostic-specific documentation (2386 chars) with Faraday's law equation, measurement principle, applications list, flux integration formula, and sign convention. Device + physical_base grammar correctly places flux_loop before voltage.
 
+  # --- Cycle-2 benchmark exemplars (equilibrium geometry) -----------------
+
+  - name: minor_radius_of_plasma_boundary
+    tier: outstanding
+    expected_score: 108
+    description: "Minor radius of the plasma boundary (half-width along R)."
+    documentation: >-
+      Minor radius $a$ of the plasma boundary, defined as half the radial extent of the outermost closed flux surface:
+
+      $$a = (R_{\max} - R_{\min}) / 2$$
+
+      where $R_{\max}$ and $R_{\min}$ are the outboard and inboard midplane intersections of the last closed flux surface (plasma boundary). Used as the characteristic length for many confinement scalings (e.g. $\tau_E \propto a^{1.97}$ in IPB98(y,2)) and as the denominator in normalised radii. See also [minor_radius_of_flux_surface](#minor_radius_of_flux_surface) for interior surfaces and [major_radius_of_geometric_axis](#major_radius_of_geometric_axis) for the complementary $R_0$.
+    unit: m
+    kind: scalar
+    tags: [geometry, equilibrium, time-dependent]
+    fields:
+      physical_base: minor_radius
+      position: plasma_boundary
+    reason: >-
+      Cycle-2 frontier exemplar. Scored 0.983 averaged across gpt-5.4, gemini-3.1-pro, sonnet-4.6 on the equilibrium benchmark. Textbook `physical_base_of_position` form with position drawn from the closed vocabulary. Cleanly separates the geometric quantity (minor_radius) from the locus where it is evaluated (plasma_boundary). Preferred over `geometric_minor_radius` (poor anti-pattern) and over bare `minor_radius`.
+
+  - name: elongation_of_plasma_boundary
+    tier: outstanding
+    expected_score: 108
+    description: "Elongation (vertical / horizontal extent ratio) of the plasma boundary."
+    documentation: >-
+      Plasma elongation $\kappa$ of the plasma boundary (last closed flux surface), defined as the ratio of vertical to horizontal half-extents:
+
+      $$\kappa = (Z_{\max} - Z_{\min}) / (R_{\max} - R_{\min})$$
+
+      Dimensionless shape parameter controlling current-carrying capacity and MHD stability limits (Troyon $\beta$ limit scales with $\kappa$). Does NOT apply to interior flux surfaces unless explicitly stated — use `elongation_of_flux_surface` with an index for surface-resolved profiles. See also [upper_elongation_of_plasma_boundary](#upper_elongation_of_plasma_boundary) and [lower_elongation_of_plasma_boundary](#lower_elongation_of_plasma_boundary) for the half-plane variants.
+    unit: dimensionless
+    kind: scalar
+    tags: [shape, equilibrium, time-dependent]
+    fields:
+      physical_base: elongation
+      position: plasma_boundary
+    reason: >-
+      Cycle-2 frontier exemplar. Scored 0.987 averaged across frontier models. Demonstrates that dimensionless shape descriptors follow the same `physical_base_of_position` form as metric quantities. Importantly, when a DD path carries an `upper`/`lower` subpath, the half-plane variants (`upper_elongation_of_plasma_boundary`) must be used — collapsing `elongation_upper` and `elongation_lower` into a single `elongation_of_plasma_boundary` is a semantic error (see anti-pattern below).
+
+  - name: distance_between_plasma_boundary_and_closest_wall_point
+    tier: outstanding
+    expected_score: 106
+    description: "Shortest distance between the plasma boundary and the first wall."
+    documentation: >-
+      Minimum Euclidean distance in the poloidal plane between the plasma boundary (last closed flux surface) and the closest point on the first wall contour:
+
+      $$d_{\min} = \min_{(\mathbf{x}_p, \mathbf{x}_w) \in \partial P \times \partial W} \| \mathbf{x}_p - \mathbf{x}_w \|$$
+
+      Used as a safety margin and plasma-wall gap indicator during position control. Related to (but distinct from) specific named gaps (`gap_angle_of_plasma_boundary`, etc.) which reference a pre-defined reference point rather than the nearest wall element.
+    unit: m
+    kind: scalar
+    tags: [geometry, equilibrium, plasma-wall, time-dependent]
+    fields:
+      physical_base: distance_between_plasma_boundary_and_closest_wall_point
+    reason: >-
+      Cycle-2 frontier exemplar. Scored 0.950 across frontier models. Demonstrates NC-14 (canonical `distance_between_X_and_Y` form for separations between two named features) AND the open-vocabulary `physical_base` principle — the whole compound lands in `physical_base` and the name still round-trips through `parse_standard_name`. Reviewers must NOT flag this pattern as "unparseable grammar"; it is exactly the prescribed form.
+
   # ===================================================================
   # GOOD tier (72-101): WEST catalog + shorter ISN entries — correct
   # grammar, adequate docs, may lack depth or polish
@@ -774,3 +832,35 @@ entries:
       physical_base: data
     reason: >-
       Synthetic anti-pattern entry. Maximally vague name with zero physics content. Empty documentation, no unit, no tags. Represents everything a standard name should NOT be. Would create namespace pollution and signal-to-noise degradation. Fails all quality dimensions.
+
+  # --- Cycle-2 benchmark anti-patterns (equilibrium geometry) ------------
+
+  - name: elongation_of_plasma_boundary  # for elongation_lower source path
+    tier: poor
+    expected_score: 35
+    description: "Elongation of the plasma boundary (collapsed from elongation_lower)."
+    documentation: >-
+      When a DD path carries a distinguishing suffix such as `_upper` or `_lower`, the standard name must preserve that distinction. Collapsing `equilibrium/.../boundary_separatrix/elongation_lower` into the generic `elongation_of_plasma_boundary` loses the half-plane information and causes a namespace collision with the true (symmetric) elongation quantity.
+    unit: dimensionless
+    kind: scalar
+    tags: []
+    fields:
+      physical_base: elongation
+      position: plasma_boundary
+    reason: >-
+      Cycle-2 anti-pattern. Semantic error observed on claude-haiku-4.5 and gpt-5.4-mini: the source path `elongation_upper` / `elongation_lower` was mapped to the same generic `elongation_of_plasma_boundary`, losing the upper/lower distinction and creating a name collision. Correct form: `upper_elongation_of_plasma_boundary` / `lower_elongation_of_plasma_boundary`. Reviewers should dock the semantic and convention dimensions (not grammar — the name itself round-trips).
+
+  - name: vertical_coordinate_of_closest_wall_point  # with invalid grammar_fields
+    tier: poor
+    expected_score: 38
+    description: "Vertical coordinate of the closest wall point (with malformed grammar_fields)."
+    documentation: >-
+      The NAME itself parses correctly (physical_base=`vertical_coordinate`, position=`closest_wall_point`). The failure mode is in the accompanying `grammar_fields` map: compose-stage models (notably gemini-3.1-flash-lite-preview) declared `geometric_base='vertical_coordinate'`, but `vertical_coordinate` is NOT in the closed `geometric_bases` vocabulary (position, vertex, centroid, outline, contour, displacement, offset, trajectory, extent, surface_normal). They also invented a `geometry` field key that is not a recognised grammar segment.
+    unit: m
+    kind: scalar
+    tags: []
+    fields:
+      geometric_base: vertical_coordinate  # INVALID: not in closed vocabulary
+      geometry: plasma_boundary            # INVALID: not a recognised grammar segment
+    reason: >-
+      Cycle-2 anti-pattern. The standard name is correct, but `grammar_fields` falsifies the decomposition: it uses `vertical_coordinate` as a `geometric_base` (closed-vocab violation) and invents a `geometry` key that does not exist in the grammar. Reviewers should dock the grammar dimension specifically for this field-map inconsistency — the name round-trips, but the declared decomposition contradicts the closed vocabularies. Correct decomposition: `physical_base: vertical_coordinate`, `position: closest_wall_point`.
