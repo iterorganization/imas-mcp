@@ -1,0 +1,318 @@
+{
+  "audit_date": "2025-07-15",
+  "plan_ref": "plans/features/standard-names/35-catalog-schema-redesign.md",
+  "total": 925,
+  "fields": {
+    "physical_base": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "potentially-drop",
+      "notes": "Legacy grammar field, fully superseded by grammar_physical_base (907/925 populated)"
+    },
+    "subject": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "potentially-drop",
+      "notes": "Legacy grammar field, fully superseded by grammar_subject (280/925 populated)"
+    },
+    "component": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "potentially-drop",
+      "notes": "Legacy grammar field, fully superseded by grammar_component (151/925 populated)"
+    },
+    "coordinate": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "potentially-drop",
+      "notes": "Legacy grammar field, fully superseded by grammar_coordinate (83/925 populated)"
+    },
+    "position": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "potentially-drop",
+      "notes": "Legacy grammar field, fully superseded by grammar_position (51/925 populated)"
+    },
+    "process": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "potentially-drop",
+      "notes": "Legacy grammar field, fully superseded by grammar_process (19/925 populated)"
+    },
+    "species": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "dead-but-retained",
+      "notes": "Plan says keep schema contract despite 0/925 population"
+    },
+    "population": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "dead-but-retained",
+      "notes": "Plan says keep schema contract despite 0/925 population"
+    },
+    "toroidal_mode": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "dead-but-retained",
+      "notes": "Plan says keep schema contract despite 0/925 population"
+    },
+    "flux_surface_average": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "dead-but-retained",
+      "notes": "Plan says keep schema contract despite 0/925 population"
+    },
+    "reviewer_model_secondary": {
+      "populated": 31,
+      "percentage": 3.35,
+      "samples": [
+        "vertical_coordinate_of_plasma_boundary",
+        "line_integrated_electron_density_constraint_exact_flag",
+        "toroidal_magnetic_flux"
+      ],
+      "category": "deprecated-secondary",
+      "notes": "Already marked deprecated in schema; 31 nodes carry legacy secondary review data"
+    },
+    "reviewer_score_secondary": {
+      "populated": 31,
+      "percentage": 3.35,
+      "samples": [
+        "vertical_coordinate_of_plasma_boundary",
+        "line_integrated_electron_density_constraint_exact_flag",
+        "toroidal_magnetic_flux"
+      ],
+      "category": "deprecated-secondary",
+      "notes": "Already marked deprecated in schema; same 31-node cohort"
+    },
+    "reviewer_scores_secondary": {
+      "populated": 31,
+      "percentage": 3.35,
+      "samples": [
+        "vertical_coordinate_of_plasma_boundary",
+        "line_integrated_electron_density_constraint_exact_flag",
+        "toroidal_magnetic_flux"
+      ],
+      "category": "deprecated-secondary",
+      "notes": "Already marked deprecated in schema; same 31-node cohort"
+    },
+    "reviewer_disagreement": {
+      "populated": 31,
+      "percentage": 3.35,
+      "samples": [
+        "vertical_coordinate_of_plasma_boundary",
+        "line_integrated_electron_density_constraint_exact_flag",
+        "toroidal_magnetic_flux"
+      ],
+      "category": "deprecated-secondary",
+      "notes": "Co-occurs exactly with other *_secondary fields (31/31 overlap). Distinct from review_disagreement (702/925, primary QA)"
+    },
+    "review_status": {
+      "populated": 925,
+      "percentage": 100.0,
+      "samples": [
+        "parallel_component_of_ion_momentum_diffusivity",
+        "radial_component_of_magnetic_field",
+        "vertical_coordinate_of_plasma_boundary_outline_point"
+      ],
+      "category": "rename",
+      "notes": "To be renamed to pipeline_status in Phase 2. Distribution: enriched=688, named=236, drafted=1"
+    },
+    "status": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "new-field",
+      "notes": "Not yet present; to be added in Phase 2, backfilled to 'draft'"
+    },
+    "deprecates": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "new-field",
+      "notes": "Not yet present; to be added in Phase 2"
+    },
+    "superseded_by": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "new-field",
+      "notes": "Not yet present; to be added in Phase 2"
+    },
+    "origin": {
+      "populated": 0,
+      "percentage": 0.0,
+      "samples": [],
+      "category": "new-field",
+      "notes": "Not yet present; to be added in Phase 2, backfilled to 'pipeline'"
+    },
+    "cocos_transformation_type": {
+      "populated": 521,
+      "percentage": 56.32,
+      "samples": [
+        "vertical_coordinate_of_plasma_boundary_outline_point",
+        "distance_to_closest_wall_point_of_plasma_boundary",
+        "major_radius_of_measurement_position"
+      ],
+      "category": "keep",
+      "notes": "Distribution: one_like=511, psi_like=4, b0_like=3, q_like=1, grid_type_tensor_contravariant_like=1, ip_like=1"
+    },
+    "cocos_rel_HAS_COCOS": {
+      "populated": 867,
+      "percentage": 93.73,
+      "samples": [
+        "parallel_component_of_ion_momentum_diffusivity",
+        "radial_component_of_magnetic_field",
+        "vertical_coordinate_of_plasma_boundary_outline_point"
+      ],
+      "category": "keep",
+      "notes": "Relationship to COCOS node; graph-only per disposition table"
+    },
+    "unit_rel_HAS_UNIT": {
+      "populated": 925,
+      "percentage": 100.0,
+      "samples": [
+        "parallel_component_of_ion_momentum_diffusivity",
+        "radial_component_of_magnetic_field",
+        "vertical_coordinate_of_plasma_boundary_outline_point"
+      ],
+      "category": "keep",
+      "notes": "All nodes have HAS_UNIT. Note: atomic_number has 2 HAS_UNIT relationships (926 total rels for 925 nodes)"
+    },
+    "source_paths": {
+      "populated": 924,
+      "percentage": 99.89,
+      "samples": [
+        "parallel_component_of_ion_momentum_diffusivity",
+        "radial_component_of_magnetic_field",
+        "vertical_coordinate_of_plasma_boundary_outline_point"
+      ],
+      "category": "graph-only-keep",
+      "notes": "1 node missing: toroidal_plasma_current_due_to_non_inductive_current_drive"
+    },
+    "source_types": {
+      "populated": 925,
+      "percentage": 100.0,
+      "samples": [
+        "parallel_component_of_ion_momentum_diffusivity",
+        "radial_component_of_magnetic_field",
+        "vertical_coordinate_of_plasma_boundary_outline_point"
+      ],
+      "category": "graph-only-keep",
+      "notes": "All nodes have source_types; all values are ['dd'] (DD extraction only, no signal sources yet)"
+    }
+  },
+  "recommendations": {
+    "drop": [
+      "physical_base",
+      "subject",
+      "component",
+      "coordinate",
+      "position",
+      "process",
+      "reviewer_model_secondary",
+      "reviewer_score_secondary",
+      "reviewer_scores_secondary",
+      "reviewer_disagreement"
+    ],
+    "keep_schema_dead": [
+      "species",
+      "population",
+      "toroidal_mode",
+      "flux_surface_average"
+    ],
+    "rationale": {
+      "physical_base": "0/925 populated; fully superseded by grammar_physical_base. Drop from schema.",
+      "subject": "0/925 populated; fully superseded by grammar_subject. Drop from schema.",
+      "component": "0/925 populated; fully superseded by grammar_component. Drop from schema.",
+      "coordinate": "0/925 populated; fully superseded by grammar_coordinate. Drop from schema.",
+      "position": "0/925 populated; fully superseded by grammar_position. Drop from schema.",
+      "process": "0/925 populated; fully superseded by grammar_process. Drop from schema.",
+      "reviewer_model_secondary": "31/925 populated but already deprecated in schema. Data is expendable secondary review output. Drop from schema and REMOVE properties in migration Cypher.",
+      "reviewer_score_secondary": "31/925 populated but already deprecated. Same 31-node cohort. Drop.",
+      "reviewer_scores_secondary": "31/925 populated but already deprecated. Same 31-node cohort. Drop.",
+      "reviewer_disagreement": "31/925 populated; co-occurs exactly with *_secondary fields. This is the secondary-review disagreement score, distinct from review_disagreement (702/925, primary QA). Drop from schema.",
+      "species": "0/925 populated. Plan explicitly says KEEP schema contract for future use. Do NOT drop.",
+      "population": "0/925 populated. Plan explicitly says KEEP schema contract. Do NOT drop.",
+      "toroidal_mode": "0/925 populated. Plan explicitly says KEEP schema contract. Do NOT drop.",
+      "flux_surface_average": "0/925 populated. Plan explicitly says KEEP schema contract. Do NOT drop."
+    }
+  },
+  "graph_only_sanity_check": {
+    "source_paths": {
+      "expected": "populated for most nodes",
+      "actual": "924/925 populated",
+      "status": "PASS"
+    },
+    "source_types": {
+      "expected": "populated for most nodes",
+      "actual": "925/925 populated",
+      "status": "PASS"
+    },
+    "cocos_rel_HAS_COCOS": {
+      "expected": "populated for COCOS-relevant names",
+      "actual": "867/925 populated",
+      "status": "PASS"
+    },
+    "SOURCE_DD_PATH_rel": {
+      "expected": "may not yet exist (plan mentions as future)",
+      "actual": "0 relationships",
+      "status": "INFO — not yet created; source_paths property serves this role currently"
+    },
+    "SOURCE_SIGNAL_rel": {
+      "expected": "may not yet exist (plan mentions as future)",
+      "actual": "0 relationships",
+      "status": "INFO — not yet created; no signal-sourced names yet"
+    }
+  },
+  "supplementary": {
+    "review_status_distribution": {
+      "enriched": 688,
+      "named": 236,
+      "drafted": 1
+    },
+    "kind_distribution": {
+      "scalar": 754,
+      "vector_component": 163,
+      "complex_part": 6,
+      "tensor_component": 2
+    },
+    "cocos_transformation_type_distribution": {
+      "one_like": 511,
+      "psi_like": 4,
+      "b0_like": 3,
+      "q_like": 1,
+      "grid_type_tensor_contravariant_like": 1,
+      "ip_like": 1
+    },
+    "relationship_summary": {
+      "outgoing": {
+        "HAS_UNIT": 926,
+        "HAS_COCOS": 867,
+        "HAS_SEGMENT": 214
+      },
+      "incoming": {
+        "PRODUCED_NAME": 1812,
+        "HAS_STANDARD_NAME": 1738,
+        "REVIEWS": 738,
+        "EVIDENCED_BY": 57
+      }
+    },
+    "notes": [
+      "atomic_number has 2 HAS_UNIT relationships — possible data quality issue to investigate",
+      "review_tier (702/925) not listed in disposition table — may need explicit keep/drop decision",
+      "reviewer_comments (702/925) and reviewer_scores (702/925) are primary review fields, should be kept",
+      "review_disagreement (702/925) is the primary QA disagreement metric, distinct from reviewer_disagreement (31/925, secondary)"
+    ]
+  }
+}
