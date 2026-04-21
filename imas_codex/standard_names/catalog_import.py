@@ -1,6 +1,9 @@
 """Catalog feedback import — read reviewed YAML entries and write to graph.
 
-Implements the publish → review → import feedback loop for standard names.
+Phase 4 rewrite: diff-based origin tracking, forbidden-key rejection,
+domain-from-path, grammar reuse, lock/watermark concurrency control,
+and unit/COCOS validation.
+
 Catalog entries are authoritative: their fields overwrite graph fields.
 Graph-only fields (embedding, model, generated_at) are preserved.
 """
@@ -8,29 +11,42 @@ Graph-only fields (embedding, model, generated_at) are preserved.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from imas_codex.standard_names.protection import PROTECTED_FIELDS
+
 logger = logging.getLogger(__name__)
 
-# Fields that are graph-only extensions (not in the ISN catalog model)
-# but may appear in YAML files. Strip before model validation; pass
-# through via the *extra* dict to _catalog_entry_to_dict.
-_GRAPH_ONLY_FIELDS = {"dd_paths", "physics_domain", "cocos_transformation_type"}
+_FORBIDDEN_YAML_KEYS = frozenset({"source_paths", "dd_paths"})
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
 
 
 @dataclass
-class ImportResult:
-    """Summary of a catalog import operation."""
+class ImportReport:
+    """Summary of a catalog import operation (Phase 4)."""
 
     imported: int = 0
     updated: int = 0
+    created: int = 0
     skipped: int = 0
     errors: list[str] = field(default_factory=list)
     entries: list[dict[str, Any]] = field(default_factory=list)
     catalog_commit_sha: str | None = None
+    pr_numbers: list[int] = field(default_factory=list)
+    dry_run: bool = False
+    watermark_advanced: bool = False
+
+
+# Keep legacy ImportResult as alias for backward compat with tests
+ImportResult = ImportReport
 
 
 @dataclass
@@ -45,12 +61,13 @@ class CheckResult:
     graph_commit_sha: str | None = None
 
 
-def _resolve_catalog_sha(catalog_dir: Path) -> str | None:
-    """Resolve the git HEAD SHA of the catalog directory.
+# ---------------------------------------------------------------------------
+# Git helpers
+# ---------------------------------------------------------------------------
 
-    Returns the 40-character commit SHA, or None if the directory
-    is not inside a git repository.
-    """
+
+def _resolve_catalog_sha(catalog_dir: Path) -> str | None:
+    """Resolve the git HEAD SHA of the catalog directory."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -70,339 +87,621 @@ def _resolve_catalog_sha(catalog_dir: Path) -> str | None:
         return None
 
 
-def _parse_grammar_fields(name: str) -> dict[str, str | None]:
-    """Derive grammar fields from a standard name string.
-
-    Returns a dict with keys: physical_base, subject, component,
-    coordinate, position, process. Values are strings or None.
-    """
+def _is_git_repo(path: Path) -> bool:
+    """Check whether *path* is inside a git work-tree."""
     try:
-        from imas_standard_names.grammar import parse_standard_name
-
-        parsed = parse_standard_name(name)
-        return {
-            "physical_base": str(parsed.physical_base)
-            if parsed.physical_base
-            else None,
-            "subject": str(parsed.subject.value) if parsed.subject else None,
-            "component": str(parsed.component.value) if parsed.component else None,
-            "coordinate": str(parsed.coordinate.value) if parsed.coordinate else None,
-            "position": str(parsed.position.value) if parsed.position else None,
-            "process": str(parsed.process.value) if parsed.process else None,
-        }
-    except Exception:
-        logger.debug("Grammar parse failed for name: %r", name)
-        return {
-            "physical_base": None,
-            "subject": None,
-            "component": None,
-            "coordinate": None,
-            "position": None,
-            "process": None,
-        }
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
 
 
-def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str, Any]:
-    """Convert a validated catalog entry to a graph-write dict.
+# ---------------------------------------------------------------------------
+# Domain-from-path derivation
+# ---------------------------------------------------------------------------
 
-    Maps catalog field names to graph schema field names and derives
-    grammar fields from the standard name.
+#: Pattern: standard_names/<domain>/.../<name>.yml  (domain = first component)
+_DOMAIN_PATH_RE = re.compile(r"standard_names/([^/]+)/.+\.ya?ml$")
 
-    Parameters
-    ----------
-    entry:
-        Validated ``StandardNameEntry`` from ISN catalog parsing.
-    extra:
-        Raw YAML dict for fields not carried by the catalog model
-        (e.g., ``cocos_transformation_type``).
+
+def _derive_domain_from_path(yaml_path: Path) -> str | None:
+    """Derive physics_domain from the file path convention.
+
+    Expects ``<root>/standard_names/<domain>/<name>.yml``.
+    Returns the domain string or None if the path doesn't match.
     """
-    # Derive grammar fields from the name
-    grammar = _parse_grammar_fields(entry.name)
+    path_str = str(yaml_path).replace("\\", "/")
+    m = _DOMAIN_PATH_RE.search(path_str)
+    if m:
+        return m.group(1)
+    return None
 
-    # Convert tags/links to plain strings (catalog may use typed objects)
-    tags = [str(t) for t in entry.tags] if entry.tags else None
-    links = [str(lnk) for lnk in entry.links] if entry.links else None
-    # dd_paths and physics_domain may not be on the ISN model — fall back to extra
-    dd_paths_raw = getattr(entry, "dd_paths", None) or (extra or {}).get("dd_paths")
-    dd_paths = list(dd_paths_raw) if dd_paths_raw else None
-    constraints = list(entry.constraints) if entry.constraints else None
 
-    # Determine source_types from presence of dd_paths
-    source_types = ["dd"] if dd_paths else ["manual"]
+# ---------------------------------------------------------------------------
+# Grammar decomposition (re-uses graph_ops helper)
+# ---------------------------------------------------------------------------
 
-    # Encode dd_paths with dd: prefix for source_paths storage
-    from imas_codex.standard_names.source_paths import encode_dd_source
 
-    source_paths = [encode_dd_source(p) for p in dd_paths] if dd_paths else None
-    physics_domain = getattr(entry, "physics_domain", None) or (extra or {}).get(
-        "physics_domain"
-    )
+def _grammar_decomposition(name: str) -> dict[str, str | None]:
+    """Parse name via ISN grammar, returning grammar_* fields."""
+    from imas_codex.standard_names.graph_ops import _grammar_decomposition
 
-    result = {
+    return _grammar_decomposition(name)
+
+
+# ---------------------------------------------------------------------------
+# Entry conversion
+# ---------------------------------------------------------------------------
+
+# Graph-only fields that import must never overwrite (omitting = preserving)
+_GRAPH_ONLY_PRESERVE = frozenset(
+    {
+        "embedding",
+        "embedded_at",
+        "model",
+        "generated_at",
+        "confidence",
+        "source_types",
+        "source_paths",
+        "pipeline_status",
+        "reviewer_model",
+        "reviewer_score",
+        "reviewer_scores",
+        "reviewer_comments",
+        "reviewed_at",
+        "review_tier",
+        "review_input_hash",
+        "vocab_gap_detail",
+        "validation_issues",
+        "validation_layer_summary",
+        "validation_status",
+        "link_status",
+    }
+)
+
+
+def _entry_to_graph_dict(
+    entry: Any,
+    *,
+    physics_domain: str,
+) -> dict[str, Any]:
+    """Convert a validated ISN entry to a graph-write dict.
+
+    Does NOT include graph-only fields (source_paths, etc.).
+    Grammar fields are derived from the entry name.
+    """
+    grammar = _grammar_decomposition(entry.name)
+
+    tags = [str(t) for t in entry.tags] if entry.tags else []
+    links = [str(lnk) for lnk in entry.links] if entry.links else []
+    constraints = list(entry.constraints) if entry.constraints else []
+
+    result: dict[str, Any] = {
         "id": entry.name,
         "description": entry.description or None,
         "documentation": entry.documentation or None,
-        "kind": str(entry.kind) if entry.kind else None,
-        "unit": str(entry.unit) if entry.unit else None,
+        "kind": str(entry.kind) if hasattr(entry, "kind") and entry.kind else None,
+        "unit": str(entry.unit) if hasattr(entry, "unit") and entry.unit else None,
         "tags": tags or None,
         "links": links or None,
-        "source_paths": source_paths,
         "validity_domain": entry.validity_domain or None,
         "constraints": constraints or None,
-        "physics_domain": physics_domain or None,
-        "pipeline_status": "accepted",
-        "source_types": source_types,
-        # Grammar fields
-        "physical_base": grammar["physical_base"],
-        "subject": grammar["subject"],
-        "component": grammar["component"],
-        "coordinate": grammar["coordinate"],
-        "position": grammar["position"],
-        "process": grammar["process"],
+        "physics_domain": physics_domain,
+        "status": str(entry.status) if entry.status else "draft",
+        "deprecates": str(entry.deprecates) if entry.deprecates else None,
+        "superseded_by": str(entry.superseded_by) if entry.superseded_by else None,
+        "cocos_transformation_type": (
+            str(entry.cocos_transformation_type)
+            if entry.cocos_transformation_type
+            else None
+        ),
     }
 
-    # Add fields from raw YAML that bypass the catalog model
-    if extra:
-        cocos_type = extra.get("cocos_transformation_type")
-        if cocos_type:
-            result["cocos_transformation_type"] = cocos_type
-        cocos = extra.get("cocos")
-        if cocos is not None:
-            result["cocos"] = int(cocos)
+    # Merge grammar fields
+    result.update(grammar)
 
     return result
 
 
-def _write_catalog_entries(
+# ---------------------------------------------------------------------------
+# Graph read: current state for diff
+# ---------------------------------------------------------------------------
+
+
+def _fetch_graph_state(
+    gc: Any,
+    name_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Fetch current StandardName properties for diff comparison."""
+    if not name_ids:
+        return {}
+
+    props = sorted(PROTECTED_FIELDS | {"origin"})
+    return_clause = ", ".join(f"sn.{p} AS {p}" for p in props)
+
+    rows = gc.query(
+        f"""
+        UNWIND $ids AS id
+        OPTIONAL MATCH (sn:StandardName {{id: id}})
+        RETURN sn.id AS id, {return_clause}
+        """,
+        ids=name_ids,
+    )
+
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows or []:
+        if row.get("id"):
+            result[row["id"]] = dict(row)
+    return result
+
+
+def _protected_fields_differ(
+    graph_state: dict[str, Any],
+    new_entry: dict[str, Any],
+) -> bool:
+    """Check whether any PROTECTED_FIELDS differ between graph and new entry."""
+    for field_name in PROTECTED_FIELDS:
+        old_val = graph_state.get(field_name)
+        new_val = new_entry.get(field_name)
+        # Normalise None-like empties
+        if not old_val:
+            old_val = None
+        if not new_val:
+            new_val = None
+        if old_val != new_val:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+
+def _validate_unit_against_graph(
+    gc: Any,
     entries: list[dict[str, Any]],
+) -> list[str]:
+    """Check for unit mismatches between catalog entries and graph."""
+    unit_batch = [{"id": e["id"], "unit": e["unit"]} for e in entries if e.get("unit")]
+    if not unit_batch:
+        return []
+
+    rows = gc.query(
+        """
+        UNWIND $batch AS b
+        MATCH (sn:StandardName {id: b.id})
+        WHERE sn.unit IS NOT NULL AND b.unit IS NOT NULL
+          AND sn.unit <> b.unit
+        RETURN sn.id AS name,
+               sn.unit AS existing_unit,
+               b.unit AS incoming_unit
+        """,
+        batch=unit_batch,
+    )
+
+    errors = []
+    for row in rows or []:
+        errors.append(
+            f"Unit mismatch for {row['name']}: "
+            f"graph has '{row['existing_unit']}', "
+            f"catalog has '{row['incoming_unit']}'. "
+            f"Use --accept-unit-override to force."
+        )
+    return errors
+
+
+def _validate_cocos_against_graph(
+    gc: Any,
+    entries: list[dict[str, Any]],
+) -> list[str]:
+    """Check for COCOS transformation type mismatches."""
+    cocos_batch = [
+        {"id": e["id"], "cocos": e["cocos_transformation_type"]}
+        for e in entries
+        if e.get("cocos_transformation_type")
+    ]
+    if not cocos_batch:
+        return []
+
+    rows = gc.query(
+        """
+        UNWIND $batch AS b
+        MATCH (sn:StandardName {id: b.id})
+        WHERE sn.cocos_transformation_type IS NOT NULL
+          AND b.cocos IS NOT NULL
+          AND sn.cocos_transformation_type <> b.cocos
+        RETURN sn.id AS name,
+               sn.cocos_transformation_type AS existing,
+               b.cocos AS incoming
+        """,
+        batch=cocos_batch,
+    )
+
+    errors = []
+    for row in rows or []:
+        errors.append(
+            f"COCOS mismatch for {row['name']}: "
+            f"graph has '{row['existing']}', "
+            f"catalog has '{row['incoming']}'. "
+            f"Use --accept-cocos-override to force."
+        )
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Graph write: import entries
+# ---------------------------------------------------------------------------
+
+
+def _write_import_entries(
+    gc: Any,
+    entries: list[dict[str, Any]],
+    *,
     catalog_commit_sha: str | None = None,
+    pr_number: int | None = None,
+    pr_url: str | None = None,
 ) -> int:
     """Write catalog entries to graph with catalog-authoritative semantics.
 
     Catalog-owned fields are SET directly (overwrite).
     Graph-only fields (embedding, model, generated_at, etc.) are preserved
-    via coalesce. Returns the number of nodes written.
+    via omission (not in the SET clause at all).
+    Returns the number of nodes written.
     """
     if not entries:
         return 0
 
-    from imas_codex.graph.client import GraphClient
-
-    # Inject catalog_commit_sha into each entry for Cypher parameter access
+    # Add provenance metadata to each entry
     for e in entries:
-        e["catalog_commit_sha"] = catalog_commit_sha
+        e["_catalog_commit_sha"] = catalog_commit_sha
+        e["_pr_number"] = pr_number
+        e["_pr_url"] = pr_url
+        e["_origin"] = e.pop("_origin", "catalog_edit")
 
-    with GraphClient() as gc:
-        # MERGE StandardName nodes — catalog fields overwrite, graph-only preserved
+    # Main MERGE — catalog-owned fields overwrite
+    gc.query(
+        """
+        UNWIND $batch AS b
+        MERGE (sn:StandardName {id: b.id})
+        SET sn.description = b.description,
+            sn.documentation = b.documentation,
+            sn.kind = b.kind,
+            sn.unit = b.unit,
+            sn.tags = b.tags,
+            sn.links = b.links,
+            sn.validity_domain = b.validity_domain,
+            sn.constraints = b.constraints,
+            sn.physics_domain = b.physics_domain,
+            sn.status = b.status,
+            sn.deprecates = b.deprecates,
+            sn.superseded_by = b.superseded_by,
+            sn.cocos_transformation_type = coalesce(b.cocos_transformation_type, sn.cocos_transformation_type),
+            sn.pipeline_status = 'accepted',
+            sn.origin = b._origin,
+            sn.imported_at = datetime(),
+            sn.catalog_commit_sha = b._catalog_commit_sha,
+            sn.import_pr_number = b._pr_number,
+            sn.import_pr_url = b._pr_url,
+            sn.source_types = coalesce(sn.source_types, ['catalog']),
+            sn.created_at = coalesce(sn.created_at, datetime())
+        """,
+        batch=entries,
+    )
+
+    # Grammar fields (separate SET to keep queries readable)
+    grammar_batch = [
+        {k: v for k, v in e.items() if k == "id" or k.startswith("grammar_")}
+        for e in entries
+    ]
+    gc.query(
+        """
+        UNWIND $batch AS b
+        MATCH (sn:StandardName {id: b.id})
+        SET sn.grammar_component = b.grammar_component,
+            sn.grammar_coordinate = b.grammar_coordinate,
+            sn.grammar_subject = b.grammar_subject,
+            sn.grammar_physical_base = b.grammar_physical_base,
+            sn.grammar_geometric_base = b.grammar_geometric_base,
+            sn.grammar_process = b.grammar_process,
+            sn.grammar_transformation = b.grammar_transformation,
+            sn.grammar_object = b.grammar_object,
+            sn.grammar_geometry = b.grammar_geometry,
+            sn.grammar_position = b.grammar_position,
+            sn.grammar_device = b.grammar_device,
+            sn.grammar_secondary_base = b.grammar_secondary_base,
+            sn.grammar_binary_operator = b.grammar_binary_operator
+        """,
+        batch=grammar_batch,
+    )
+
+    # Create HAS_UNIT relationships
+    units_batch = [{"id": e["id"], "unit": e["unit"]} for e in entries if e.get("unit")]
+    if units_batch:
         gc.query(
             """
             UNWIND $batch AS b
-            MERGE (sn:StandardName {id: b.id})
-            SET sn.description = b.description,
-                sn.documentation = b.documentation,
-                sn.kind = b.kind,
-                sn.unit = b.unit,
-                sn.tags = b.tags,
-                sn.links = b.links,
-                sn.source_paths = b.source_paths,
-                sn.validity_domain = b.validity_domain,
-                sn.constraints = b.constraints,
-                sn.physics_domain = b.physics_domain,
-                sn.cocos_transformation_type = coalesce(b.cocos_transformation_type, sn.cocos_transformation_type),
-                sn.pipeline_status = 'accepted',
-                sn.imported_at = datetime(),
-                sn.catalog_commit_sha = b.catalog_commit_sha,
-                sn.grammar_physical_base = b.physical_base,
-                sn.grammar_subject = b.subject,
-                sn.grammar_component = b.component,
-                sn.grammar_coordinate = b.coordinate,
-                sn.grammar_position = b.position,
-                sn.grammar_process = b.process,
-                sn.source_types = coalesce(b.source_types, sn.source_types),
-                sn.created_at = coalesce(sn.created_at, datetime()),
-                sn.embedding = coalesce(sn.embedding, null),
-                sn.embedded_at = coalesce(sn.embedded_at, null),
-                sn.model = coalesce(sn.model, null),
-                sn.generated_at = coalesce(sn.generated_at, null),
-                sn.confidence = coalesce(sn.confidence, null),
-                sn.cocos = coalesce(b.cocos, sn.cocos),
-                sn.dd_version = coalesce(sn.dd_version, null)
+            MATCH (sn:StandardName {id: b.id})
+            MERGE (u:Unit {id: b.unit})
+            SET u.symbol = coalesce(u.symbol, b.unit)
+            MERGE (sn)-[:HAS_UNIT]->(u)
             """,
-            batch=entries,
+            batch=units_batch,
         )
-
-        # Create HAS_UNIT relationships: StandardName → Unit
-        units_batch = [
-            {"id": e["id"], "unit": e["unit"]} for e in entries if e.get("unit")
-        ]
-        if units_batch:
-            gc.query(
-                """
-                UNWIND $batch AS b
-                MATCH (sn:StandardName {id: b.id})
-                MERGE (u:Unit {id: b.unit})
-                SET u.symbol = coalesce(u.symbol, b.unit)
-                MERGE (sn)-[:HAS_UNIT]->(u)
-                """,
-                batch=units_batch,
-            )
-
-        # Create HAS_COCOS relationships: StandardName → COCOS
-        cocos_batch = [
-            {"id": e["id"], "cocos": e["cocos"]}
-            for e in entries
-            if e.get("cocos") is not None
-        ]
-        if cocos_batch:
-            gc.query(
-                """
-                UNWIND $batch AS b
-                MATCH (sn:StandardName {id: b.id})
-                MATCH (c:COCOS {id: b.cocos})
-                MERGE (sn)-[:HAS_COCOS]->(c)
-                """,
-                batch=cocos_batch,
-            )
-
-        # Create HAS_STANDARD_NAME relationships from dd_paths
-        # source_paths has dd: prefix; IMASNode.id uses bare paths
-        from imas_codex.standard_names.source_paths import strip_dd_prefix
-
-        dd_batch = []
-        for e in entries:
-            if e.get("source_paths"):
-                for path in e["source_paths"]:
-                    dd_batch.append({"id": e["id"], "source_id": strip_dd_prefix(path)})
-
-        if dd_batch:
-            gc.query(
-                """
-                UNWIND $batch AS b
-                MATCH (sn:StandardName {id: b.id})
-                MATCH (src:IMASNode {id: b.source_id})
-                MERGE (src)-[:HAS_STANDARD_NAME]->(sn)
-                """,
-                batch=dd_batch,
-            )
 
     written = len(entries)
     logger.info("Imported %d catalog entries to graph", written)
     return written
 
 
-def import_catalog(
+# Keep legacy name as alias
+_write_catalog_entries = _write_import_entries
+
+
+# ---------------------------------------------------------------------------
+# Main entry point: run_import
+# ---------------------------------------------------------------------------
+
+
+def run_import(
     catalog_dir: Path,
     dry_run: bool = False,
-    tag_filter: list[str] | None = None,
-) -> ImportResult:
+    accept_unit_override: bool = False,
+    accept_cocos_override: bool = False,
+) -> ImportReport:
     """Import YAML catalog entries into graph as accepted StandardName nodes.
 
-    Reads all ``*.yml`` and ``*.yaml`` files from *catalog_dir* (recursive),
-    validates each entry against the ``imas-standard-names`` catalog model,
-    derives grammar fields via name parsing, and MERGEs into the graph.
-
-    Catalog fields are authoritative and overwrite graph values.
-    Graph-only fields (embedding, model, generated_at) are preserved.
-    Imported entries receive ``pipeline_status='accepted'``.
+    Phase 4 implementation with:
+    - Forbidden-key rejection (source_paths, dd_paths)
+    - Domain-from-path derivation
+    - Grammar decomposition via graph_ops helper
+    - Diff-based origin tracking
+    - Lock and watermark concurrency control
+    - Unit and COCOS validation
 
     Parameters
     ----------
     catalog_dir:
-        Path to directory containing YAML catalog entries.
+        Path to ISN catalog repository root (containing ``standard_names/`` subtree).
     dry_run:
         If True, parse and validate but do not write to graph.
-    tag_filter:
-        If provided, only import entries whose tags overlap with this list.
 
     Returns
     -------
-    ImportResult with counts and entry details.
+    ImportReport with counts and entry details.
     """
     import yaml
     from imas_standard_names.models import StandardNameEntry
     from pydantic import TypeAdapter
 
     ta = TypeAdapter(StandardNameEntry)
-    # Resolve catalog commit SHA for version tracking
-    catalog_sha = _resolve_catalog_sha(catalog_dir)
-    if catalog_sha:
-        logger.info("Catalog commit SHA: %s", catalog_sha)
+    report = ImportReport(dry_run=dry_run)
 
-    result = ImportResult(catalog_commit_sha=catalog_sha)
+    isnc_path = catalog_dir
 
-    # Collect YAML files
+    # Resolve HEAD SHA
+    catalog_sha = _resolve_catalog_sha(isnc_path)
+    report.catalog_commit_sha = catalog_sha
+
+    has_git = _is_git_repo(isnc_path)
+
+    # ── Phase 1: Parse and validate all YAML files ──────────────────────
+
+    sn_dir = isnc_path / "standard_names"
+    if not sn_dir.is_dir():
+        # Fall back to searching from root (flat layout)
+        sn_dir = isnc_path
+
     yaml_files = sorted(
-        p
-        for p in catalog_dir.rglob("*")
-        if p.suffix in (".yml", ".yaml") and p.is_file()
+        p for p in sn_dir.rglob("*") if p.suffix in (".yml", ".yaml") and p.is_file()
     )
 
     if not yaml_files:
-        logger.info("No YAML files found in %s", catalog_dir)
-        return result
+        logger.info("No YAML files found in %s", sn_dir)
+        return report
 
-    logger.info("Found %d YAML files in %s", len(yaml_files), catalog_dir)
+    logger.info("Found %d YAML files in %s", len(yaml_files), sn_dir)
 
-    # Parse and validate entries
     prepared: list[dict[str, Any]] = []
 
     for yaml_path in yaml_files:
+        relative = (
+            yaml_path.relative_to(isnc_path)
+            if isnc_path in yaml_path.parents
+            else yaml_path
+        )
         try:
             with open(yaml_path) as f:
                 data = yaml.safe_load(f)
 
             if not isinstance(data, dict):
-                result.errors.append(f"{yaml_path.name}: not a YAML mapping")
+                report.errors.append(f"{relative}: not a YAML mapping")
                 continue
 
-            # Strip graph-only fields before ISN model validation
-            model_data = {k: v for k, v in data.items() if k not in _GRAPH_ONLY_FIELDS}
-            entry = ta.validate_python(model_data)
+            # 4d: Reject forbidden keys (source_paths, dd_paths)
+            forbidden_found = _FORBIDDEN_YAML_KEYS & set(data.keys())
+            if forbidden_found:
+                report.errors.append(
+                    f"{relative}: contains forbidden key(s) "
+                    f"{sorted(forbidden_found)}. Provenance is graph-only; "
+                    f"use 'sn run' for provenance management."
+                )
+                continue
+
+            # Validate against ISN model (no stripping needed — rc19 model
+            # includes cocos_transformation_type natively)
+            entry = ta.validate_python(data)
+
         except Exception as exc:
-            result.errors.append(f"{yaml_path.name}: {exc}")
+            report.errors.append(f"{relative}: {exc}")
             logger.debug("Failed to parse %s: %s", yaml_path, exc)
             continue
 
-        # Apply tag filter if specified
-        if tag_filter:
-            entry_tags = {str(t) for t in entry.tags} if entry.tags else set()
-            if not entry_tags.intersection(tag_filter):
-                result.skipped += 1
-                continue
+        # 4b: Derive physics_domain from path
+        path_domain = _derive_domain_from_path(yaml_path)
+        if path_domain is None:
+            # File not in standard_names/<domain>/ structure — use status field
+            report.errors.append(
+                f"{relative}: cannot derive physics_domain from file path. "
+                f"Expected standard_names/<domain>/<name>.yml layout."
+            )
+            continue
+
+        # 4c: Grammar decomposition — hard fail on parse error
+        grammar = _grammar_decomposition(entry.name)
 
         # Convert to graph dict
-        graph_dict = _catalog_entry_to_dict(entry, extra=data)
+        graph_dict = _entry_to_graph_dict(entry, physics_domain=path_domain)
+        graph_dict.update(grammar)
         prepared.append(graph_dict)
-        result.entries.append(graph_dict)
+        report.entries.append(graph_dict)
+
+    if report.errors:
+        logger.warning("Encountered %d error(s) during parsing", len(report.errors))
 
     if not prepared:
-        logger.info("No entries to import after filtering")
-        return result
+        logger.info("No entries to import after validation")
+        return report
 
-    # Write to graph (unless dry run)
     if dry_run:
-        result.imported = len(prepared)
+        report.imported = len(prepared)
+        report.skipped = 0
         logger.info("Dry run: would import %d entries", len(prepared))
-    else:
-        written = _write_catalog_entries(prepared, catalog_commit_sha=catalog_sha)
-        result.imported = written
-        logger.info("Imported %d entries to graph", written)
+        return report
 
-    return result
+    # ── Phase 2: Lock, diff, validate, write ────────────────────────────
+
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.standard_names.import_sync import (
+        acquire_import_lock,
+        advance_watermark,
+        release_import_lock,
+    )
+
+    with GraphClient() as gc:
+        # Acquire lock
+        if not acquire_import_lock(gc):
+            report.errors.append(
+                "Could not acquire import lock — another import may be running."
+            )
+            return report
+
+        try:
+            # 4e: Diff-based origin tracking
+            name_ids = [e["id"] for e in prepared]
+            graph_state = _fetch_graph_state(gc, name_ids)
+
+            for entry_dict in prepared:
+                eid = entry_dict["id"]
+                existing = graph_state.get(eid)
+
+                if existing is None:
+                    # New entry — mark as catalog_edit origin
+                    entry_dict["_origin"] = "catalog_edit"
+                    report.created += 1
+                elif _protected_fields_differ(existing, entry_dict):
+                    # Edited entry — flip origin
+                    entry_dict["_origin"] = "catalog_edit"
+                    report.updated += 1
+                else:
+                    # No protected-field changes — preserve current origin
+                    entry_dict["_origin"] = existing.get("origin") or "pipeline"
+                    report.skipped += 1
+
+            # Count only created + updated as imported
+            to_write = [
+                e
+                for e in prepared
+                if e.get("_origin") == "catalog_edit"
+                or graph_state.get(e["id"]) is None
+            ]
+            # Actually write ALL entries (even no-ops refresh timestamps)
+            to_write = prepared
+
+            # 4f: Unit validation
+            if not accept_unit_override:
+                unit_errors = _validate_unit_against_graph(gc, to_write)
+                if unit_errors:
+                    report.errors.extend(unit_errors)
+
+            # 4g: COCOS validation
+            if not accept_cocos_override:
+                cocos_errors = _validate_cocos_against_graph(gc, to_write)
+                if cocos_errors:
+                    report.errors.extend(cocos_errors)
+
+            # Write entries
+            written = _write_import_entries(
+                gc,
+                to_write,
+                catalog_commit_sha=catalog_sha,
+            )
+            report.imported = written
+
+            # 4h: Advance watermark
+            if catalog_sha and has_git:
+                try:
+                    advance_watermark(gc, catalog_sha)
+                    report.watermark_advanced = True
+                except Exception as exc:
+                    report.errors.append(f"Failed to advance watermark: {exc}")
+                    logger.warning("Watermark advance failed: %s", exc)
+
+        finally:
+            release_import_lock(gc)
+
+    return report
 
 
-# -- Fields compared during check mode (catalog-owned, excluding grammar fields) --
+# ---------------------------------------------------------------------------
+# Legacy wrapper (deprecated)
+# ---------------------------------------------------------------------------
+
+
+def import_catalog(
+    catalog_dir: Path,
+    dry_run: bool = False,
+    tag_filter: list[str] | None = None,
+) -> ImportReport:
+    """Legacy import API — delegates to ``run_import()``.
+
+    .. deprecated:: 0.9.0
+        Use :func:`run_import` instead.
+    """
+    import warnings
+
+    warnings.warn(
+        "import_catalog() is deprecated; use run_import() instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return run_import(catalog_dir, dry_run=dry_run)
+
+
+# ---------------------------------------------------------------------------
+# Check mode (catalog-vs-graph comparison)
+# ---------------------------------------------------------------------------
+
 _CHECK_FIELDS = (
     "description",
     "documentation",
     "kind",
     "unit",
     "tags",
-    "source_paths",
     "validity_domain",
     "constraints",
     "physics_domain",
 )
+
+# Fields that are graph-only extensions (not in the ISN catalog model)
+# but may appear in YAML files. Strip before model validation.
+_GRAPH_ONLY_FIELDS = {"dd_paths", "physics_domain", "cocos_transformation_type"}
 
 
 def check_catalog(
@@ -462,7 +761,9 @@ def check_catalog(
             if not entry_tags.intersection(tag_filter):
                 continue
 
-        graph_dict = _catalog_entry_to_dict(entry, extra=data)
+        graph_dict = _entry_to_graph_dict(
+            entry, physics_domain=_derive_domain_from_path(yaml_path) or "unscoped"
+        )
         catalog_entries[graph_dict["id"]] = graph_dict
 
     if not catalog_entries:
@@ -524,11 +825,7 @@ def check_catalog(
 
 
 def _normalize_field(val: Any) -> Any:
-    """Normalize a field value for comparison.
-
-    Converts lists to sorted tuples, None-like values to None,
-    and strings to stripped strings.
-    """
+    """Normalize a field value for comparison."""
     if val is None:
         return None
     if isinstance(val, list):

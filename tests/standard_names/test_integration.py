@@ -42,13 +42,10 @@ def _call_write(names: list[dict], mock_gc: MagicMock) -> int:
 def _call_import_write(
     entries: list[dict], mock_gc: MagicMock, catalog_sha: str | None = None
 ) -> int:
-    """Call _write_catalog_entries with a mocked GraphClient."""
-    with patch("imas_codex.graph.client.GraphClient") as MockGC:
-        MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
-        MockGC.return_value.__exit__ = MagicMock(return_value=False)
-        from imas_codex.standard_names.catalog_import import _write_catalog_entries
+    """Call _write_import_entries with a mocked GraphClient."""
+    from imas_codex.standard_names.catalog_import import _write_import_entries
 
-        return _write_catalog_entries(entries, catalog_commit_sha=catalog_sha)
+    return _write_import_entries(mock_gc, entries, catalog_commit_sha=catalog_sha)
 
 
 def _merge_cypher(mock_gc: MagicMock) -> str:
@@ -108,11 +105,11 @@ class TestEmbeddingCoverage:
         )
 
     def test_import_preserves_existing_embedding(self) -> None:
-        """_write_catalog_entries uses coalesce to preserve existing embedding.
+        """_write_import_entries does NOT touch embedding fields at all.
 
-        The catalog import must never erase an embedding that was set by the
-        embedding pipeline. The Cypher should contain the coalesce guard:
-          sn.embedding = coalesce(sn.embedding, null)
+        Phase 4 approach: embedding fields are preserved by omission — they
+        are not mentioned in the SET clause, so Neo4j keeps the existing
+        values. This is safer than the old coalesce(sn.embedding, null) pattern.
         """
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
@@ -126,31 +123,40 @@ class TestEmbeddingCoverage:
                 "unit": "eV",
                 "tags": ["core_profiles"],
                 "links": None,
-                "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": "core plasma",
                 "constraints": ["T_e > 0"],
                 "physics_domain": "core_plasma_physics",
-                "pipeline_status": "accepted",
-                "source_types": ["dd"],
-                "physical_base": "temperature",
-                "subject": "electron",
-                "component": None,
-                "coordinate": None,
-                "position": None,
-                "process": None,
+                "status": "draft",
+                "deprecates": None,
+                "superseded_by": None,
+                "cocos_transformation_type": None,
+                "grammar_physical_base": "temperature",
+                "grammar_subject": "electron",
+                "grammar_component": None,
+                "grammar_coordinate": None,
+                "grammar_position": None,
+                "grammar_process": None,
+                "grammar_geometric_base": None,
+                "grammar_transformation": None,
+                "grammar_object": None,
+                "grammar_geometry": None,
+                "grammar_device": None,
+                "grammar_secondary_base": None,
+                "grammar_binary_operator": None,
             }
         ]
         _call_import_write(entries, mock_gc)
 
         cypher = _merge_cypher(mock_gc)
 
-        # The catalog import Cypher must preserve embedding via coalesce
-        assert "coalesce(sn.embedding, null)" in cypher, (
-            "_write_catalog_entries Cypher must use coalesce(sn.embedding, null) "
-            "to preserve existing embeddings"
+        # Phase 4: import Cypher must NOT mention embedding at all (preserved by omission)
+        assert "sn.embedding" not in cypher, (
+            "_write_import_entries must not mention sn.embedding "
+            "(preserved by omission from SET clause)"
         )
-        assert "coalesce(sn.embedded_at, null)" in cypher, (
-            "_write_catalog_entries Cypher must use coalesce(sn.embedded_at, null)"
+        assert "sn.embedded_at" not in cypher, (
+            "_write_import_entries must not mention sn.embedded_at "
+            "(preserved by omission from SET clause)"
         )
 
     def test_embedding_field_not_in_write_batch(self) -> None:
@@ -214,12 +220,12 @@ class TestCoalesceSafety:
         ("validity_domain", "b.validity_domain, sn.validity_domain"),
         ("constraints", "b.constraints, sn.constraints"),
         ("confidence", "b.confidence, sn.confidence"),
-        ("physical_base", "b.physical_base, sn.grammar_physical_base"),
-        ("subject", "b.subject, sn.grammar_subject"),
-        ("component", "b.component, sn.grammar_component"),
-        ("coordinate", "b.coordinate, sn.grammar_coordinate"),
-        ("position", "b.position, sn.grammar_position"),
-        ("process", "b.process, sn.grammar_process"),
+        ("grammar_physical_base", "b.grammar_physical_base, sn.grammar_physical_base"),
+        ("grammar_subject", "b.grammar_subject, sn.grammar_subject"),
+        ("grammar_component", "b.grammar_component, sn.grammar_component"),
+        ("grammar_coordinate", "b.grammar_coordinate, sn.grammar_coordinate"),
+        ("grammar_position", "b.grammar_position, sn.grammar_position"),
+        ("grammar_process", "b.grammar_process, sn.grammar_process"),
     ]
 
     def test_build_does_not_erase_imported_data(self) -> None:
@@ -282,12 +288,6 @@ class TestCoalesceSafety:
         required_keys = {
             "id",
             "source_types",
-            "physical_base",
-            "subject",
-            "component",
-            "coordinate",
-            "position",
-            "process",
             "description",
             "documentation",
             "kind",
@@ -297,6 +297,10 @@ class TestCoalesceSafety:
             "validity_domain",
             "constraints",
             "unit",
+            "physics_domain",
+            "cocos_transformation_type",
+            "cocos",
+            "dd_version",
             "model",
             "pipeline_status",
             "generated_at",
@@ -308,6 +312,26 @@ class TestCoalesceSafety:
             "reviewed_at",
             "review_tier",
             "vocab_gap_detail",
+            "validation_issues",
+            "validation_layer_summary",
+            "validation_status",
+            "link_status",
+            "review_input_hash",
+            "embedding",
+            "embedded_at",
+            "grammar_component",
+            "grammar_coordinate",
+            "grammar_subject",
+            "grammar_physical_base",
+            "grammar_geometric_base",
+            "grammar_process",
+            "grammar_transformation",
+            "grammar_object",
+            "grammar_geometry",
+            "grammar_position",
+            "grammar_device",
+            "grammar_secondary_base",
+            "grammar_binary_operator",
         }
         missing = required_keys - set(item.keys())
         assert not missing, (
@@ -315,8 +339,16 @@ class TestCoalesceSafety:
             "All optional fields must be present (even as None) for coalesce to work."
         )
 
-        # Fields absent from source must be None (not some unexpected value)
-        for key in required_keys - {"id", "source_types"}:
+        # Fields absent from source must be None (not some unexpected value).
+        # Grammar fields are auto-computed from the name via _grammar_decomposition,
+        # and link_status is derived from the links field, so exclude them.
+        auto_computed = {
+            "id",
+            "source_types",
+            "link_status",
+            *(k for k in required_keys if k.startswith("grammar_")),
+        }
+        for key in required_keys - auto_computed:
             assert item[key] is None, (
                 f"Batch key '{key}' should be None when not supplied, got {item[key]!r}"
             )
@@ -355,7 +387,7 @@ class TestCoalesceSafety:
     def test_import_then_build_preserves_catalog_fields(self) -> None:
         """Verify coalesce semantics cover the full import → build cycle.
 
-        Step 1: _write_catalog_entries (import) is called with rich metadata.
+        Step 1: _write_import_entries (import) is called with rich metadata.
                The Cypher sets catalog-owned fields directly.
         Step 2: write_standard_names (build) is called with only basic fields.
                The Cypher uses coalesce for all optional fields.
@@ -377,18 +409,26 @@ class TestCoalesceSafety:
             "unit": "eV",
             "tags": ["core_profiles"],
             "links": None,
-            "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
             "validity_domain": "core plasma",
             "constraints": ["T_e > 0"],
             "physics_domain": "core_plasma_physics",
-            "pipeline_status": "accepted",
-            "source_types": ["dd"],
-            "physical_base": "temperature",
-            "subject": "electron",
-            "component": None,
-            "coordinate": None,
-            "position": None,
-            "process": None,
+            "status": "draft",
+            "deprecates": None,
+            "superseded_by": None,
+            "cocos_transformation_type": None,
+            "grammar_physical_base": "temperature",
+            "grammar_subject": "electron",
+            "grammar_component": None,
+            "grammar_coordinate": None,
+            "grammar_position": None,
+            "grammar_process": None,
+            "grammar_geometric_base": None,
+            "grammar_transformation": None,
+            "grammar_object": None,
+            "grammar_geometry": None,
+            "grammar_device": None,
+            "grammar_secondary_base": None,
+            "grammar_binary_operator": None,
         }
         imported = _call_import_write([rich_entry], import_gc)
         assert imported == 1
@@ -401,8 +441,10 @@ class TestCoalesceSafety:
         assert "sn.pipeline_status = 'accepted'" in import_cypher, (
             "Catalog import must set pipeline_status='accepted' directly"
         )
-        # Embedding and model must still be protected via coalesce
-        assert "coalesce(sn.embedding, null)" in import_cypher
+        # Embedding must NOT appear — preserved by omission
+        assert "sn.embedding" not in import_cypher, (
+            "Phase 4 import must not mention sn.embedding"
+        )
 
         # --- Step 2: sn-build writes basic fields only ---
         basic_entry = {
@@ -488,7 +530,6 @@ SAMPLE_CATALOG_ENTRY_RT: dict[str, Any] = {
     "unit": "eV",
     "tags": [],
     "links": [],
-    "dd_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "validity_domain": "core plasma",
     "constraints": ["T_e > 0"],
     "physics_domain": "core_plasma_physics",
@@ -501,24 +542,28 @@ def _published_yaml_to_catalog(
 ) -> dict[str, Any]:
     """Convert a published YAML string to a catalog-importable dict.
 
-    Strips provenance, adds ``physics_domain``, normalises ``status`` to
-    ``"active"``, and converts links from ``[{name: …}]`` dicts to plain
-    strings so that ``StandardNameEntry`` validation succeeds.
+    Strips provenance, normalises ``status`` to ``"active"``, and converts
+    links from ``[{name: …}]`` dicts to plain strings so that
+    ``StandardNameEntry`` validation succeeds.  ``physics_domain`` is
+    derived from file path — NOT stored in YAML.
     """
     doc: dict[str, Any] = yaml.safe_load(published_yaml)
     # Provenance block is not part of the catalog schema
     doc.pop("provenance", None)
     # status must be a catalog-valid value
     doc["status"] = "active"
-    # physics_domain is required by StandardNameEntry
-    doc.setdefault("physics_domain", physics_domain)
+    # physics_domain is derived from directory structure, NOT in YAML
+    doc.pop("physics_domain", None)
     # Normalise links: published format uses [{name: link}] dicts
     raw_links = doc.get("links", [])
     if raw_links and isinstance(raw_links[0], dict):
         doc["links"] = [lnk.get("name", str(lnk)) for lnk in raw_links]
     # Ensure required list fields are present (even if empty)
-    for list_field in ("tags", "links", "dd_paths", "constraints"):
+    for list_field in ("tags", "links", "constraints"):
         doc.setdefault(list_field, [])
+    # dd_paths and source_paths are forbidden by the importer — strip them
+    doc.pop("dd_paths", None)
+    doc.pop("source_paths", None)
     # Empty string validity_domain instead of None
     if doc.get("validity_domain") is None:
         doc["validity_domain"] = ""
@@ -536,6 +581,29 @@ def _imported_dict_to_graph_record(d: dict[str, Any]) -> dict[str, Any]:
     return rec
 
 
+def _write_catalog_yaml(
+    root: Path,
+    entry: dict[str, Any],
+    *,
+    domain: str = "core_plasma_physics",
+    filename: str | None = None,
+) -> Path:
+    """Write a catalog YAML entry in the proper directory structure.
+
+    Creates ``<root>/standard_names/<domain>/<filename>`` and returns ``root``
+    (which is what ``import_catalog()`` / ``run_import()`` expect).
+
+    ``physics_domain`` is stripped from the entry dict if present — it's
+    derived from the path, not from YAML content.
+    """
+    clean = {k: v for k, v in entry.items() if k != "physics_domain"}
+    fname = filename or f"{clean.get('name', 'entry')}.yaml"
+    dest = root / "standard_names" / domain
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / fname).write_text(yaml.safe_dump(clean))
+    return root
+
+
 def _key_fields(parsed_yaml: dict[str, Any]) -> dict[str, Any]:
     """Extract the semantic fields that must be preserved across a round-trip."""
     return {
@@ -544,7 +612,6 @@ def _key_fields(parsed_yaml: dict[str, Any]) -> dict[str, Any]:
         "unit": parsed_yaml.get("unit"),
         "description": parsed_yaml.get("description"),
         "documentation": parsed_yaml.get("documentation"),
-        "dd_paths": sorted(parsed_yaml.get("dd_paths") or []),
         "validity_domain": parsed_yaml.get("validity_domain"),
         "constraints": sorted(parsed_yaml.get("constraints") or []),
     }
@@ -556,7 +623,7 @@ class TestRoundTripIdempotence:
     def test_publish_import_publish_idempotent(self, tmp_path: Path) -> None:
         """Round-trip: graph_records → YAML → catalog import → YAML should match.
 
-        Key fields (name, kind, unit, dd_paths, validity_domain, constraints)
+        Key fields (name, kind, unit, validity_domain, constraints)
         must be identical after a full publish → import → publish cycle.
         Provenance and confidence fields are allowed to differ.
         """
@@ -566,7 +633,6 @@ class TestRoundTripIdempotence:
         )
 
         round1_dir = tmp_path / "round1"
-        catalog_dir = tmp_path / "catalog"
         round2_dir = tmp_path / "round2"
 
         # --- Round 1: graph record → YAML files ---
@@ -584,15 +650,14 @@ class TestRoundTripIdempotence:
         catalog_doc = _published_yaml_to_catalog(
             published_yaml_text, physics_domain="core_plasma_physics"
         )
-        catalog_dir.mkdir(parents=True, exist_ok=True)
-        (catalog_dir / "electron_temperature.yaml").write_text(
-            yaml.safe_dump(catalog_doc)
+        isnc_root = _write_catalog_yaml(
+            tmp_path / "catalog", catalog_doc, domain="core_plasma_physics"
         )
 
         # --- Import catalog (dry run) → graph dicts ---
         from imas_codex.standard_names.catalog_import import import_catalog
 
-        result = import_catalog(catalog_dir, dry_run=True)
+        result = import_catalog(isnc_root, dry_run=True)
         assert result.imported == 1, (
             f"Expected 1 imported entry, got {result.imported}; errors: {result.errors}"
         )
@@ -620,7 +685,6 @@ class TestRoundTripIdempotence:
         assert fields2["name"] == fields1["name"], "name must be preserved"
         assert fields2["kind"] == fields1["kind"], "kind must be preserved"
         assert fields2["unit"] == fields1["unit"], "unit must be preserved"
-        assert fields2["dd_paths"] == fields1["dd_paths"], "dd_paths must be preserved"
         assert fields2["validity_domain"] == fields1["validity_domain"], (
             "validity_domain must be preserved"
         )
@@ -641,14 +705,12 @@ class TestRoundTripIdempotence:
             graph_records_to_entries,
         )
 
-        catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        (catalog_dir / "electron_temperature.yaml").write_text(
-            yaml.safe_dump(SAMPLE_CATALOG_ENTRY_RT)
+        isnc_root = _write_catalog_yaml(
+            tmp_path / "catalog", SAMPLE_CATALOG_ENTRY_RT, domain="core_plasma_physics"
         )
 
         # Import (dry run) → graph dicts
-        result = import_catalog(catalog_dir, dry_run=True)
+        result = import_catalog(isnc_root, dry_run=True)
         assert result.imported == 1, (
             f"Expected 1 imported entry; errors: {result.errors}"
         )
@@ -673,9 +735,6 @@ class TestRoundTripIdempotence:
         assert published.get("documentation") == original["documentation"], (
             "documentation must round-trip"
         )
-        assert sorted(published.get("dd_paths") or []) == sorted(
-            original.get("dd_paths") or []
-        ), "dd_paths must round-trip"
         if original.get("validity_domain"):
             assert published.get("validity_domain") == original["validity_domain"], (
                 "validity_domain must round-trip"
@@ -692,14 +751,12 @@ class TestRoundTripIdempotence:
         """
         from imas_codex.standard_names.catalog_import import import_catalog
 
-        catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        (catalog_dir / "electron_temperature.yaml").write_text(
-            yaml.safe_dump(SAMPLE_CATALOG_ENTRY_RT)
+        isnc_root = _write_catalog_yaml(
+            tmp_path / "catalog", SAMPLE_CATALOG_ENTRY_RT, domain="core_plasma_physics"
         )
 
-        result1 = import_catalog(catalog_dir, dry_run=True)
-        result2 = import_catalog(catalog_dir, dry_run=True)
+        result1 = import_catalog(isnc_root, dry_run=True)
+        result2 = import_catalog(isnc_root, dry_run=True)
 
         assert result1.imported == result2.imported, (
             "Both imports should report the same import count"
@@ -822,10 +879,8 @@ class TestE2ERoundTrip:
             "unit": publish_entry.unit,
             "tags": publish_entry.tags,
             "links": publish_entry.links,
-            "dd_paths": publish_entry.dd_paths,
             "validity_domain": publish_entry.validity_domain or "",
             "constraints": publish_entry.constraints,
-            "physics_domain": "core_plasma_physics",
             "status": "active",
         }
 
@@ -863,25 +918,24 @@ class TestE2ERoundTrip:
 
         # Phase 3: simulate curator enrichment into catalog format
         catalog_entry = self._build_catalog_entry(publish_entry)
-        catalog_dir = tmp_path / "reviewed_catalog"
-        catalog_dir.mkdir()
-        (catalog_dir / "electron_temperature.yaml").write_text(
-            yaml.safe_dump(catalog_entry)
+        isnc_root = _write_catalog_yaml(
+            tmp_path / "reviewed_catalog",
+            catalog_entry,
+            domain="core_plasma_physics",
         )
 
         # Phase 4: import catalog (dry_run=True, no graph write)
-        result = import_catalog(catalog_dir=catalog_dir, dry_run=True)
+        result = import_catalog(catalog_dir=isnc_root, dry_run=True)
 
         assert result.imported == 1
         assert len(result.errors) == 0
 
         entry = result.entries[0]
         assert entry["id"] == "electron_temperature"
-        assert entry["pipeline_status"] == "accepted"
         assert entry["unit"] == "eV"
         assert entry["physics_domain"] == "core_plasma_physics"
-        assert entry["physical_base"] == "temperature"
-        assert entry["subject"] == "electron"
+        assert entry["grammar_physical_base"] == "temperature"
+        assert entry["grammar_subject"] == "electron"
 
     def test_publish_generates_valid_yaml_for_import(self, tmp_path: Path) -> None:
         """Published YAML (after curator enrichment) is valid input for import_catalog."""
@@ -893,13 +947,11 @@ class TestE2ERoundTrip:
 
         # Curator enriches published entry into catalog format
         catalog_entry = self._build_catalog_entry(entries[0])
-        catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        (catalog_dir / "electron_temperature.yaml").write_text(
-            yaml.safe_dump(catalog_entry)
+        isnc_root = _write_catalog_yaml(
+            tmp_path / "catalog", catalog_entry, domain="core_plasma_physics"
         )
 
-        result = import_catalog(catalog_dir=catalog_dir, dry_run=True)
+        result = import_catalog(catalog_dir=isnc_root, dry_run=True)
 
         assert result.imported == 1
         assert len(result.errors) == 0
@@ -907,12 +959,9 @@ class TestE2ERoundTrip:
         entry = result.entries[0]
         # catalog 'unit' passes through as graph 'unit'
         assert entry["unit"] == "eV"
-        # catalog 'dd_paths' → graph 'source_paths'
-        assert entry["source_paths"] == [
-            "dd:core_profiles/profiles_1d/electrons/temperature"
-        ]
+        # dd_paths and source_paths are no longer in catalog import output
         assert "dd_paths" not in entry
-        assert entry["pipeline_status"] == "accepted"
+        assert "source_paths" not in entry
 
     def test_field_preservation_across_lifecycle(self, tmp_path: Path) -> None:
         """Specific rich fields are verified at each stage of the lifecycle."""
@@ -962,13 +1011,11 @@ class TestE2ERoundTrip:
 
         # Stage D: import_catalog maps all fields correctly
         catalog_entry = self._build_catalog_entry(entry)
-        catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        (catalog_dir / "electron_temperature.yaml").write_text(
-            yaml.safe_dump(catalog_entry)
+        isnc_root = _write_catalog_yaml(
+            tmp_path / "catalog", catalog_entry, domain="core_plasma_physics"
         )
 
-        result = import_catalog(catalog_dir=catalog_dir, dry_run=True)
+        result = import_catalog(catalog_dir=isnc_root, dry_run=True)
         imported = result.entries[0]
 
         assert imported["id"] == "electron_temperature"
@@ -976,15 +1023,14 @@ class TestE2ERoundTrip:
         assert "documentation" in imported
         assert imported["kind"] == "scalar"
         assert imported["unit"] == "eV"
-        assert imported["source_paths"] == [
-            "dd:core_profiles/profiles_1d/electrons/temperature"
-        ]
+        # source_paths and dd_paths are no longer in catalog import output
+        assert "source_paths" not in imported
+        assert "dd_paths" not in imported
         assert imported["validity_domain"] == "core plasma"
         assert imported["constraints"] == ["T_e > 0"]
         assert imported["physics_domain"] == "core_plasma_physics"
-        assert imported["pipeline_status"] == "accepted"
-        assert imported["physical_base"] == "temperature"
-        assert imported["subject"] == "electron"
+        assert imported["grammar_physical_base"] == "temperature"
+        assert imported["grammar_subject"] == "electron"
 
     def test_write_standard_names_called_with_all_fields(self) -> None:
         """write_standard_names receives all populated fields without losing any."""
@@ -1038,23 +1084,20 @@ class TestE2ERoundTrip:
             "unit": "eV",
             "tags": [],
             "links": [],
-            "dd_paths": [],
             "validity_domain": "",
             "constraints": [],
-            "physics_domain": "core_plasma_physics",
             "status": "active",
         }
-        catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        (catalog_dir / "electron_temperature.yaml").write_text(
-            yaml.safe_dump(catalog_entry)
+        isnc_root = _write_catalog_yaml(
+            tmp_path / "catalog",
+            catalog_entry,
+            domain="core_plasma_physics",
         )
 
         with patch(
-            "imas_codex.standard_names.catalog_import._write_catalog_entries"
+            "imas_codex.standard_names.catalog_import._write_import_entries"
         ) as mock_write:
-            result = import_catalog(catalog_dir=catalog_dir, dry_run=True)
+            result = import_catalog(catalog_dir=isnc_root, dry_run=True)
 
         mock_write.assert_not_called()
         assert result.imported == 1
-        assert result.entries[0]["pipeline_status"] == "accepted"
