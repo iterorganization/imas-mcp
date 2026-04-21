@@ -2,9 +2,9 @@
 
 Covers plan 32 Phase 4 deliverables:
 
-- ``run_dd_completion`` stop conditions (dry_run, budget_exhausted, plateau,
+- ``run_sn_loop`` stop conditions (dry_run, budget_exhausted, plateau,
   interrupted).
-- ``RotationSummary`` / ``summary_table`` shape.
+- ``RunSummary`` / ``summary_table`` shape.
 - ``_apply_skip_by_design`` filters ``/process/`` paths and writes
   ``configurable_meaning`` skip sources.
 """
@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from imas_codex.standard_names.dd_completion import (
-    RotationSummary,
-    run_dd_completion,
+from imas_codex.standard_names.loop import (
+    RunSummary,
+    run_sn_loop,
     summary_table,
 )
 from imas_codex.standard_names.sources.dd import _apply_skip_by_design
@@ -91,14 +91,15 @@ class TestApplySkipByDesign:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# RotationSummary / summary_table
+# RunSummary / summary_table
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestRotationSummary:
+class TestRunSummary:
     def test_summary_table_shape(self):
-        s = RotationSummary(
-            rotation_id="abc123",
+        s = RunSummary(
+            run_id="abc123",
+            turn_number=3,
             started_at=datetime(2025, 1, 1, tzinfo=UTC),
             ended_at=datetime(2025, 1, 1, 0, 5, tzinfo=UTC),
             cost_spent=1.2345,
@@ -108,20 +109,19 @@ class TestRotationSummary:
             names_reviewed=8,
             names_regenerated=2,
             domains_touched={"equilibrium", "magnetics"},
-            stop_reason="plateau",
-            passes=3,
+            stop_reason="completed",
         )
         row = summary_table(s)
-        assert row["rotation_id"] == "abc123"
+        assert row["run_id"] == "abc123"
+        assert row["turn_number"] == 3
         assert row["cost_spent"] == 1.2345
-        assert row["stop_reason"] == "plateau"
-        assert row["passes"] == 3
+        assert row["stop_reason"] == "completed"
         assert row["domains_touched"] == ["equilibrium", "magnetics"]
         assert row["elapsed_s"] == 300.0
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# run_dd_completion stop conditions
+# run_sn_loop stop conditions
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -130,55 +130,50 @@ class TestRunDdCompletion:
     """Verify the DD completion loop obeys plan-32 stop conditions."""
 
     async def test_dry_run_short_circuits(self):
-        """Dry run returns immediately without invoking run_rotation."""
+        """Dry run returns immediately without invoking run_turn."""
         with (
             patch(
-                "imas_codex.standard_names.dd_completion._count_eligible_domains",
+                "imas_codex.standard_names.loop._count_eligible_domains",
                 return_value=[{"domain": "equilibrium", "remaining": 42}],
             ),
             patch(
-                "imas_codex.standard_names.rotation.run_rotation",
+                "imas_codex.standard_names.turn.run_turn",
                 new_callable=AsyncMock,
             ) as mock_run,
-            patch(
-                "imas_codex.standard_names.dd_completion._write_rotation_run"
-            ) as mock_write,
+            patch("imas_codex.standard_names.loop._write_sn_run") as mock_write,
         ):
-            summary = await run_dd_completion(cost_limit=5.0, dry_run=True)
+            summary = await run_sn_loop(cost_limit=5.0, dry_run=True)
 
         assert summary.stop_reason == "dry_run"
-        assert summary.passes == 0
         assert mock_run.await_count == 0
-        # Dry-run must NOT persist a RotationRun row.
+        # Dry-run must NOT persist a SNRun row.
         mock_write.assert_not_called()
         assert summary.pass_records[0]["eligible_domains"] == [
             {"domain": "equilibrium", "remaining": 42}
         ]
 
-    async def test_plateau_exits(self):
-        """When no eligible domains and no maintenance work, plateau fires."""
+    async def test_no_work_exits_completed(self):
+        """When no eligible domains and no maintenance work, the loop exits."""
         with (
             patch(
-                "imas_codex.standard_names.dd_completion._count_eligible_domains",
+                "imas_codex.standard_names.loop._count_eligible_domains",
                 return_value=[],
             ),
             patch(
-                "imas_codex.standard_names.dd_completion._existing_domain_targets",
+                "imas_codex.standard_names.loop._existing_domain_targets",
                 return_value=[],
             ),
-            patch("imas_codex.standard_names.dd_completion._write_rotation_run"),
+            patch("imas_codex.standard_names.loop._write_sn_run"),
         ):
-            summary = await run_dd_completion(
-                cost_limit=5.0, plateau_passes=1, dry_run=False
-            )
-        assert summary.stop_reason == "plateau"
+            summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
+        assert summary.stop_reason in ("completed", "no_work")
         assert summary.cost_spent == 0.0
 
     async def test_budget_exhausted_stops_mid_pass(self):
         """Once cost_spent >= cost_limit, the loop exits with budget_exhausted."""
-        from imas_codex.standard_names.rotation import PhaseResult
+        from imas_codex.standard_names.turn import PhaseResult
 
-        # First call: two domains eligible. run_rotation burns the full
+        # First call: two domains eligible. run_turn burns the full
         # budget on domain #1, so domain #2 must be skipped.
         eligible = [
             {"domain": "equilibrium", "remaining": 10},
@@ -202,16 +197,16 @@ class TestRunDdCompletion:
         mock_run = AsyncMock(side_effect=lambda cfg: make_results())
         with (
             patch(
-                "imas_codex.standard_names.dd_completion._count_eligible_domains",
+                "imas_codex.standard_names.loop._count_eligible_domains",
                 return_value=eligible,
             ),
             patch(
-                "imas_codex.standard_names.rotation.run_rotation",
+                "imas_codex.standard_names.turn.run_turn",
                 mock_run,
             ),
-            patch("imas_codex.standard_names.dd_completion._write_rotation_run"),
+            patch("imas_codex.standard_names.loop._write_sn_run"),
         ):
-            summary = await run_dd_completion(cost_limit=5.0, dry_run=False)
+            summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
 
         assert summary.stop_reason == "budget_exhausted"
         assert summary.cost_spent >= 5.0
@@ -219,15 +214,15 @@ class TestRunDdCompletion:
         # Only one domain should have been processed before budget cut.
         assert len(summary.domains_touched) == 1
 
-    async def test_rotation_id_propagates_to_config(self):
-        """The DD-completion rotation_id is threaded through every per-domain
-        RotationConfig so provenance stamping is coherent."""
-        from imas_codex.standard_names.rotation import PhaseResult
+    async def test_run_id_propagates_to_config(self):
+        """The run_id is threaded through every per-domain
+        TurnConfig so provenance stamping is coherent."""
+        from imas_codex.standard_names.turn import PhaseResult
 
         seen_ids: list[str] = []
 
         async def fake_run(cfg):
-            seen_ids.append(cfg.rotation_id)
+            seen_ids.append(cfg.run_id)
             return [
                 PhaseResult(
                     name="generate",
@@ -243,15 +238,15 @@ class TestRunDdCompletion:
 
         with (
             patch(
-                "imas_codex.standard_names.dd_completion._count_eligible_domains",
+                "imas_codex.standard_names.loop._count_eligible_domains",
                 return_value=[{"domain": "equilibrium", "remaining": 5}],
             ),
             patch(
-                "imas_codex.standard_names.rotation.run_rotation",
+                "imas_codex.standard_names.turn.run_turn",
                 side_effect=fake_run,
             ),
-            patch("imas_codex.standard_names.dd_completion._write_rotation_run"),
+            patch("imas_codex.standard_names.loop._write_sn_run"),
         ):
-            summary = await run_dd_completion(cost_limit=5.0, dry_run=False)
+            summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
 
-        assert seen_ids == [summary.rotation_id]
+        assert seen_ids == [summary.run_id]

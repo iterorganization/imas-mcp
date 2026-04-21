@@ -145,18 +145,17 @@ enums:
       Validation lifecycle for standard names.
 
         pending → valid | quarantined
-        valid   → needs_revision   (set by review_worker when
-                  review_tier ∈ {poor, adequate})
-        needs_revision → valid     (after regeneration with
-                  --regen-only)
 
       Names default to pending at persist time.
       validate_worker promotes to valid (passes) or quarantined (critical failures).
-      review_worker may demote a valid name to needs_revision based on reviewer
-      tier — the regenerate cycle (sn generate --regen-only) then
-      restores valid after the LLM addresses reviewer comments.
-      Only valid names participate in publish. needs_revision names remain
-      eligible for consolidation and subsequent review/regeneration.
+
+      Reviewer feedback (``reviewer_score``, ``reviewer_comments``,
+      ``review_tier``) is written onto every reviewed StandardName without
+      status demotion. Sub-threshold names are selected for regeneration via
+      ``sn run --min-score`` based on ``reviewer_score``, not on
+      ``validation_status``.
+
+      Only valid names participate in publish.
     permissible_values:
       pending:
         description: Awaiting validation (set at compose/persist time)
@@ -166,14 +165,6 @@ enums:
         description: >-
           Failed critical validation checks (grammar round-trip failure,
           empty description, invalid kind). Can be re-validated after fixes.
-      needs_revision:
-        description: >-
-          Review worker scored this name in a low tier (poor or adequate).
-          The name is still grammatically valid but the reviewer flagged
-          quality issues. Eligible for targeted regeneration via
-          `sn generate --regen-only`, which feeds the prior
-          reviewer critique back into the compose prompt. Excluded from
-          `sn publish` until promoted back to `valid`.
 
   LinkResolutionStatus:
     description: Status of cross-reference link resolution for standard names
@@ -195,10 +186,10 @@ enums:
       ``name_only`` uses four dimensions (grammar, semantic, convention,
       completeness) normalised over 80 points and is used for names
       generated without rich descriptions, typically during
-      ``sn generate --target names`` rotation cycles.
+      ``sn run --target names`` turns.
       ``docs`` uses four dimensions (description_quality, documentation_quality,
       completeness, physics_accuracy) normalised over 80 points and evaluates
-      a docs-generation cycle (``sn generate --target docs``) without
+      a docs-generation cycle (``sn run --target docs``) without
       re-scoring the name itself.
       Fidelity rank: ``name_only`` < ``docs`` < ``full``. A lower-fidelity
       run must not overwrite a prior higher-fidelity review unless
@@ -484,11 +475,10 @@ classes:
       validation_status:
         description: >-
           Validation lifecycle gate. Set to 'pending' at compose time,
-          promoted to 'valid' or 'quarantined' by validate_worker. May be
-          demoted from 'valid' to 'needs_revision' by review_worker when
-          review_tier is 'poor' or 'adequate'. Only 'valid' names participate
-          in publish; 'needs_revision' names are eligible for regeneration
-          via `sn generate --regen-only`.
+          promoted to 'valid' or 'quarantined' by validate_worker. Only
+          'valid' names participate in publish. Regeneration targeting is
+          driven by `sn run --min-score F`, which selects valid names
+          whose `reviewer_score` falls below the threshold.
         range: StandardNameValidationStatus
       consolidated_at:
         description: >-
@@ -549,25 +539,32 @@ classes:
         description: >-
           Batch identifier grouping names enriched in the same run.
           Format: "enrich-{timestamp}" or user-supplied tag.
-      # --- Rotation provenance ---
-      last_rotation_id:
+      # --- Run provenance ---
+      last_run_id:
         description: >-
-          UUID of the ``sn rotate`` invocation that last produced or
+          UUID of the ``sn run`` invocation that last produced or
           regenerated this name. Allows downstream review runs to
-          identify which rotation cycle created a name. Set on
-          generate and regen phases only.
-      last_rotation_at:
+          identify which pipeline invocation created a name.
+      last_run_at:
         description: >-
-          ISO 8601 timestamp of the ``sn rotate`` invocation that last
+          ISO 8601 timestamp of the ``sn run`` invocation that last
           produced or regenerated this name. Paired with
-          ``last_rotation_id`` for temporal queries.
+          ``last_run_id`` for temporal queries.
         range: datetime
-      # --- Regeneration tracking (plan-32 phase-4) ---
+      last_turn_number:
+        description: >-
+          Turn number (1-based) recorded by ``sn run --turn-number N``
+          for the invocation that last produced or regenerated this
+          name. Default 1. Increment externally between successive
+          runs to track multi-turn bootstrapping cycles.
+        range: integer
+        ifabsent: int(1)
+      # --- Regeneration tracking ---
       regen_count:
         description: >-
           Number of review→regen cycles this name has been through.
           0 for fresh names; incremented by the regen pass in
-          ``sn generate``. Hard cap at 1 prevents
+          ``sn run``. Hard cap at 1 prevents
           infinite regeneration loops on persistently poor scorers.
         range: integer
         ifabsent: int(0)
@@ -576,12 +573,6 @@ classes:
           Reviewer comments that triggered the last regeneration cycle.
           Captured from ``reviewer_comments`` at regen time so the
           reason survives subsequent review overwrites.
-      rotation_id:
-        description: >-
-          UUID of the rotation run that last touched this name during
-          a regeneration cycle. Points to a ``RotationRun`` node.
-          Distinct from ``last_rotation_id`` (set by ``sn rotate`` for
-          any phase) — ``rotation_id`` is only stamped on regen.
       # --- Grammar decomposition (from imas_standard_names.grammar.parse_standard_name) ---
       grammar_component:
         description: >-
@@ -804,72 +795,80 @@ classes:
           Human-readable detail for the skip (e.g. the raw DD unit string,
           the conflicting parent/child units). Set when status='skipped'.
 
-  RotationRun:
+  SNRun:
     description: >-
-      A single invocation of the ``sn generate`` rotator.
-      Records budget, counts, domains touched, and stop
-      reason so operators can audit rotation cycles over time.
+      A single invocation of ``sn run``. Records budget, counts,
+      domains touched, turn number, and stop reason so operators can
+      audit run cycles over time.
 
       Example Cypher:
-        MATCH (rr:RotationRun)
-        RETURN rr.id, rr.started_at, rr.cost_spent, rr.names_composed,
-               rr.names_reviewed, rr.stop_reason
+        MATCH (rr:SNRun)
+        RETURN rr.id, rr.turn_number, rr.started_at, rr.cost_spent,
+               rr.names_composed, rr.names_reviewed, rr.stop_reason
         ORDER BY rr.started_at DESC LIMIT 10
 
         MATCH (sn:StandardName)
-        WHERE sn.rotation_id IS NOT NULL
-        MATCH (rr:RotationRun {id: sn.rotation_id})
-        RETURN rr.id, count(sn) AS regenerated
+        WHERE sn.last_run_id IS NOT NULL
+        MATCH (rr:SNRun {id: sn.last_run_id})
+        RETURN rr.id, rr.turn_number, count(sn) AS touched
         ORDER BY rr.started_at DESC
-    class_uri: sn:RotationRun
+    class_uri: sn:SNRun
     attributes:
       id:
         identifier: true
-        description: UUID of the rotation run
+        description: UUID of the run
         required: true
+      turn_number:
+        description: >-
+          Turn number supplied via ``sn run --turn-number N``.
+          Default 1. Used to track multi-turn bootstrap cycles; stamped
+          onto StandardName.last_turn_number for every name touched.
+        range: integer
+        ifabsent: int(1)
       started_at:
-        description: When the rotation run started
+        description: When the run started
         required: true
         range: datetime
       ended_at:
-        description: When the rotation run completed (null if interrupted)
+        description: When the run completed (null if interrupted)
         range: datetime
       cost_spent:
-        description: Total LLM cost spent across all passes (USD)
+        description: Total LLM cost spent across all phases (USD)
         range: float
         ifabsent: float(0.0)
       cost_limit:
-        description: Cost budget supplied to this rotation run (USD)
+        description: Cost budget supplied to this run (USD)
         range: float
       names_composed:
-        description: Count of names produced by the generate pass(es)
+        description: Count of names produced by the generate phase
         range: integer
         ifabsent: int(0)
       names_enriched:
-        description: Count of names enriched during this rotation
+        description: Count of names enriched during this run
         range: integer
         ifabsent: int(0)
       names_reviewed:
-        description: Count of names reviewed during this rotation
+        description: Count of names reviewed during this run
         range: integer
         ifabsent: int(0)
       names_regenerated:
-        description: Count of names that went through the regen pass
+        description: Count of names that went through the regen phase
         range: integer
         ifabsent: int(0)
       domains_touched:
-        description: Physics domains that had at least one pass run
+        description: Physics domains that had at least one phase executed
         multivalued: true
       stop_reason:
         description: >-
-          Why the rotation exited. One of:
-          'budget_exhausted', 'plateau', 'interrupted', 'error', 'completed'.
-      passes:
-        description: Number of full extract→enrich→review→regen passes executed
-        range: integer
-        ifabsent: int(0)
+          Why the run exited. One of:
+          'budget_exhausted', 'interrupted', 'error', 'completed'.
+      min_score:
+        description: >-
+          The ``--min-score`` threshold below which reviewed names were
+          selected for the regen phase. Null if regen phase was skipped.
+        range: float
       description:
-        description: Free-text notes about this rotation run (optional)
+        description: Free-text notes about this run (optional)
 
   Review:
     description: >-

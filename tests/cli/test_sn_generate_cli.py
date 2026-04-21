@@ -48,7 +48,8 @@ class TestGenerateHelpShowsNewFlags:
             "--retry-quarantined",
             "--retry-skipped",
             "--retry-vocab-gap",
-            "--regen-only",
+            "--turn-number",
+            "--min-score",
         ]:
             assert flag in result.output, f"Missing flag {flag} in help output"
 
@@ -159,70 +160,6 @@ class TestFilterPlumbing:
                 ],
             )
         assert result.exit_code == 0
-        call_kwargs = mock_reset.call_args[1]
-        assert call_kwargs["validation_status"] == "quarantined"
-
-    def test_regen_only_implies_needs_revision(self, runner: CliRunner) -> None:
-        """--regen-only (without --tier) selects needs_revision names."""
-        with patch(
-            "imas_codex.standard_names.graph_ops.reset_standard_names",
-            return_value=3,
-        ) as mock_reset:
-            result = runner.invoke(
-                sn,
-                [
-                    "run",
-                    "--reset-to",
-                    "drafted",
-                    "--regen-only",
-                    "--reset-only",
-                ],
-            )
-        assert result.exit_code == 0, result.output
-        call_kwargs = mock_reset.call_args[1]
-        assert call_kwargs["validation_status"] == "needs_revision"
-
-    def test_explicit_tier_overrides_regen_only(self, runner: CliRunner) -> None:
-        """Explicit --tier takes precedence; implicit needs_revision NOT set."""
-        with patch(
-            "imas_codex.standard_names.graph_ops.reset_standard_names",
-            return_value=1,
-        ) as mock_reset:
-            result = runner.invoke(
-                sn,
-                [
-                    "run",
-                    "--reset-to",
-                    "drafted",
-                    "--regen-only",
-                    "--tier",
-                    "poor",
-                    "--reset-only",
-                ],
-            )
-        assert result.exit_code == 0, result.output
-        call_kwargs = mock_reset.call_args[1]
-        assert call_kwargs["validation_status"] is None
-        assert call_kwargs["tiers"] == ["poor"]
-
-    def test_retry_quarantined_wins_over_regen_only(self, runner: CliRunner) -> None:
-        """--retry-quarantined takes precedence over --regen-only."""
-        with patch(
-            "imas_codex.standard_names.graph_ops.reset_standard_names",
-            return_value=1,
-        ) as mock_reset:
-            result = runner.invoke(
-                sn,
-                [
-                    "run",
-                    "--reset-to",
-                    "drafted",
-                    "--regen-only",
-                    "--retry-quarantined",
-                    "--reset-only",
-                ],
-            )
-        assert result.exit_code == 0, result.output
         call_kwargs = mock_reset.call_args[1]
         assert call_kwargs["validation_status"] == "quarantined"
 

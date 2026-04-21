@@ -252,7 +252,7 @@ def get_generate_batch_config() -> dict[str, int]:
     """
     from imas_codex.settings import _get_section
 
-    section = _get_section("sn-generate")
+    section = _get_section("sn-run")
     return {
         "batch_size": int(section.get("batch-size", 25)),
         "name_only_batch_size": int(section.get("name-only-batch-size", 50)),

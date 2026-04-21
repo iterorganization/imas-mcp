@@ -65,7 +65,7 @@ class TestReviewFeedbackInjection:
                 "completeness": 12,
                 "compliance": 6,
             },
-            "validation_status": "needs_revision",
+            "validation_status": "valid",
         }
         item = _min_item(review_feedback=fb)
         rendered = render_prompt("sn/compose_dd", _min_context([item]))
@@ -92,7 +92,7 @@ class TestReviewFeedbackInjection:
             "review_tier": "adequate",
             "reviewer_comments": "Needs sharper definition.",
             "reviewer_scores": None,
-            "validation_status": "needs_revision",
+            "validation_status": "valid",
         }
         item = _min_item(review_feedback=fb)
         rendered = render_prompt("sn/compose_dd", _min_context([item]))
@@ -110,7 +110,7 @@ class TestReviewFeedbackInjection:
                 "review_tier": "poor",
                 "reviewer_comments": "Too verbose.",
                 "reviewer_scores": None,
-                "validation_status": "needs_revision",
+                "validation_status": "valid",
             },
         )
         rendered = render_prompt(

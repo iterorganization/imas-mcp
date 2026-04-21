@@ -88,8 +88,8 @@ class TestSchemaInvariants:
         schema = _load_schema()
         vs_enum = schema["enums"]["StandardNameValidationStatus"]
         values = set(vs_enum["permissible_values"].keys())
-        expected = {"pending", "valid", "quarantined", "needs_revision"}
-        assert expected <= values, f"Missing validation_status: {expected - values}"
+        expected = {"pending", "valid", "quarantined"}
+        assert expected == values, f"Unexpected validation_status set: {values}"
 
 
 # ---------------------------------------------------------------------------

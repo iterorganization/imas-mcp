@@ -24,7 +24,7 @@ from imas_codex.standard_names.workers import (
 logger = logging.getLogger(__name__)
 
 
-async def run_sn_generate_engine(
+async def run_sn_pipeline(
     state: StandardNameBuildState,
     *,
     stop_event: asyncio.Event | None = None,

@@ -293,48 +293,40 @@ def _get_rich_source_name_mapping() -> dict[str, dict]:
 # =============================================================================
 
 
-def fetch_needs_revision_sources(
+def fetch_low_score_sources(
     *,
+    min_score: float | None = None,
     domain: str | None = None,
     ids: str | None = None,
     limit: int | None = None,
     source_type: str = "dd",
 ) -> list[dict[str, Any]]:
-    """Enumerate source entities whose linked StandardName is ``needs_revision``.
+    """Enumerate sources whose linked StandardName has ``reviewer_score < min_score``.
 
     Walks ``(:IMASNode|:FacilitySignal)-[:HAS_STANDARD_NAME]->(:StandardName)``
     and returns the originating source IDs along with the reviewer feedback
-    that caused the demotion. Used by the extract worker's regen-only mode
-    (``sn generate --regen-only``) to re-queue the exact sources
-    that need rework instead of re-scanning the full DD.
+    needed to prompt a targeted regeneration. Used by the extract worker's
+    regen mode (``sn run --min-score F``) to re-queue the exact sources
+    whose names scored below the threshold.
+
+    Only reviewed names are considered (``reviewer_score IS NOT NULL``), so
+    unreviewed names are never pulled into regen. Duplicates per source_id
+    are collapsed, keeping the lowest-scoring entry ("worst critique wins").
 
     Args:
-        domain: Optional physics-domain filter applied to the StandardName
-            (not the source entity), matching how review classified them.
-        ids: Optional IDS-name filter (DD source only; IMASNode -> IDS).
-        limit: Optional cap on the number of rows returned (ordered by
-            lowest reviewer_score first, i.e. "worst names first").
-        source_type: ``"dd"`` or ``"signals"`` — selects which entity label
-            to walk from.
+        min_score: Reviewer-score threshold (0-1). Names with
+            ``reviewer_score < min_score`` are returned. Required for any
+            results; None short-circuits to an empty list.
+        domain: Optional physics-domain filter applied to the StandardName.
+        ids: Optional IDS-name filter (DD source only).
+        limit: Optional cap on rows returned (ordered by worst score first).
+        source_type: ``"dd"`` or ``"signals"``.
 
     Returns:
-        List of dicts, one per distinct ``source_id``, each with keys:
-
-        - ``source_id`` (str): the entity id (DD path or signal id)
-        - ``source_type`` (str): echo of input
-        - ``review_feedback`` (dict): full feedback payload matching
-          :func:`fetch_review_feedback_for_sources` for prompt injection.
-
-        Duplicates (a source with multiple linked SNs) are collapsed by
-        keeping the lowest-scoring entry, matching the feedback helper's
-        "worst-critique wins" semantics so the LLM sees the sharpest
-        criticism.
+        List of dicts with ``source_id``, ``source_type``, ``review_feedback``.
     """
-    # Import lazily so the graph helper module doesn't require the generated
-    # models at import time (circular-import guard).
-    from imas_codex.graph.models import StandardNameValidationStatus
-
-    status_value = StandardNameValidationStatus.needs_revision.value
+    if min_score is None:
+        return []
 
     if source_type == "dd":
         match_clause = "MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)"
@@ -345,8 +337,12 @@ def fetch_needs_revision_sources(
     else:
         raise ValueError(f"source_type must be 'dd' or 'signals', got {source_type!r}")
 
-    where_clauses = ["sn.validation_status = $status"]
-    params: dict[str, Any] = {"status": status_value}
+    where_clauses = [
+        "sn.reviewer_score IS NOT NULL",
+        "sn.reviewer_score < $min_score",
+        "coalesce(sn.regen_count, 0) < 1",
+    ]
+    params: dict[str, Any] = {"min_score": float(min_score)}
 
     if domain:
         where_clauses.append("sn.physics_domain = $domain")
@@ -428,7 +424,7 @@ def fetch_review_feedback_for_sources(
     """Fetch prior reviewer feedback for a batch of StandardNameSource ids.
 
     Used by the compose worker when a regeneration run is invoked with
-    ``--regen-only``. Each returned dict carries enough context
+    ``--min-score F``. Each returned dict carries enough context
     to let the LLM understand what the previous reviewer objected to and
     adjust the new candidate accordingly.
 
@@ -448,7 +444,7 @@ def fetch_review_feedback_for_sources(
         - ``reviewer_comments`` (str | None): free-form reviewer critique
         - ``reviewer_scores`` (dict | None): parsed 6-dimensional rubric scores
         - ``validation_status`` (str | None): graph lifecycle state at
-          fetch time (typically ``needs_revision``)
+          fetch time
 
         Only sources that currently link to a StandardName with a
         non-null ``reviewer_score`` are returned — entries without prior
@@ -3072,18 +3068,20 @@ def get_standard_name_source_stats(
         return {r["status"]: r["count"] for r in result}
 
 
-def write_rotation_provenance(
+def write_run_provenance(
     name_ids: list[str],
-    rotation_id: str,
+    run_id: str,
+    turn_number: int = 1,
 ) -> int:
-    """Stamp ``last_rotation_id`` and ``last_rotation_at`` on StandardName nodes.
+    """Stamp run provenance fields on StandardName nodes.
 
-    Called by the rotation orchestrator after the generate and regen phases
-    to tag every produced/regenerated name with the current rotation UUID.
+    Sets ``last_run_id``, ``last_run_at``, and ``last_turn_number`` on every
+    name touched by the current ``sn run`` invocation.
 
     Args:
         name_ids: StandardName ids to stamp.
-        rotation_id: UUID string identifying this rotation invocation.
+        run_id: UUID string identifying this ``sn run`` invocation.
+        turn_number: Turn number supplied via ``--turn-number``.
 
     Returns:
         Number of nodes updated.
@@ -3100,12 +3098,14 @@ def write_rotation_provenance(
             """
             UNWIND $ids AS nid
             MATCH (sn:StandardName {id: nid})
-            SET sn.last_rotation_id = $rid,
-                sn.last_rotation_at = datetime($ts)
+            SET sn.last_run_id = $rid,
+                sn.last_run_at = datetime($ts),
+                sn.last_turn_number = $tn
             RETURN count(sn) AS n
             """,
             ids=name_ids,
-            rid=rotation_id,
+            rid=run_id,
             ts=now,
+            tn=turn_number,
         )
         return result[0]["n"] if result else 0

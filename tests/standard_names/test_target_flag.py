@@ -25,7 +25,7 @@ def runner():
 
 
 # Patch targets for the three routing exits in ``sn_generate``.
-_ROTATOR = "imas_codex.cli.sn._run_rotator"
+_ROTATOR = "imas_codex.cli.sn._run_sn_loop_cmd"
 _DOCS_HELPER = "imas_codex.cli.sn._run_sn_docs_generation"
 
 

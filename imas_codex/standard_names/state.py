@@ -38,14 +38,20 @@ class StandardNameBuildState(DiscoveryStateBase):
     paths_list: list[str] | None = None  # Explicit DD paths (bypass query+classifier)
     dry_run: bool = False
     force: bool = False  # Bypass source-level skip
-    # Scope extraction to existing SNs in validation_status='needs_revision'
-    # (set by --regen-only or by the rotator's regen phase). When False, the
-    # extract worker runs the broad DD path / signals source.
-    regen_only: bool = False
-    # Inject prior reviewer critique (tier, score, comments) into the compose
-    # prompt so the LLM can directly address it on regeneration. Always-on by
-    # default — the CLI exposes ``--no-review-feedback`` to disable.
-    inject_review_feedback: bool = True
+    # Regeneration mode. When True, extraction targets existing reviewed
+    # StandardNames whose ``reviewer_score`` is below ``min_score`` and
+    # re-composes them with their prior reviewer critique injected. When
+    # False, the extract worker runs the broad DD path / signals source.
+    regen: bool = False
+    # Reviewer-score threshold for regen-mode selection. Names with
+    # ``reviewer_score < min_score`` are eligible. None in regen mode is a
+    # no-op (nothing selected); paired with the CLI ``--min-score`` flag.
+    min_score: float | None = None
+    # Run provenance — stamped on every StandardName touched by this run
+    # via write_run_provenance. Set by the CLI / loop; default placeholders
+    # allow standalone pipeline invocations to still produce a node.
+    run_id: str | None = None
+    turn_number: int = 1
     limit: int | None = None  # Cap on paths to process
     from_model: str | None = None  # Regenerate names produced by this model (substring)
 
@@ -124,20 +130,18 @@ class StandardNameBuildState(DiscoveryStateBase):
     # Mode helpers
     # ------------------------------------------------------------------
 
-    def is_regen_only_mode(self) -> bool:
-        """Return True when extraction should be scoped to needs_revision SNs only.
+    def is_regen_mode(self) -> bool:
+        """Return True when extraction should target reviewed names below ``min_score``.
 
-        Triggered by ``--regen-only`` (or by the rotator's regen phase) when no
-        narrower source-selection flag overrides the default extraction scope.
-        ``--paths`` (``paths_list``) and ``--from-model`` both narrow to an
-        explicit source set, so they short-circuit regen-only mode.
-        ``--domain`` / ``--ids`` / ``--limit`` are *narrowing* filters
-        within regen-only mode, not overrides.
+        Triggered by ``--min-score F`` (or by the loop's regen phase). An
+        explicit ``paths_list`` or ``from_model`` short-circuits to those
+        narrower sources instead. ``--domain`` / ``--limit`` act as
+        narrowing filters within regen mode, not overrides.
         """
-        if not self.regen_only:
+        if not self.regen:
             return False
         if self.paths_list:
             return False
         if self.from_model:
             return False
-        return True
+        return self.min_score is not None

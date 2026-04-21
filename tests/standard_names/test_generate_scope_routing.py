@@ -22,11 +22,11 @@ def runner():
 
 
 # Patch target for the rotator entrypoint in the CLI module.
-_ROTATOR = "imas_codex.cli.sn._run_rotator"
-# The single-pass path reaches ``run_sn_generate_engine`` via a local import
+_ROTATOR = "imas_codex.cli.sn._run_sn_loop_cmd"
+# The single-pass path reaches ``run_sn_pipeline`` via a local import
 # inside the CLI function.  Patching the source module also blocks it
 # effectively because the import resolves each invocation.
-_SINGLE_PASS = "imas_codex.standard_names.pipeline.run_sn_generate_engine"
+_SINGLE_PASS = "imas_codex.standard_names.pipeline.run_sn_pipeline"
 
 
 async def _async_noop(*args, **kwargs):  # pragma: no cover - test helper

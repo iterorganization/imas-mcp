@@ -30,12 +30,19 @@ class TestValidationStatusEnum:
         assert StandardNameValidationStatus.pending == "pending"
         assert StandardNameValidationStatus.valid == "valid"
         assert StandardNameValidationStatus.quarantined == "quarantined"
-        assert StandardNameValidationStatus.needs_revision == "needs_revision"
+
+    def test_needs_revision_removed(self) -> None:
+        """`needs_revision` has been dropped — regen is driven by --min-score."""
+        from imas_codex.graph.models import StandardNameValidationStatus
+
+        assert not hasattr(StandardNameValidationStatus, "needs_revision")
+        values = {m.value for m in StandardNameValidationStatus}
+        assert "needs_revision" not in values
 
     def test_enum_member_count(self) -> None:
         from imas_codex.graph.models import StandardNameValidationStatus
 
-        assert len(StandardNameValidationStatus) == 4
+        assert len(StandardNameValidationStatus) == 3
 
     def test_standard_name_model_has_field(self) -> None:
         """StandardName Pydantic model includes validation_status."""

@@ -38,50 +38,59 @@ def sn() -> None:
     pass
 
 
-def _run_rotator(
+def _run_sn_loop_cmd(
     *,
     cost_limit: float,
-    plateau_passes: int,
     per_domain_limit: int | None,
     dry_run: bool,
     quiet: bool,
     only_domain: str | None = None,
     verbose: bool = False,
+    turn_number: int = 1,
+    min_score: float | None = None,
+    skip_enrich: bool = False,
+    skip_review: bool = False,
+    skip_regen: bool = False,
 ) -> None:
-    """Execute the DD completion rotator and render the summary."""
+    """Execute the DD completion loop and render the summary."""
     import asyncio
 
     from rich.console import Console
     from rich.table import Table
 
     from imas_codex.cli.discover.common import setup_logging
-    from imas_codex.standard_names.dd_completion import (
-        run_dd_completion,
+    from imas_codex.standard_names.loop import (
+        run_sn_loop,
         summary_table,
     )
 
     console = Console(quiet=quiet)
 
-    # Wire INFO-level logs to stderr so per-pass progress from run_dd_completion
-    # / run_rotation / workers is visible. Without this the user sees the
+    # Wire INFO-level logs to stderr so per-phase progress from run_sn_loop
+    # / run_turn / workers is visible. Without this the user sees the
     # "DD completion loop" header and then nothing for the whole run.
     if not quiet:
-        setup_logging("sn", "sn-generate", use_rich=False, verbose=verbose)
+        setup_logging("sn", "sn-run", use_rich=False, verbose=verbose)
 
     if not quiet:
         console.print(
             f"[bold]DD completion loop[/bold] "
-            f"(budget=${cost_limit:.2f}, plateau_passes={plateau_passes}"
+            f"(budget=${cost_limit:.2f}, turn={turn_number}"
+            f"{f', min_score={min_score}' if min_score is not None else ''}"
             f"{', dry-run' if dry_run else ''})"
         )
 
     summary = asyncio.run(
-        run_dd_completion(
+        run_sn_loop(
             cost_limit=cost_limit,
-            plateau_passes=plateau_passes,
             per_domain_limit=per_domain_limit,
             dry_run=dry_run,
             only_domain=only_domain,
+            turn_number=turn_number,
+            min_score=min_score,
+            skip_enrich=skip_enrich,
+            skip_review=skip_review,
+            skip_regen=skip_regen,
         )
     )
     row = summary_table(summary)
@@ -89,11 +98,11 @@ def _run_rotator(
     if quiet:
         return
 
-    table = Table(title=f"Rotation {row['rotation_id'][:8]}…")
+    table = Table(title=f"Run {row['run_id'][:8]}… (turn {row.get('turn_number', 1)})")
     table.add_column("field", style="cyan")
     table.add_column("value", style="white")
     for key in (
-        "passes",
+        "turn_number",
         "stop_reason",
         "cost_spent",
         "cost_limit",
@@ -103,7 +112,8 @@ def _run_rotator(
         "names_regenerated",
         "elapsed_s",
     ):
-        table.add_row(key, str(row[key]))
+        if key in row:
+            table.add_row(key, str(row[key]))
     table.add_row("domains_touched", ", ".join(row["domains_touched"]) or "—")
     console.print(table)
 
@@ -274,25 +284,51 @@ def _run_rotator(
     ),
 )
 @click.option(
-    "--regen-only",
-    is_flag=True,
-    default=False,
+    "--turn-number",
+    "turn_number",
+    type=int,
+    default=1,
+    show_default=True,
     help=(
-        "Narrow extraction to existing StandardName sources whose linked name "
-        "has validation_status='needs_revision'. Use after a review pass to "
-        "regenerate only the names flagged for revision. Prior reviewer "
-        "comments are injected into the compose prompt automatically whenever "
-        "they are available — use --no-review-feedback to disable that."
+        "User-supplied turn number for this run. Stamped on every "
+        "StandardName touched via ``last_turn_number`` and on the "
+        "created SNRun audit node. Does NOT auto-increment — call "
+        "``sn run --turn-number 2`` manually to drive the next pass."
     ),
 )
 @click.option(
-    "--no-review-feedback",
+    "--min-score",
+    "min_score",
+    type=float,
+    default=None,
+    help=(
+        "Reviewer-score threshold for regen phase. Names with "
+        "``reviewer_score < min_score`` (that haven't already been "
+        "regenerated) are re-composed with prior reviewer critique "
+        "injected into the compose prompt. When None (default), the "
+        "regen phase is skipped. Typical value: 0.6."
+    ),
+)
+@click.option(
+    "--skip-enrich",
+    is_flag=True,
+    default=False,
+    help="Skip the enrich phase (documentation generation).",
+)
+@click.option(
+    "--skip-review",
+    is_flag=True,
+    default=False,
+    help="Skip the review phase (6-dimensional scoring).",
+)
+@click.option(
+    "--skip-regen",
     is_flag=True,
     default=False,
     help=(
-        "Opt out of the default behaviour of injecting prior reviewer "
-        "comments / score / tier into the compose prompt. Useful for "
-        "A/B comparing prompts with and without feedback context."
+        "Skip the regen phase even when ``--min-score`` is set. "
+        "Useful for A/B testing extract → compose → enrich → review "
+        "in isolation from regeneration."
     ),
 )
 @click.option(
@@ -347,19 +383,8 @@ def _run_rotator(
     default=False,
     help=(
         "Force the single-pass extract → compose pipeline instead of "
-        "the default domain-rotating completion loop. Useful for CI "
-        "and regression tests. --plateau-passes is ignored."
-    ),
-)
-@click.option(
-    "--plateau-passes",
-    type=int,
-    default=2,
-    show_default=True,
-    help=(
-        "Consecutive zero-change passes before the rotator exits. "
-        "Set higher to tolerate transient extraction stalls. "
-        "Ignored under --single-pass."
+        "the default domain-iterating completion loop. Useful for CI "
+        "and regression tests."
     ),
 )
 def sn_run(
@@ -385,33 +410,36 @@ def sn_run(
     retry_quarantined: bool,
     retry_skipped: bool,
     retry_vocab_gap: bool,
-    regen_only: bool,
-    no_review_feedback: bool,
+    turn_number: int,
+    min_score: float | None,
+    skip_enrich: bool,
+    skip_review: bool,
+    skip_regen: bool,
     target: str,
     name_only_batch_size: int | None,
     docs_status_filter: str,
     docs_batch_size: int | None,
     single_pass: bool,
-    plateau_passes: int,
 ) -> None:
     """Generate standard names from a source.
 
     \b
     Scope routing:
-      - With --paths: single-pass pipeline (explicit paths too narrow for rotation)
-      - Without --paths: domain-rotating completion loop (default)
+      - With --paths: single-pass pipeline (explicit paths too narrow for looping)
+      - Without --paths: domain-iterating completion loop (default)
       - With --single-pass: always single-pass pipeline
 
     \b
     Examples:
-      imas-codex sn run -c 50                                 # rotator over all domains
-      imas-codex sn run --physics-domain equilibrium -c 5     # rotator, one domain
+      imas-codex sn run -c 50                                 # loop over all domains
+      imas-codex sn run --physics-domain equilibrium -c 5     # loop, one domain
       imas-codex sn run --physics-domain magnetics --dry-run
       imas-codex sn run --source signals --facility tcv --physics-domain magnetics
       imas-codex sn run --paths equilibrium/time_slice/profiles_1d/psi --paths equilibrium/time_slice/profiles_1d/q
       imas-codex sn run --single-pass --paths equilibrium/time_slice/profiles_1d/psi -c 1  # single compose pass on explicit paths
       imas-codex sn run --reset-to drafted --reset-only
       imas-codex sn run --reset-to drafted --below-score 0.6 --reset-only
+      imas-codex sn run --turn-number 2 --min-score 0.6 -c 5  # regen reviewed names below 0.6
     """
     # --- Resolve --target ---
     target_normalized = target.lower()
@@ -439,21 +467,25 @@ def sn_run(
         )
         return
 
-    # Scope-routing: --paths → single-pass; else → rotator (unless --single-pass).
-    # The rotator drives the full extract→enrich→review→regen rotation per domain
-    # and persists a RotationRun audit node. --physics-domain is forwarded to scope
-    # the rotator to a single domain (single-element rotation).
-    use_rotator = not single_pass and not paths_list and source == "dd"
+    # Scope-routing: --paths → single-pass; else → loop (unless --single-pass).
+    # The loop drives the full extract→enrich→review→regen cycle per domain
+    # and persists an SNRun audit node. --physics-domain is forwarded to scope
+    # the loop to a single domain (single-element iteration).
+    use_loop = not single_pass and not paths_list and source == "dd"
 
-    if use_rotator:
-        _run_rotator(
+    if use_loop:
+        _run_sn_loop_cmd(
             cost_limit=cost_limit,
-            plateau_passes=plateau_passes,
             per_domain_limit=limit,
             dry_run=dry_run,
             quiet=quiet,
             only_domain=domain_filter,
             verbose=verbose,
+            turn_number=turn_number,
+            min_score=min_score,
+            skip_enrich=skip_enrich,
+            skip_review=skip_review,
+            skip_regen=skip_regen,
         )
         return
 
@@ -553,20 +585,11 @@ def sn_run(
     if reset_only and reset_to is None:
         raise click.UsageError("--reset-only requires --reset-to")
 
-    # Build filter kwargs for reset/clear functions
+    # Build filter kwargs for reset/clear functions.
     _tiers = [t.strip() for t in tier.split(",")] if tier else None
     _validation_status: str | None = None
     if retry_quarantined:
         _validation_status = "quarantined"
-    elif regen_only and not tier:
-        # --regen-only targets needs_revision names by default (review_worker
-        # demotes poor/adequate tier names to this state). Explicit --tier
-        # overrides this implicit filter.
-        _validation_status = "needs_revision"
-        logger.info(
-            "--regen-only: implicit filter validation_status='needs_revision' "
-            "(pass --tier to override)"
-        )
     _reset_filter_kwargs: dict[str, Any] = {
         "since": since,
         "before": before,
@@ -692,7 +715,7 @@ def sn_run(
     log_print(f"  Cost limit: ${cost_limit:.2f}")
     log_print("")
 
-    from imas_codex.standard_names.pipeline import run_sn_generate_engine
+    from imas_codex.standard_names.pipeline import run_sn_pipeline
     from imas_codex.standard_names.state import StandardNameBuildState
 
     # Build progress display
@@ -715,7 +738,7 @@ def sn_run(
         from imas_codex.settings import _get_section
 
         name_only_batch_size = int(
-            _get_section("sn-generate").get("name-only-batch-size", 50)
+            _get_section("sn-run").get("name-only-batch-size", 50)
         )
     if name_only:
         logger.info("Mode: name-only (batch_size=%d)", name_only_batch_size)
@@ -730,8 +753,9 @@ def sn_run(
         cost_limit=cost_limit,
         dry_run=dry_run,
         force=force,
-        regen_only=regen_only,
-        inject_review_feedback=not no_review_feedback,
+        regen=min_score is not None,
+        min_score=min_score,
+        turn_number=turn_number,
         limit=limit,
         compose_model=compose_model,
         from_model=from_model,
@@ -745,7 +769,7 @@ def sn_run(
     async def _run(stop_event, service_monitor):
         if service_monitor:
             state.service_monitor = service_monitor
-        await run_sn_generate_engine(
+        await run_sn_pipeline(
             state,
             stop_event=stop_event,
             on_worker_status=display.on_worker_status if display else None,
@@ -762,7 +786,7 @@ def sn_run(
         check_ssh=False,
         check_auth=source != "dd",  # signals source might need auth
         check_model=not dry_run,
-        model_section="sn-generate",
+        model_section="sn-run",
         suppress_loggers=[
             "imas_codex.standard_names",
         ],
@@ -1088,7 +1112,7 @@ def sn_status() -> None:
         skip_table.add_row("[bold]Total[/bold]", f"[bold]{skip_total}[/bold]")
         console.print(skip_table)
 
-    # Latest RotationRun (from sn run rotator)
+    # Latest SNRun (from sn run rotator)
     try:
         from imas_codex.graph.client import GraphClient
 
@@ -1096,7 +1120,7 @@ def sn_status() -> None:
             rr_rows = list(
                 gc.query(
                     """
-                MATCH (rr:RotationRun)
+                MATCH (rr:SNRun)
                 RETURN rr.id AS id,
                        rr.started_at AS started_at,
                        rr.ended_at AS ended_at,
@@ -1116,7 +1140,7 @@ def sn_status() -> None:
             )
     except Exception as exc:  # pragma: no cover
         rr_rows = []
-        logger.debug("Could not fetch latest RotationRun: %s", exc)
+        logger.debug("Could not fetch latest SNRun: %s", exc)
 
     if rr_rows:
         rr = rr_rows[0]
@@ -2713,7 +2737,7 @@ def _run_sn_docs_generation(
     if batch_size is None:
         from imas_codex.settings import _get_section
 
-        sn_generate_cfg = _get_section("sn-generate")
+        sn_generate_cfg = _get_section("sn-run")
         sn_enrich_cfg = _get_section("sn-enrich")
         batch_size = int(
             sn_generate_cfg.get("docs-batch-size", sn_enrich_cfg.get("batch-size", 8))
@@ -2842,173 +2866,3 @@ def _run_sn_docs_generation(
             log_print("  (dry run — no LLM calls or graph writes)")
     elif not quiet:
         log_print("[yellow]No enrichment results returned[/yellow]")
-
-
-@sn.command("rotate")
-@click.option(
-    "--physics-domain",
-    "domain",
-    type=_PHYSICS_DOMAIN_CHOICE,
-    required=True,
-    help="Physics domain scope, applied to all 4 phases.",
-)
-@click.option(
-    "-c",
-    "--cost-limit",
-    type=float,
-    default=5.0,
-    show_default=True,
-    help="TOTAL budget in USD, split across phases (40/20/20/20 default)",
-)
-@click.option(
-    "--limit",
-    type=int,
-    default=None,
-    help="Max paths per generate phase",
-)
-@click.option("--dry-run", is_flag=True, help="Plan only — no LLM calls")
-@click.option(
-    "--fail-fast",
-    is_flag=True,
-    help="Abort rotation on first phase error",
-)
-@click.option("--skip-generate", is_flag=True, help="Skip initial generate phase")
-@click.option("--skip-enrich", is_flag=True, help="Skip enrich phase")
-@click.option("--skip-review", is_flag=True, help="Skip review phase")
-@click.option("--skip-regen", is_flag=True, help="Skip regen phase")
-@click.option(
-    "--concurrency",
-    type=int,
-    default=2,
-    show_default=True,
-    help="Parallel workers per phase",
-)
-def sn_rotate(
-    domain: str,
-    cost_limit: float,
-    limit: int | None,
-    dry_run: bool,
-    fail_fast: bool,
-    skip_generate: bool,
-    skip_enrich: bool,
-    skip_review: bool,
-    skip_regen: bool,
-    concurrency: int,
-) -> None:
-    """Run one full quality-improvement rotation cycle.
-
-    \b
-    Chains four phases in sequence:
-      1. generate  — extract + compose missing names
-      2. enrich    — populate documentation for valid names
-      3. review    — score valid names; demote poor/adequate to needs_revision
-      4. regen     — regenerate needs_revision names with reviewer feedback
-
-    \b
-    Budget is split 40/20/20/20 across (generate/enrich/review/regen).
-
-    \b
-    Examples:
-      imas-codex sn rotate --domain equilibrium --dry-run
-      imas-codex sn rotate --domain magnetics -c 10.0
-      imas-codex sn rotate --domain transport --skip-review --skip-regen
-      imas-codex sn rotate --domain equilibrium --fail-fast -c 3.0
-    """
-    import asyncio
-    import sys
-
-    from rich.table import Table
-
-    from imas_codex.standard_names.rotation import (
-        RotationConfig,
-        rotation_summary,
-        run_rotation,
-    )
-
-    cfg = RotationConfig(
-        domain=domain,
-        cost_limit=cost_limit,
-        limit=limit,
-        concurrency=concurrency,
-        dry_run=dry_run,
-        fail_fast=fail_fast,
-        skip_generate=skip_generate,
-        skip_enrich=skip_enrich,
-        skip_review=skip_review,
-        skip_regen=skip_regen,
-    )
-
-    # --- Header ---
-    console.print(
-        f"\n[bold]═══ SN Rotation [dim]{cfg.rotation_id[:8]}…[/dim] ═══[/bold]"
-    )
-    console.print(f"  Domain:     {domain}")
-    console.print(f"  Budget:     ${cost_limit:.2f}")
-    console.print(f"  Split:      {'/'.join(f'{s:.0%}' for s in cfg.split)}")
-    if limit:
-        console.print(f"  Limit:      {limit}")
-    if dry_run:
-        console.print("  Mode:       [yellow]dry run[/yellow]")
-    console.print("")
-
-    # --- Phase plan ---
-    phase_labels = ["generate", "enrich", "review", "regen"]
-    skips = [skip_generate, skip_enrich, skip_review, skip_regen]
-    plan_table = Table(title="Phase Plan", show_lines=False)
-    plan_table.add_column("#", style="dim", width=3)
-    plan_table.add_column("Phase", width=12)
-    plan_table.add_column("Budget", justify="right", width=10)
-    plan_table.add_column("Status", width=10)
-    for i, (label, skipped) in enumerate(zip(phase_labels, skips, strict=True)):
-        budget_str = f"${cfg.phase_budget(i):.2f}"
-        status = "[dim]skip[/dim]" if skipped else "[green]run[/green]"
-        plan_table.add_row(str(i + 1), label, budget_str, status)
-    console.print(plan_table)
-    console.print("")
-
-    if dry_run:
-        console.print("[yellow]Dry run — no LLM calls or graph writes[/yellow]")
-        sys.exit(0)
-
-    # --- Run rotation ---
-    results = asyncio.run(run_rotation(cfg))
-    summary = rotation_summary(results, cfg)
-
-    # --- Summary table ---
-    console.print("")
-    summary_table = Table(title="Rotation Summary", show_lines=True)
-    summary_table.add_column("Phase", width=12)
-    summary_table.add_column("Count", justify="right", width=8)
-    summary_table.add_column("Cost", justify="right", width=10)
-    summary_table.add_column("Elapsed", justify="right", width=10)
-    summary_table.add_column("Status", width=12)
-    for phase in summary["phases"]:
-        if phase["skipped"]:
-            status = "[dim]skipped[/dim]"
-        elif phase["exit_code"] == 0:
-            status = "[green]ok[/green]"
-        else:
-            status = f"[red]error ({phase['exit_code']})[/red]"
-
-        summary_table.add_row(
-            phase["name"],
-            str(phase["count"]),
-            f"${phase['cost']:.4f}",
-            f"{phase['elapsed']:.1f}s" if phase["elapsed"] > 0 else "—",
-            status,
-        )
-    console.print(summary_table)
-
-    console.print(
-        f"\n[bold]Total:[/bold] {summary['total_count']} items, "
-        f"${summary['total_cost']:.4f} / ${summary['cost_limit']:.2f}, "
-        f"{summary['total_elapsed']:.1f}s"
-    )
-    console.print(f"[dim]rotation_id: {cfg.rotation_id}[/dim]")
-
-    if summary["errors"]:
-        console.print("\n[red]Errors:[/red]")
-        for err in summary["errors"]:
-            console.print(f"  [{err['phase']}] {err['error']}")
-
-    sys.exit(summary["exit_code"])

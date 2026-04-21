@@ -1,10 +1,10 @@
 """Tests for rotation provenance stamping.
 
 Validates:
-- ``last_rotation_id`` is written on generate + regen phases
-- ``last_rotation_at`` is written alongside
+- ``last_run_id`` is written on generate + regen phases
+- ``last_run_at`` is written alongside
 - Phases that didn't produce the node don't overwrite provenance
-- ``write_rotation_provenance`` handles empty lists gracefully
+- ``write_run_provenance`` handles empty lists gracefully
 """
 
 from __future__ import annotations
@@ -14,24 +14,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from imas_codex.standard_names.rotation import PhaseResult, RotationConfig
+from imas_codex.standard_names.turn import PhaseResult, TurnConfig
 
 # ═══════════════════════════════════════════════════════════════════════
-# write_rotation_provenance unit tests
+# write_run_provenance unit tests
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestWriteRotationProvenance:
-    """Unit tests for the graph_ops.write_rotation_provenance helper."""
+    """Unit tests for the graph_ops.write_run_provenance helper."""
 
     def test_empty_list_returns_zero(self):
-        from imas_codex.standard_names.graph_ops import write_rotation_provenance
+        from imas_codex.standard_names.graph_ops import write_run_provenance
 
-        result = write_rotation_provenance([], "test-rotation-id")
+        result = write_run_provenance([], "test-rotation-id")
         assert result == 0
 
     def test_calls_graph_with_correct_params(self):
-        from imas_codex.standard_names.graph_ops import write_rotation_provenance
+        from imas_codex.standard_names.graph_ops import write_run_provenance
 
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[{"n": 3}])
@@ -42,7 +42,7 @@ class TestWriteRotationProvenance:
             "imas_codex.standard_names.graph_ops.GraphClient",
             return_value=mock_gc,
         ):
-            n = write_rotation_provenance(["sn_a", "sn_b", "sn_c"], "rotation-123")
+            n = write_run_provenance(["sn_a", "sn_b", "sn_c"], "rotation-123")
 
         assert n == 3
         mock_gc.query.assert_called_once()
@@ -59,15 +59,15 @@ class TestWriteRotationProvenance:
 
 
 class TestRotationProvenanceOnGenerate:
-    """Verify that generate phase stamps rotation_id on produced names."""
+    """Verify that generate phase stamps run_id on produced names."""
 
     @pytest.mark.asyncio
-    async def test_generate_stamps_rotation_id(self):
-        """After generate, write_rotation_provenance should be called
+    async def test_generate_stamps_run_id(self):
+        """After generate, write_run_provenance should be called
         with the consolidated name IDs."""
-        from imas_codex.standard_names.rotation import _run_generate_phase
+        from imas_codex.standard_names.turn import _run_generate_phase
 
-        cfg = RotationConfig(domain="equilibrium", dry_run=False)
+        cfg = TurnConfig(domain="equilibrium", dry_run=False)
 
         mock_state = MagicMock()
         mock_state.total_cost = 0.1
@@ -79,13 +79,13 @@ class TestRotationProvenanceOnGenerate:
 
         provenance_calls = []
 
-        def capture_provenance(ids, rid):
-            provenance_calls.append((ids, rid))
+        def capture_provenance(ids, rid, tn=1):
+            provenance_calls.append((ids, rid, tn))
             return len(ids)
 
         with (
             patch(
-                "imas_codex.standard_names.pipeline.run_sn_generate_engine",
+                "imas_codex.standard_names.pipeline.run_sn_pipeline",
                 new_callable=AsyncMock,
             ) as _mock_engine,
             patch(
@@ -93,7 +93,7 @@ class TestRotationProvenanceOnGenerate:
                 return_value=mock_state,
             ),
             patch(
-                "imas_codex.standard_names.graph_ops.write_rotation_provenance",
+                "imas_codex.standard_names.graph_ops.write_run_provenance",
                 side_effect=capture_provenance,
             ),
         ):
@@ -102,17 +102,17 @@ class TestRotationProvenanceOnGenerate:
         assert result.name == "generate"
         assert result.count == 2
         assert len(provenance_calls) == 1
-        ids, rid = provenance_calls[0]
+        ids, rid, _tn = provenance_calls[0]
         assert "electron_temperature" in ids
         assert "ion_density" in ids
-        assert rid == cfg.rotation_id
+        assert rid == cfg.run_id
 
     @pytest.mark.asyncio
     async def test_dry_run_no_provenance(self):
-        """Dry-run should NOT call write_rotation_provenance."""
-        from imas_codex.standard_names.rotation import _run_generate_phase
+        """Dry-run should NOT call write_run_provenance."""
+        from imas_codex.standard_names.turn import _run_generate_phase
 
-        cfg = RotationConfig(domain="equilibrium", dry_run=True)
+        cfg = TurnConfig(domain="equilibrium", dry_run=True)
         result = await _run_generate_phase(cfg)
 
         assert result.name == "generate"
@@ -125,13 +125,13 @@ class TestRotationProvenanceOnGenerate:
 
 
 class TestRotationProvenanceOnRegen:
-    """Verify that regen phase also stamps rotation_id."""
+    """Verify that regen phase also stamps run_id."""
 
     @pytest.mark.asyncio
-    async def test_regen_stamps_rotation_id(self):
-        from imas_codex.standard_names.rotation import _run_generate_phase
+    async def test_regen_stamps_run_id(self):
+        from imas_codex.standard_names.turn import _run_generate_phase
 
-        cfg = RotationConfig(domain="equilibrium", dry_run=False)
+        cfg = TurnConfig(domain="equilibrium", dry_run=False)
 
         mock_state = MagicMock()
         mock_state.total_cost = 0.05
@@ -140,13 +140,13 @@ class TestRotationProvenanceOnRegen:
 
         provenance_calls = []
 
-        def capture_provenance(ids, rid):
-            provenance_calls.append((ids, rid))
+        def capture_provenance(ids, rid, tn=1):
+            provenance_calls.append((ids, rid, tn))
             return len(ids)
 
         with (
             patch(
-                "imas_codex.standard_names.pipeline.run_sn_generate_engine",
+                "imas_codex.standard_names.pipeline.run_sn_pipeline",
                 new_callable=AsyncMock,
             ),
             patch(
@@ -154,17 +154,17 @@ class TestRotationProvenanceOnRegen:
                 return_value=mock_state,
             ),
             patch(
-                "imas_codex.standard_names.graph_ops.write_rotation_provenance",
+                "imas_codex.standard_names.graph_ops.write_run_provenance",
                 side_effect=capture_provenance,
             ),
         ):
-            result = await _run_generate_phase(cfg, regen_only=True, force=True)
+            result = await _run_generate_phase(cfg, regen=True, force=True)
 
         assert result.name == "regen"
         assert len(provenance_calls) == 1
-        ids, rid = provenance_calls[0]
+        ids, rid, _tn = provenance_calls[0]
         assert "plasma_current" in ids
-        assert rid == cfg.rotation_id
+        assert rid == cfg.run_id
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -176,11 +176,11 @@ class TestEnrichNoRotationOverwrite:
     """Verify enrich phase does not stamp rotation provenance."""
 
     @pytest.mark.asyncio
-    async def test_enrich_does_not_call_write_rotation_provenance(self):
-        """The enrich phase should not touch last_rotation_id."""
-        from imas_codex.standard_names.rotation import _run_enrich_phase
+    async def test_enrich_does_not_call_write_run_provenance(self):
+        """The enrich phase should not touch last_run_id."""
+        from imas_codex.standard_names.turn import _run_enrich_phase
 
-        cfg = RotationConfig(domain="equilibrium", dry_run=True)
+        cfg = TurnConfig(domain="equilibrium", dry_run=True)
         result = await _run_enrich_phase(cfg)
 
         # Dry-run enrich returns without calling any graph operations
@@ -192,11 +192,11 @@ class TestReviewNoRotationOverwrite:
     """Verify review phase does not stamp rotation provenance."""
 
     @pytest.mark.asyncio
-    async def test_review_does_not_call_write_rotation_provenance(self):
-        """The review phase should not touch last_rotation_id."""
-        from imas_codex.standard_names.rotation import _run_review_phase
+    async def test_review_does_not_call_write_run_provenance(self):
+        """The review phase should not touch last_run_id."""
+        from imas_codex.standard_names.turn import _run_review_phase
 
-        cfg = RotationConfig(domain="equilibrium", dry_run=True)
+        cfg = TurnConfig(domain="equilibrium", dry_run=True)
         result = await _run_review_phase(cfg)
 
         assert result.name == "review"

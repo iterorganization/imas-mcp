@@ -1,16 +1,17 @@
-"""Unified rotation orchestrator for ``sn rotate``.
+"""Per-domain turn orchestrator for ``sn run``.
 
-Chains one full quality-improvement cycle::
+Chains one full quality-improvement cycle for a single physics domain::
 
     generate → enrich → review → regen
 
-Each phase delegates to the same library functions used by the
-individual ``sn generate``, ``sn enrich``, and ``sn review`` CLI
-commands — no pipeline logic is duplicated.
+Each phase delegates to the same library functions used by the individual
+``sn run``, ``sn enrich``, and ``sn review`` CLI commands — no pipeline
+logic is duplicated.
 
-The rotation is identified by a UUID (``rotation_id``) stamped
-onto every StandardName node produced or regenerated during the
-cycle.
+The turn is identified by a UUID (``run_id``) stamped onto every
+StandardName node produced or regenerated during the cycle, along with a
+``turn_number`` that increments across successive ``sn run
+--turn-number N`` invocations.
 """
 
 from __future__ import annotations
@@ -26,12 +27,12 @@ logger = logging.getLogger(__name__)
 
 # Default cost-budget split across the four phases.
 # Values must sum to 1.0.
-ROTATION_SPLIT: tuple[float, float, float, float] = (0.40, 0.20, 0.20, 0.20)
+TURN_SPLIT: tuple[float, float, float, float] = (0.40, 0.20, 0.20, 0.20)
 
 
 @dataclass
 class PhaseResult:
-    """Outcome of a single rotation phase."""
+    """Outcome of a single phase within one turn."""
 
     name: str
     exit_code: int = 0
@@ -43,8 +44,8 @@ class PhaseResult:
 
 
 @dataclass
-class RotationConfig:
-    """Configuration for a single rotation cycle."""
+class TurnConfig:
+    """Configuration for a single turn (one domain × four phases)."""
 
     domain: str
     cost_limit: float = 5.0
@@ -56,8 +57,10 @@ class RotationConfig:
     skip_enrich: bool = False
     skip_review: bool = False
     skip_regen: bool = False
-    split: tuple[float, float, float, float] = ROTATION_SPLIT
-    rotation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    split: tuple[float, float, float, float] = TURN_SPLIT
+    run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    turn_number: int = 1
+    min_score: float | None = None
 
     def phase_budget(self, index: int) -> float:
         """Return the cost budget allocated to phase *index* (0–3)."""
@@ -65,19 +68,21 @@ class RotationConfig:
 
 
 async def _run_generate_phase(
-    cfg: RotationConfig,
+    cfg: TurnConfig,
     *,
-    regen_only: bool = False,
+    regen: bool = False,
     force: bool = False,
 ) -> PhaseResult:
     """Run the generate (or regen) pipeline phase.
 
     Constructs a :class:`StandardNameBuildState` and invokes
-    :func:`run_sn_generate_engine` — the same function that
-    ``sn generate`` delegates to.
+    :func:`run_sn_pipeline` — the same function that ``sn run``
+    delegates to. When ``regen=True`` the state is configured to
+    select existing reviewed names whose ``reviewer_score`` is below
+    ``cfg.min_score``.
     """
-    phase_name = "regen" if regen_only else "generate"
-    phase_idx = 3 if regen_only else 0
+    phase_name = "regen" if regen else "generate"
+    phase_idx = 3 if regen else 0
     budget = cfg.phase_budget(phase_idx)
 
     if cfg.dry_run:
@@ -88,7 +93,7 @@ async def _run_generate_phase(
             count=0,
         )
 
-    from imas_codex.standard_names.pipeline import run_sn_generate_engine
+    from imas_codex.standard_names.pipeline import run_sn_pipeline
     from imas_codex.standard_names.state import StandardNameBuildState
 
     state = StandardNameBuildState(
@@ -98,13 +103,16 @@ async def _run_generate_phase(
         cost_limit=budget,
         dry_run=False,
         force=force,
-        regen_only=regen_only,
+        regen=regen,
+        min_score=cfg.min_score if regen else None,
+        turn_number=cfg.turn_number,
+        run_id=cfg.run_id,
         limit=cfg.limit,
     )
 
     t0 = time.monotonic()
     try:
-        await run_sn_generate_engine(state)
+        await run_sn_pipeline(state)
     except Exception as exc:
         logger.error("Phase %s failed: %s", phase_name, exc, exc_info=True)
         return PhaseResult(
@@ -120,15 +128,15 @@ async def _run_generate_phase(
     compose_count = state.stats.get("compose_count", 0)
     compose_cost = state.stats.get("compose_cost", 0.0)
 
-    # Stamp rotation provenance on produced names
+    # Stamp run provenance on produced names
     persisted_ids: list[str] = [
         n.get("id", "") for n in state.consolidated if n.get("id")
     ]
     if persisted_ids:
-        from imas_codex.standard_names.graph_ops import write_rotation_provenance
+        from imas_codex.standard_names.graph_ops import write_run_provenance
 
         await asyncio.to_thread(
-            write_rotation_provenance, persisted_ids, cfg.rotation_id
+            write_run_provenance, persisted_ids, cfg.run_id, cfg.turn_number
         )
 
     return PhaseResult(
@@ -139,7 +147,7 @@ async def _run_generate_phase(
     )
 
 
-async def _run_enrich_phase(cfg: RotationConfig) -> PhaseResult:
+async def _run_enrich_phase(cfg: TurnConfig) -> PhaseResult:
     """Run the enrich pipeline phase.
 
     Constructs a :class:`StandardNameEnrichState` targeting
@@ -187,12 +195,13 @@ async def _run_enrich_phase(cfg: RotationConfig) -> PhaseResult:
     )
 
 
-async def _run_review_phase(cfg: RotationConfig) -> PhaseResult:
+async def _run_review_phase(cfg: TurnConfig) -> PhaseResult:
     """Run the review pipeline phase.
 
-    Reviews ``valid`` names in the given domain that are unreviewed
-    or have stale review hashes. Automatically demotes poor/adequate
-    tier names to ``needs_revision``.
+    Reviews ``valid`` names in the given domain that are unreviewed or
+    have stale review hashes. Writes reviewer scores and comments onto
+    each name without status demotion — low-score selection for regen
+    is handled by the regen phase via ``--min-score``.
     """
     budget = cfg.phase_budget(2)
 
@@ -240,8 +249,8 @@ async def _run_review_phase(cfg: RotationConfig) -> PhaseResult:
     )
 
 
-async def run_rotation(cfg: RotationConfig) -> list[PhaseResult]:
-    """Execute a full rotation cycle.
+async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
+    """Execute one full turn (generate → enrich → review → regen).
 
     Runs the four phases in sequence, respecting skip flags. Returns
     a list of :class:`PhaseResult` for every phase (including skipped
@@ -255,7 +264,7 @@ async def run_rotation(cfg: RotationConfig) -> list[PhaseResult]:
         (
             "regen",
             cfg.skip_regen,
-            lambda: _run_generate_phase(cfg, regen_only=True, force=True),
+            lambda: _run_generate_phase(cfg, regen=True, force=True),
         ),
     ]
 
@@ -271,7 +280,7 @@ async def run_rotation(cfg: RotationConfig) -> list[PhaseResult]:
 
         if result.exit_code != 0 and cfg.fail_fast:
             logger.error(
-                "Phase %s failed (exit_code=%d), --fail-fast: aborting rotation",
+                "Phase %s failed (exit_code=%d), --fail-fast: aborting turn",
                 name,
                 result.exit_code,
             )
@@ -283,9 +292,9 @@ async def run_rotation(cfg: RotationConfig) -> list[PhaseResult]:
     return results
 
 
-def rotation_summary(
+def turn_summary(
     results: list[PhaseResult],
-    cfg: RotationConfig,
+    cfg: TurnConfig,
 ) -> dict[str, Any]:
     """Build a summary dict suitable for rich printing.
 
@@ -299,7 +308,8 @@ def rotation_summary(
     errors = [r for r in results if r.error]
 
     return {
-        "rotation_id": cfg.rotation_id,
+        "run_id": cfg.run_id,
+        "turn_number": cfg.turn_number,
         "domain": cfg.domain,
         "phases": [
             {

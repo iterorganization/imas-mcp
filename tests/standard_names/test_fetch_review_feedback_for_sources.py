@@ -43,7 +43,7 @@ class TestFetchReviewFeedbackForSources:
                             "compliance": 6,
                         }
                     ),
-                    "validation_status": "needs_revision",
+                    "validation_status": "valid",
                 }
             ]
         )
@@ -73,7 +73,7 @@ class TestFetchReviewFeedbackForSources:
         assert fb["reviewer_score"] == 0.32
         assert fb["review_tier"] == "poor"
         assert fb["reviewer_comments"] == "Drop prefix"
-        assert fb["validation_status"] == "needs_revision"
+        assert fb["validation_status"] == "valid"
         # JSON parsed into dict
         assert isinstance(fb["reviewer_scores"], dict)
         assert fb["reviewer_scores"]["convention"] == 5
@@ -91,7 +91,7 @@ class TestFetchReviewFeedbackForSources:
                     "review_tier": "adequate",
                     "reviewer_comments": "meh",
                     "reviewer_scores_json": None,
-                    "validation_status": "needs_revision",
+                    "validation_status": "valid",
                 }
             ]
         )
@@ -114,7 +114,7 @@ class TestFetchReviewFeedbackForSources:
                     "review_tier": "adequate",
                     "reviewer_comments": "meh",
                     "reviewer_scores_json": "not-json",
-                    "validation_status": "needs_revision",
+                    "validation_status": "valid",
                 }
             ]
         )
@@ -138,7 +138,7 @@ class TestFetchReviewFeedbackForSources:
                     "review_tier": "adequate",
                     "reviewer_comments": "",
                     "reviewer_scores_json": None,
-                    "validation_status": "needs_revision",
+                    "validation_status": "valid",
                 },
                 {
                     "source_id": "dd:x",
@@ -149,7 +149,7 @@ class TestFetchReviewFeedbackForSources:
                     "review_tier": "poor",
                     "reviewer_comments": "",
                     "reviewer_scores_json": None,
-                    "validation_status": "needs_revision",
+                    "validation_status": "valid",
                 },
             ]
         )

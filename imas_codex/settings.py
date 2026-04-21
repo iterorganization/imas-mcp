@@ -85,7 +85,7 @@ MODEL_SECTIONS = frozenset(
         "compaction",
         "reasoning",
         "dd-enrichment",
-        "sn-generate",
+        "sn-run",
         "sn-enrich",
     }
 )
@@ -99,7 +99,7 @@ _MODEL_DEFAULTS: dict[str, str] = {
     "compaction": "anthropic/claude-haiku-4.5",
     "reasoning": "anthropic/claude-sonnet-4.6",
     "dd-enrichment": "anthropic/claude-sonnet-4.6",
-    "sn-generate": "anthropic/claude-sonnet-4.6",
+    "sn-run": "anthropic/claude-sonnet-4.6",
     "sn-enrich": "openrouter/anthropic/claude-opus-4.6",
 }
 
@@ -112,7 +112,7 @@ _MODEL_ENV_VARS: dict[str, str] = {
     "compaction": "IMAS_CODEX_COMPACTION_MODEL",
     "reasoning": "IMAS_CODEX_REASONING_MODEL",
     "dd-enrichment": "IMAS_CODEX_DD_ENRICHMENT_MODEL",
-    "sn-generate": "IMAS_CODEX_SN_GENERATE_MODEL",
+    "sn-run": "IMAS_CODEX_SN_RUN_MODEL",
     "sn-enrich": "IMAS_CODEX_SN_ENRICH_MODEL",
 }
 

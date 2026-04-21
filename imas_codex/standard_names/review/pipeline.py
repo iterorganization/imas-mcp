@@ -969,12 +969,10 @@ def _match_reviews_to_entries(
         original["review_tier"] = review.scores.tier
         original["review_mode"] = review_mode
 
-        # Phase C: demote low-tier names to needs_revision so a subsequent
-        # `sn generate --regen-only` run picks them up and
-        # regenerates with the reviewer critique fed back into the prompt.
-        if review.scores.tier in ("poor", "adequate"):
-            original["validation_status"] = "needs_revision"
-
+        # Review writes score/tier/comments but does NOT demote
+        # validation_status. Regeneration targeting is driven by the
+        # ``sn run --min-score F`` threshold instead, which selects names
+        # purely by reviewer_score without touching lifecycle state.
         if review.verdict == StandardNameReviewVerdict.revise and review.revised_name:
             if not _valid_sn_id(review.revised_name):
                 # Reviewer hallucinated garbage into revised_name (e.g. embedded

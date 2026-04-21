@@ -783,7 +783,7 @@ The LLM never provides the unit field.
 
 | Command | Purpose | Key Options |
 |---------|---------|-------------|
-| `sn run` | Generate standard names from DD paths or facility signals via LLM pipeline (extract → compose → validate → enrich → review → regen loop) | `--source {dd,signals}`, `--physics-domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--target {names,docs,full}`, `--docs-status`, `--docs-batch-size`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--include-review-feedback`, `--single-pass`, `--plateau-passes` |
+| `sn run` | Generate standard names from DD paths or facility signals via LLM pipeline (extract → compose → validate → enrich → review → regen loop) | `--source {dd,signals}`, `--physics-domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--target {names,docs,full}`, `--docs-status`, `--docs-batch-size`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--single-pass`, `--turn-number`, `--min-score`, `--skip-enrich`, `--skip-review`, `--skip-regen` |
 | `sn review` | Score and tier existing valid standard names via batched reviewer LLM (1:1 scoring invariant, retry-unmatched) | `--physics-domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--target {names,docs,full}` |
 | `sn publish` | Export validated StandardName nodes to YAML catalog files | `--output-dir`, `--ids`, `--domain`, `--group-by {ids,domain,confidence}`, `--confidence-min`, `--catalog-dir`, `--create-pr` |
 | `sn import` | Import reviewed YAML catalog entries back into graph | `--catalog-dir` (required), `--tags`, `--dry-run`, `--check` |
@@ -840,7 +840,7 @@ disagreement-threshold = 0.2
 **Disagreement semantics:** When `|primary_score − secondary_score| > threshold`:
 - `reviewer_disagreement` is set to the absolute difference
 - `reviewer_score` is consolidated to `min(primary, secondary)` (conservative)
-- `validation_status` is set to `needs_revision`
+- The name is flagged via low `reviewer_score` so it becomes eligible for the next `sn run --min-score <threshold>` regen turn
 
 **Persisted fields:** `reviewer_model_secondary`, `reviewer_score_secondary`,
 `reviewer_scores_secondary` (JSON), `reviewer_disagreement` (float).
@@ -861,22 +861,19 @@ A separate `validation_status` field gates names before they participate in revi
 
 ```
 pending → valid | quarantined
-valid   → needs_revision   (set by review_worker when review_tier ∈ {poor, adequate})
-needs_revision → valid     (after regeneration with sn run --include-review-feedback)
 ```
 
 - **pending**: Default state when a name is first drafted
 - **valid**: Passed all critical validation checks — eligible for `sn review`, consolidation, and `sn publish`
 - **quarantined**: Failed one or more critical checks — excluded from downstream pipeline stages
-- **needs_revision**: Review worker scored the name in a low tier (`poor` or `adequate`). The name is still grammatically valid but the reviewer flagged quality issues. Eligible for targeted regeneration via `sn run --include-review-feedback` (which feeds the prior reviewer critique back into the compose prompt). Excluded from `sn publish` until promoted back to `valid`.
 
 **Critical failures (→ quarantine):** grammar round-trip failure, Pydantic construction error, detected ambiguity.
 
 **Non-critical issues (→ valid):** semantic warnings, description quality hints — persisted as `validation_issues` but do not gate the name.
 
-**Review-driven demotion (→ needs_revision):** the `sn review` pipeline writes `validation_status='needs_revision'` for any name whose `review_tier` ends up `poor` or `adequate`. Running `sn run --include-review-feedback` then selects these names (implicitly setting `validation_status='needs_revision'` as the filter unless `--tier` is passed), injects the prior `reviewer_comments`, `reviewer_score`, and 6-dimensional rubric scores into the compose prompt, and regenerates a replacement name that addresses the critique.
+**Review does not demote.** The `sn review` pipeline writes `reviewer_score`, `reviewer_tier`, and `reviewer_comments` only — it never mutates `validation_status`. Low-scoring names remain `valid` and are selected for targeted regeneration via `sn run --min-score <threshold>`, which injects the prior reviewer feedback (always-on) into the compose prompt. Reviewer feedback injection is unconditional; there is no toggle.
 
-Only `valid` names participate in `sn publish`. `needs_revision` names remain eligible for consolidation and subsequent review/regeneration cycles.
+Only `valid` names participate in `sn publish`.
 
 ### StandardNameSource Lifecycle
 
@@ -947,14 +944,18 @@ This prevents a cheap `--target names` sweep from clobbering a prior full review
 `review_mode` enum (persisted on `StandardName.review_mode`) has three values: `full`,
 `name_only`, `docs`.
 
-**Rotator (default)** — Without `--paths`, `sn run` runs the DD-completion rotator.
+**Loop (default)** — Without `--paths`, `sn run` runs the DD-completion loop.
 Iterates over physics domains that still have extract-eligible paths, running a per-domain
-`run_rotation` (generate→enrich→review→regen) with fair-share cost budgeting across remaining
-domains. Stops when every domain reports zero new names for `--plateau-passes` consecutive passes
-(default 2), when `--cost-limit` is exhausted, or on `Ctrl-C`. Writes a `RotationRun` audit node
-capturing cost, phase counters, domains touched, and `stop_reason`; `sn status` surfaces the most
-recent run. `--physics-domain` narrows to a single-domain rotation. Use `--single-pass` to opt
-out and force the single-pass extract→compose pipeline.
+turn (generate→enrich→review→regen) with fair-share cost budgeting across remaining
+domains. Stops when every domain reports zero eligible work, when `--cost-limit` is exhausted,
+or on `Ctrl-C`. Writes an `SNRun` audit node capturing cost, phase counters, domains touched,
+`turn_number`, `min_score`, and `stop_reason`; `sn status` surfaces the most recent run.
+`--physics-domain` narrows to a single-domain loop. `--turn-number N` stamps the current
+iteration number onto the run (user-supplied; does not auto-increment). `--min-score F`
+enables the regen phase: names with `reviewer_score < F` are re-composed with the prior
+reviewer feedback injected into the prompt. Reviewer feedback injection is unconditional.
+Use `--single-pass` to opt out and force the single-pass extract→compose pipeline.
+`--skip-enrich`, `--skip-review`, `--skip-regen` narrow the per-turn phase set.
 
 ### Write Semantics
 

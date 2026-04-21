@@ -167,9 +167,6 @@ Documentation = "https://github.com/iterorganization/imas-codex#readme"
 
 [project.scripts]
 imas-codex = "imas_codex.cli:main"
-sn = "imas_codex.cli.sn:sn"
-discover = "imas_codex.cli.discover:discover"
-imas = "imas_codex.cli.imas_dd:imas"
 dd-version = "scripts.dd_version:main"
 build-schemas = "scripts.build_schemas:build_schemas"
 map-ids-domains = "scripts.map_ids_domains:map_ids_domains"
@@ -274,7 +271,7 @@ model = "google/gemini-3.1-flash-lite-preview"
 [tool.imas-codex.reasoning]
 model = "anthropic/claude-sonnet-4.6"
 
-[tool.imas-codex.sn-generate]
+[tool.imas-codex.sn-run]
 model = "anthropic/claude-sonnet-4.6"
 batch-size = 25
 # Batch size used when ``sn generate --name-only`` groups paths by
@@ -301,7 +298,7 @@ model = "openrouter/anthropic/claude-opus-4.6"
 # Enrich packs ~800–1200 tokens per name (docs, exemplars, DD context)
 # so batches should be smaller than generate batches.
 batch-size = 12
-# Pre-flight token budget guard (same semantics as sn-generate).
+# Pre-flight token budget guard (same semantics as sn-run).
 max-tokens = 150000
 
 [tool.imas-codex.sn.review]

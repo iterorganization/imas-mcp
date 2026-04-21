@@ -885,9 +885,9 @@ class TestPipelineShouldStopFn:
         """Validate/consolidate/persist should ignore budget exhaustion."""
         import inspect
 
-        from imas_codex.standard_names.pipeline import run_sn_generate_engine
+        from imas_codex.standard_names.pipeline import run_sn_pipeline
 
-        source = inspect.getsource(run_sn_generate_engine)
+        source = inspect.getsource(run_sn_pipeline)
         assert "should_stop_fn" in source
         assert "_downstream_should_stop" in source
 
@@ -899,9 +899,9 @@ class TestPipelineShouldStopFn:
         """
         import inspect
 
-        from imas_codex.standard_names.pipeline import run_sn_generate_engine
+        from imas_codex.standard_names.pipeline import run_sn_pipeline
 
-        source = inspect.getsource(run_sn_generate_engine)
+        source = inspect.getsource(run_sn_pipeline)
         # Must pass stop_fn to run_discovery_engine
         assert "stop_fn=" in source
         # stop_fn must check stop_requested only, not should_stop (budget)

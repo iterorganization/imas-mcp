@@ -77,20 +77,20 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
         _on_status("loading existing names…")
         existing = get_existing_standard_names()
 
-        # Regen-only mode: when --regen-only is passed without a narrower
-        # source selector, re-queue exactly the sources whose linked
-        # StandardName has validation_status='needs_revision'. The subsequent
-        # feedback-injection block (below) then attaches reviewer_comments /
+        # Regen mode: when --min-score F is passed, re-queue sources whose
+        # linked StandardName has reviewer_score < min_score. The subsequent
+        # feedback-injection block (always-on) attaches reviewer_comments /
         # tier / scores to each item so compose regenerates with critique
         # in-prompt.
-        if state.is_regen_only_mode() and state.source == "dd":
+        if state.is_regen_mode() and state.source == "dd":
             from imas_codex.standard_names.graph_ops import (
-                fetch_needs_revision_sources,
+                fetch_low_score_sources,
             )
             from imas_codex.standard_names.sources.dd import extract_specific_paths
 
-            _on_status("loading needs_revision sources…")
-            regen_sources = fetch_needs_revision_sources(
+            _on_status(f"loading sources below reviewer_score={state.min_score}…")
+            regen_sources = fetch_low_score_sources(
+                min_score=state.min_score,
                 domain=state.domain_filter,
                 ids=state.ids_filter,
                 limit=state.limit,
@@ -98,17 +98,19 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
             )
             if not regen_sources:
                 wlog.info(
-                    "Regen-only mode (--regen-only): no "
-                    "needs_revision sources found (domain=%s, ids=%s, limit=%s)",
+                    "Regen mode (--min-score %s): no low-score sources found "
+                    "(domain=%s, ids=%s, limit=%s)",
+                    state.min_score,
                     state.domain_filter,
                     state.ids_filter,
                     state.limit,
                 )
                 return []
             wlog.info(
-                "Regen-only mode: %d needs_revision sources "
+                "Regen mode: %d sources below reviewer_score=%s "
                 "(domain=%s, ids=%s, limit=%s)",
                 len(regen_sources),
+                state.min_score,
                 state.domain_filter,
                 state.ids_filter,
                 state.limit,
@@ -199,39 +201,36 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
         if injected:
             wlog.info("Injected previous_name context for %d items", injected)
 
-    # Inject prior reviewer feedback for targeted regeneration. The compose
-    # prompt's {% if item.review_feedback %} block surfaces the previous
-    # reviewer critique so the LLM can directly address it in the new name.
-    # Always-on by default (no-op when no prior feedback exists); disabled by
-    # ``--no-review-feedback``.
-    if state.inject_review_feedback:
+    # Inject prior reviewer feedback for targeted regeneration (always on).
+    # The compose prompt's {% if item.review_feedback %} block surfaces the
+    # previous reviewer critique so the LLM can directly address it in the
+    # new name. No-op when no prior feedback exists.
+    def _get_feedback():
+        from imas_codex.standard_names.graph_ops import (
+            fetch_review_feedback_for_sources,
+        )
 
-        def _get_feedback():
-            from imas_codex.standard_names.graph_ops import (
-                fetch_review_feedback_for_sources,
-            )
-
-            ids: set[str] = set()
-            for batch in batches:
-                for item in batch.items:
-                    path = item.get("path", item.get("signal_id"))
-                    if path:
-                        ids.add(path)
-            return fetch_review_feedback_for_sources(ids)
-
-        feedback_map = await asyncio.to_thread(_get_feedback)
-        fb_injected = 0
+        ids: set[str] = set()
         for batch in batches:
             for item in batch.items:
                 path = item.get("path", item.get("signal_id"))
-                if path and path in feedback_map:
-                    item["review_feedback"] = feedback_map[path]
-                    fb_injected += 1
-        if fb_injected:
-            wlog.info(
-                "Injected review_feedback for %d items",
-                fb_injected,
-            )
+                if path:
+                    ids.add(path)
+        return fetch_review_feedback_for_sources(ids)
+
+    feedback_map = await asyncio.to_thread(_get_feedback)
+    fb_injected = 0
+    for batch in batches:
+        for item in batch.items:
+            path = item.get("path", item.get("signal_id"))
+            if path and path in feedback_map:
+                item["review_feedback"] = feedback_map[path]
+                fb_injected += 1
+    if fb_injected:
+        wlog.info(
+            "Injected review_feedback for %d items",
+            fb_injected,
+        )
 
     # Write StandardNameSource nodes for crash-resilient tracking
     if not state.dry_run and batches:
@@ -950,7 +949,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     from imas_codex.standard_names.context import build_compose_context
     from imas_codex.standard_names.models import StandardNameComposeBatch
 
-    model = state.compose_model or get_model("sn-generate")
+    model = state.compose_model or get_model("sn-run")
     context = build_compose_context()
 
     # Enrich batch items with rich DD context (coordinate specs, COCOS, siblings,
