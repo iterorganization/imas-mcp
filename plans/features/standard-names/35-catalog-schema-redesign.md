@@ -487,7 +487,19 @@ New graph-only field, enum `OriginType` (NOT serialised to catalog YAML — the 
             pipeline
 ```
 
-**Diff-based flip rule (HIGH fix from RD v2)**: `sn import` flips `origin` to `catalog_edit` **only when the imported catalog-owned field set differs from the current graph values after normalisation** (whitespace-trim, list-sort for unordered lists, YAML round-trip). No-op imports (e.g. the first import after a clean-break export where YAML matches graph exactly) preserve `origin=pipeline`. This makes Phase 8 acceptance consistent: regenerating ISNC from the graph and immediately re-importing is a no-op that does not lock the catalog.
+**Diff-based flip rule (HIGH fix from RD v2)**: `sn import` flips `origin` to `catalog_edit` **only when the imported catalog-owned field set differs from the current graph values after normalisation**. No-op imports (e.g. the first import after a clean-break export where YAML matches graph exactly) preserve `origin=pipeline`. This makes Phase 8 acceptance consistent: regenerating ISNC from the graph and immediately re-importing is a no-op that does not lock the catalog.
+
+**Canonical-dict comparison rules (LOW fix from RD v3)** — to avoid false diffs from YAML-representation differences, both sides are normalised to a canonical dict before field-by-field comparison:
+
+| Normalisation | Applied to |
+|---|---|
+| Missing key == `null` | all nullable scalar fields (`deprecates`, `superseded_by`, `validity_domain`, …) |
+| Missing key == `[]` | all list fields (`tags`, `links`, `source_paths`, …) |
+| `.strip()` and collapse `\r\n` → `\n`, strip trailing newlines | multiline strings (`description`, `documentation`) |
+| Sort in-place | unordered lists declared so in schema: `tags`, `source_paths`, `deprecates` (not `links` — order is editorial) |
+| YAML-dump + re-parse (ruamel round-trip) | entire catalog entry before comparison, to normalise quoting and numeric-literal representation |
+
+Any field not listed retains original ordering/whitespace and is compared verbatim. The normaliser is implemented once in `catalog_import.canonicalise_entry()` and covered by `test_canonicalise_entry.py` (parametrised: each rule has a positive and a negative case).
 
 Semantics:
 - `origin=pipeline` — pipeline owns **all** protected fields; regeneration is free.
@@ -542,9 +554,15 @@ Two agents on different machines can both run `sn import` concurrently against t
 
 Before writing the staging tree, `sn export` computes an invariant-check report: for each graph SN with `origin=catalog_edit`, compare the graph's catalog-owned fields against the catalog YAML at `imported_catalog_commit_sha` (if ISNC checkout is git and that SHA is reachable). Any difference is an INVARIANT_VIOLATION — it means some pipeline write path bypassed protection. This is a hard-fail (not maskable by `--force` or `--skip-gate`) because it indicates a bug, not a policy choice. The `--override-edits <name>` flag resets affected names to `pipeline` and re-exports them cleanly.
 
-### Pipeline protection enforcement (HIGH fix from RD v2: not a single choke-point)
+### Pipeline protection enforcement (HIGH fix from RD v2; rephrased per RD v3)
 
-Audit of current writers shows catalog-owned fields are written from multiple call sites:
+**Scope**: "All writers of **protected editorial fields** are covered by
+`filter_protected()`." Other `StandardName` mutations (e.g.
+`workers.py:633` appending to `source_paths`, embedding refreshes, reviewer
+score writes) are outside this protection because those fields are
+explicitly not catalog-owned.
+
+Audit of writers that touch protected editorial fields:
 
 | Writer | File:line | Touches |
 |---|---|---|
@@ -605,7 +623,7 @@ Reclassified per RD finding #5:
 | `validity_domain`, `constraints` | **catalog-owned** | Editorial annotation | Protected |
 | `unit` | **validated on import** | DD/physics-authoritative; LLM never writes it anyway | Import rejects mismatch with DD unless `--accept-unit-override` is passed; not on the `origin` protection list |
 | `cocos_transformation_type` | **validated on import** | Physics-authoritative; manifest-level COCOS is already gated | Import rejects mismatch with graph COCOS FK unless override |
-| `source_paths` | **pipeline-owned** | Provenance of where this name was extracted from; tracking DD/signal reality, not editorial | Import UNIONs pipeline values with catalog values (humans may add manual refs); no protection needed |
+| `source_paths` | **replace-on-import** | Provenance; catalog reflects pipeline's view at export; catalog edit REPLACES on import (not UNION). Removing a path in catalog is NOT persistent — pipeline re-adds on next `sn run` if extraction still produces it. To permanently suppress, fix extraction or apply graph-side surgery. Not on the `origin` protection list (pipeline re-populates naturally on next run). |
 | `cocos` (FK) | **graph-only** | Not serialised to catalog | N/A |
 
 ### Should we track this metadata?
@@ -954,11 +972,13 @@ CLI integration serialised with Phase 3 and Phase 5.
 4a. Accept new schema (no `dd_paths` fallback — clean break; Phase 8 regenerates ISNC).
 4b. Derive `physics_domain` from file path `standard_names/<domain>/<name>.yml`; refuse mismatches with loud error.
 4c. Call shared `decompose_name(name)` to repopulate `grammar_*`.
-4d. Partition `source_paths` by prefix (UNION with existing graph values per
-    §Catalog-owned field classification — `source_paths` is pipeline-owned
-    and merges rather than overwrites):
+4d. Partition `source_paths` by prefix and **REPLACE** existing graph values
+    (not UNION, per §Catalog-owned field classification — `source_paths` is
+    replace-on-import; removal in catalog is not persistent but does not
+    create a UNION sticky-divergence):
     - `dd:<path>` → re-link via `SOURCE_DD_PATH` to `IMASNode`.
     - `signal:<facility>:<id>` → `SOURCE_SIGNAL` to `FacilitySignal`.
+    - Existing relationships not present in the incoming list are DROPPED.
     - Unknown prefixes logged + skipped (not fatal).
 4e. **Diff-based `origin` flip** (HIGH fix from RD v2): after normalising
     catalog-owned fields in the incoming entry (whitespace-trim, list-sort),
