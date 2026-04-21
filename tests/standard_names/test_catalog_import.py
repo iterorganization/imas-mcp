@@ -1,12 +1,10 @@
 """Tests for the catalog feedback import module (Phase 4).
 
-Tests error handling, SHA resolution, check mode, field normalization,
-and deprecation of the legacy import_catalog() API.
+Tests error handling, SHA resolution, check mode, and field normalization.
 """
 
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -75,9 +73,9 @@ class TestErrorHandling:
         d.mkdir()
         (d / "bad.yaml").write_text(": : : invalid yaml [[[")
 
-        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import run_import
 
-        result = import_catalog(d, dry_run=True)
+        result = run_import(d, dry_run=True)
 
         assert result.imported == 0
         assert len(result.errors) == 1
@@ -89,9 +87,9 @@ class TestErrorHandling:
         d.mkdir()
         (d / "list.yaml").write_text(yaml.safe_dump(["a", "b", "c"]))
 
-        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import run_import
 
-        result = import_catalog(d, dry_run=True)
+        result = run_import(d, dry_run=True)
 
         assert result.imported == 0
         assert len(result.errors) == 1
@@ -104,9 +102,9 @@ class TestErrorHandling:
         incomplete = {"name": "test", "kind": "scalar"}  # missing required fields
         (d / "incomplete.yaml").write_text(yaml.safe_dump(incomplete))
 
-        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import run_import
 
-        result = import_catalog(d, dry_run=True)
+        result = run_import(d, dry_run=True)
 
         assert result.imported == 0
         assert len(result.errors) == 1
@@ -117,9 +115,9 @@ class TestErrorHandling:
         d = tmp_path / "empty"
         d.mkdir()
 
-        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import run_import
 
-        result = import_catalog(d, dry_run=True)
+        result = run_import(d, dry_run=True)
 
         assert result.imported == 0
         assert result.skipped == 0
@@ -292,27 +290,3 @@ class TestNormalizeField:
 
         assert _normalize_field(42) == 42
         assert _normalize_field(3.14) == 3.14
-
-
-# =============================================================================
-# Deprecation warning
-# =============================================================================
-
-
-class TestDeprecationWarning:
-    """import_catalog() should emit DeprecationWarning."""
-
-    def test_import_catalog_warns(self, tmp_path: Path) -> None:
-        """Calling import_catalog() should raise DeprecationWarning."""
-        d = tmp_path / "catalog"
-        d.mkdir()
-
-        from imas_codex.standard_names.catalog_import import import_catalog
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            import_catalog(d, dry_run=True)
-
-        dep_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(dep_warnings) >= 1
-        assert "run_import" in str(dep_warnings[0].message)

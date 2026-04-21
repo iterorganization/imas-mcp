@@ -1,4 +1,4 @@
-"""Integration tests for embedding coverage, coalesce safety, and round-trip idempotence.
+"""Integration tests for embedding coverage, coalesce safety, and import idempotence.
 
 Verifies that:
 1. Embedding fields are never accidentally erased by write_standard_names
@@ -8,9 +8,7 @@ Verifies that:
 3. created_at is preserved across rewrites.
 4. The import → build cycle is safe: catalog-imported rich fields are
    not erased by a subsequent sn-build write.
-5. publish → import → publish is idempotent (key fields round-trip cleanly).
-6. Full E2E lifecycle: write_standard_names → get_validated_standard_names
-   → graph_records_to_entries → generate_catalog_files → import_catalog.
+5. run_import is deterministic (double import produces identical results).
 """
 
 from __future__ import annotations
@@ -537,50 +535,6 @@ SAMPLE_CATALOG_ENTRY_RT: dict[str, Any] = {
 }
 
 
-def _published_yaml_to_catalog(
-    published_yaml: str, physics_domain: str = "unscoped"
-) -> dict[str, Any]:
-    """Convert a published YAML string to a catalog-importable dict.
-
-    Strips provenance, normalises ``status`` to ``"active"``, and converts
-    links from ``[{name: …}]`` dicts to plain strings so that
-    ``StandardNameEntry`` validation succeeds.  ``physics_domain`` is
-    derived from file path — NOT stored in YAML.
-    """
-    doc: dict[str, Any] = yaml.safe_load(published_yaml)
-    # Provenance block is not part of the catalog schema
-    doc.pop("provenance", None)
-    # status must be a catalog-valid value
-    doc["status"] = "active"
-    # physics_domain is derived from directory structure, NOT in YAML
-    doc.pop("physics_domain", None)
-    # Normalise links: published format uses [{name: link}] dicts
-    raw_links = doc.get("links", [])
-    if raw_links and isinstance(raw_links[0], dict):
-        doc["links"] = [lnk.get("name", str(lnk)) for lnk in raw_links]
-    # Ensure required list fields are present (even if empty)
-    for list_field in ("tags", "links", "constraints"):
-        doc.setdefault(list_field, [])
-    # dd_paths and source_paths are forbidden by the importer — strip them
-    doc.pop("dd_paths", None)
-    doc.pop("source_paths", None)
-    # Empty string validity_domain instead of None
-    if doc.get("validity_domain") is None:
-        doc["validity_domain"] = ""
-    return doc
-
-
-def _imported_dict_to_graph_record(d: dict[str, Any]) -> dict[str, Any]:
-    """Normalise an imported graph dict for ``graph_records_to_entries``.
-
-    ``import_catalog`` returns dicts with ``id`` / ``units`` / ``source_paths``
-    keys.  ``graph_records_to_entries`` reads ``source_paths`` from graph
-    records and maps to ``dd_paths`` on the Pydantic model.
-    """
-    rec = dict(d)
-    return rec
-
-
 def _write_catalog_yaml(
     root: Path,
     entry: dict[str, Any],
@@ -591,7 +545,7 @@ def _write_catalog_yaml(
     """Write a catalog YAML entry in the proper directory structure.
 
     Creates ``<root>/standard_names/<domain>/<filename>`` and returns ``root``
-    (which is what ``import_catalog()`` / ``run_import()`` expect).
+    (which is what ``run_import()`` expect).
 
     ``physics_domain`` is stripped from the entry dict if present — it's
     derived from the path, not from YAML content.
@@ -604,159 +558,23 @@ def _write_catalog_yaml(
     return root
 
 
-def _key_fields(parsed_yaml: dict[str, Any]) -> dict[str, Any]:
-    """Extract the semantic fields that must be preserved across a round-trip."""
-    return {
-        "name": parsed_yaml.get("name"),
-        "kind": parsed_yaml.get("kind"),
-        "unit": parsed_yaml.get("unit"),
-        "description": parsed_yaml.get("description"),
-        "documentation": parsed_yaml.get("documentation"),
-        "validity_domain": parsed_yaml.get("validity_domain"),
-        "constraints": sorted(parsed_yaml.get("constraints") or []),
-    }
-
-
-class TestRoundTripIdempotence:
-    """Verify that publish → import → publish produces semantically identical YAML."""
-
-    def test_publish_import_publish_idempotent(self, tmp_path: Path) -> None:
-        """Round-trip: graph_records → YAML → catalog import → YAML should match.
-
-        Key fields (name, kind, unit, validity_domain, constraints)
-        must be identical after a full publish → import → publish cycle.
-        Provenance and confidence fields are allowed to differ.
-        """
-        from imas_codex.standard_names.publish import (
-            generate_catalog_files,
-            graph_records_to_entries,
-        )
-
-        round1_dir = tmp_path / "round1"
-        round2_dir = tmp_path / "round2"
-
-        # --- Round 1: graph record → YAML files ---
-        entries1 = graph_records_to_entries([SAMPLE_GRAPH_RECORD])
-        assert len(entries1) == 1, "Expected one publish entry from graph record"
-        generate_catalog_files(entries1, round1_dir)
-
-        yaml_files1 = list(round1_dir.rglob("*.yaml"))
-        assert len(yaml_files1) == 1, (
-            f"Expected exactly 1 YAML file in round1, got {len(yaml_files1)}"
-        )
-
-        # --- Convert published YAML → catalog-importable format ---
-        published_yaml_text = yaml_files1[0].read_text()
-        catalog_doc = _published_yaml_to_catalog(
-            published_yaml_text, physics_domain="core_plasma_physics"
-        )
-        isnc_root = _write_catalog_yaml(
-            tmp_path / "catalog", catalog_doc, domain="core_plasma_physics"
-        )
-
-        # --- Import catalog (dry run) → graph dicts ---
-        from imas_codex.standard_names.catalog_import import import_catalog
-
-        result = import_catalog(isnc_root, dry_run=True)
-        assert result.imported == 1, (
-            f"Expected 1 imported entry, got {result.imported}; errors: {result.errors}"
-        )
-        assert not result.errors, f"Import errors: {result.errors}"
-
-        # --- Normalise imported dicts and convert back to publish entries ---
-        graph_records2 = [_imported_dict_to_graph_record(e) for e in result.entries]
-        entries2 = graph_records_to_entries(graph_records2)
-        assert len(entries2) == 1, "Expected one publish entry from imported dict"
-
-        # --- Round 2: publish entries → YAML files ---
-        generate_catalog_files(entries2, round2_dir)
-        yaml_files2 = list(round2_dir.rglob("*.yaml"))
-        assert len(yaml_files2) == 1, (
-            f"Expected exactly 1 YAML file in round2, got {len(yaml_files2)}"
-        )
-
-        # --- Compare key fields (ignore provenance / confidence changes) ---
-        parsed1 = yaml.safe_load(yaml_files1[0].read_text())
-        parsed2 = yaml.safe_load(yaml_files2[0].read_text())
-
-        fields1 = _key_fields(parsed1)
-        fields2 = _key_fields(parsed2)
-
-        assert fields2["name"] == fields1["name"], "name must be preserved"
-        assert fields2["kind"] == fields1["kind"], "kind must be preserved"
-        assert fields2["unit"] == fields1["unit"], "unit must be preserved"
-        assert fields2["validity_domain"] == fields1["validity_domain"], (
-            "validity_domain must be preserved"
-        )
-        assert fields2["constraints"] == fields1["constraints"], (
-            "constraints must be preserved"
-        )
-
-    def test_import_export_idempotent(self, tmp_path: Path) -> None:
-        """Import a catalog entry then re-publish it — key fields must be unchanged.
-
-        Tests the ``import_catalog`` → ``graph_records_to_entries`` →
-        ``generate_yaml_entry`` path, asserting that the re-published YAML
-        preserves every semantically significant field from the original catalog.
-        """
-        from imas_codex.standard_names.catalog_import import import_catalog
-        from imas_codex.standard_names.publish import (
-            generate_yaml_entry,
-            graph_records_to_entries,
-        )
-
-        isnc_root = _write_catalog_yaml(
-            tmp_path / "catalog", SAMPLE_CATALOG_ENTRY_RT, domain="core_plasma_physics"
-        )
-
-        # Import (dry run) → graph dicts
-        result = import_catalog(isnc_root, dry_run=True)
-        assert result.imported == 1, (
-            f"Expected 1 imported entry; errors: {result.errors}"
-        )
-        assert not result.errors, f"Import errors: {result.errors}"
-
-        # Normalise dict keys and convert to StandardNamePublishEntry
-        graph_records = [_imported_dict_to_graph_record(e) for e in result.entries]
-        entries = graph_records_to_entries(graph_records)
-        assert len(entries) == 1, "Expected one publish entry from imported graph dict"
-
-        # Generate YAML and parse it back for comparison
-        yaml_str = generate_yaml_entry(entries[0])
-        published = yaml.safe_load(yaml_str)
-
-        original = SAMPLE_CATALOG_ENTRY_RT
-        assert published["name"] == original["name"], "name must round-trip"
-        assert published["kind"] == original["kind"], "kind must round-trip"
-        assert published.get("unit") == original["unit"], "unit must round-trip"
-        assert published.get("description") == original["description"], (
-            "description must round-trip"
-        )
-        assert published.get("documentation") == original["documentation"], (
-            "documentation must round-trip"
-        )
-        if original.get("validity_domain"):
-            assert published.get("validity_domain") == original["validity_domain"], (
-                "validity_domain must round-trip"
-            )
-        assert sorted(published.get("constraints") or []) == sorted(
-            original.get("constraints") or []
-        ), "constraints must round-trip"
+class TestImportIdempotence:
+    """Verify run_import determinism."""
 
     def test_double_import_identical_entries(self, tmp_path: Path) -> None:
         """Importing the same catalog directory twice yields identical result entries.
 
-        Verifies that ``import_catalog`` is deterministic: repeated calls on the
+        Verifies that ``run_import`` is deterministic: repeated calls on the
         same input produce identical graph dicts (same keys and values).
         """
-        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import run_import
 
         isnc_root = _write_catalog_yaml(
             tmp_path / "catalog", SAMPLE_CATALOG_ENTRY_RT, domain="core_plasma_physics"
         )
 
-        result1 = import_catalog(isnc_root, dry_run=True)
-        result2 = import_catalog(isnc_root, dry_run=True)
+        result1 = run_import(isnc_root, dry_run=True)
+        result2 = run_import(isnc_root, dry_run=True)
 
         assert result1.imported == result2.imported, (
             "Both imports should report the same import count"
@@ -848,189 +666,12 @@ _GRAPH_QUERY_ROW = {
 
 
 class TestE2ERoundTrip:
-    """Full lifecycle: build → publish → manual-edit → import.
+    """Full lifecycle: build → import.
 
     All graph operations are mocked — no live Neo4j required.
+    Legacy tests using the pre-Phase-3 publish pipeline (graph_records_to_entries,
+    generate_catalog_files) were removed in the p-cli-integration task.
     """
-
-    # ------------------------------------------------------------------
-    # Phase helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _mock_write_graph_client():
-        """Mock GraphClient for write_standard_names (no return value needed)."""
-        mock_gc = MagicMock()
-        mock_gc.query = MagicMock(return_value=None)
-        mock_ctx = MagicMock()
-        mock_ctx.__enter__ = MagicMock(return_value=mock_gc)
-        mock_ctx.__exit__ = MagicMock(return_value=False)
-        return mock_ctx
-
-    @staticmethod
-    def _build_catalog_entry(publish_entry) -> dict:
-        """Simulate a curator enriching a published entry into catalog format."""
-        return {
-            "name": publish_entry.name,
-            "description": publish_entry.description,
-            "documentation": publish_entry.documentation
-            or "Enriched documentation by curator.",
-            "kind": "scalar",
-            "unit": publish_entry.unit,
-            "tags": publish_entry.tags,
-            "links": publish_entry.links,
-            "validity_domain": publish_entry.validity_domain or "",
-            "constraints": publish_entry.constraints,
-            "status": "active",
-        }
-
-    # ------------------------------------------------------------------
-    # Tests
-    # ------------------------------------------------------------------
-
-    def test_full_lifecycle_round_trip(self, tmp_path: Path) -> None:
-        """Complete build → publish → manual-edit → import cycle."""
-        from imas_codex.standard_names.catalog_import import import_catalog
-        from imas_codex.standard_names.graph_ops import write_standard_names
-        from imas_codex.standard_names.publish import (
-            generate_catalog_files,
-            graph_records_to_entries,
-        )
-
-        # Phase 1: write to graph (mocked)
-        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
-            MockGC.return_value = self._mock_write_graph_client()
-            count = write_standard_names([_RICH_SN_RECORD])
-        assert count == 1
-
-        # Phase 2: graph → publish entries → YAML files
-        entries = graph_records_to_entries([_GRAPH_QUERY_ROW])
-        assert len(entries) == 1
-
-        written = generate_catalog_files(entries, tmp_path / "published")
-        assert len(written) == 1
-        assert written[0].exists()
-
-        publish_entry = entries[0]
-        assert publish_entry.name == "electron_temperature"
-        assert publish_entry.unit == "eV"
-        assert publish_entry.documentation is not None
-
-        # Phase 3: simulate curator enrichment into catalog format
-        catalog_entry = self._build_catalog_entry(publish_entry)
-        isnc_root = _write_catalog_yaml(
-            tmp_path / "reviewed_catalog",
-            catalog_entry,
-            domain="core_plasma_physics",
-        )
-
-        # Phase 4: import catalog (dry_run=True, no graph write)
-        result = import_catalog(catalog_dir=isnc_root, dry_run=True)
-
-        assert result.imported == 1
-        assert len(result.errors) == 0
-
-        entry = result.entries[0]
-        assert entry["id"] == "electron_temperature"
-        assert entry["unit"] == "eV"
-        assert entry["physics_domain"] == "core_plasma_physics"
-        assert entry["grammar_physical_base"] == "temperature"
-        assert entry["grammar_subject"] == "electron"
-
-    def test_publish_generates_valid_yaml_for_import(self, tmp_path: Path) -> None:
-        """Published YAML (after curator enrichment) is valid input for import_catalog."""
-        from imas_codex.standard_names.catalog_import import import_catalog
-        from imas_codex.standard_names.publish import graph_records_to_entries
-
-        entries = graph_records_to_entries([_GRAPH_QUERY_ROW])
-        assert len(entries) == 1
-
-        # Curator enriches published entry into catalog format
-        catalog_entry = self._build_catalog_entry(entries[0])
-        isnc_root = _write_catalog_yaml(
-            tmp_path / "catalog", catalog_entry, domain="core_plasma_physics"
-        )
-
-        result = import_catalog(catalog_dir=isnc_root, dry_run=True)
-
-        assert result.imported == 1
-        assert len(result.errors) == 0
-
-        entry = result.entries[0]
-        # catalog 'unit' passes through as graph 'unit'
-        assert entry["unit"] == "eV"
-        # dd_paths and source_paths are no longer in catalog import output
-        assert "dd_paths" not in entry
-        assert "source_paths" not in entry
-
-    def test_field_preservation_across_lifecycle(self, tmp_path: Path) -> None:
-        """Specific rich fields are verified at each stage of the lifecycle."""
-        from imas_codex.standard_names.catalog_import import import_catalog
-        from imas_codex.standard_names.publish import (
-            generate_catalog_files,
-            generate_yaml_entry,
-            graph_records_to_entries,
-        )
-
-        # Stage A: graph_records_to_entries preserves rich fields
-        entries = graph_records_to_entries([_GRAPH_QUERY_ROW])
-        entry = entries[0]
-
-        assert entry.name == "electron_temperature"
-        assert entry.kind == "scalar"
-        assert entry.unit == "eV"
-        assert "spatial-profile" in entry.tags
-        assert entry.links == ["name:ion_temperature"]
-        assert entry.dd_paths == ["core_profiles/profiles_1d/electrons/temperature"]
-        assert entry.validity_domain == "core plasma"
-        assert entry.constraints == ["T_e > 0"]
-        assert entry.documentation is not None
-        assert "$T_e$" in (entry.documentation or "")
-        assert entry.provenance.confidence == 0.95
-        assert entry.provenance.source == "dd"
-        assert entry.provenance.ids_name == "core_profiles"
-
-        # Stage B: generate_yaml_entry serializes all fields
-        yaml_str = generate_yaml_entry(entry)
-        parsed = yaml.safe_load(yaml_str)
-
-        assert parsed["name"] == "electron_temperature"
-        assert parsed["kind"] == "scalar"
-        assert parsed["unit"] == "eV"
-        assert parsed["validity_domain"] == "core plasma"
-        assert parsed["constraints"] == ["T_e > 0"]
-        assert "documentation" in parsed
-        assert parsed["dd_paths"] == ["core_profiles/profiles_1d/electrons/temperature"]
-        assert parsed["provenance"]["confidence"] == 0.95
-
-        # Stage C: generate_catalog_files creates correct subdirectory structure
-        written = generate_catalog_files(entries, tmp_path / "published")
-        assert len(written) == 1
-        # Primary tag is "core_profiles" → file lives in core_profiles/
-        assert written[0].parent.name == "spatial-profile"
-
-        # Stage D: import_catalog maps all fields correctly
-        catalog_entry = self._build_catalog_entry(entry)
-        isnc_root = _write_catalog_yaml(
-            tmp_path / "catalog", catalog_entry, domain="core_plasma_physics"
-        )
-
-        result = import_catalog(catalog_dir=isnc_root, dry_run=True)
-        imported = result.entries[0]
-
-        assert imported["id"] == "electron_temperature"
-        assert imported["description"] == "Electron temperature in the core plasma"
-        assert "documentation" in imported
-        assert imported["kind"] == "scalar"
-        assert imported["unit"] == "eV"
-        # source_paths and dd_paths are no longer in catalog import output
-        assert "source_paths" not in imported
-        assert "dd_paths" not in imported
-        assert imported["validity_domain"] == "core plasma"
-        assert imported["constraints"] == ["T_e > 0"]
-        assert imported["physics_domain"] == "core_plasma_physics"
-        assert imported["grammar_physical_base"] == "temperature"
-        assert imported["grammar_subject"] == "electron"
 
     def test_write_standard_names_called_with_all_fields(self) -> None:
         """write_standard_names receives all populated fields without losing any."""
@@ -1074,7 +715,7 @@ class TestE2ERoundTrip:
 
     def test_import_dry_run_does_not_call_graph(self, tmp_path: Path) -> None:
         """dry_run=True must never invoke the graph write path."""
-        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import run_import
 
         catalog_entry = {
             "name": "electron_temperature",
@@ -1097,7 +738,7 @@ class TestE2ERoundTrip:
         with patch(
             "imas_codex.standard_names.catalog_import._write_import_entries"
         ) as mock_write:
-            result = import_catalog(catalog_dir=isnc_root, dry_run=True)
+            result = run_import(catalog_dir=isnc_root, dry_run=True)
 
         mock_write.assert_not_called()
         assert result.imported == 1

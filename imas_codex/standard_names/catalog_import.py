@@ -45,10 +45,6 @@ class ImportReport:
     watermark_advanced: bool = False
 
 
-# Keep legacy ImportResult as alias for backward compat with tests
-ImportResult = ImportReport
-
-
 @dataclass
 class CheckResult:
     """Summary of a catalog-vs-graph sync check."""
@@ -657,31 +653,6 @@ def run_import(
             release_import_lock(gc)
 
     return report
-
-
-# ---------------------------------------------------------------------------
-# Legacy wrapper (deprecated)
-# ---------------------------------------------------------------------------
-
-
-def import_catalog(
-    catalog_dir: Path,
-    dry_run: bool = False,
-    tag_filter: list[str] | None = None,
-) -> ImportReport:
-    """Legacy import API — delegates to ``run_import()``.
-
-    .. deprecated:: 0.9.0
-        Use :func:`run_import` instead.
-    """
-    import warnings
-
-    warnings.warn(
-        "import_catalog() is deprecated; use run_import() instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return run_import(catalog_dir, dry_run=dry_run)
 
 
 # ---------------------------------------------------------------------------
