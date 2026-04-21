@@ -1153,6 +1153,130 @@ def sn_status() -> None:
         )
         console.print(rr_table)
 
+    # --- Linking integrity & review cost --------------------------------
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            integrity = next(
+                iter(
+                    gc.query(
+                        """
+                        MATCH (sn:StandardName)
+                        WITH count(sn) AS total_sn,
+                             count(CASE WHEN NOT (sn)<-[:PRODUCED_NAME]-() THEN 1 END) AS orphan_sn
+                        MATCH (s:StandardNameSource)
+                        WITH total_sn, orphan_sn,
+                             count(CASE WHEN s.status IN ['composed','attached']
+                                         AND NOT (s)-[:PRODUCED_NAME]->()
+                                   THEN 1 END) AS orphan_src
+                        RETURN total_sn, orphan_sn, orphan_src
+                        """
+                    )
+                ),
+                None,
+            )
+    except Exception as exc:  # pragma: no cover — graph connection issues
+        integrity = None
+        logger.debug("Could not fetch linking integrity: %s", exc)
+
+    if integrity:
+        console.print()
+        console.print("[bold]Linking Integrity[/bold]")
+        li_table = Table(show_header=True)
+        li_table.add_column("Metric")
+        li_table.add_column("Count", justify="right")
+        li_table.add_row(
+            "Orphan StandardName (no PRODUCED_NAME edge)",
+            str(integrity.get("orphan_sn", 0)),
+        )
+        li_table.add_row(
+            "Orphan composed/attached source (no PRODUCED_NAME edge)",
+            str(integrity.get("orphan_src", 0)),
+        )
+        console.print(li_table)
+
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            review_totals = next(
+                iter(
+                    gc.query(
+                        """
+                        MATCH (r:Review)
+                        RETURN count(r) AS total_reviews,
+                               count(r.cost_usd) AS reviews_with_cost,
+                               coalesce(sum(r.cost_usd), 0.0) AS total_cost,
+                               coalesce(sum(r.tokens_in), 0) AS total_tokens_in,
+                               coalesce(sum(r.tokens_out), 0) AS total_tokens_out
+                        """
+                    )
+                ),
+                None,
+            )
+            cost_by_model = list(
+                gc.query(
+                    """
+                    MATCH (r:Review)
+                    WHERE r.cost_usd IS NOT NULL
+                    RETURN r.model AS model,
+                           count(r) AS n,
+                           sum(r.cost_usd) AS cost_usd,
+                           sum(r.tokens_in) AS tokens_in,
+                           sum(r.tokens_out) AS tokens_out
+                    ORDER BY cost_usd DESC
+                    """
+                )
+            )
+    except Exception as exc:  # pragma: no cover
+        review_totals = None
+        cost_by_model = []
+        logger.debug("Could not fetch review cost: %s", exc)
+
+    if review_totals:
+        console.print()
+        console.print("[bold]Review Cost[/bold]")
+        rc_table = Table(show_header=True)
+        rc_table.add_column("Metric")
+        rc_table.add_column("Value", justify="right")
+        total_reviews = review_totals.get("total_reviews", 0) or 0
+        with_cost = review_totals.get("reviews_with_cost", 0) or 0
+        rc_table.add_row("Review nodes", str(total_reviews))
+        rc_table.add_row(
+            "With cost recorded",
+            f"{with_cost} ({100 * with_cost / max(total_reviews, 1):.1f}%)",
+        )
+        rc_table.add_row(
+            "Total cost (USD)", f"${float(review_totals.get('total_cost') or 0):.4f}"
+        )
+        rc_table.add_row(
+            "Total tokens in", str(review_totals.get("total_tokens_in") or 0)
+        )
+        rc_table.add_row(
+            "Total tokens out", str(review_totals.get("total_tokens_out") or 0)
+        )
+        console.print(rc_table)
+
+    if cost_by_model:
+        console.print()
+        console.print("[bold]Review Cost by Reviewer Model[/bold]")
+        cm_table = Table(show_header=True)
+        cm_table.add_column("Model")
+        cm_table.add_column("Reviews", justify="right")
+        cm_table.add_column("Cost (USD)", justify="right")
+        cm_table.add_column("Tokens in", justify="right")
+        cm_table.add_column("Tokens out", justify="right")
+        for row in cost_by_model:
+            cm_table.add_row(
+                str(row.get("model") or "—"),
+                str(row.get("n") or 0),
+                f"${float(row.get('cost_usd') or 0):.4f}",
+                str(row.get("tokens_in") or 0),
+                str(row.get("tokens_out") or 0),
+            )
+        console.print(cm_table)
+
 
 @sn.command("gaps")
 @click.option(
