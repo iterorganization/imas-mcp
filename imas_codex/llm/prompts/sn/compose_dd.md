@@ -203,6 +203,37 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 
 {% endfor %}
 
+## Grammar Fields — MANDATORY
+
+For **every** candidate you emit, populate the `grammar_fields` map with the
+grammar-segment decomposition of `standard_name`. This is not optional — it
+is how downstream tooling validates the round-trip
+`parse(name) → compose() == name`.
+
+Use only these keys (omit keys whose segment is absent from the name):
+
+```
+subject, process, physical_base, geometric_base,
+component, basis, position, reducer, reference, statistic
+```
+
+**Examples:**
+
+- `electron_temperature` →
+  `{"subject": "electron", "physical_base": "temperature"}`
+- `electron_temperature_core` →
+  `{"subject": "electron", "physical_base": "temperature", "position": "core"}`
+- `radial_component_of_magnetic_field` →
+  `{"component": "radial", "physical_base": "magnetic_field"}`
+- `minor_radius_of_plasma_boundary` →
+  `{"physical_base": "minor_radius", "position": "plasma_boundary"}`
+- `distance_between_plasma_boundary_and_closest_wall_point` →
+  `{"physical_base": "distance_between_plasma_boundary_and_closest_wall_point"}`
+  (open-vocabulary compound; whole name is the physical_base.)
+
+If you cannot decompose the name, the name is wrong — revise it rather than
+emit an empty `grammar_fields`.
+
 ## Vocabulary Gaps
 
 If a path requires a token that does **not** exist in a closed grammar segment
