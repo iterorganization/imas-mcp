@@ -71,6 +71,19 @@ grammar and convention scores.
 - A compound `physical_base` is **grammar-valid** as long as the whole name
   round-trips — do not dock grammar points merely because the compound uses
   prepositions (`_between_`, `_and_`, `_of_`) that look "non-canonical".
+- **Decomposition audit** — inspect the `physical_base` slot and flag any
+  closed-vocab token (from `subjects`, `components`, `coordinates`,
+  `transformations`, `processes`, `positions`, `objects`, `geometric_bases`
+  above) that appears as a whole underscore-separated substring. Each
+  candidate defect:
+    - `toroidal_torque` → component=`toroidal` + physical_base=`torque`
+    - `volume_averaged_electron_temperature` → transformation=`volume_averaged` + subject=`electron` + physical_base=`temperature`
+    - `flux_surface_cross_sectional_area` → position=`flux_surface` + physical_base=`cross_sectional_area`
+  Allow genuine lexicalised atomic terms (`poloidal_flux`, `minor_radius`,
+  `cross_sectional_area`, `safety_factor`). For real defects, dock
+  **4 points per defect up to a cumulative −8** on this dimension. Record
+  each absorbed token in the `issues` field as
+  `decomposition: <token>(<segment>) absorbed into physical_base`.
 
 ### 2. Semantic Accuracy (0-20)
 - Does the name accurately describe the physical quantity implied by the source path?

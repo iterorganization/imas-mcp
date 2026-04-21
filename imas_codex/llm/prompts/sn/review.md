@@ -63,6 +63,22 @@ grammar and convention scores.
 - Is the field decomposition consistent with the composed name?
 - Does the name round-trip: `parse(name) → compose() == name`?
 - **[I1.1]** Does the name use `_from_` preposition? → Flag as grammar issue (use device prefix or `_of_`).
+- **[I4.6] Decomposition audit** — inspect the `physical_base` slot for
+  closed-vocab tokens that were absorbed instead of lifted to their own
+  segment. Any token from the lists above (`subjects`, `components`,
+  `coordinates`, `transformations`, `processes`, `positions`, `objects`,
+  `geometric_bases`) that appears as a whole underscore-separated substring
+  of the `physical_base` is a **candidate decomposition defect**.
+  Examples of defects and corrections:
+    - `toroidal_torque` → component=`toroidal` + physical_base=`torque`
+    - `volume_averaged_electron_temperature` → transformation=`volume_averaged` + subject=`electron` + physical_base=`temperature`
+    - `normalized_poloidal_flux` → transformation=`normalized` + physical_base=`poloidal_flux` (`poloidal_flux` is a lexicalised atomic term)
+  Allow lexicalised atomic compounds (`poloidal_flux`, `minor_radius`,
+  `cross_sectional_area`, `safety_factor`) — these are named quantities
+  even though they contain closed-vocab words. For genuine defects,
+  dock grammar by **4 points per defect up to a cumulative −8**. List
+  the absorbed tokens in the `issues` field as
+  `decomposition: <token>(<segment>) absorbed into physical_base`.
 
 **20**: Perfect parse, valid segments, consistent decomposition.
 **10**: Parses correctly but uses unusual segment combinations.

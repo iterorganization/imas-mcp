@@ -193,3 +193,41 @@ common_issues:
       description: "Inconsistent naming across entries in same batch"
       rule: "Same vocabulary and suffix patterns for related entries within a batch"
       affects: [convention, compliance]
+
+    I4.6_physical_base_decomposition:
+      description: >-
+        Closed-vocabulary tokens (subject, component, coordinate,
+        transformation, position, process, geometry, object, region,
+        device, geometric_base) absorbed into an open ``physical_base``
+        compound instead of being lifted to their dedicated grammar
+        segment. A parse-valid compound is not grammar-wrong — but a
+        compound that hides structure in ``physical_base`` is a
+        decomposition defect because it defeats per-segment search and
+        grammatical composition.
+      rule: >-
+        For each candidate, inspect the ``physical_base`` slot of the
+        parsed grammar fields and list any closed-vocab tokens present
+        as whole underscore-separated substrings. Treat each hit as a
+        candidate decomposition defect unless the compound is a
+        well-known lexicalised atomic quantity
+        (e.g. ``poloidal_flux``, ``minor_radius``,
+        ``cross_sectional_area``).
+      examples_bad:
+        - name: "toroidal_torque"
+          hit: "toroidal (component)"
+          correction: "component=toroidal + physical_base=torque"
+        - name: "volume_averaged_electron_temperature"
+          hit: "volume_averaged (transformation), electron (subject)"
+          correction: "transformation=volume_averaged + subject=electron + physical_base=temperature"
+        - name: "normalized_poloidal_flux"
+          hit: "normalized (transformation), poloidal (coordinate)"
+          correction: "transformation=normalized + physical_base=poloidal_flux (poloidal_flux is an accepted atomic term)"
+      examples_allowed:
+        - "poloidal_flux (atomic — widely lexicalised as a named quantity)"
+        - "cross_sectional_area (atomic geometric property)"
+        - "minor_radius (atomic geometric property)"
+      affects: [grammar, semantic]
+      score_override: >-
+        grammar -= 4 per genuine decomposition defect (capped at -8 on
+        dim 1); semantic -= 4 when the absorbed token would change the
+        referenced quantity.
