@@ -95,7 +95,7 @@ class TestLoadIsnExamples:
         for entry in entries:
             assert "id" in entry, f"Missing 'id' in entry: {entry}"
             assert entry["source_types"] == ["reference"]
-            assert entry["review_status"] == "accepted"
+            assert entry["pipeline_status"] == "accepted"
             assert entry.get("description"), f"Missing description for {entry['id']}"
             assert entry.get("kind"), f"Missing kind for {entry['id']}"
             assert entry.get("physics_domain"), (
@@ -193,7 +193,7 @@ class TestLoadWestCatalog:
         magnetics_entry = next(e for e in entries if e["id"] == "diamagnetic_loop_flux")
         assert magnetics_entry["physics_domain"] == "magnetic_field_diagnostics"
         assert magnetics_entry["source_types"] == ["west"]
-        assert magnetics_entry["review_status"] == "drafted"
+        assert magnetics_entry["pipeline_status"] == "drafted"
 
         core_entry = next(e for e in entries if e["id"] == "electron_temperature")
         assert core_entry["physics_domain"] == "core_plasma_physics"

@@ -90,7 +90,7 @@ class TestPersistComposedBatch:
         written = mock_write.call_args[0][0]
         for entry in written:
             assert entry["model"] == "claude-test"
-            assert entry["review_status"] == "named"
+            assert entry["pipeline_status"] == "named"
             assert "generated_at" in entry
 
     @patch("imas_codex.standard_names.graph_ops.write_standard_names")
@@ -110,9 +110,12 @@ class TestPersistComposedBatch:
         persist_composed_batch(sample_candidates, compose_model="test")
 
         written = mock_write.call_args[0][0]
-        assert written[0]["physical_base"] == "temperature"
-        assert written[0]["subject"] == "electron"
-        assert written[1]["physical_base"] == "density"
+        # Grammar fields (physical_base, subject, etc.) are no longer
+        # extracted from compose `fields` dict — grammar decomposition
+        # happens inside write_standard_names() via _grammar_decomposition().
+        # Verify the compose output no longer carries legacy field names.
+        assert "physical_base" not in written[0]
+        assert "subject" not in written[0]
 
     @patch("imas_codex.standard_names.graph_ops.write_standard_names")
     @patch("imas_codex.embeddings.description.embed_descriptions_batch")
@@ -165,7 +168,7 @@ class TestPersistComposedBatch:
         for entry in written:
             assert entry["embedding"] == [0.4, 0.5, 0.6]
             assert entry["embedded_at"] is not None
-            assert entry["review_status"] == "named"
+            assert entry["pipeline_status"] == "named"
             assert entry["validation_status"] != "quarantined"
 
     @patch("imas_codex.standard_names.graph_ops.write_standard_names")
@@ -244,10 +247,10 @@ class TestPersistComposedBatch:
         persist_composed_batch(batch2, compose_model="test")
         second_written = mock_write.call_args[0][0]
 
-        # Same embeddings, same review_status, same structure
+        # Same embeddings, same pipeline_status, same structure
         for a, b in zip(first_written, second_written, strict=True):
             assert a["embedding"] == b["embedding"]
-            assert a["review_status"] == b["review_status"]
+            assert a["pipeline_status"] == b["pipeline_status"]
             assert a["validation_status"] == b["validation_status"]
 
 

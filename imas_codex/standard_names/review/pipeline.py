@@ -166,15 +166,15 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
                        sn.tags AS tags,
                        sn.links AS links,
                        sn.source_paths AS source_paths,
-                       sn.physical_base AS physical_base,
-                       sn.subject AS subject,
-                       sn.component AS component,
-                       sn.coordinate AS coordinate,
-                       sn.position AS position,
-                       sn.process AS process,
+                       sn.grammar_physical_base AS physical_base,
+                       sn.grammar_subject AS subject,
+                       sn.grammar_component AS component,
+                       sn.grammar_coordinate AS coordinate,
+                       sn.grammar_position AS position,
+                       sn.grammar_process AS process,
                        sn.cocos_transformation_type AS cocos_transformation_type,
                        sn.physics_domain AS physics_domain,
-                       sn.review_status AS review_status,
+                       sn.pipeline_status AS pipeline_status,
                        sn.reviewer_score AS reviewer_score,
                        sn.review_input_hash AS review_input_hash,
                        sn.embedding AS embedding,
@@ -228,7 +228,7 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
 
         # --status filter
         if state.status_filter:
-            status = name.get("review_status") or "drafted"
+            status = name.get("pipeline_status") or "drafted"
             if status != state.status_filter:
                 continue
 

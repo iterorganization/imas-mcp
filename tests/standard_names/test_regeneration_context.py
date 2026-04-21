@@ -18,14 +18,14 @@ class TestGetSourceNameMapping:
                 "name": "poloidal_magnetic_flux",
                 "description": "Poloidal magnetic flux",
                 "kind": "scalar",
-                "review_status": "drafted",
+                "pipeline_status": "drafted",
             },
             {
                 "source_id": "core_profiles/profiles_1d/electrons/temperature",
                 "name": "electron_temperature",
                 "description": "Electron temperature",
                 "kind": "scalar",
-                "review_status": "accepted",
+                "pipeline_status": "accepted",
             },
         ]
 
@@ -48,7 +48,9 @@ class TestGetSourceNameMapping:
             == "poloidal_magnetic_flux"
         )
         assert (
-            mapping["core_profiles/profiles_1d/electrons/temperature"]["review_status"]
+            mapping["core_profiles/profiles_1d/electrons/temperature"][
+                "pipeline_status"
+            ]
             == "accepted"
         )
 
@@ -62,14 +64,14 @@ class TestGetSourceNameMapping:
                 "name": "old_drafted_name",
                 "description": "Old",
                 "kind": "scalar",
-                "review_status": "drafted",
+                "pipeline_status": "drafted",
             },
             {
                 "source_id": "equilibrium/time_slice/profiles_1d/psi",
                 "name": "accepted_name",
                 "description": "Accepted",
                 "kind": "scalar",
-                "review_status": "accepted",
+                "pipeline_status": "accepted",
             },
         ]
 
@@ -124,7 +126,7 @@ class TestComposePromptPreviousName:
                     "previous_name": {
                         "name": "poloidal_magnetic_flux",
                         "description": "The poloidal magnetic flux",
-                        "review_status": "drafted",
+                        "pipeline_status": "drafted",
                     },
                 }
             ],
@@ -150,7 +152,7 @@ class TestComposePromptPreviousName:
                     "previous_name": {
                         "name": "electron_temperature",
                         "description": "Electron temperature",
-                        "review_status": "accepted",
+                        "pipeline_status": "accepted",
                     },
                 }
             ],

@@ -1999,7 +1999,7 @@ async def persist_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     """
                     MATCH (sn:StandardName)
                     WHERE sn.embedded_at IS NOT NULL
-                      AND sn.review_status IN ['named', 'drafted']
+                      AND sn.pipeline_status IN ['named', 'drafted']
                     RETURN sn.id AS id, sn.source_paths AS source_paths
                     """
                 )
@@ -2022,7 +2022,7 @@ async def persist_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             UNWIND $paths AS path
                             MATCH (n:IMASNode {id: path})-[r:HAS_STANDARD_NAME]->(sn:StandardName)
                             WHERE NOT (sn.id IN $keep_names)
-                              AND sn.review_status IN ['named', 'drafted', null]
+                              AND sn.pipeline_status IN ['named', 'drafted', null]
                             DELETE r
                             RETURN count(r) AS detached
                             """,

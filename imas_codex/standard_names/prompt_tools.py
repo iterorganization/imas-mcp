@@ -117,7 +117,7 @@ def fetch_cluster_siblings(cluster_id: str, limit: int = 10) -> list[dict[str, A
         WHERE sn.name IS NOT NULL
         RETURN n.id AS path,
                sn.name AS standard_name,
-               sn.review_status AS review_status
+               sn.pipeline_status AS pipeline_status
         LIMIT $limit
     """
     with GraphClient() as gc:
@@ -142,7 +142,7 @@ def fetch_reference_exemplar(concept: str) -> list[dict[str, Any]]:
     cypher = """
         CALL db.index.vector.queryNodes('standardname_vec', 5, $vec)
         YIELD node, score
-        WHERE node.review_status IN ['published', 'accepted']
+        WHERE node.pipeline_status IN ['published', 'accepted']
         RETURN node.name AS standard_name,
                node.description AS description,
                score

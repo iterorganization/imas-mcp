@@ -15,6 +15,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Fields that are graph-only extensions (not in the ISN catalog model)
+# but may appear in YAML files. Strip before model validation; pass
+# through via the *extra* dict to _catalog_entry_to_dict.
+_GRAPH_ONLY_FIELDS = {"dd_paths", "physics_domain", "cocos_transformation_type"}
+
 
 @dataclass
 class ImportResult:
@@ -117,7 +122,9 @@ def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str
     # Convert tags/links to plain strings (catalog may use typed objects)
     tags = [str(t) for t in entry.tags] if entry.tags else None
     links = [str(lnk) for lnk in entry.links] if entry.links else None
-    dd_paths = list(entry.dd_paths) if entry.dd_paths else None
+    # dd_paths and physics_domain may not be on the ISN model — fall back to extra
+    dd_paths_raw = getattr(entry, "dd_paths", None) or (extra or {}).get("dd_paths")
+    dd_paths = list(dd_paths_raw) if dd_paths_raw else None
     constraints = list(entry.constraints) if entry.constraints else None
 
     # Determine source_types from presence of dd_paths
@@ -127,6 +134,9 @@ def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str
     from imas_codex.standard_names.source_paths import encode_dd_source
 
     source_paths = [encode_dd_source(p) for p in dd_paths] if dd_paths else None
+    physics_domain = getattr(entry, "physics_domain", None) or (extra or {}).get(
+        "physics_domain"
+    )
 
     result = {
         "id": entry.name,
@@ -139,8 +149,8 @@ def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str
         "source_paths": source_paths,
         "validity_domain": entry.validity_domain or None,
         "constraints": constraints or None,
-        "physics_domain": entry.physics_domain or None,
-        "review_status": "accepted",
+        "physics_domain": physics_domain or None,
+        "pipeline_status": "accepted",
         "source_types": source_types,
         # Grammar fields
         "physical_base": grammar["physical_base"],
@@ -199,15 +209,15 @@ def _write_catalog_entries(
                 sn.constraints = b.constraints,
                 sn.physics_domain = b.physics_domain,
                 sn.cocos_transformation_type = coalesce(b.cocos_transformation_type, sn.cocos_transformation_type),
-                sn.review_status = 'accepted',
+                sn.pipeline_status = 'accepted',
                 sn.imported_at = datetime(),
                 sn.catalog_commit_sha = b.catalog_commit_sha,
-                sn.physical_base = b.physical_base,
-                sn.subject = b.subject,
-                sn.component = b.component,
-                sn.coordinate = b.coordinate,
-                sn.position = b.position,
-                sn.process = b.process,
+                sn.grammar_physical_base = b.physical_base,
+                sn.grammar_subject = b.subject,
+                sn.grammar_component = b.component,
+                sn.grammar_coordinate = b.coordinate,
+                sn.grammar_position = b.position,
+                sn.grammar_process = b.process,
                 sn.source_types = coalesce(b.source_types, sn.source_types),
                 sn.created_at = coalesce(sn.created_at, datetime()),
                 sn.embedding = coalesce(sn.embedding, null),
@@ -293,7 +303,7 @@ def import_catalog(
 
     Catalog fields are authoritative and overwrite graph values.
     Graph-only fields (embedding, model, generated_at) are preserved.
-    Imported entries receive ``review_status='accepted'``.
+    Imported entries receive ``pipeline_status='accepted'``.
 
     Parameters
     ----------
@@ -345,7 +355,9 @@ def import_catalog(
                 result.errors.append(f"{yaml_path.name}: not a YAML mapping")
                 continue
 
-            entry = ta.validate_python(data)
+            # Strip graph-only fields before ISN model validation
+            model_data = {k: v for k, v in data.items() if k not in _GRAPH_ONLY_FIELDS}
+            entry = ta.validate_python(model_data)
         except Exception as exc:
             result.errors.append(f"{yaml_path.name}: {exc}")
             logger.debug("Failed to parse %s: %s", yaml_path, exc)
@@ -438,7 +450,9 @@ def check_catalog(
                 data = yaml.safe_load(f)
             if not isinstance(data, dict):
                 continue
-            entry = ta.validate_python(data)
+            # Strip graph-only fields before ISN model validation
+            model_data = {k: v for k, v in data.items() if k not in _GRAPH_ONLY_FIELDS}
+            entry = ta.validate_python(model_data)
         except Exception:
             continue
 
@@ -459,7 +473,7 @@ def check_catalog(
         rows = gc.query(
             """
             MATCH (sn:StandardName)
-            WHERE sn.review_status = 'accepted'
+            WHERE sn.pipeline_status = 'accepted'
             RETURN sn.id AS id,
                    sn.description AS description,
                    sn.documentation AS documentation,

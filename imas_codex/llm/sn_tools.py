@@ -58,7 +58,7 @@ def _search_standard_names(
     *,
     kind: str | None = None,
     tags: list[str] | None = None,
-    review_status: str | None = None,
+    pipeline_status: str | None = None,
     cocos_type: str | None = None,
     grammar_physical_base: str | None = None,
     grammar_subject: str | None = None,
@@ -119,11 +119,11 @@ def _search_standard_names(
         rows = [r for r in rows if (r.get("kind") or "").lower() == kind.lower()]
     if tags:
         rows = [r for r in rows if any(t in (r.get("tags") or []) for t in tags)]
-    if review_status:
+    if pipeline_status:
         rows = [
             r
             for r in rows
-            if (r.get("review_status") or "").lower() == review_status.lower()
+            if (r.get("pipeline_status") or "").lower() == pipeline_status.lower()
         ]
     if cocos_type:
         rows = [
@@ -161,7 +161,7 @@ WHERE sn.id IS NOT NULL
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.description AS description,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
-       sn.tags AS tags, sn.review_status AS review_status,
+       sn.tags AS tags, sn.pipeline_status AS pipeline_status,
        sn.documentation AS documentation,
        sn.grammar_physical_base AS grammar_physical_base,
        sn.grammar_subject AS grammar_subject,
@@ -192,7 +192,7 @@ WHERE toLower(sn.id) CONTAINS toLower($keyword)
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.description AS description,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
-       sn.tags AS tags, sn.review_status AS review_status,
+       sn.tags AS tags, sn.pipeline_status AS pipeline_status,
        sn.documentation AS documentation,
        sn.grammar_physical_base AS grammar_physical_base,
        sn.grammar_subject AS grammar_subject,
@@ -230,7 +230,7 @@ def _format_search_report(query: str, rows: list[dict]) -> str:
         kind = row.get("kind") or ""
         unit = row.get("unit") or ""
         tags = row.get("tags") or []
-        review_status = row.get("review_status") or ""
+        pipeline_status = row.get("pipeline_status") or ""
         description = row.get("description") or ""
         documentation = row.get("documentation") or ""
         physical_base = row.get("grammar_physical_base") or ""
@@ -251,8 +251,8 @@ def _format_search_report(query: str, rows: list[dict]) -> str:
         if tags:
             tag_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
             lines.append(f"- **Tags:** {tag_str}")
-        if review_status:
-            lines.append(f"- **Status:** {review_status}")
+        if pipeline_status:
+            lines.append(f"- **Status:** {pipeline_status}")
         if cocos_transformation_type:
             lines.append(f"- **COCOS Transformation:** {cocos_transformation_type}")
         if cocos is not None:
@@ -327,7 +327,7 @@ RETURN sn.id AS name, sn.description AS description,
        sn.grammar_physical_base AS physical_base, sn.grammar_subject AS subject,
        sn.grammar_component AS component, sn.grammar_coordinate AS coordinate,
        sn.grammar_position AS position, sn.grammar_process AS process,
-       sn.review_status AS review_status,
+       sn.pipeline_status AS pipeline_status,
        sn.confidence AS confidence, sn.model AS model,
        sn.cocos_transformation_type AS cocos_transformation_type,
        sn.cocos AS cocos,
@@ -377,7 +377,7 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
         coordinate = row.get("coordinate") or ""
         position = row.get("position") or ""
         process = row.get("process") or ""
-        review_status = row.get("review_status") or ""
+        pipeline_status = row.get("pipeline_status") or ""
         confidence = row.get("confidence")
         model = row.get("model") or ""
         cocos_transformation_type = row.get("cocos_transformation_type") or ""
@@ -396,8 +396,8 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
             lines.append(f"- **Kind:** {kind}")
         if unit:
             lines.append(f"- **Unit:** {unit}")
-        if review_status:
-            lines.append(f"- **Review Status:** {review_status}")
+        if pipeline_status:
+            lines.append(f"- **Review Status:** {pipeline_status}")
         if confidence is not None:
             lines.append(f"- **Confidence:** {confidence:.2f}")
         if model:
@@ -472,7 +472,7 @@ def _list_standard_names(
     *,
     tag: str | None = None,
     kind: str | None = None,
-    review_status: str | None = None,
+    pipeline_status: str | None = None,
     cocos_type: str | None = None,
     gc: GraphClient | None = None,
 ) -> str:
@@ -495,9 +495,9 @@ def _list_standard_names(
     if kind:
         conditions.append("toLower(sn.kind) = toLower($kind)")
         params["kind"] = kind
-    if review_status:
-        conditions.append("toLower(sn.review_status) = toLower($review_status)")
-        params["review_status"] = review_status
+    if pipeline_status:
+        conditions.append("toLower(sn.pipeline_status) = toLower($pipeline_status)")
+        params["pipeline_status"] = pipeline_status
     if cocos_type:
         conditions.append("sn.cocos_transformation_type = $cocos_type")
         params["cocos_type"] = cocos_type
@@ -510,7 +510,7 @@ MATCH (sn:StandardName)
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.kind AS kind,
        coalesce(u.id, sn.unit) AS unit,
-       sn.review_status AS review_status,
+       sn.pipeline_status AS pipeline_status,
        sn.cocos_transformation_type AS cocos_transformation_type,
        sn.cocos AS cocos,
        sn.description AS description
@@ -525,7 +525,7 @@ ORDER BY sn.id
         return f"List failed: {_neo4j_error_message(e)}"
 
     return _format_list_report(
-        rows, tag=tag, kind=kind, review_status=review_status, cocos_type=cocos_type
+        rows, tag=tag, kind=kind, pipeline_status=pipeline_status, cocos_type=cocos_type
     )
 
 
@@ -534,7 +534,7 @@ def _format_list_report(
     *,
     tag: str | None = None,
     kind: str | None = None,
-    review_status: str | None = None,
+    pipeline_status: str | None = None,
     cocos_type: str | None = None,
 ) -> str:
     """Format list results as a markdown table."""
@@ -543,8 +543,8 @@ def _format_list_report(
         filter_parts.append(f"tag={tag}")
     if kind:
         filter_parts.append(f"kind={kind}")
-    if review_status:
-        filter_parts.append(f"status={review_status}")
+    if pipeline_status:
+        filter_parts.append(f"status={pipeline_status}")
     if cocos_type:
         filter_parts.append(f"cocos_type={cocos_type}")
     filter_str = f" (filtered by: {', '.join(filter_parts)})" if filter_parts else ""
@@ -562,7 +562,7 @@ def _format_list_report(
         name = row.get("name") or ""
         row_kind = row.get("kind") or ""
         unit = row.get("unit") or ""
-        status = row.get("review_status") or ""
+        status = row.get("pipeline_status") or ""
         cocos_type_val = row.get("cocos_transformation_type") or ""
         cocos_val = row.get("cocos") if row.get("cocos") is not None else ""
         desc = row.get("description") or ""

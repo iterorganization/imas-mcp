@@ -5,7 +5,7 @@ workers into the generic discovery engine and runs them with supervision
 and progress tracking.
 
 The enrich pipeline runs *after* the generate pipeline completes for a
-corpus.  It takes ``review_status='named'`` StandardName nodes and
+corpus.  It takes ``pipeline_status='named'`` StandardName nodes and
 enriches them with documentation, descriptions, and cross-reference
 links produced by LLM calls.
 
@@ -54,7 +54,7 @@ async def run_sn_enrich_engine(
 
         EXTRACT → CONTEXTUALISE → DOCUMENT → VALIDATE → PERSIST
 
-    Extract queries the graph for ``review_status='named'`` StandardName
+    Extract queries the graph for ``pipeline_status='named'`` StandardName
     nodes, builds enrichment batches.
     Contextualise gathers DD docs, nearby SNs, domain siblings.
     Document uses an LLM to generate descriptions and documentation.

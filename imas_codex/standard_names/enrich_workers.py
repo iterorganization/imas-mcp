@@ -4,7 +4,7 @@ Five-phase enrich pipeline:
 
     EXTRACT → CONTEXTUALISE → DOCUMENT → VALIDATE → PERSIST
 
-- **extract**: queries graph for ``review_status='named'`` StandardNames,
+- **extract**: queries graph for ``pipeline_status='named'`` StandardNames,
   batches them for downstream processing.  Uses claim-token pattern to
   prevent parallel workers from double-processing.
 - **contextualise**: gathers DD path descriptions, vector-similar
@@ -207,7 +207,7 @@ def claim_names_for_enrichment(
     force: bool = False,
     status_filter: list[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Atomically claim StandardNames at a given review_status for enrichment.
+    """Atomically claim StandardNames at a given pipeline_status for enrichment.
 
     Uses the two-step claim-token pattern (SET + verify) to prevent
     parallel workers from double-processing.  Skips nodes already at
@@ -233,7 +233,7 @@ def claim_names_for_enrichment(
 
     # Build WHERE clauses
     where_parts = [
-        "sn.review_status IN $statuses",
+        "sn.pipeline_status IN $statuses",
         "(sn.enrich_claimed_at IS NULL"
         "  OR sn.enrich_claimed_at < datetime() - duration($timeout))",
     ]
@@ -289,12 +289,12 @@ def claim_names_for_enrichment(
                    sn.tags AS tags,
                    sn.links AS links,
                    sn.source_paths AS source_paths,
-                   sn.physical_base AS physical_base,
-                   sn.subject AS subject,
-                   sn.component AS component,
-                   sn.coordinate AS coordinate,
-                   sn.position AS position,
-                   sn.process AS process,
+                   sn.grammar_physical_base AS physical_base,
+                   sn.grammar_subject AS subject,
+                   sn.grammar_component AS component,
+                   sn.grammar_coordinate AS coordinate,
+                   sn.grammar_position AS position,
+                   sn.grammar_process AS process,
                    sn.physics_domain AS physics_domain,
                    sn.confidence AS confidence,
                    sn.model AS model
@@ -327,7 +327,7 @@ def release_enrichment_claims(token: str) -> int:
 
 
 async def enrich_extract_worker(state: StandardNameEnrichState, **_kwargs) -> None:
-    """Extract ``review_status='named'`` StandardNames into enrichment batches.
+    """Extract ``pipeline_status='named'`` StandardNames into enrichment batches.
 
     Queries the graph for named SNs (filtered by domain/ids/limit),
     claims them with a token, and groups into batches for downstream
@@ -554,7 +554,7 @@ def _fetch_nearby_sns(
     """Fetch k vector-similar StandardNames for each item via the vector index.
 
     Iterates items but reuses the same *gc* session. Only returns neighbours
-    with ``review_status IN ['enriched', 'published', 'accepted']``.
+    with ``pipeline_status IN ['enriched', 'published', 'accepted']``.
 
     Returns ``{sn_id: [{name, description}, ...]}``.
     """
@@ -572,7 +572,7 @@ def _fetch_nearby_sns(
                     'standard_name_desc_embedding', $fetch_k, target.embedding
                 ) YIELD node, score
                 WHERE node.id <> $target_id
-                  AND node.review_status IN ['enriched', 'published', 'accepted']
+                  AND node.pipeline_status IN ['enriched', 'published', 'accepted']
                 RETURN node.id AS name,
                        node.description AS description
                 LIMIT $k
@@ -627,7 +627,7 @@ def _fetch_domain_siblings(
                 MATCH (sibling:StandardName)
                 WHERE sibling.physics_domain = $domain
                   AND NOT (sibling.id IN $exclude_ids)
-                  AND sibling.review_status IN [
+                  AND sibling.pipeline_status IN [
                       'named', 'enriched', 'reviewable',
                       'published', 'accepted'
                   ]
@@ -666,7 +666,7 @@ def _fetch_domain_siblings(
                 MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sibling:StandardName)
                 WHERE src.ids = $ids_name
                   AND sibling.id <> $exclude_id
-                  AND sibling.review_status IN [
+                  AND sibling.pipeline_status IN [
                       'named', 'enriched', 'reviewable',
                       'published', 'accepted'
                   ]
@@ -1124,7 +1124,7 @@ def _check_links_batch(
 
     Links that reference a name present in *batch_ids* are valid
     (they'll resolve once persisted).  Links referencing existing
-    StandardName nodes with valid review_status are also valid.
+    StandardName nodes with valid pipeline_status are also valid.
     Everything else gets a ``link_not_found`` warning.
 
     Returns ``{item_id: [issue_strings]}``.
@@ -1150,7 +1150,7 @@ def _check_links_batch(
                     """
                     UNWIND $link_ids AS lid
                     MATCH (sn:StandardName {id: lid})
-                    WHERE sn.review_status IN $statuses
+                    WHERE sn.pipeline_status IN $statuses
                     RETURN sn.id AS id
                     """,
                     link_ids=list(all_links),
@@ -1192,7 +1192,6 @@ def _validate_item_pydantic(item: dict[str, Any]) -> list[str]:
             "unit": item.get("unit") or "",
             "description": item.get("enriched_description") or "",
             "documentation": item.get("enriched_documentation") or "",
-            "physics_domain": item.get("physics_domain") or "generic",
         }
         # Include optional fields if present
         if item.get("tags") or item.get("enriched_tags"):

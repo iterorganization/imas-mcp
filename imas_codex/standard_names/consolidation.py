@@ -286,7 +286,7 @@ def consolidate_candidates(
         # Check 5: Concept registry lookup
         if existing_registry and name in existing_registry:
             existing = existing_registry[name]
-            if existing.get("review_status") == "accepted":
+            if existing.get("pipeline_status") == "accepted":
                 result.reused.append(existing)
                 logger.debug("Reusing existing accepted name: %s", name)
                 continue

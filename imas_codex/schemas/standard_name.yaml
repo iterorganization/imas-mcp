@@ -54,6 +54,36 @@ enums:
       reference:
         description: Seeded from ISN reference library
 
+  StandardNameStatus:
+    description: >-
+      Catalog-authoritative lifecycle status for standard names.
+      Maps to ISN StatusEnum values (published, drafted, accepted,
+      superseded, deprecated). Set by catalog import; pipeline defaults
+      to 'drafted'.
+    permissible_values:
+      published:
+        description: Published in the catalog — editorial content is authoritative
+      drafted:
+        description: Draft — not yet published to catalog
+      accepted:
+        description: Accepted by reviewers — scheduled for next release
+      superseded:
+        description: Replaced by another standard name (see superseded_by)
+      deprecated:
+        description: Deprecated — should not be used in new work
+
+  StandardNameOrigin:
+    description: >-
+      Provenance of the most recent editorial edit to a StandardName.
+      pipeline = generated/enriched by the codex LLM pipeline.
+      catalog_edit = imported from a catalog PR that modified editorial
+      fields. Used by filter_protected() to guard catalog-owned content.
+    permissible_values:
+      pipeline:
+        description: Generated or enriched by the codex LLM pipeline
+      catalog_edit:
+        description: Imported from a catalog PR with editorial changes
+
   StandardNameReviewStatus:
     description: >-
       Review lifecycle for standard names.
@@ -235,10 +265,6 @@ classes:
         required: true
       description:
         description: Human-readable definition of this quantity
-      physical_base:
-        description: >-
-          The core physics quantity (e.g., "temperature", "density",
-          "current"). Used for grouping related standard names.
       unit:
         description: Expected SI units for this quantity
         range: Unit
@@ -253,9 +279,46 @@ classes:
       confidence:
         description: LLM confidence score for generated names (0-1)
         range: float
-      review_status:
-        description: Review lifecycle status
+      pipeline_status:
+        description: >-
+          Pipeline lifecycle status. Renamed from review_status in schema v2;
+          one-release alias maintained at CLI/MCP level.
         range: StandardNameReviewStatus
+      status:
+        description: >-
+          Catalog-authoritative lifecycle status. Set by catalog import;
+          pipeline defaults to 'drafted'. Distinct from pipeline_status
+          which tracks the internal pipeline state machine.
+        range: StandardNameStatus
+      origin:
+        description: >-
+          Provenance of the most recent editorial edit. 'pipeline' for
+          LLM-generated content, 'catalog_edit' for content imported from
+          a catalog PR. Used by filter_protected() to guard catalog-owned
+          editorial fields from pipeline overwrites.
+        range: StandardNameOrigin
+      deprecates:
+        description: >-
+          ID of the standard name this entry deprecates. Set during
+          catalog import when a name supersedes an older one.
+      superseded_by:
+        description: >-
+          ID of the standard name that supersedes this entry. Set
+          during catalog import when this name is replaced.
+      catalog_pr_number:
+        description: >-
+          GitHub PR number of the catalog PR that last modified this
+          entry. Set by sn import; null for pipeline-only names.
+        range: integer
+      catalog_pr_url:
+        description: >-
+          Full URL of the catalog PR that last modified this entry.
+          Set by sn import; null for pipeline-only names.
+      exported_at:
+        description: >-
+          ISO 8601 timestamp when this name was last exported to the
+          catalog staging directory by sn export.
+        range: datetime
       model:
         description: >-
           LLM model that generated this standard name
@@ -302,18 +365,8 @@ classes:
         description: Physical/mathematical constraints (e.g., T_e > 0)
         multivalued: true
         range: string
-      subject:
-        description: Particle species (electron, ion, deuterium, etc.)
-      component:
-        description: Vector component (radial, toroidal, vertical, etc.)
-      coordinate:
-        description: Coordinate qualifier
-      position:
-        description: Spatial location qualifier (magnetic_axis, midplane, etc.)
       physics_domain:
         description: Physics domain classification (equilibrium, transport, etc.)
-      process:
-        description: Physical process qualifier (ohmic, bootstrap, etc.)
       cocos_transformation_type:
         description: >-
           COCOS transformation type from the source DD path. Identifies which
@@ -373,21 +426,6 @@ classes:
           normalised over 80). A ``name_only`` run must not overwrite a
           prior ``full`` review unless ``--force`` is given.
         range: StandardNameReviewMode
-      reviewer_model_secondary:
-        description: >-
-          DEPRECATED. Legacy field from the cross-family secondary reviewer.
-          Superseded by Review nodes (see the Review class). Retained only
-          for schema compatibility during migration; new reviews no longer
-          populate this field.
-      reviewer_score_secondary:
-        description: >-
-          DEPRECATED. Legacy secondary-reviewer score. Superseded by
-          Review nodes. Not populated by new reviews.
-        range: float
-      reviewer_scores_secondary:
-        description: >-
-          DEPRECATED. Legacy secondary-reviewer per-dimension JSON. Superseded
-          by Review nodes. Not populated by new reviews.
       review_count:
         description: >-
           Number of Review nodes attached to this StandardName via
@@ -405,13 +443,6 @@ classes:
           ``max(Review.score) - min(Review.score) >= disagreement-threshold``.
           Always false for ``review_count <= 1``.
         range: boolean
-      reviewer_disagreement:
-        description: >-
-          DEPRECATED. Legacy float field: absolute difference between primary
-          and secondary reviewer scores. Superseded by ``review_disagreement``
-          (boolean) computed from Review nodes. Retained only for schema
-          compatibility with existing graph data.
-        range: float
       validation_issues:
         description: >-
           ISN validation issues from three-layer validation
@@ -1001,3 +1032,54 @@ classes:
         inlined: false
         annotations:
           relationship_type: EVIDENCED_BY
+
+  ImportWatermark:
+    description: >-
+      Singleton node tracking the last successful catalog import. Exactly
+      one node with id='singleton' exists in the graph. Used by sn import
+      to determine which catalog commits have already been processed.
+    class_uri: sn:ImportWatermark
+    attributes:
+      id:
+        identifier: true
+        description: Always 'singleton'
+        required: true
+      last_commit_sha:
+        description: >-
+          Git commit SHA of the last successfully imported catalog commit.
+          Null if no import has been performed.
+      last_import_at:
+        description: >-
+          ISO 8601 timestamp of the last successful import.
+        range: datetime
+      source_repo:
+        description: >-
+          GitHub repository slug (owner/repo) of the catalog source.
+          E.g., 'iterorganization/imas-standard-names-catalog'.
+
+  ImportLock:
+    description: >-
+      Singleton advisory lock for catalog import operations. Prevents
+      concurrent sn import runs from corrupting graph state. Exactly
+      one node with id='singleton' exists in the graph.
+    class_uri: sn:ImportLock
+    attributes:
+      id:
+        identifier: true
+        description: Always 'singleton'
+        required: true
+      acquired_at:
+        description: >-
+          ISO 8601 timestamp when the lock was acquired. Null when
+          the lock is not held.
+        range: datetime
+      holder:
+        description: >-
+          Identifier of the process holding the lock (hostname:pid or
+          similar). Null when the lock is not held.
+      stale_after_minutes:
+        description: >-
+          Number of minutes after acquired_at before the lock is
+          considered stale and can be forcibly broken. Default 30.
+        range: integer
+        ifabsent: int(30)

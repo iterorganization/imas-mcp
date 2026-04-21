@@ -475,7 +475,7 @@ def test_review_cli_dry_run():
         {
             "id": "electron_temperature",
             "description": "Te",
-            "review_status": "drafted",
+            "pipeline_status": "drafted",
             "documentation": "Electron temperature.",
             "kind": "scalar",
             "unit": "eV",

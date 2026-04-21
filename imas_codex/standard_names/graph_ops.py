@@ -214,7 +214,7 @@ def get_source_name_mapping(*, rich: bool = False) -> dict[str, dict]:
 
     Returns:
         Dict mapping source entity ID to dict with keys:
-        name, description, kind, review_status (and more if rich=True).
+        name, description, kind, pipeline_status (and more if rich=True).
         If a source has multiple names, prefers the accepted one.
     """
     if rich:
@@ -227,18 +227,18 @@ def get_source_name_mapping(*, rich: bool = False) -> dict[str, dict]:
                    sn.id AS name,
                    sn.description AS description,
                    sn.kind AS kind,
-                   sn.review_status AS review_status
+                   sn.pipeline_status AS pipeline_status
         """)
         mapping: dict[str, dict] = {}
         for r in results:
             sid = r["source_id"]
             # If multiple names exist for same source, prefer accepted
-            if sid not in mapping or r.get("review_status") == "accepted":
+            if sid not in mapping or r.get("pipeline_status") == "accepted":
                 mapping[sid] = {
                     "name": r["name"],
                     "description": r.get("description"),
                     "kind": r.get("kind"),
-                    "review_status": r.get("review_status"),
+                    "pipeline_status": r.get("pipeline_status"),
                 }
         return mapping
 
@@ -258,7 +258,7 @@ def _get_rich_source_name_mapping() -> dict[str, dict]:
                    sn.kind AS kind,
                    sn.tags AS tags,
                    sn.links AS links,
-                   sn.review_status AS review_status,
+                   sn.pipeline_status AS pipeline_status,
                    sn.reviewer_score AS reviewer_score,
                    sn.review_tier AS review_tier,
                    sn.validation_issues AS validation_issues,
@@ -268,7 +268,7 @@ def _get_rich_source_name_mapping() -> dict[str, dict]:
         mapping: dict[str, dict] = {}
         for r in results:
             sid = r["source_id"]
-            if sid not in mapping or r.get("review_status") == "accepted":
+            if sid not in mapping or r.get("pipeline_status") == "accepted":
                 mapping[sid] = {
                     "name": r["name"],
                     "description": r.get("description"),
@@ -276,7 +276,7 @@ def _get_rich_source_name_mapping() -> dict[str, dict]:
                     "kind": r.get("kind"),
                     "tags": r.get("tags"),
                     "links": r.get("links"),
-                    "review_status": r.get("review_status"),
+                    "pipeline_status": r.get("pipeline_status"),
                     "reviewer_score": r.get("reviewer_score"),
                     "review_tier": r.get("review_tier"),
                     "validation_issues": r.get("validation_issues"),
@@ -512,7 +512,11 @@ def fetch_review_feedback_for_sources(
     return mapping
 
 
-def write_standard_names(names: list[dict[str, Any]]) -> int:
+def write_standard_names(
+    names: list[dict[str, Any]],
+    *,
+    override: bool = False,
+) -> int:
     """MERGE StandardName nodes with HAS_STANDARD_NAME relationships.
 
     Relationship direction: entity → concept
@@ -524,17 +528,21 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
       - ``source_types``: ["dd"] or ["signals"] etc.
       - ``source_id``: the originating path / signal ID
 
-    Optional fields: ``physical_base``, ``subject``, ``component``,
-    ``coordinate``, ``position``, ``process``, ``unit``, ``description``,
+    Optional fields: ``unit``, ``description``,
     ``documentation``, ``kind``, ``tags``, ``links``, ``source_paths``,
-    ``validity_domain``, ``constraints``, ``model``, ``review_status``,
+    ``validity_domain``, ``constraints``, ``model``, ``pipeline_status``,
     ``generated_at``, ``confidence``, ``reviewer_model``, ``reviewer_score``,
     ``reviewer_scores``, ``reviewer_comments``, ``reviewed_at``,
-    ``review_tier``, ``reviewer_model_secondary``, ``reviewer_score_secondary``,
-    ``reviewer_scores_secondary``, ``reviewer_disagreement``,
+    ``review_tier``,
     ``vocab_gap_detail``, ``validation_issues``,
     ``validation_layer_summary``, ``cocos_transformation_type``, ``dd_version``,
     ``review_input_hash``.
+
+    Parameters
+    ----------
+    override:
+        When ``True``, bypass pipeline protection — write protected fields
+        even on catalog-edited names.
 
     Performs conflict detection on ``unit``: if a StandardName already exists
     with a different unit value, that entry is skipped (not written)
@@ -542,6 +550,19 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
 
     Returns the number of nodes written.
     """
+    if not names:
+        return 0
+
+    # Pipeline protection — strip catalog-owned fields from catalog_edit items
+    from imas_codex.standard_names.protection import filter_protected
+
+    names, skipped = filter_protected(names, override=override)
+    if skipped:
+        logger.warning(
+            "write_standard_names: stripped protected fields from %d catalog-edited name(s): %s",
+            len(skipped),
+            ", ".join(skipped[:5]),
+        )
     if not names:
         return 0
 
@@ -596,12 +617,6 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
             UNWIND $batch AS b
             MERGE (sn:StandardName {id: b.id})
             SET sn.source_types = coalesce(b.source_types, sn.source_types),
-                sn.physical_base = coalesce(b.physical_base, sn.physical_base),
-                sn.subject = coalesce(b.subject, sn.subject),
-                sn.component = coalesce(b.component, sn.component),
-                sn.coordinate = coalesce(b.coordinate, sn.coordinate),
-                sn.position = coalesce(b.position, sn.position),
-                sn.process = coalesce(b.process, sn.process),
                 sn.description = coalesce(b.description, sn.description),
                 sn.documentation = coalesce(b.documentation, sn.documentation),
                 sn.kind = coalesce(b.kind, sn.kind),
@@ -616,7 +631,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.cocos = coalesce(b.cocos, sn.cocos),
                 sn.dd_version = coalesce(b.dd_version, sn.dd_version),
                 sn.model = coalesce(b.model, sn.model),
-                sn.review_status = coalesce(b.review_status, sn.review_status),
+                sn.pipeline_status = coalesce(b.pipeline_status, sn.pipeline_status),
                 sn.generated_at = coalesce(b.generated_at, sn.generated_at),
                 sn.confidence = coalesce(b.confidence, sn.confidence),
                 sn.reviewer_model = coalesce(b.reviewer_model, sn.reviewer_model),
@@ -625,10 +640,6 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.reviewer_comments = coalesce(b.reviewer_comments, sn.reviewer_comments),
                 sn.reviewed_at = coalesce(b.reviewed_at, sn.reviewed_at),
                 sn.review_tier = coalesce(b.review_tier, sn.review_tier),
-                sn.reviewer_model_secondary = coalesce(b.reviewer_model_secondary, sn.reviewer_model_secondary),
-                sn.reviewer_score_secondary = coalesce(b.reviewer_score_secondary, sn.reviewer_score_secondary),
-                sn.reviewer_scores_secondary = coalesce(b.reviewer_scores_secondary, sn.reviewer_scores_secondary),
-                sn.reviewer_disagreement = coalesce(b.reviewer_disagreement, sn.reviewer_disagreement),
                 sn.vocab_gap_detail = coalesce(b.vocab_gap_detail, sn.vocab_gap_detail),
                 sn.validation_issues = coalesce(b.validation_issues, sn.validation_issues),
                 sn.validation_layer_summary = coalesce(b.validation_layer_summary, sn.validation_layer_summary),
@@ -656,12 +667,6 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 {
                     "id": n["id"],
                     "source_types": n.get("source_types") or None,
-                    "physical_base": n.get("physical_base"),
-                    "subject": n.get("subject"),
-                    "component": n.get("component"),
-                    "coordinate": n.get("coordinate"),
-                    "position": n.get("position"),
-                    "process": n.get("process"),
                     "description": n.get("description"),
                     "documentation": n.get("documentation"),
                     "kind": n.get("kind"),
@@ -676,7 +681,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "cocos": n.get("cocos"),
                     "dd_version": n.get("dd_version"),
                     "model": n.get("model"),
-                    "review_status": n.get("review_status"),
+                    "pipeline_status": n.get("pipeline_status")
+                    or n.get("review_status"),
                     "generated_at": n.get("generated_at"),
                     "confidence": n.get("confidence"),
                     "reviewer_model": n.get("reviewer_model"),
@@ -685,7 +691,6 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "reviewer_comments": n.get("reviewer_comments"),
                     "reviewed_at": n.get("reviewed_at"),
                     "review_tier": n.get("review_tier"),
-                    "reviewer_disagreement": n.get("reviewer_disagreement"),
                     "vocab_gap_detail": _ensure_json(n.get("vocab_gap_detail")),
                     "validation_issues": n.get("validation_issues") or None,
                     "validation_layer_summary": _ensure_json(
@@ -1164,14 +1169,13 @@ def persist_composed_batch(
 
     for entry in candidates:
         entry.setdefault("model", compose_model)
-        entry.setdefault("review_status", "named")
+        entry.setdefault("pipeline_status", "named")
         entry.setdefault("validation_status", "pending")
         entry.setdefault("generated_at", now)
-        # Extract grammar fields into top-level properties for graph
-        fields = entry.get("fields", {})
-        for field_name in _GRAMMAR_FIELDS:
-            if field_name in fields and field_name not in entry:
-                entry[field_name] = fields[field_name]
+        # Legacy grammar fields (physical_base, subject, etc.) previously
+        # extracted from compose fields dict are now dropped from the schema.
+        # Grammar decomposition into grammar_* fields is handled by
+        # _grammar_decomposition() inside write_standard_names().
 
         # D5/P0.3: derive kind from name structure (overrides LLM default).
         name = entry.get("id") or ""
@@ -1219,7 +1223,11 @@ def persist_composed_batch(
 
 
 @retry_on_deadlock()
-def persist_enriched_batch(items: list[dict[str, Any]]) -> int:
+def persist_enriched_batch(
+    items: list[dict[str, Any]],
+    *,
+    override: bool = False,
+) -> int:
     """Persist enriched StandardName data and REFERENCES relationships.
 
     Called by the enrich pipeline PERSIST worker after validation and
@@ -1240,8 +1248,26 @@ def persist_enriched_batch(items: list[dict[str, Any]]) -> int:
     Enrichment claims (``enrich_claimed_at``, ``enrich_claim_token``)
     are released on all processed nodes.
 
+    Parameters
+    ----------
+    override:
+        When ``True``, bypass pipeline protection on catalog-edited names.
+
     Returns the number of nodes written.
     """
+    if not items:
+        return 0
+
+    # Pipeline protection
+    from imas_codex.standard_names.protection import filter_protected
+
+    items, skipped = filter_protected(items, override=override)
+    if skipped:
+        logger.warning(
+            "persist_enriched_batch: stripped protected fields from %d name(s): %s",
+            len(skipped),
+            ", ".join(skipped[:5]),
+        )
     if not items:
         return 0
 
@@ -1264,7 +1290,7 @@ def persist_enriched_batch(items: list[dict[str, Any]]) -> int:
                 "documentation": item.get("enriched_documentation"),
                 "embedding": item.get("embedding"),
                 "tags": merged_tags,
-                "review_status": "enriched",
+                "pipeline_status": "enriched",
                 "enriched_at": now,
                 "llm_model": item.get("llm_model") or item.get("enrich_model"),
                 "llm_cost": item.get("llm_cost") or item.get("enrich_cost_usd"),
@@ -1289,7 +1315,7 @@ def persist_enriched_batch(items: list[dict[str, Any]]) -> int:
                 sn.embedded_at = CASE WHEN b.embedding IS NOT NULL
                                       THEN datetime() ELSE sn.embedded_at END,
                 sn.tags = coalesce(b.tags, sn.tags),
-                sn.review_status = b.review_status,
+                sn.pipeline_status = b.pipeline_status,
                 sn.enriched_at = datetime(b.enriched_at),
                 sn.llm_model = coalesce(b.llm_model, sn.llm_model),
                 sn.llm_cost = coalesce(b.llm_cost, sn.llm_cost),
@@ -1469,7 +1495,7 @@ def claim_names_for_validation(limit: int = 50) -> tuple[str, list[dict[str, Any
         gc.query(
             """
             MATCH (sn:StandardName)
-            WHERE sn.review_status IN ['named', 'drafted']
+            WHERE sn.pipeline_status IN ['named', 'drafted']
               AND sn.generated_at IS NOT NULL
               AND sn.validated_at IS NULL
               AND (sn.claimed_at IS NULL
@@ -1490,13 +1516,13 @@ def claim_names_for_validation(limit: int = 50) -> tuple[str, list[dict[str, Any
                    sn.documentation AS documentation, sn.kind AS kind,
                    sn.unit AS unit, sn.tags AS tags, sn.links AS links,
                    sn.source_paths AS source_paths,
-                   sn.physical_base AS physical_base,
-                   sn.subject AS subject,
-                   sn.component AS component,
-                   sn.coordinate AS coordinate,
-                   sn.position AS position,
-                   sn.process AS process,
-                   sn.geometric_base AS geometric_base,
+                   sn.grammar_physical_base AS physical_base,
+                   sn.grammar_subject AS subject,
+                   sn.grammar_component AS component,
+                   sn.grammar_coordinate AS coordinate,
+                   sn.grammar_position AS position,
+                   sn.grammar_process AS process,
+                   sn.grammar_geometric_base AS geometric_base,
                    sn.object AS object,
                    sn.confidence AS confidence,
                    sn.physics_domain AS physics_domain,
@@ -1576,7 +1602,7 @@ def claim_names_for_embedding(limit: int = 100) -> tuple[str, list[dict[str, Any
         gc.query(
             """
             MATCH (sn:StandardName)
-            WHERE sn.review_status IN ['named', 'drafted', 'published', 'accepted']
+            WHERE sn.pipeline_status IN ['named', 'drafted', 'published', 'accepted']
               AND sn.validated_at IS NOT NULL
               AND sn.embedding IS NULL
               AND sn.description IS NOT NULL
@@ -1655,7 +1681,7 @@ def get_validated_names(
     ``validation_status`` = ``'valid'``.
     """
     where_parts = [
-        "sn.review_status IN ['named', 'drafted']",
+        "sn.pipeline_status IN ['named', 'drafted']",
         "sn.validated_at IS NOT NULL",
         "sn.validation_status = 'valid'",
     ]
@@ -1713,11 +1739,11 @@ def mark_names_consolidated(name_ids: list[str]) -> int:
 def get_validated_standard_names(
     ids_filter: str | None = None,
     confidence_min: float = 0.0,
-    review_status: str = "drafted",
+    pipeline_status: str = "drafted",
 ) -> list[dict[str, Any]]:
     """Read validated StandardName nodes and their provenance.
 
-    Queries StandardName nodes with the given ``review_status``, joining
+    Queries StandardName nodes with the given ``pipeline_status``, joining
     through ``HAS_STANDARD_NAME`` to find source entities and their parent IDS,
     and through ``HAS_UNIT`` to find the unit node.  Uses ``collect()``
     to avoid row duplication when a name has multiple sources (takes the first).
@@ -1731,26 +1757,25 @@ def get_validated_standard_names(
     confidence_min:
         Minimum confidence threshold.  Nodes without a ``confidence``
         property are treated as 1.0 (grammar-validated).
-    review_status:
-        Filter by ``review_status`` property (default ``"drafted"``).
+    pipeline_status:
+        Filter by ``pipeline_status`` property (default ``"drafted"``).
 
     Returns
     -------
     list of dicts with keys: name, description, documentation, kind,
     unit, tags, links, dd_paths, constraints, validity_domain,
-    confidence, model, source, source_path, ids_name, physical_base,
-    subject, component, coordinate, position, process, source_ids_names.
+    confidence, model, source, source_path, ids_name, source_ids_names.
     """
     with GraphClient() as gc:
         params: dict[str, Any] = {
             "confidence_min": confidence_min,
-            "review_status": review_status,
+            "pipeline_status": pipeline_status,
         }
 
         # Collect source info — use HAS_STANDARD_NAME (entity → concept)
         cypher = """
             MATCH (sn:StandardName)
-            WHERE sn.review_status = $review_status
+            WHERE sn.pipeline_status = $pipeline_status
             AND coalesce(sn.confidence, 1.0) >= $confidence_min
             AND sn.validation_status = 'valid'
             OPTIONAL MATCH (src)-[:HAS_STANDARD_NAME]->(sn)
@@ -1787,12 +1812,6 @@ def get_validated_standard_names(
                    sn.source_types AS source_types,
                    first_source AS source_path,
                    first_ids AS ids_name,
-                   sn.physical_base AS physical_base,
-                   sn.subject AS subject,
-                   sn.component AS component,
-                   sn.coordinate AS coordinate,
-                   sn.position AS position,
-                   sn.process AS process,
                    all_ids AS source_ids_names,
                    sn.cocos_transformation_type AS cocos_transformation_type,
                    sn.cocos AS cocos,
@@ -1802,11 +1821,11 @@ def get_validated_standard_names(
 
         results = gc.query(cypher, **params)
         logger.info(
-            "Read %d validated standard names (ids_filter=%s, confidence_min=%.2f, review_status=%s)",
+            "Read %d validated standard names (ids_filter=%s, confidence_min=%.2f, pipeline_status=%s)",
             len(results),
             ids_filter,
             confidence_min,
-            review_status,
+            pipeline_status,
         )
         return list(results)
 
@@ -1833,9 +1852,9 @@ def reset_standard_names(
     Parameters
     ----------
     from_status:
-        Only reset nodes with this ``review_status`` (default ``"drafted"``).
+        Only reset nodes with this ``pipeline_status`` (default ``"drafted"``).
     to_status:
-        Target ``review_status`` after reset.  ``None`` (default) clears fields
+        Target ``pipeline_status`` after reset.  ``None`` (default) clears fields
         only without changing the status.
     source_filter:
         Restrict to nodes with ``source`` equal to ``"dd"`` or ``"signals"``.
@@ -1861,7 +1880,7 @@ def reset_standard_names(
     """
     with GraphClient() as gc:
         params: dict[str, Any] = {"from_status": from_status}
-        where_clauses = ["sn.review_status = $from_status"]
+        where_clauses = ["sn.pipeline_status = $from_status"]
 
         if source_filter:
             where_clauses.append("$source_filter IN sn.source_types")
@@ -1965,7 +1984,7 @@ def reset_standard_names(
                 "sn.embedding = null, sn.embedded_at = null, sn.model = null, "
                 "sn.generated_at = null, sn.confidence = null, "
                 "sn.cocos_transformation_type = null, sn.cocos = null, sn.dd_version = null, "
-                "sn.review_status = $to_status"
+                "sn.pipeline_status = $to_status"
             )
             reset_params["to_status"] = to_status
         else:
@@ -2009,13 +2028,13 @@ def clear_standard_names(
     2. Then delete ``StandardName`` nodes that have zero remaining
        ``HAS_STANDARD_NAME`` edges.
 
-    By default only nodes with ``review_status = 'drafted'`` are deleted.
+    By default only nodes with ``pipeline_status = 'drafted'`` are deleted.
     Accepted names require ``include_accepted=True``.
 
     Parameters
     ----------
     status_filter:
-        List of ``review_status`` values to delete (default ``["drafted"]``).
+        List of ``pipeline_status`` values to delete (default ``["drafted"]``).
     source_filter:
         Restrict to nodes with ``source`` equal to ``"dd"`` or ``"signals"``.
     ids_filter:
@@ -2056,10 +2075,10 @@ def clear_standard_names(
         sn_where_clauses: list[str] = []
         if all_statuses:
             if not include_accepted:
-                sn_where_clauses.append("sn.review_status <> 'accepted'")
+                sn_where_clauses.append("sn.pipeline_status <> 'accepted'")
         else:
             params["statuses"] = effective_statuses
-            sn_where_clauses.append("sn.review_status IN $statuses")
+            sn_where_clauses.append("sn.pipeline_status IN $statuses")
 
         if source_filter:
             sn_where_clauses.append("$source_filter IN sn.source_types")
@@ -2148,14 +2167,14 @@ def clear_standard_names(
 
 
 def update_review_status(names: list[str], status: str = "published") -> int:
-    """Update review_status for a batch of StandardName nodes.
+    """Update pipeline_status for a batch of StandardName nodes.
 
     Parameters
     ----------
     names:
         List of StandardName node IDs (``sn.id``) to update.
     status:
-        New ``review_status`` value (default ``"published"``).
+        New ``pipeline_status`` value (default ``"published"``).
 
     Returns
     -------
@@ -2168,14 +2187,14 @@ def update_review_status(names: list[str], status: str = "published") -> int:
             """
             UNWIND $names AS name
             MATCH (sn:StandardName {id: name})
-            SET sn.review_status = $status
+            SET sn.pipeline_status = $status
             RETURN count(sn) AS updated
             """,
             names=names,
             status=status,
         )
         count = result[0]["updated"] if result else 0
-        logger.info("Updated review_status to '%s' for %d names", status, count)
+        logger.info("Updated pipeline_status to '%s' for %d names", status, count)
         return count
 
 
@@ -2230,12 +2249,32 @@ def claim_unresolved_links(limit: int = 20) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def resolve_links_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
+def resolve_links_batch(
+    items: list[dict[str, Any]],
+    *,
+    override: bool = False,
+) -> dict[str, Any]:
     """Resolve dd: links to name: links for a batch of names.
 
     For each ``dd:path`` link, checks if a StandardName exists that was
     generated from that path. If found, replaces with ``name:sn_id``.
+
+    Parameters
+    ----------
+    override:
+        When ``True``, bypass pipeline protection on catalog-edited names.
     """
+    # Pipeline protection — links is a protected field
+    from imas_codex.standard_names.protection import filter_protected
+
+    items, skipped = filter_protected(items, override=override)
+    if skipped:
+        logger.warning(
+            "resolve_links_batch: stripped protected fields from %d name(s): %s",
+            len(skipped),
+            ", ".join(skipped[:5]),
+        )
+
     resolved_count = 0
     still_unresolved = 0
     failed_count = 0
@@ -2326,8 +2365,9 @@ def get_enrichment_candidates(
     """Get StandardName nodes that need documentation enrichment.
 
     Returns dicts with: id, description, documentation, kind, unit, tags,
-    physical_base, subject, component, coordinate, position, process,
-    plus all linked DD paths aggregated with their documentation.
+    grammar_physical_base, grammar_subject, grammar_component, grammar_coordinate,
+    grammar_position, grammar_process, plus all linked DD paths aggregated with
+    their documentation.
     """
     with GraphClient() as gc:
         params: dict[str, Any] = {}
@@ -2343,7 +2383,7 @@ def get_enrichment_candidates(
             where_clauses.append("sn.physics_domain = $domain_filter")
             params["domain_filter"] = domain_filter
         if status_filter:
-            where_clauses.append("sn.review_status = $status_filter")
+            where_clauses.append("sn.pipeline_status = $status_filter")
             params["status_filter"] = status_filter
 
         where = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
@@ -2375,15 +2415,15 @@ def get_enrichment_candidates(
                    sn.links AS links,
                    sn.validity_domain AS validity_domain,
                    sn.constraints AS constraints,
-                   sn.physical_base AS physical_base,
-                   sn.subject AS subject,
-                   sn.component AS component,
-                   sn.coordinate AS coordinate,
-                   sn.position AS position,
-                   sn.process AS process,
-                   sn.geometric_base AS geometric_base,
+                   sn.grammar_physical_base AS physical_base,
+                   sn.grammar_subject AS subject,
+                   sn.grammar_component AS component,
+                   sn.grammar_coordinate AS coordinate,
+                   sn.grammar_position AS position,
+                   sn.grammar_process AS process,
+                   sn.grammar_geometric_base AS geometric_base,
                    sn.physics_domain AS physics_domain,
-                   sn.review_status AS review_status,
+                   sn.pipeline_status AS pipeline_status,
                    dd_paths
             ORDER BY sn.id
             {limit_clause}
@@ -2403,18 +2443,39 @@ def get_enrichment_candidates(
         return candidates
 
 
-def write_enrichment_results(results: list[dict[str, Any]]) -> int:
+def write_enrichment_results(
+    results: list[dict[str, Any]],
+    *,
+    override: bool = False,
+) -> int:
     """Write enrichment results back to graph.
 
     Only updates doc fields: description, documentation, tags, links,
     validity_domain, constraints. Clears review_input_hash to invalidate
     stale reviews.
 
-    Does NOT touch: id, physical_base, subject, component, coordinate,
-    position, process, kind, unit, model, etc.
+    Does NOT touch: id, kind, unit, model, grammar_* fields, etc.
+
+    Parameters
+    ----------
+    override:
+        When ``True``, bypass pipeline protection on catalog-edited names.
 
     Returns the number of nodes updated.
     """
+    if not results:
+        return 0
+
+    # Pipeline protection
+    from imas_codex.standard_names.protection import filter_protected
+
+    results, skipped = filter_protected(results, override=override)
+    if skipped:
+        logger.warning(
+            "write_enrichment_results: stripped protected fields from %d name(s): %s",
+            len(skipped),
+            ", ".join(skipped[:5]),
+        )
     if not results:
         return 0
 

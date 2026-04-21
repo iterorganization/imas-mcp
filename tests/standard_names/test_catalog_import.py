@@ -184,13 +184,13 @@ class TestFieldMapping:
     """Test that catalog fields are correctly mapped to graph dict."""
 
     def test_sets_accepted_status(self, catalog_dir: Path) -> None:
-        """All imported entries should have review_status='accepted'."""
+        """All imported entries should have pipeline_status='accepted'."""
         from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
         for entry in result.entries:
-            assert entry["review_status"] == "accepted"
+            assert entry["pipeline_status"] == "accepted"
 
     def test_maps_unit_to_unit(self, catalog_dir: Path) -> None:
         """Catalog 'unit' field should pass through as graph unit key."""
@@ -439,7 +439,7 @@ class TestWriteCatalogEntries:
                 "validity_domain": "core",
                 "constraints": None,
                 "physics_domain": "core_plasma_physics",
-                "review_status": "accepted",
+                "pipeline_status": "accepted",
                 "source_types": ["dd"],
                 "physical_base": "temperature",
                 "subject": "electron",
@@ -460,10 +460,10 @@ class TestWriteCatalogEntries:
         assert "sn.kind = b.kind" in cypher
         assert "sn.tags = b.tags" in cypher
         assert "sn.validity_domain = b.validity_domain" in cypher
-        assert "sn.physical_base = b.physical_base" in cypher
+        assert "sn.grammar_physical_base = b.physical_base" in cypher
 
-        # review_status should be hardcoded to 'accepted'
-        assert "sn.review_status = 'accepted'" in cypher
+        # pipeline_status should be hardcoded to 'accepted'
+        assert "sn.pipeline_status = 'accepted'" in cypher
 
         # imported_at should be set
         assert "sn.imported_at = datetime()" in cypher
@@ -492,7 +492,7 @@ class TestWriteCatalogEntries:
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": None,
-                "review_status": "accepted",
+                "pipeline_status": "accepted",
                 "source_types": ["dd"],
                 "physical_base": "temperature",
                 "subject": "electron",
@@ -532,7 +532,7 @@ class TestWriteCatalogEntries:
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": None,
-                "review_status": "accepted",
+                "pipeline_status": "accepted",
                 "source_types": ["dd"],
                 "physical_base": "temperature",
                 "subject": "electron",
@@ -572,7 +572,7 @@ class TestWriteCatalogEntries:
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": None,
-                "review_status": "accepted",
+                "pipeline_status": "accepted",
                 "source_types": ["manual"],
                 "physical_base": None,
                 "subject": None,
@@ -656,7 +656,7 @@ class TestVersionTracking:
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": None,
-                "review_status": "accepted",
+                "pipeline_status": "accepted",
                 "source_types": ["dd"],
                 "physical_base": "temperature",
                 "subject": "electron",
@@ -703,7 +703,7 @@ class TestVersionTracking:
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": None,
-                "review_status": "accepted",
+                "pipeline_status": "accepted",
                 "source_types": ["manual"],
                 "physical_base": None,
                 "subject": None,
@@ -807,7 +807,7 @@ class TestImportIdempotency:
                 "validity_domain",
                 "constraints",
                 "physics_domain",
-                "review_status",
+                "pipeline_status",
                 "source_types",
                 "physical_base",
                 "subject",
@@ -1176,7 +1176,7 @@ class TestPublishImportRoundTrip:
         assert entry["source_paths"] == [
             "dd:core_profiles/profiles_1d/electrons/temperature"
         ]
-        assert entry["review_status"] == "accepted"
+        assert entry["pipeline_status"] == "accepted"
         assert entry["source_types"] == ["dd"]
         assert entry["physics_domain"] == "core_plasma_physics"
         assert entry["validity_domain"] == "core plasma"
@@ -1262,5 +1262,5 @@ class TestPublishImportRoundTrip:
         assert entry["id"] == "electron_temperature"
         assert entry["unit"] == "eV"
         assert entry["source_types"] == ["dd"]
-        assert entry["review_status"] == "accepted"
+        assert entry["pipeline_status"] == "accepted"
         assert entry["documentation"] == "Te from core profiles."

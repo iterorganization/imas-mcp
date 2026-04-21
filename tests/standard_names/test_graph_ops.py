@@ -61,7 +61,7 @@ class TestWriteStandardNames:
         assert "coalesce(b.validity_domain, sn.validity_domain)" in cypher
         assert "coalesce(b.constraints, sn.constraints)" in cypher
         assert "coalesce(b.confidence, sn.confidence)" in cypher
-        assert "coalesce(b.process, sn.process)" in cypher
+        assert "coalesce(b.grammar_process, sn.grammar_process)" in cypher
 
         # created_at should use coalesce(sn.created_at, datetime()) — preserve existing
         assert "coalesce(sn.created_at, datetime())" in cypher
@@ -399,15 +399,15 @@ class TestResetStandardNames:
         all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
         assert "HAS_UNIT" in all_cypher
 
-    def test_to_status_sets_review_status(self) -> None:
-        """When to_status is given, SET clause should include review_status."""
+    def test_to_status_sets_pipeline_status(self) -> None:
+        """When to_status is given, SET clause should include pipeline_status."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[{"n": 1}])
 
         self._call_reset(mock_gc, from_status="drafted", to_status="extracted")
 
         all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
-        assert "review_status" in all_cypher
+        assert "pipeline_status" in all_cypher
 
         # Verify to_status kwarg was passed
         all_kwargs = [call[1] for call in mock_gc.query.call_args_list]
@@ -781,7 +781,7 @@ class TestResetStandardNamesFilters:
         mock_gc = MagicMock()
         self._call_reset(mock_gc, from_status="drafted")
         cypher = self._get_count_cypher(mock_gc)
-        assert "sn.review_status = $from_status" in cypher
+        assert "sn.pipeline_status = $from_status" in cypher
         assert "datetime" not in cypher
         assert "reviewer_score" not in cypher
         assert "review_tier" not in cypher

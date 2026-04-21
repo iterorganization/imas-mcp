@@ -218,11 +218,11 @@ def build_domain_vocabulary_preseed(domain: str | None) -> str:
     """Build a vocabulary pre-seed section for compose prompts.
 
     Queries the graph for all StandardName nodes in *domain* that are
-    ``review_status IN ['drafted', 'published', 'accepted']`` AND
+    ``pipeline_status IN ['drafted', 'published', 'accepted']`` AND
     ``validation_status = 'valid'``, returning up to 40 canonical
     ``(name, description-first-sentence)`` pairs.
 
-    Ordered by review_status priority (accepted > published > drafted),
+    Ordered by pipeline_status priority (accepted > published > drafted),
     then alphabetically by name.
 
     Returns empty string when *domain* is None or no names are found.
@@ -238,13 +238,13 @@ def build_domain_vocabulary_preseed(domain: str | None) -> str:
                 """
                 MATCH (sn:StandardName)
                 WHERE sn.physics_domain = $domain
-                  AND sn.review_status IN ['drafted', 'published', 'accepted']
+                  AND sn.pipeline_status IN ['drafted', 'published', 'accepted']
                   AND sn.validation_status = 'valid'
                 RETURN sn.id AS name,
                        sn.description AS description,
-                       sn.review_status AS review_status
+                       sn.pipeline_status AS pipeline_status
                 ORDER BY
-                    CASE sn.review_status
+                    CASE sn.pipeline_status
                         WHEN 'accepted' THEN 0
                         WHEN 'published' THEN 1
                         WHEN 'drafted' THEN 2

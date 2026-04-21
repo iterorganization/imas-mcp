@@ -130,7 +130,7 @@ class TestEmbeddingCoverage:
                 "validity_domain": "core plasma",
                 "constraints": ["T_e > 0"],
                 "physics_domain": "core_plasma_physics",
-                "review_status": "accepted",
+                "pipeline_status": "accepted",
                 "source_types": ["dd"],
                 "physical_base": "temperature",
                 "subject": "electron",
@@ -173,7 +173,7 @@ class TestEmbeddingCoverage:
                 "description": "Electron temperature",
                 "kind": "scalar",
                 "unit": "eV",
-                "review_status": "drafted",
+                "pipeline_status": "drafted",
                 "confidence": 0.95,
             }
         ]
@@ -205,7 +205,7 @@ class TestCoalesceSafety:
     """
 
     _COALESCE_FIELDS = [
-        ("review_status", "b.review_status, sn.review_status"),
+        ("pipeline_status", "b.pipeline_status, sn.pipeline_status"),
         ("documentation", "b.documentation, sn.documentation"),
         ("kind", "b.kind, sn.kind"),
         ("tags", "b.tags, sn.tags"),
@@ -214,19 +214,19 @@ class TestCoalesceSafety:
         ("validity_domain", "b.validity_domain, sn.validity_domain"),
         ("constraints", "b.constraints, sn.constraints"),
         ("confidence", "b.confidence, sn.confidence"),
-        ("physical_base", "b.physical_base, sn.physical_base"),
-        ("subject", "b.subject, sn.subject"),
-        ("component", "b.component, sn.component"),
-        ("coordinate", "b.coordinate, sn.coordinate"),
-        ("position", "b.position, sn.position"),
-        ("process", "b.process, sn.process"),
+        ("physical_base", "b.physical_base, sn.grammar_physical_base"),
+        ("subject", "b.subject, sn.grammar_subject"),
+        ("component", "b.component, sn.grammar_component"),
+        ("coordinate", "b.coordinate, sn.grammar_coordinate"),
+        ("position", "b.position, sn.grammar_position"),
+        ("process", "b.process, sn.grammar_process"),
     ]
 
     def test_build_does_not_erase_imported_data(self) -> None:
         """All optional fields in the MERGE SET must use coalesce(b.field, sn.field).
 
         This protects against a scenario where:
-          1. catalog import sets review_status='accepted', documentation, etc.
+          1. catalog import sets pipeline_status='accepted', documentation, etc.
           2. sn-build re-runs write_standard_names with those fields = None
           3. Without coalesce, the re-run would null-out the imported values.
         """
@@ -240,7 +240,7 @@ class TestCoalesceSafety:
                 "source_types": ["dd"],
                 "source_id": "core_profiles/profiles_1d/electrons/temperature",
                 "description": "Electron temperature",
-                # review_status, documentation, kind, tags, etc. all absent/None
+                # pipeline_status, documentation, kind, tags, etc. all absent/None
             }
         ]
         _call_write(names, mock_gc)
@@ -298,7 +298,7 @@ class TestCoalesceSafety:
             "constraints",
             "unit",
             "model",
-            "review_status",
+            "pipeline_status",
             "generated_at",
             "confidence",
             "reviewer_model",
@@ -381,7 +381,7 @@ class TestCoalesceSafety:
             "validity_domain": "core plasma",
             "constraints": ["T_e > 0"],
             "physics_domain": "core_plasma_physics",
-            "review_status": "accepted",
+            "pipeline_status": "accepted",
             "source_types": ["dd"],
             "physical_base": "temperature",
             "subject": "electron",
@@ -398,8 +398,8 @@ class TestCoalesceSafety:
         assert "sn.documentation = b.documentation" in import_cypher, (
             "Catalog import must set documentation directly (authoritative)"
         )
-        assert "sn.review_status = 'accepted'" in import_cypher, (
-            "Catalog import must set review_status='accepted' directly"
+        assert "sn.pipeline_status = 'accepted'" in import_cypher, (
+            "Catalog import must set pipeline_status='accepted' directly"
         )
         # Embedding and model must still be protected via coalesce
         assert "coalesce(sn.embedding, null)" in import_cypher
@@ -410,7 +410,7 @@ class TestCoalesceSafety:
             "source_types": ["dd"],
             "source_id": "core_profiles/profiles_1d/electrons/temperature",
             "description": "Electron temperature",
-            # review_status, documentation, kind, validity_domain, constraints all absent
+            # pipeline_status, documentation, kind, validity_domain, constraints all absent
         }
         written = _call_write([basic_entry], build_gc)
         assert written == 1
@@ -419,7 +419,7 @@ class TestCoalesceSafety:
         build_cypher = _merge_cypher(build_gc)
 
         catalog_owned = [
-            ("review_status", "b.review_status, sn.review_status"),
+            ("pipeline_status", "b.pipeline_status, sn.pipeline_status"),
             ("documentation", "b.documentation, sn.documentation"),
             ("kind", "b.kind, sn.kind"),
             ("tags", "b.tags, sn.tags"),
@@ -440,7 +440,7 @@ class TestCoalesceSafety:
 
         # These were not supplied — must be None in batch so coalesce falls back to graph
         for absent_field in (
-            "review_status",
+            "pipeline_status",
             "documentation",
             "kind",
             "validity_domain",
@@ -720,7 +720,7 @@ class TestRoundTripIdempotence:
             "validity_domain",
             "constraints",
             "physics_domain",
-            "review_status",
+            "pipeline_status",
             "source_types",
         )
         for e1, e2 in zip(result1.entries, result2.entries, strict=True):
@@ -757,7 +757,7 @@ _RICH_SN_RECORD = {
     "subject": "electron",
     "confidence": 0.95,
     "model": "gpt-4o",
-    "review_status": "drafted",
+    "pipeline_status": "drafted",
 }
 
 # What get_validated_standard_names returns — graph-canonical keys
@@ -877,7 +877,7 @@ class TestE2ERoundTrip:
 
         entry = result.entries[0]
         assert entry["id"] == "electron_temperature"
-        assert entry["review_status"] == "accepted"
+        assert entry["pipeline_status"] == "accepted"
         assert entry["unit"] == "eV"
         assert entry["physics_domain"] == "core_plasma_physics"
         assert entry["physical_base"] == "temperature"
@@ -912,7 +912,7 @@ class TestE2ERoundTrip:
             "dd:core_profiles/profiles_1d/electrons/temperature"
         ]
         assert "dd_paths" not in entry
-        assert entry["review_status"] == "accepted"
+        assert entry["pipeline_status"] == "accepted"
 
     def test_field_preservation_across_lifecycle(self, tmp_path: Path) -> None:
         """Specific rich fields are verified at each stage of the lifecycle."""
@@ -982,7 +982,7 @@ class TestE2ERoundTrip:
         assert imported["validity_domain"] == "core plasma"
         assert imported["constraints"] == ["T_e > 0"]
         assert imported["physics_domain"] == "core_plasma_physics"
-        assert imported["review_status"] == "accepted"
+        assert imported["pipeline_status"] == "accepted"
         assert imported["physical_base"] == "temperature"
         assert imported["subject"] == "electron"
 
@@ -1022,7 +1022,7 @@ class TestE2ERoundTrip:
         assert node["tags"] == ["spatial-profile"]
         assert node["constraints"] == ["T_e > 0"]
         assert node["validity_domain"] == "core plasma"
-        assert node["review_status"] == "drafted"
+        assert node["pipeline_status"] == "drafted"
         assert node["confidence"] == 0.95
         assert node["model"] == "gpt-4o"
 
@@ -1057,4 +1057,4 @@ class TestE2ERoundTrip:
 
         mock_write.assert_not_called()
         assert result.imported == 1
-        assert result.entries[0]["review_status"] == "accepted"
+        assert result.entries[0]["pipeline_status"] == "accepted"

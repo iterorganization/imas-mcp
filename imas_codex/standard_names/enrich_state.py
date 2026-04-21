@@ -5,7 +5,7 @@ phases for the EXTRACT → CONTEXTUALISE → DOCUMENT → VALIDATE → PERSIST
 standard-name enrichment pipeline.
 
 The enrich pipeline runs *after* the generate pipeline completes.
-It takes ``review_status='named'`` StandardName nodes and enriches
+It takes ``pipeline_status='named'`` StandardName nodes and enriches
 them with documentation, description, and cross-reference links,
 transitioning them through ``enriched`` → ``reviewable``.
 """

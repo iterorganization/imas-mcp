@@ -3147,7 +3147,7 @@ class AgentsServer:
                     query,
                     kind=kind,
                     tags=tags,
-                    review_status=review_status,
+                    pipeline_status=review_status,
                     k=k,
                     cocos_type=cocos_type,
                     grammar_physical_base=grammar_physical_base,
@@ -3207,7 +3207,7 @@ class AgentsServer:
                 return _lsn(
                     tag=tag,
                     kind=kind,
-                    review_status=review_status,
+                    pipeline_status=review_status,
                     cocos_type=cocos_type,
                 )
 

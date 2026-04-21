@@ -252,7 +252,7 @@ def _existing_domain_targets(
         MATCH (sn:StandardName)
         WHERE sn.physics_domain IS NOT NULL
           AND (
-               sn.review_status IN ['named', 'drafted']
+               sn.pipeline_status IN ['named', 'drafted']
             OR sn.reviewer_score IS NULL
           )
         RETURN sn.physics_domain AS domain, count(*) AS remaining

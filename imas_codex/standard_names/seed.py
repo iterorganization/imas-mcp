@@ -2,11 +2,11 @@
 
 Supports two sources:
 - **ISN examples**: Shipped with ``imas-standard-names``, 42 entries
-  covering core physics domains. Imported as ``review_status='accepted'``
+  covering core physics domains. Imported as ``pipeline_status='accepted'``
   and ``source_types=['reference']``.
 - **WEST catalog**: ~305 entries from the ``west-standard-names`` repo.
   Requires two fixes (add ``physics_domain``, strip primary tags) before
-  ISN validation. Imported as ``review_status='drafted'`` and
+  ISN validation. Imported as ``pipeline_status='drafted'`` and
   ``source_types=['west']``.
 """
 
@@ -166,7 +166,7 @@ def _check_grammar_roundtrip(name: str) -> str | None:
 def _entry_to_graph_dict(
     data: dict[str, Any],
     *,
-    review_status: str,
+    pipeline_status: str,
     source_types: list[str],
 ) -> dict[str, Any]:
     """Convert a validated catalog-style dict to a ``write_standard_names`` dict.
@@ -177,8 +177,8 @@ def _entry_to_graph_dict(
         Dict with ``name``, ``description``, ``documentation``, ``kind``,
         ``unit``, ``tags``, ``physics_domain``, plus optional ``links``,
         ``dd_paths``, ``validity_domain``, ``constraints``.
-    review_status:
-        Graph review_status to assign.
+    pipeline_status:
+        Graph pipeline_status to assign.
     source_types:
         Graph source_types to assign (e.g., ``['reference']`` or ``['west']``).
     """
@@ -202,7 +202,7 @@ def _entry_to_graph_dict(
         "validity_domain": data.get("validity_domain") or None,
         "constraints": list(data["constraints"]) if data.get("constraints") else None,
         "physics_domain": data.get("physics_domain") or None,
-        "review_status": review_status,
+        "pipeline_status": pipeline_status,
         # Grammar fields
         **grammar,
     }
@@ -261,7 +261,7 @@ def load_isn_examples() -> tuple[list[dict[str, Any]], list[str]]:
 
             entries.append(
                 _entry_to_graph_dict(
-                    data, review_status="accepted", source_types=["reference"]
+                    data, pipeline_status="accepted", source_types=["reference"]
                 )
             )
 
@@ -392,7 +392,7 @@ def load_west_catalog(
 
             entries.append(
                 _entry_to_graph_dict(
-                    fixed, review_status="drafted", source_types=["west"]
+                    fixed, pipeline_status="drafted", source_types=["west"]
                 )
             )
 

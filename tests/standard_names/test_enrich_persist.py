@@ -117,7 +117,7 @@ class TestPersistEnrichedBatch:
         assert b["description"] == item["enriched_description"]
         assert b["documentation"] == item["enriched_documentation"]
         assert b["embedding"] == item["embedding"]
-        assert b["review_status"] == "enriched"
+        assert b["pipeline_status"] == "enriched"
         assert b["llm_model"] == "test-enrich-model"
         assert b["llm_cost"] == 0.005
         assert b["enrich_tokens"] == 500

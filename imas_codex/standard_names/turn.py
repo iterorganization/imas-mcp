@@ -152,7 +152,7 @@ async def _run_enrich_phase(cfg: TurnConfig) -> PhaseResult:
 
     Constructs a :class:`StandardNameEnrichState` targeting
     ``validation_status='valid'`` names in the given domain that are
-    still at ``review_status='named'`` (missing enrichment).
+    still at ``pipeline_status='named'`` (missing enrichment).
     """
     budget = cfg.phase_budget(1)
 

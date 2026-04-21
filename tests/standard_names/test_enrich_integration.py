@@ -24,7 +24,7 @@ import pytest
 
 TEST_PREFIX = "test_integration_sn_"
 # Use a physics_domain with no production data so claim-safety tests isolate
-# themselves from the live graph. ``runaway_electrons`` has 0 ``review_status='named'``
+# themselves from the live graph. ``runaway_electrons`` has 0 ``pipeline_status='named'``
 # nodes; using a real enum value keeps schema-compliance tests happy.
 _TEST_PHYSICS_DOMAIN = "runaway_electrons"
 
@@ -603,7 +603,7 @@ def _skip_no_api_key():
 
 
 def _create_test_nodes(names: list[str]) -> None:
-    """Create test StandardName nodes in graph with review_status='named'."""
+    """Create test StandardName nodes in graph with pipeline_status='named'."""
     from imas_codex.graph.client import GraphClient
 
     with GraphClient() as gc:
@@ -611,12 +611,12 @@ def _create_test_nodes(names: list[str]) -> None:
             gc.query(
                 """
                 MERGE (sn:StandardName {id: $name})
-                SET sn.review_status = 'named',
+                SET sn.pipeline_status = 'named',
                     sn.kind = 'scalar',
                     sn.unit = 'eV',
                     sn.physics_domain = $domain,
-                    sn.physical_base = 'temperature',
-                    sn.subject = 'electron',
+                    sn.grammar_physical_base = 'temperature',
+                    sn.grammar_subject = 'electron',
                     sn.tags = ['transport'],
                     sn.confidence = 0.85,
                     sn.model = 'test-model',
@@ -688,7 +688,7 @@ class TestDryRunIntegration:
                 rows = gc.query(
                     """
                     MATCH (sn:StandardName {id: $name})
-                    RETURN sn.review_status AS status,
+                    RETURN sn.pipeline_status AS status,
                            sn.description AS description,
                            sn.documentation AS documentation,
                            sn.enrich_claimed_at AS claimed
@@ -927,7 +927,7 @@ class TestFullPipelineSmoke:
                 MATCH (sn:StandardName)
                 WHERE sn.id STARTS WITH '{TEST_PREFIX}live_'
                 RETURN sn.id AS id,
-                       sn.review_status AS status,
+                       sn.pipeline_status AS status,
                        sn.description AS description,
                        sn.documentation AS documentation,
                        sn.embedding IS NOT NULL AS has_embedding,

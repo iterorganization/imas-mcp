@@ -23,7 +23,7 @@ class TestSearchStandardNames:
                     "kind": "scalar",
                     "unit": "eV",
                     "tags": ["core_profiles"],
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "documentation": None,
                     "physical_base": "temperature",
                     "subject": "electron",
@@ -68,7 +68,7 @@ class TestSearchStandardNames:
                     "kind": "scalar",
                     "unit": "eV",
                     "tags": [],
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "documentation": None,
                     "physical_base": "temperature",
                     "subject": None,
@@ -80,7 +80,7 @@ class TestSearchStandardNames:
                     "kind": "vector",
                     "unit": "m/s",
                     "tags": [],
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "documentation": None,
                     "physical_base": None,
                     "subject": None,
@@ -97,8 +97,8 @@ class TestSearchStandardNames:
         assert "electron_temperature" in result
         assert "velocity_field" not in result
 
-    def test_review_status_filter(self):
-        """review_status filter is applied."""
+    def test_pipeline_status_filter(self):
+        """pipeline_status filter is applied."""
         from imas_codex.llm.sn_tools import _search_standard_names
 
         mock_gc = MagicMock()
@@ -110,7 +110,7 @@ class TestSearchStandardNames:
                     "kind": "scalar",
                     "unit": "eV",
                     "tags": [],
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "documentation": None,
                     "physical_base": None,
                     "subject": None,
@@ -122,7 +122,7 @@ class TestSearchStandardNames:
                     "kind": "scalar",
                     "unit": "A",
                     "tags": [],
-                    "review_status": "published",
+                    "pipeline_status": "published",
                     "documentation": None,
                     "physical_base": None,
                     "subject": None,
@@ -134,7 +134,9 @@ class TestSearchStandardNames:
         with patch(
             "imas_codex.llm.sn_tools.Encoder", side_effect=Exception("no embeddings")
         ):
-            result = _search_standard_names("test", review_status="drafted", gc=mock_gc)
+            result = _search_standard_names(
+                "test", pipeline_status="drafted", gc=mock_gc
+            )
 
         assert "drafted_name" in result
         assert "published_name" not in result
@@ -152,7 +154,7 @@ class TestSearchStandardNames:
                     "kind": "scalar",
                     "unit": "eV",
                     "tags": ["core_profiles", "kinetics"],
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "documentation": None,
                     "physical_base": None,
                     "subject": None,
@@ -164,7 +166,7 @@ class TestSearchStandardNames:
                     "kind": "scalar",
                     "unit": "m",
                     "tags": ["equilibrium"],
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "documentation": None,
                     "physical_base": None,
                     "subject": None,
@@ -196,7 +198,7 @@ class TestSearchStandardNames:
                     "kind": "scalar",
                     "unit": "eV",
                     "tags": [],
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "documentation": None,
                     "grammar_physical_base": "temperature",
                     "grammar_subject": "electron",
@@ -241,7 +243,7 @@ class TestFetchStandardNames:
                     "coordinate": None,
                     "position": None,
                     "process": None,
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "confidence": 0.95,
                     "model": "test",
                     "source_ids": ["core_profiles/profiles_1d/electrons/temperature"],
@@ -278,7 +280,7 @@ class TestFetchStandardNames:
                     "coordinate": None,
                     "position": None,
                     "process": None,
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "confidence": None,
                     "model": None,
                     "source_ids": [],
@@ -301,7 +303,7 @@ class TestFetchStandardNames:
                     "coordinate": None,
                     "position": None,
                     "process": None,
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "confidence": None,
                     "model": None,
                     "source_ids": [],
@@ -349,7 +351,7 @@ class TestFetchStandardNames:
                     "coordinate": None,
                     "position": None,
                     "process": None,
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "confidence": None,
                     "model": None,
                     "source_ids": [],
@@ -377,14 +379,14 @@ class TestListStandardNames:
                     "name": "electron_temperature",
                     "kind": "scalar",
                     "unit": "eV",
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "description": "Te",
                 },
                 {
                     "name": "plasma_current",
                     "kind": "scalar",
                     "unit": "A",
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "description": "Ip",
                 },
             ]
@@ -404,7 +406,7 @@ class TestListStandardNames:
                     "name": "electron_temperature",
                     "kind": "scalar",
                     "unit": "eV",
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "description": "Te",
                 },
             ]
@@ -434,7 +436,7 @@ class TestListStandardNames:
                     "name": "electron_temperature",
                     "kind": "scalar",
                     "unit": "eV",
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "description": "Te",
                 },
             ]
@@ -454,7 +456,7 @@ class TestListStandardNames:
                     "name": "electron_temperature",
                     "kind": "scalar",
                     "unit": "eV",
-                    "review_status": "drafted",
+                    "pipeline_status": "drafted",
                     "description": "Te",
                 },
             ]
@@ -491,7 +493,7 @@ class TestMCPToolRegistration:
         assert "query" in params
         assert "kind" in params
         assert "tags" in params
-        assert "review_status" in params
+        assert "pipeline_status" in params
         assert "k" in params
         assert "gc" in params
 
@@ -516,5 +518,5 @@ class TestMCPToolRegistration:
         params = set(sig.parameters.keys())
         assert "tag" in params
         assert "kind" in params
-        assert "review_status" in params
+        assert "pipeline_status" in params
         assert "gc" in params

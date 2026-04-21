@@ -1754,13 +1754,13 @@ def sn_publish(
         written = generate_catalog_files(entries, out)
         console.print(f"\n[green]Wrote {len(written)} YAML files to {out}[/green]")
 
-        # Step 6b: Update review_status in graph
+        # Step 6b: Update pipeline_status in graph
         from imas_codex.standard_names.graph_ops import update_review_status
 
         published_names = [e.name for e in entries]
         updated = update_review_status(published_names, status="published")
         console.print(
-            f"  Updated [bold]{updated}[/bold] names to review_status='published'"
+            f"  Updated [bold]{updated}[/bold] names to pipeline_status='published'"
         )
 
     # Step 7: Optionally create PRs
@@ -1816,7 +1816,7 @@ def sn_import(
     \b
     Reads YAML files from the catalog directory, validates them against
     the imas-standard-names catalog model, derives grammar fields, and
-    MERGEs into the graph with review_status='accepted'.
+    MERGEs into the graph with pipeline_status='accepted'.
 
     \b
     Use --check to compare catalog vs graph without importing.
@@ -1954,7 +1954,7 @@ def sn_import(
 @click.option(
     "--status",
     default=None,
-    help="Delete names with this review_status (e.g. drafted)",
+    help="Delete names with this pipeline_status (e.g. drafted)",
 )
 @click.option(
     "--all",
@@ -2361,7 +2361,7 @@ def sn_resolve_links(
     "--status",
     "status_filter",
     default="drafted",
-    help="Filter by review_status (default: drafted)",
+    help="Filter by pipeline_status (default: drafted)",
 )
 @click.option(
     "--unreviewed",
@@ -2518,15 +2518,15 @@ def sn_review(
                                coalesce(u.id, sn.unit) AS unit,
                                sn.tags AS tags, sn.links AS links,
                                sn.source_paths AS source_paths,
-                               sn.physical_base AS physical_base,
-                               sn.subject AS subject,
-                               sn.component AS component,
-                               sn.coordinate AS coordinate,
-                               sn.position AS position,
-                               sn.process AS process,
+                               sn.grammar_physical_base AS physical_base,
+                               sn.grammar_subject AS subject,
+                               sn.grammar_component AS component,
+                               sn.grammar_coordinate AS coordinate,
+                               sn.grammar_position AS position,
+                               sn.grammar_process AS process,
                                sn.cocos_transformation_type AS cocos_transformation_type,
                                sn.physics_domain AS physics_domain,
-                               sn.review_status AS review_status,
+                               sn.pipeline_status AS pipeline_status,
                                sn.reviewer_score AS reviewer_score,
                                sn.review_input_hash AS review_input_hash,
                                sn.embedding AS embedding,
@@ -2576,7 +2576,7 @@ def sn_review(
             targets = list(state.all_names) if state.all_names else []
             if status_filter:
                 targets = [
-                    n for n in targets if n.get("review_status") == status_filter
+                    n for n in targets if n.get("pipeline_status") == status_filter
                 ]
             if ids:
                 targets = [
