@@ -423,6 +423,30 @@ classes:
       reviewed_at:
         description: When LLM review occurred
         range: datetime
+      reviewer_score_name:
+        description: >-
+          Name-review quality score (0-1). Set by the name review phase
+          (``--target names`` or the ``review_names`` turn phase).
+          Independent of ``reviewer_score_docs``.
+        range: float
+      reviewed_name_at:
+        description: >-
+          ISO 8601 timestamp of the most recent name-review pass.
+          Gate for docs review — docs review skips any name where
+          ``reviewed_name_at IS NULL``.
+        range: datetime
+      reviewer_score_docs:
+        description: >-
+          Docs-review quality score (0-1). Set by the docs review phase
+          (``--target docs`` or the ``review_docs`` turn phase).
+          Independent of ``reviewer_score_name``. Docs review never
+          writes ``reviewer_score``.
+        range: float
+      reviewed_docs_at:
+        description: >-
+          ISO 8601 timestamp of the most recent docs-review pass.
+          Set only by ``--target docs`` review.
+        range: datetime
       review_tier:
         description: >-
           Quality tier from review: outstanding, good, inadequate, poor.
@@ -838,6 +862,15 @@ classes:
         ifabsent: int(0)
       names_regenerated:
         description: Count of names that went through the regen phase
+        range: integer
+        ifabsent: int(0)
+      error_siblings_minted:
+        description: >-
+          Count of error-sibling StandardName nodes deterministically
+          minted during the generate phase via uncertainty modifier
+          grammar (B9). Each parent with HAS_ERROR edges produces up
+          to 3 siblings (upper_uncertainty, lower_uncertainty,
+          uncertainty_index). These skip LLM compose and review.
         range: integer
         ifabsent: int(0)
       domains_touched:
