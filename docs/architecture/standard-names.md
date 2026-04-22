@@ -573,3 +573,20 @@ Only `valid` names participate in `sn review`, consolidation, and `sn publish`.
 | `imas_codex/llm/config/sn_review_criteria.yaml` | Review scoring config (dimensions, tiers, verdict rules) |
 | `imas_codex/standard_names/search.py` | Vector search for similar existing StandardName nodes |
 | `imas_codex/schemas/standard_name.yaml` | LinkML schema (v0.5.0) |
+| `imas_codex/graph/dd_search.py` | Pure functions: `hybrid_dd_search`, `find_related_dd_paths` |
+| `imas_codex/standard_names/example_loader.py` | Graph-backed scored example selection for prompts |
+
+## Migration from Pre-Wave-2 Catalogs
+
+Wave 2 added `reviewer_scores`, `reviewer_comments_per_dim`, and
+`reviewer_verdict` to the `StandardName` schema. These are additive — no graph
+migration is required.
+
+Existing nodes carry `NULL` for these fields until re-reviewed via
+`sn review --force`. The example loader filters
+`WHERE sn.reviewer_verdict IS NOT NULL`, excluding un-backfilled nodes from
+scored-example injection. Export gates are unaffected (they check
+`reviewer_score`, not the per-dim fields).
+
+The tier rename (`adequate` → `inadequate`) applies to new reviews; stale
+`review_tier = 'adequate'` values persist harmlessly until re-reviewed.

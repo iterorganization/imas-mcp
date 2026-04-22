@@ -1107,6 +1107,28 @@ Compose and review prompts use shared fragments via `{% include %}`:
 - `llm/config/sn_review_criteria.yaml` — scoring dimensions, tiers, verdict rules (loaded via `load_prompt_config()`)
 - ISN context keys (`quick_start`, `common_patterns`, `critical_distinctions`) rendered in compose prompt
 
+### Migration from Pre-Wave-2 Catalogs
+
+Wave 2 added three new properties to `StandardName` nodes: `reviewer_scores`
+(per-dimension JSON), `reviewer_comments_per_dim` (per-dimension commentary),
+and `reviewer_verdict` (accept/reject/revise). These properties are **additive** —
+no schema migration is required.
+
+**Existing nodes** will have `reviewer_scores = NULL`, `reviewer_comments_per_dim = NULL`,
+and `reviewer_verdict = NULL` until re-reviewed. Downstream code handles NULL gracefully:
+- The example loader (`example_loader.py`) filters `WHERE sn.reviewer_verdict IS NOT NULL`, so pre-wave-2 nodes are automatically excluded from scored-example injection until backfilled.
+- Export gates check `reviewer_score` (which already exists on reviewed nodes), not the new per-dim fields.
+
+**Backfill procedure:** Run `sn review --force` to re-review all valid names. This
+populates the per-dim fields on existing reviewed nodes without changing their
+`pipeline_status` or `validation_status`. The `--force` flag bypasses the
+"already reviewed" skip logic.
+
+The tier rename (`adequate` → `inadequate`) was applied at the schema level;
+existing `review_tier = 'adequate'` values in the graph will persist until
+re-reviewed but are functionally equivalent — both map to the same score band
+(0.40–0.65).
+
 ## Remote Tools
 
 Prefer these Rust-based CLI tools over standard Unix commands. Defined in `imas_codex/config/remote_tools.yaml`.
