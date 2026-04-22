@@ -446,12 +446,113 @@ def _enrich_ids_context(ids_name: str) -> dict | None:
         }
 
 
+def _hybrid_search_neighbours(
+    gc: Any,
+    path: str,
+    description: str | None = None,
+    physics_domain: str | None = None,
+    max_results: int = 15,
+) -> list[dict]:
+    """Run parallel hybrid DD searches and pre-resolve HAS_STANDARD_NAME.
+
+    Issues two hybrid queries per source path — one by description
+    (physics-concept neighbours) and one by path text (structural cousins).
+    Results are deduplicated, capped at *max_results*, and enriched with
+    any already-minted standard name via a single batch Cypher query.
+
+    Returns a list of dicts with keys: ``tag``, ``path``, ``ids``,
+    ``unit``, ``physics_domain``, ``doc_short``, ``cocos_label``.
+    """
+    from imas_codex.graph.dd_search import hybrid_dd_search
+
+    all_hits: dict[str, Any] = {}  # path → SearchHit (dedup by path)
+
+    # Query 1: description-based (physics concept)
+    desc_query = (description or "")[:200].strip()
+    if desc_query:
+        try:
+            hits = hybrid_dd_search(
+                gc,
+                desc_query,
+                node_category="quantity",
+                physics_domain=physics_domain,
+                k=10,
+            )
+            for h in hits:
+                if h.path != path:
+                    all_hits[h.path] = h
+        except Exception:
+            logger.debug(
+                "Hybrid search (description) failed for %s", path, exc_info=True
+            )
+
+    # Query 2: path-text based (structural cousins)
+    try:
+        hits = hybrid_dd_search(
+            gc,
+            path,
+            node_category="quantity",
+            k=10,
+        )
+        for h in hits:
+            if h.path != path and h.path not in all_hits:
+                all_hits[h.path] = h
+    except Exception:
+        logger.debug("Hybrid search (path) failed for %s", path, exc_info=True)
+
+    if not all_hits:
+        return []
+
+    # Cap to max_results (keep highest scored)
+    sorted_hits = sorted(all_hits.values(), key=lambda h: h.score, reverse=True)[
+        :max_results
+    ]
+
+    # Pre-resolve HAS_STANDARD_NAME in one batch query
+    hit_paths = [h.path for h in sorted_hits]
+    sn_map: dict[str, str | None] = {}
+    try:
+        rows = gc.query(
+            """
+            UNWIND $paths AS pid
+            MATCH (n:IMASNode {id: pid})
+            OPTIONAL MATCH (n)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+            RETURN n.id AS path, sn.id AS sn_id
+            """,
+            paths=hit_paths,
+        )
+        for r in rows or []:
+            sn_map[r["path"]] = r.get("sn_id")
+    except Exception:
+        logger.debug("HAS_STANDARD_NAME pre-resolution failed", exc_info=True)
+
+    # Build compact dicts for prompt injection
+    neighbours: list[dict] = []
+    for h in sorted_hits:
+        sn_id = sn_map.get(h.path)
+        tag = f"name:{sn_id}" if sn_id else f"dd:{h.path}"
+        doc = (h.documentation or h.description or "")[:120]
+        neighbours.append(
+            {
+                "tag": tag,
+                "path": h.path,
+                "ids": h.ids_name,
+                "unit": h.units or "",
+                "physics_domain": h.physics_domain or "",
+                "doc_short": doc,
+                "cocos_label": h.cocos_transformation_type or "",
+            }
+        )
+
+    return neighbours
+
+
 def _enrich_batch_items(items: list[dict]) -> None:
     """Enrich batch items with rich DD context from the graph.
 
     Fetches coordinate specs, COCOS info, identifier schemas, sibling
-    fields, cross-IDS cluster siblings, and version history for each
-    item. Modifies items in-place.
+    fields, cross-IDS cluster siblings, hybrid-search neighbours, and
+    version history for each item. Modifies items in-place.
     """
     from imas_codex.graph.client import GraphClient
 
@@ -554,6 +655,18 @@ def _enrich_batch_items(items: list[dict]) -> None:
                         )
                 if valid_changes:
                     item["version_history"] = valid_changes
+
+            # Hybrid-search neighbours (physics-concept + structural)
+            # Parallel injection: both description-based and path-based
+            # queries run, results deduplicated and pre-resolved for SN.
+            hybrid = _hybrid_search_neighbours(
+                gc,
+                path,
+                description=item.get("description"),
+                physics_domain=item.get("physics_domain"),
+            )
+            if hybrid:
+                item["hybrid_neighbours"] = hybrid
 
 
 def _is_attachment_consistent(source_id: str, sn_name: str) -> tuple[bool, str]:

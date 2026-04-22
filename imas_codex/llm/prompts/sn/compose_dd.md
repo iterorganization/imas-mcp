@@ -165,6 +165,11 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% for xp in item.cross_ids_paths %}  - `{{ xp }}`
 {% endfor %}  → Generate ONE name that covers all cross-IDS instances.
 {% endif %}
+{% if item.hybrid_neighbours %}
+- **Hybrid-search neighbours** (physics-concept + structural cousins):
+{% for n in item.hybrid_neighbours %}  - `{{ n.tag }}` [{{ n.unit }}, {{ n.physics_domain }}]: {{ n.doc_short }}{% if n.cocos_label %} (COCOS {{ n.cocos_label }}){% endif %}
+{% endfor %}  → Reuse a `name:` entry above when your source measures the same quantity.
+{% endif %}
 {% if item.version_history %}
 - **Version history:**
 {% for vh in item.version_history %}  - {{ vh.version }}: {{ vh.change_type }}{% if vh.description %} — {{ vh.description }}{% endif %}
