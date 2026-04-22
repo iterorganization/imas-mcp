@@ -388,6 +388,11 @@ async def enrich_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
         )
         batch["neighborhood"] = neighbors
 
+        # DD source docs + hybrid neighbours + related-path neighbours
+        batch_names = batch.get("names", [])
+        if batch_names:
+            await asyncio.to_thread(_fetch_review_dd_context, batch_names)
+
         # Audit findings (if audit was run)
         if state.audit_report is not None:
             batch_ids = {n.get("id", "") for n in batch.get("names", [])}
@@ -413,6 +418,150 @@ async def enrich_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
             }
         ]
     )
+
+
+def _fetch_review_dd_context(names: list[dict]) -> None:
+    """Enrich review items with DD source docs, hybrid neighbours, and related paths.
+
+    For each item with ``source_paths``, fetches:
+
+    1. **DD source docs** — IMASNode documentation for each linked DD path.
+    2. **Version notes** — notable DD version changes for the paths.
+    3. **Hybrid neighbours** ``[hybrid]`` — concept-similar DD paths via
+       :func:`~imas_codex.standard_names.workers._hybrid_search_neighbours`.
+    4. **Related neighbours** ``[related]`` — cross-IDS structural siblings
+       via :func:`~imas_codex.standard_names.workers._related_path_neighbours`
+       (cluster, coordinate, unit, identifier, COCOS relationships).
+
+    Modifies items in-place, adding ``dd_source_docs``, ``version_notes``,
+    ``nearest_peers``, and ``related_neighbours``.
+    """
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.standard_names.workers import (
+        _hybrid_search_neighbours,
+        _related_path_neighbours,
+    )
+
+    # Collect all source paths across items
+    all_paths: set[str] = set()
+    for item in names:
+        sp = item.get("source_paths")
+        if sp:
+            if isinstance(sp, str):
+                try:
+                    sp = json.loads(sp)
+                except (json.JSONDecodeError, TypeError):
+                    sp = [sp]
+            all_paths.update(sp)
+
+    if not all_paths:
+        return
+
+    with GraphClient() as gc:
+        # Batch-fetch DD path docs
+        path_docs: dict[str, dict] = {}
+        try:
+            rows = gc.query(
+                """
+                UNWIND $paths AS pid
+                MATCH (n:IMASNode {id: pid})
+                RETURN n.id AS id,
+                       n.unit AS unit,
+                       n.description AS description,
+                       n.documentation AS documentation
+                """,
+                paths=list(all_paths),
+            )
+            for r in rows or []:
+                path_docs[r["id"]] = {
+                    "id": r["id"],
+                    "unit": r.get("unit", ""),
+                    "description": r.get("description", ""),
+                    "documentation": r.get("documentation", ""),
+                }
+        except Exception:
+            logger.debug("Review DD source fetch failed", exc_info=True)
+
+        # Batch-fetch version history for all source paths
+        path_versions: dict[str, list[dict]] = {}
+        try:
+            vrows = gc.query(
+                """
+                UNWIND $paths AS pid
+                MATCH (vc:IMASNodeChange)-[:FOR_IMAS_PATH]->(n:IMASNode {id: pid})
+                WHERE vc.change_type IN [
+                    'path_added', 'cocos_transformation_type',
+                    'sign_convention', 'units', 'path_renamed',
+                    'definition_clarification'
+                ]
+                RETURN n.id AS path, vc.id AS change_id,
+                       vc.change_type AS change_type
+                """,
+                paths=list(all_paths),
+            )
+            for vr in vrows or []:
+                vpath = vr["path"]
+                change_id = vr.get("change_id") or ""
+                change_type = vr.get("change_type") or ""
+                parts = change_id.rsplit(":", 1)
+                version = parts[-1] if len(parts) >= 2 else ""
+                if version and change_type:
+                    path_versions.setdefault(vpath, []).append(
+                        {"version": version, "change_type": change_type}
+                    )
+        except Exception:
+            logger.debug("Review version history fetch failed", exc_info=True)
+
+        # Enrich each item
+        for item in names:
+            sp = item.get("source_paths")
+            if sp:
+                if isinstance(sp, str):
+                    try:
+                        sp = json.loads(sp)
+                    except (json.JSONDecodeError, TypeError):
+                        sp = [sp]
+
+                docs = [path_docs[p] for p in sp if p in path_docs]
+                if docs:
+                    item["dd_source_docs"] = docs
+
+                    # Version notes from DD path changes
+                    vnotes: list[dict] = []
+                    for p in sp:
+                        vnotes.extend(path_versions.get(p, []))
+                    if vnotes:
+                        item["version_notes"] = vnotes
+
+                    # Hybrid-search nearest peers [hybrid]
+                    try:
+                        peers = _hybrid_search_neighbours(
+                            gc,
+                            sp[0],
+                            description=item.get("description"),
+                            physics_domain=item.get("physics_domain"),
+                            max_results=5,
+                        )
+                        if peers:
+                            item["nearest_peers"] = peers
+                    except Exception:
+                        logger.debug(
+                            "Review hybrid search failed for %s",
+                            item.get("id"),
+                            exc_info=True,
+                        )
+
+                    # Related-path neighbours [related]
+                    try:
+                        related = _related_path_neighbours(gc, sp[0], max_results=5)
+                        if related:
+                            item["related_neighbours"] = related
+                    except Exception:
+                        logger.debug(
+                            "Review related-path search failed for %s",
+                            item.get("id"),
+                            exc_info=True,
+                        )
 
 
 # =============================================================================
@@ -981,7 +1130,9 @@ def _match_reviews_to_entries(
         # validation_status. Regeneration targeting is driven by the
         # ``sn run --min-score F`` threshold instead, which selects names
         # purely by reviewer_score without touching lifecycle state.
-        if review.verdict == StandardNameReviewVerdict.revise and getattr(review, "revised_name", None):
+        if review.verdict == StandardNameReviewVerdict.revise and getattr(
+            review, "revised_name", None
+        ):
             if not _valid_sn_id(review.revised_name):
                 # Reviewer hallucinated garbage into revised_name (e.g. embedded
                 # stream-of-consciousness reasoning). Keep original and log.
