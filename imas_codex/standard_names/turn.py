@@ -359,6 +359,10 @@ async def _run_review_phase(cfg: TurnConfig) -> PhaseResult:
         facility="dd",
         cost_limit=budget,
         domain_filter=cfg.domain,
+        # Pass status_filter=None so any pipeline_status is accepted.
+        # The generate pipeline writes 'named' or 'enriched', never 'drafted',
+        # so the default status_filter='drafted' would silently extract 0 names.
+        status_filter=None,
         unreviewed_only=True,
         skip_audit=True,
         concurrency=cfg.concurrency,
@@ -383,11 +387,34 @@ async def _run_review_phase(cfg: TurnConfig) -> PhaseResult:
         )
     elapsed = time.monotonic() - t0
 
+    persist_count = state.stats.get("persist_count", 0)
+
+    # Invariant: if eligible names were identified but nothing was persisted
+    # and we are not budget-exhausted, something silently failed.
+    if (
+        len(state.target_names) > 0
+        and persist_count == 0
+        and state.total_cost < budget * 0.5
+    ):
+        msg = (
+            f"invariant violated: {len(state.target_names)} eligible names "
+            "identified but zero persisted (not budget-exhausted)"
+        )
+        logger.error("Phase review %s", msg)
+        return PhaseResult(
+            name="review",
+            exit_code=1,
+            cost=state.total_cost,
+            elapsed=elapsed,
+            count=0,
+            error=msg,
+        )
+
     return PhaseResult(
         name="review",
         cost=state.total_cost,
         elapsed=elapsed,
-        count=state.stats.get("persist_count", 0),
+        count=persist_count,
     )
 
 
