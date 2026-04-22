@@ -9,6 +9,12 @@ schema_needs: []
 
 Generate standard names for the following IMAS Data Dictionary paths.
 
+{% if retry_reason %}
+## ⚠️ Retry Context
+
+{{ retry_reason }}
+{% endif %}
+
 ## Unit Policy
 
 The `unit` field for each path is pre-populated from the IMAS Data Dictionary

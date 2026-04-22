@@ -457,6 +457,7 @@ def _hybrid_search_neighbours(
     description: str | None = None,
     physics_domain: str | None = None,
     max_results: int = 15,
+    search_k: int = 10,
 ) -> list[dict]:
     """Run parallel hybrid DD searches and pre-resolve HAS_STANDARD_NAME.
 
@@ -481,7 +482,7 @@ def _hybrid_search_neighbours(
                 desc_query,
                 node_category="quantity",
                 physics_domain=physics_domain,
-                k=10,
+                k=search_k,
             )
             for h in hits:
                 if h.path != path:
@@ -497,7 +498,7 @@ def _hybrid_search_neighbours(
             gc,
             path,
             node_category="quantity",
-            k=10,
+            k=search_k,
         )
         for h in hits:
             if h.path != path and h.path not in all_hits:
@@ -554,6 +555,10 @@ def _hybrid_search_neighbours(
 
 # Cap for graph-relationship neighbour injection (per path).
 _RELATED_MAX_RESULTS = 5
+
+# Compose retry: on grammar/validation failure, retry once with expanded context.
+_RETRY_ATTEMPTS = 1
+_RETRY_K_EXPANSION = 12
 
 
 def _related_path_neighbours(
@@ -1336,14 +1341,80 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 {"role": "user", "content": user_prompt},
             ]
 
-            result, cost, tokens = await acall_llm_structured(
-                model=model,
-                messages=messages,
-                response_model=StandardNameComposeBatch,
-                service="standard-names",
-            )
+            # --- Delta H: bounded retry loop for failed compositions ---
+            _total_compose_cost = 0.0
+            for _compose_attempt in range(_RETRY_ATTEMPTS + 1):
+                result, cost, tokens = await acall_llm_structured(
+                    model=model,
+                    messages=messages,
+                    response_model=StandardNameComposeBatch,
+                    service="standard-names",
+                )
+                _total_compose_cost += cost
 
-            state.compose_stats.cost += cost
+                # Quick grammar round-trip check on all candidates
+                _grammar_failures: list[str] = []
+                try:
+                    from imas_standard_names.grammar import parse_standard_name
+
+                    for c in result.candidates:
+                        try:
+                            parse_standard_name(c.standard_name)
+                        except Exception:
+                            _grammar_failures.append(c.standard_name)
+                except ImportError:
+                    pass  # ISN not installed — skip check
+
+                if not _grammar_failures or _compose_attempt >= _RETRY_ATTEMPTS:
+                    break
+
+                # Re-enrich items with expanded hybrid search for retry
+                wlog.info(
+                    "Composition retry %d/%d: %d grammar failures (%s) "
+                    "— re-composing with expanded DD context",
+                    _compose_attempt + 1,
+                    _RETRY_ATTEMPTS,
+                    len(_grammar_failures),
+                    ", ".join(_grammar_failures[:3]),
+                )
+
+                def _re_enrich_expanded():
+                    from imas_codex.graph.client import GraphClient
+
+                    with GraphClient() as gc:
+                        for item in batch.items:
+                            path = item.get("path")
+                            if not path:
+                                continue
+                            hybrid = _hybrid_search_neighbours(
+                                gc,
+                                path,
+                                description=item.get("description"),
+                                physics_domain=item.get("physics_domain"),
+                                search_k=_RETRY_K_EXPANSION,
+                            )
+                            if hybrid:
+                                item["hybrid_neighbours"] = hybrid
+
+                await asyncio.to_thread(_re_enrich_expanded)
+
+                _retry_reason = (
+                    f"Previous attempt failed: grammar round-trip failed for "
+                    f"{', '.join(_grammar_failures[:3])}. Consider expanded "
+                    f"neighbour context and produce a different name."
+                )
+                retry_render_ctx = {
+                    **context,
+                    **user_context,
+                    "retry_reason": _retry_reason,
+                }
+                user_prompt = render_prompt(prompt_template, retry_render_ctx)
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+
+            state.compose_stats.cost += _total_compose_cost
             state.compose_stats.processed += len(batch.items)
             state.compose_stats.record_batch(len(batch.items))
 
