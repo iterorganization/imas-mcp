@@ -918,6 +918,221 @@ def update_review_aggregates(
         return len(list(rows or []))
 
 
+def write_review_results(
+    entries: list[dict[str, Any]],
+    mode: str,
+    *,
+    stats: dict[str, Any] | None = None,
+) -> int:
+    """Write phase-specific review scores to StandardName nodes.
+
+    Three modes reflecting the name-then-docs review DAG:
+
+    ``name``
+        Writes ``reviewer_score_name`` + ``reviewed_name_at``.
+        Bootstrap: when ``reviewer_score IS NULL``, also sets
+        ``reviewer_score = reviewer_score_name``.
+        Always writes ``reviewer_scores``, ``reviewer_comments``,
+        ``review_tier``, ``reviewer_verdict``, ``review_mode``,
+        ``reviewer_model``, ``reviewed_at``, ``review_input_hash``.
+
+    ``docs``
+        Writes ``reviewer_score_docs`` + ``reviewed_docs_at``.
+        **Never** touches ``reviewer_score``.
+        Gate: entries whose ``reviewed_name_at IS NULL`` in the graph
+        are skipped (logged as ERROR, counted in
+        ``stats['docs_skipped_missing_name']``).
+
+    ``full``
+        Writes ``reviewer_score`` (aggregate), ``reviewer_score_name``,
+        ``reviewer_score_docs``, ``reviewed_name_at``, ``reviewed_docs_at``
+        plus all standard review fields. Mirrors the existing behaviour
+        of the 6-dim rubric.
+
+    Parameters
+    ----------
+    entries:
+        Dicts with at least ``id`` and ``reviewer_score`` keys.
+    mode:
+        One of ``"name"``, ``"docs"``, ``"full"``.
+    stats:
+        Optional mutable dict to accumulate skip/write counters.
+
+    Returns
+    -------
+    int
+        Number of StandardName nodes written.
+    """
+    if not entries:
+        return 0
+    if stats is None:
+        stats = {}
+
+    if mode == "docs":
+        # Gate check: query graph for reviewed_name_at on target names
+        entry_ids = [e["id"] for e in entries if e.get("id")]
+        if not entry_ids:
+            return 0
+        with GraphClient() as gc:
+            rows = gc.query(
+                """
+                UNWIND $ids AS sid
+                MATCH (sn:StandardName {id: sid})
+                RETURN sn.id AS id, sn.reviewed_name_at AS reviewed_name_at
+                """,
+                ids=entry_ids,
+            )
+            gated: dict[str, bool] = {}
+            for r in rows or []:
+                gated[r["id"]] = r.get("reviewed_name_at") is not None
+
+        passed: list[dict[str, Any]] = []
+        skipped = 0
+        for e in entries:
+            eid = e.get("id", "")
+            if not gated.get(eid, False):
+                logger.error(
+                    "write_review_results(docs): skipping %r — reviewed_name_at IS NULL",
+                    eid,
+                )
+                skipped += 1
+                continue
+            passed.append(e)
+        stats["docs_skipped_missing_name"] = (
+            stats.get("docs_skipped_missing_name", 0) + skipped
+        )
+        if not passed:
+            return 0
+        entries = passed
+
+    with GraphClient() as gc:
+        if mode == "name":
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (sn:StandardName {id: b.id})
+                SET sn.reviewer_score_name = b.reviewer_score_name,
+                    sn.reviewed_name_at = b.reviewed_name_at,
+                    sn.reviewer_score = coalesce(sn.reviewer_score, b.reviewer_score_name),
+                    sn.reviewer_scores = coalesce(b.reviewer_scores, sn.reviewer_scores),
+                    sn.reviewer_comments = coalesce(b.reviewer_comments, sn.reviewer_comments),
+                    sn.reviewer_comments_per_dim = coalesce(b.reviewer_comments_per_dim, sn.reviewer_comments_per_dim),
+                    sn.reviewer_verdict = coalesce(b.reviewer_verdict, sn.reviewer_verdict),
+                    sn.review_tier = coalesce(b.review_tier, sn.review_tier),
+                    sn.review_mode = coalesce(b.review_mode, sn.review_mode),
+                    sn.reviewer_model = coalesce(b.reviewer_model, sn.reviewer_model),
+                    sn.reviewed_at = coalesce(b.reviewed_at, sn.reviewed_at),
+                    sn.review_input_hash = b.review_input_hash
+                """,
+                batch=[
+                    {
+                        "id": e["id"],
+                        "reviewer_score_name": e.get("reviewer_score"),
+                        "reviewed_name_at": e.get("reviewed_at"),
+                        "reviewer_scores": _ensure_json(e.get("reviewer_scores")),
+                        "reviewer_comments": e.get("reviewer_comments"),
+                        "reviewer_comments_per_dim": _ensure_json(
+                            e.get("reviewer_comments_per_dim")
+                        ),
+                        "reviewer_verdict": e.get("reviewer_verdict"),
+                        "review_tier": e.get("review_tier"),
+                        "review_mode": e.get("review_mode"),
+                        "reviewer_model": e.get("reviewer_model"),
+                        "reviewed_at": e.get("reviewed_at"),
+                        "review_input_hash": e.get("review_input_hash"),
+                    }
+                    for e in entries
+                ],
+            )
+
+        elif mode == "docs":
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (sn:StandardName {id: b.id})
+                SET sn.reviewer_score_docs = b.reviewer_score_docs,
+                    sn.reviewed_docs_at = b.reviewed_docs_at,
+                    sn.reviewer_scores = coalesce(b.reviewer_scores, sn.reviewer_scores),
+                    sn.reviewer_comments = coalesce(b.reviewer_comments, sn.reviewer_comments),
+                    sn.reviewer_comments_per_dim = coalesce(b.reviewer_comments_per_dim, sn.reviewer_comments_per_dim),
+                    sn.reviewer_verdict = coalesce(b.reviewer_verdict, sn.reviewer_verdict),
+                    sn.review_mode = coalesce(b.review_mode, sn.review_mode),
+                    sn.reviewer_model = coalesce(b.reviewer_model, sn.reviewer_model),
+                    sn.reviewed_at = coalesce(b.reviewed_at, sn.reviewed_at),
+                    sn.review_input_hash = b.review_input_hash
+                """,
+                batch=[
+                    {
+                        "id": e["id"],
+                        "reviewer_score_docs": e.get("reviewer_score"),
+                        "reviewed_docs_at": e.get("reviewed_at"),
+                        "reviewer_scores": _ensure_json(e.get("reviewer_scores")),
+                        "reviewer_comments": e.get("reviewer_comments"),
+                        "reviewer_comments_per_dim": _ensure_json(
+                            e.get("reviewer_comments_per_dim")
+                        ),
+                        "reviewer_verdict": e.get("reviewer_verdict"),
+                        "review_mode": e.get("review_mode"),
+                        "reviewer_model": e.get("reviewer_model"),
+                        "reviewed_at": e.get("reviewed_at"),
+                        "review_input_hash": e.get("review_input_hash"),
+                    }
+                    for e in entries
+                ],
+            )
+
+        elif mode == "full":
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (sn:StandardName {id: b.id})
+                SET sn.reviewer_score = b.reviewer_score,
+                    sn.reviewer_score_name = coalesce(b.reviewer_score_name, sn.reviewer_score_name),
+                    sn.reviewer_score_docs = coalesce(b.reviewer_score_docs, sn.reviewer_score_docs),
+                    sn.reviewed_name_at = coalesce(b.reviewed_name_at, sn.reviewed_name_at),
+                    sn.reviewed_docs_at = coalesce(b.reviewed_docs_at, sn.reviewed_docs_at),
+                    sn.reviewer_scores = coalesce(b.reviewer_scores, sn.reviewer_scores),
+                    sn.reviewer_comments = coalesce(b.reviewer_comments, sn.reviewer_comments),
+                    sn.reviewer_comments_per_dim = coalesce(b.reviewer_comments_per_dim, sn.reviewer_comments_per_dim),
+                    sn.reviewer_verdict = coalesce(b.reviewer_verdict, sn.reviewer_verdict),
+                    sn.review_tier = coalesce(b.review_tier, sn.review_tier),
+                    sn.review_mode = coalesce(b.review_mode, sn.review_mode),
+                    sn.reviewer_model = coalesce(b.reviewer_model, sn.reviewer_model),
+                    sn.reviewed_at = coalesce(b.reviewed_at, sn.reviewed_at),
+                    sn.review_input_hash = b.review_input_hash
+                """,
+                batch=[
+                    {
+                        "id": e["id"],
+                        "reviewer_score": e.get("reviewer_score"),
+                        "reviewer_score_name": e.get("reviewer_score_name"),
+                        "reviewer_score_docs": e.get("reviewer_score_docs"),
+                        "reviewed_name_at": e.get("reviewed_at"),
+                        "reviewed_docs_at": e.get("reviewed_at"),
+                        "reviewer_scores": _ensure_json(e.get("reviewer_scores")),
+                        "reviewer_comments": e.get("reviewer_comments"),
+                        "reviewer_comments_per_dim": _ensure_json(
+                            e.get("reviewer_comments_per_dim")
+                        ),
+                        "reviewer_verdict": e.get("reviewer_verdict"),
+                        "review_tier": e.get("review_tier"),
+                        "review_mode": e.get("review_mode"),
+                        "reviewer_model": e.get("reviewer_model"),
+                        "reviewed_at": e.get("reviewed_at"),
+                        "review_input_hash": e.get("review_input_hash"),
+                    }
+                    for e in entries
+                ],
+            )
+
+        else:
+            raise ValueError(f"write_review_results: unknown mode {mode!r}")
+
+    written = len(entries)
+    logger.info("write_review_results(mode=%s): wrote %d names", mode, written)
+    return written
+
+
 def _resolve_grammar_token_version(gc: GraphClient, isn_version: str) -> str | None:
     """Find the best GrammarToken version for HAS_SEGMENT resolution.
 
@@ -2522,6 +2737,24 @@ def merge_standard_name_sources(
             f"Only {_VALID_PIPELINE_SOURCE_TYPES} are valid."
         )
 
+    # Birth-invariant: a 'dd' source with no dd_path cannot have a FROM_DD_PATH
+    # edge and would be an orphan from the moment it is written.  Drop these
+    # before they reach the graph and log a WARNING so the caller knows.
+    valid_sources: list[dict] = []
+    for s in sources:
+        if s.get("source_type") == "dd" and not s.get("dd_path"):
+            logger.warning(
+                "merge_standard_name_sources: skipping dd source %r — "
+                "no dd_path supplied; writing would create an orphan "
+                "(birth invariant violation).",
+                s.get("id"),
+            )
+            continue
+        valid_sources.append(s)
+    sources = valid_sources
+    if not sources:
+        return 0
+
     with GraphClient() as gc:
         result = gc.query(
             """
@@ -3077,6 +3310,84 @@ def reconcile_standard_name_sources(source_type: str = "dd") -> dict:
         "revived": revived_count,
         "relinked": relinked_count,
     }
+
+
+def reconcile_error_siblings() -> dict[str, int]:
+    """Detect and mark stale error-sibling StandardNames.
+
+    An error-sibling StandardName is identified by
+    ``model='deterministic:dd_error_modifier'``. It is orphaned when
+    no parent StandardName exists that the sibling's uncertainty
+    operator wraps. Detection: strip the ``upper_uncertainty_of_`` /
+    ``lower_uncertainty_of_`` / ``uncertainty_index_of_`` prefix and
+    check whether the resulting parent name still has a StandardName
+    node in the graph.
+
+    Orphans are marked ``pipeline_status='skipped'`` to prevent them
+    from appearing in downstream phases.
+
+    Returns dict with counts: {stale_marked}.
+    """
+    from imas_codex.standard_names.error_siblings import ERROR_SUFFIX_TO_OPERATOR
+
+    # Build the list of operator prefixes to strip
+    prefixes = [f"{op}_of_" for op in ERROR_SUFFIX_TO_OPERATOR.values()]
+
+    with GraphClient() as gc:
+        # Find all error-sibling names
+        rows = list(
+            gc.query(
+                """
+                MATCH (sn:StandardName)
+                WHERE sn.model = 'deterministic:dd_error_modifier'
+                  AND sn.pipeline_status <> 'skipped'
+                RETURN sn.id AS id
+                """
+            )
+            or []
+        )
+
+        orphan_ids: list[str] = []
+        for row in rows:
+            sn_id = row["id"]
+            parent_name = None
+            for prefix in prefixes:
+                if sn_id.startswith(prefix):
+                    parent_name = sn_id[len(prefix) :]
+                    break
+
+            if parent_name is None:
+                # Can't determine parent — skip
+                continue
+
+            # Check if parent StandardName exists
+            parent_check = list(
+                gc.query(
+                    "MATCH (p:StandardName {id: $pid}) RETURN p.id LIMIT 1",
+                    pid=parent_name,
+                )
+                or []
+            )
+            if not parent_check:
+                orphan_ids.append(sn_id)
+
+        stale_count = 0
+        if orphan_ids:
+            gc.query(
+                """
+                UNWIND $ids AS sid
+                MATCH (sn:StandardName {id: sid})
+                SET sn.pipeline_status = 'skipped'
+                """,
+                ids=orphan_ids,
+            )
+            stale_count = len(orphan_ids)
+            logger.info(
+                "Reconciled %d orphaned error-sibling StandardNames → skipped",
+                stale_count,
+            )
+
+    return {"stale_marked": stale_count}
 
 
 def get_standard_name_source_stats(
