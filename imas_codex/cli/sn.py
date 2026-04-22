@@ -1078,6 +1078,160 @@ def sn_benchmark(
     console.print(f"\n[green]Report saved:[/green] {out_path}")
 
 
+@sn.command("coverage")
+@click.option(
+    "--physics-domain",
+    "physics_domain",
+    type=_PHYSICS_DOMAIN_CHOICE,
+    default=None,
+    help="Restrict eligibility counts to this physics domain.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit machine-readable JSON instead of rich tables.",
+)
+def sn_coverage(physics_domain: str | None, as_json: bool) -> None:
+    """Pre-run coverage report: how many names do we expect to mint?
+
+    Prints a three-section report:
+
+    \b
+      1. DD extract eligibility — leaves admitted by the B3' invariant.
+      2. Already-minted coverage — existing StandardName catalog.
+      3. Work remaining — uncovered paths + rough LLM cost estimate.
+
+    \b
+    Examples:
+      imas-codex sn coverage
+      imas-codex sn coverage --physics-domain equilibrium
+      imas-codex sn coverage --json | jq .to_compose
+    """
+    from imas_codex.standard_names.coverage import compute_coverage
+
+    try:
+        report = compute_coverage(physics_domain=physics_domain)
+    except Exception as exc:  # pragma: no cover
+        console.print(f"[red]Error computing coverage:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    if as_json:
+        click.echo(report.to_json())
+        return
+
+    # --- Rich output --------------------------------------------------------
+    from rich.table import Table
+
+    scope_label = (
+        f"[bold cyan]{physics_domain}[/bold cyan]"
+        if physics_domain
+        else "[bold cyan]all domains[/bold cyan]"
+    )
+    console.print(f"\n[bold]SN Coverage Report[/bold] — scope: {scope_label}\n")
+
+    # Section 1: DD eligibility
+    elig_table = Table(
+        title="1 · DD Extract Eligibility (B3' invariant)", show_header=True
+    )
+    elig_table.add_column("Metric", style="cyan")
+    elig_table.add_column("Count", justify="right")
+    elig_table.add_row(
+        "[bold]Total eligible leaves[/bold]", f"[bold]{report.eligible_total:,}[/bold]"
+    )
+    elig_table.add_row(
+        "  … with HAS_ERROR edges (B9 parents)", f"{report.eligible_with_errors:,}"
+    )
+    console.print(elig_table)
+
+    cat_table = Table(title="By node_category", show_header=True)
+    cat_table.add_column("node_category", style="dim")
+    cat_table.add_column("Count", justify="right")
+    for k, v in sorted(report.eligible_by_category.items(), key=lambda x: -x[1]):
+        cat_table.add_row(k, f"{v:,}")
+    console.print(cat_table)
+
+    nt_table = Table(title="By node_type", show_header=True)
+    nt_table.add_column("node_type", style="dim")
+    nt_table.add_column("Count", justify="right")
+    for k, v in sorted(report.eligible_by_node_type.items(), key=lambda x: -x[1]):
+        nt_table.add_row(k, f"{v:,}")
+    console.print(nt_table)
+
+    # Only show domain table when not filtered (it's redundant when filtered)
+    if not physics_domain:
+        dom_table = Table(title="By physics_domain (top 15)", show_header=True)
+        dom_table.add_column("physics_domain", style="dim")
+        dom_table.add_column("Count", justify="right")
+        for k, v in sorted(report.eligible_by_domain.items(), key=lambda x: -x[1])[:15]:
+            dom_table.add_row(k, f"{v:,}")
+        console.print(dom_table)
+
+    # Section 2: Already-minted
+    console.print()
+    minted_table = Table(title="2 · Already-Minted Coverage", show_header=True)
+    minted_table.add_column("Metric", style="cyan")
+    minted_table.add_column("Count", justify="right")
+    minted_table.add_row(
+        "[bold]Total StandardName nodes[/bold]", f"[bold]{report.sn_total:,}[/bold]"
+    )
+    minted_table.add_row(
+        "  Error-sibling names (deterministic:dd_error_modifier)",
+        f"{report.error_siblings_minted:,}",
+    )
+    minted_table.add_row(
+        "  IMASNodes covered (HAS_STANDARD_NAME)", f"{report.covered_parents:,}"
+    )
+    console.print(minted_table)
+
+    ps_table = Table(title="By pipeline_status", show_header=True)
+    ps_table.add_column("pipeline_status", style="dim")
+    ps_table.add_column("Count", justify="right")
+    for k, v in sorted(report.sn_by_pipeline_status.items(), key=lambda x: -x[1]):
+        ps_table.add_row(k, f"{v:,}")
+    console.print(ps_table)
+
+    vs_table = Table(title="By validation_status", show_header=True)
+    vs_table.add_column("validation_status", style="dim")
+    vs_table.add_column("Count", justify="right")
+    for k, v in sorted(report.sn_by_validation_status.items(), key=lambda x: -x[1]):
+        vs_table.add_row(k, f"{v:,}")
+    console.print(vs_table)
+
+    # Section 3: Work remaining
+    console.print()
+    work_table = Table(title="3 · Work Remaining", show_header=True)
+    work_table.add_column("Metric", style="cyan")
+    work_table.add_column("Value", justify="right")
+    work_table.add_row(
+        "[bold]To compose (uncovered leaves)[/bold]",
+        f"[bold]{report.to_compose:,}[/bold]",
+    )
+    work_table.add_row("  … with HAS_ERROR edges", f"{report.to_compose_with_errors:,}")
+    work_table.add_row(
+        "  Expected error siblings (3×)", f"{report.expected_error_siblings:,}"
+    )
+
+    if report.cost_per_name is not None:
+        work_table.add_row(
+            "Avg cost/name (from SNRun telemetry)",
+            f"${report.cost_per_name:.5f}",
+        )
+        if report.estimated_compose_cost is not None:
+            work_table.add_row(
+                "Estimated total compose cost",
+                f"${report.estimated_compose_cost:.2f}",
+            )
+    else:
+        work_table.add_row(
+            "Cost estimate",
+            "[dim]unknown — no prior SNRun telemetry[/dim]",
+        )
+    console.print(work_table)
+    console.print()
+
+
 @sn.command("status")
 def sn_status() -> None:
     """Show standard name statistics."""
