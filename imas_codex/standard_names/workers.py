@@ -1576,6 +1576,39 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     }
                 )
 
+                # --- B9: Mint error siblings deterministically ---
+                # If the parent has HAS_ERROR edges, mint uncertainty
+                # modifier siblings without LLM calls.
+                if (
+                    not grammar_failed
+                    and source_item
+                    and source_item.get("has_errors")
+                    and source_item.get("error_node_ids")
+                ):
+                    from imas_codex.standard_names.error_siblings import (
+                        mint_error_siblings,
+                    )
+
+                    siblings = mint_error_siblings(
+                        name_id,
+                        error_node_ids=source_item["error_node_ids"],
+                        unit=unit,
+                        physics_domain=physics_domain,
+                        cocos_type=cocos_type,
+                        cocos_version=batch.cocos_version,
+                        dd_version=batch.dd_version,
+                    )
+                    if siblings:
+                        candidates.extend(siblings)
+                        state.error_siblings_minted = getattr(
+                            state, "error_siblings_minted", 0
+                        ) + len(siblings)
+                        wlog.debug(
+                            "B9: Minted %d error siblings for parent %r",
+                            len(siblings),
+                            name_id,
+                        )
+
             # Collect vocab gaps and persist immediately
             if result.vocab_gaps:
                 gap_dicts = []
