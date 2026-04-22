@@ -26,38 +26,49 @@ Examples: `electron_temperature`, `toroidal_magnetic_field_at_magnetic_axis`,
 
 ```
  ┌───────────┐     ┌───────────┐     ┌───────────┐
- │  EXTRACT  │────▶│  COMPOSE  │────▶│  REVIEW   │  (optional)
+ │  EXTRACT  │────▶│  COMPOSE  │────▶│  VALIDATE │
  │           │     │           │     │           │
- │ DD query  │     │ LLM call  │     │ LLM judge │
- │ classify  │     │ per-batch │     │ accept/   │
- │ enrich    │     │ unit from │     │ reject/   │
- │ group     │     │ DD, not   │     │ revise    │
+ │ DD query  │     │ LLM call  │     │ ISN 3-    │
+ │ classify  │     │ per-batch │     │ layer +   │
+ │ enrich    │     │ unit from │     │ grammar   │
+ │ group     │     │ DD, not   │     │ round-trip│
  └───────────┘     │ LLM       │     └─────┬─────┘
                    └───────────┘           │
                                            ▼
  ┌───────────┐     ┌───────────┐     ┌───────────┐
- │  PERSIST  │◀────│CONSOLIDATE│◀────│ VALIDATE  │
+ │  PERSIST  │◀────│CONSOLIDATE│◀────│ REVIEW    │  (optional, two phases)
  │           │     │           │     │           │
- │ Neo4j     │     │ dedup     │     │ ISN 3-    │
- │ conflict  │     │ conflicts │     │ layer +   │
- │ detection │     │ coverage  │     │ grammar   │
- └───────────┘     └───────────┘     │ round-trip│
+ │ Neo4j     │     │ dedup     │     │ review_   │
+ │ conflict  │     │ conflicts │     │ names ──▶ │
+ │ detection │     │ coverage  │     │ review_   │
+ └───────────┘     └───────────┘     │ docs      │
                                      └───────────┘
+
+ Error siblings (rc22): deterministic fast-path — no COMPOSE / REVIEW
+ ┌───────────────────────────────────────────────────────────────┐
+ │ mint_error_siblings()  model='deterministic:dd_error_modifier' │
+ │ _error_upper / _error_lower / _error_index companions minted   │
+ │ from parent name via uncertainty modifier grammar rule.        │
+ │ All review fields pre-populated; skips LLM entirely.          │
+ └───────────────────────────────────────────────────────────────┘
 ```
 
 **Phase summary:**
 
 | Phase | Module | What it does |
 |-------|--------|--------------|
-| EXTRACT | `workers.extract_worker` | Query graph for DD paths, classify, enrich with clusters, group into batches |
+| EXTRACT | `workers.extract_worker` | Query graph for DD paths filtered by `SN_SOURCE_CATEGORIES` (`{quantity, geometry, coordinate}`) + leaf invariant (`data_type NOT IN STRUCTURE/STRUCT_ARRAY`), classify, enrich with clusters, group into batches |
 | COMPOSE | `workers.compose_worker` | LLM generates standard names per batch; unit injected from DD |
-| REVIEW | `workers.review_worker` | Optional LLM review: accept/reject/revise each candidate |
 | VALIDATE | `workers.validate_worker` | ISN 3-layer validation + grammar round-trip via `parse_standard_name()`, fields consistency |
 | CONSOLIDATE | `workers.consolidate_worker` | Cross-batch dedup, conflict detection, coverage accounting |
 | PERSIST | `workers.persist_worker` | Conflict-detecting Neo4j writes with coalesce semantics |
+| REVIEW_NAMES | turn `review_names` | 4-dim name rubric; writes `reviewer_score_name` + `reviewed_name_at`; bootstraps `reviewer_score` |
+| REVIEW_DOCS | turn `review_docs` | 4-dim docs rubric; gated on `reviewed_name_at IS NOT NULL`; writes `reviewer_score_docs` + `reviewed_docs_at` |
 
 Orchestrator: `imas_codex/standard_names/pipeline.py` — wires workers into the generic
-`run_discovery_engine()` with a DAG dependency graph.
+`run_discovery_engine()` with a DAG dependency graph. The review phases are turn-level
+(in `turn.py`) rather than pipeline-level workers; they run after PERSIST in the per-domain
+loop with a 15 %/15 % phase budget split.
 
 ## ISN Integration
 

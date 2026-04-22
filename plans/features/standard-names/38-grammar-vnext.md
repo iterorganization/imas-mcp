@@ -1,6 +1,10 @@
 # Plan 38 — Grammar vNext (ISN rc21) + Codex Schema & Prompt Overhaul
 
-> **Status**: DRAFT — awaiting RD review then fleet dispatch
+> **Status**: SUBSTANTIALLY LANDED — Waves 1–4 shipped (ISN rc21, codex schema/prompt overhaul).
+> Wave 5 bootstrap surfaced infrastructure bugs resolved in the rc22 pivot (Plan 39 / rc22).
+> The grammar vNext work (ISN rc21) and codex integration are complete. Remaining open items
+> from Part D (bootstrap validation) and Part E (documentation) were addressed in rc22 B7.
+> **See Plan 39 (rc22-plan.md) for the full rc22 fix set.**
 > **Supersedes**: plan 37 (grammar-identity-prefix)
 > **Scope**: ISN grammar + vocabulary rework (`imas-standard-names` repo),
 > ISNC corpus preservation (`imas-standard-names-catalog` fork), and
