@@ -101,6 +101,22 @@ These names already exist in the catalog. Compare docs for consistency and cross
 - {{ issue }}
 {% endfor %}
 {% endif %}
+{% if item.dd_source_docs %}
+**Source DD paths** (compare description clarity against DD definitions):
+{% for p in item.dd_source_docs %}- `{{ p.id }}` [{{ p.unit }}]: {{ p.documentation or p.description }}
+{% endfor %}{% endif %}
+{% if item.nearest_peers %}
+**DD neighbours** `[hybrid]` (concept-similar paths — compare documentation quality):
+{% for n in item.nearest_peers %}- `{{ n.tag }}` [{{ n.unit }}, {{ n.physics_domain }}]: {{ n.doc_short }}{% if n.cocos_label %} (COCOS {{ n.cocos_label }}){% endif %}
+{% endfor %}{% endif %}
+{% if item.related_neighbours %}
+**DD relatives** `[related]` (cross-IDS context for completeness and accuracy):
+{% for r in item.related_neighbours %}- `{{ r.path }}` ({{ r.ids }}) — {{ r.relationship_type }}{% if r.via %} via {{ r.via }}{% endif %}
+{% endfor %}{% endif %}
+{% if item.version_notes %}
+**Version history:**
+{% for vh in item.version_notes %}- {{ vh.version }}: {{ vh.change_type }}
+{% endfor %}{% endif %}
 
 {% endfor %}
 
