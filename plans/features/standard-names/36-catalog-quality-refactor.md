@@ -1,11 +1,14 @@
-# Plan 36 — Catalog Quality Refactor (v3)
+# Plan 36 — Catalog Quality Refactor (v4)
 
-> **Status**: PLANNING (RD round 3 pending on this refactor)
-> **Supersedes**: v1 (complex parent/part addition) and v2 (complex-SUFFIX asymmetric design)
-> **Scope pivot (v3)**: Greenfield postfix grammar inversion (unifies vector + complex
-> under ONE rule); complete linking-workflow rebuild (11 bugs); field design cleanup.
-> **RD round 2 findings** (on v2) are either resolved by postfix (#1) or merged into this
-> plan (#4, #6, #7, #8a/b, #1b/d/e, #5).
+> **Status**: PLANNING (RD round 4 pending on v4 amplification + example deltas)
+> **Supersedes**: v1 (complex parent/part addition), v2 (complex-SUFFIX asymmetric), v3 (postfix + linking)
+> **v4 scope additions**: graph-backed DD context amplification in SN prompts (Deltas A–J);
+> target-anchored dynamic example library split by consumer with per-dimension reviewer
+> reasoning (Delta K); rubric unification (publish threshold = `good` tier floor = 0.65;
+> `adequate` → `inadequate`); removal of static `benchmark_calibration.yaml`.
+> **RD round 2** findings (on v2) are either resolved by postfix (#1) or merged into this
+> plan (#4, #6, #7, #8a/b, #1b/d/e, #5). **RD round 3** findings folded into Phase-specific
+> fix tables.
 
 ---
 
@@ -866,3 +869,929 @@ All other phases are independently rollback-able via git revert.
 | #1c | NC-20a self-healing | ✅ CONFIRMED SOUND |
 | #2 | Phase 1c numbering | ✅ RESTRUCTURED |
 | #3 | Bootstrap CLI + $1.00 cap | ✅ GENERALISED as Phase 4d |
+
+---
+
+# v4 deltas (RD round 4 input)
+
+> The sections below extend Plan 36 with amplification-focused deltas A–K.
+> They modify/extend the v3 body above but do not rewrite it; merge conflicts
+> with the v3 phases are flagged inline per delta.
+
+# Plan 36 v4 Deltas — graph-context amplification (staged for RD round 3)
+
+**Status**: drafted; to be merged into plan 36 immediately after RD round 3
+completes (currently at 2918s / 71 tool calls / "Analyzing graph
+infrastructure context"). This file converts the prompt audit findings plus
+user guidance into concrete plan edits.
+
+**User directives this turn**:
+
+1. IMAS-VEC is **parallel** injection, not fallback.
+2. Use `search_dd_paths` **backing function directly** — hybrid (60/40
+   vector/text + path-segment tiebreaker + accessor de-ranking + IDS-preference
+   boost + full enrichment), not naive vector.
+3. Prompt-inject far richer context than we currently do.
+4. Build **iteration loops** into the plan — this is a significant multi-area
+   change that will not land zero-shot; verification + tight retry loops are
+   mandatory.
+
+---
+
+## Delta A — Refactor `search_dd_paths` for pipeline reuse
+
+**Problem**: the hybrid search lives inside a stateful MCP tool class
+(`HybridDDSearch._gc`, `_embed_query`) — the pipeline cannot currently call it
+directly. Plan 36 needs a pure function.
+
+**Change**:
+
+1. Extract core hybrid into `imas_codex/graph/dd_search.py`:
+
+   ```python
+   def hybrid_dd_search(
+       query: str,
+       *,
+       ids_filter: str | list[str] | None = None,
+       physics_domain: str | None = None,
+       node_category: str | None = None,
+       cocos_transformation_type: str | None = None,
+       dd_version: int | None = None,
+       max_results: int = 20,
+       gc: GraphClient | None = None,
+       encoder: Encoder | None = None,
+   ) -> list[DDSearchHit]:
+       ...
+   ```
+
+2. `DDSearchHit` dataclass exposing **every enrichment field** the MCP tool
+   surfaces: id, ids, documentation, data_type, units, physics_domain,
+   lifecycle, coordinates, structure_reference, cocos_label,
+   cocos_expression, identifier_schema, timebase, score.
+
+3. `HybridDDSearch.search_dd_paths` (MCP tool) refactored to delegate to
+   `hybrid_dd_search()` + format.
+
+4. Acceptance: MCP tool output byte-identical before/after refactor; new
+   function callable from the compose/enrich workers without MCP plumbing.
+
+**Why a refactor and not a wrapper**: the hybrid logic (tiebreaker, de-ranking,
+IDS-preference) is 200 lines — we do not want to duplicate or freeze it. One
+source of truth shared by MCP tool and pipeline.
+
+---
+
+## Delta B — Phase 2c.2 upgrade: parallel hybrid injection (supersedes v3's Phase 2c.2)
+
+### 2c.2a — Cluster-peer block (unchanged from v3)
+
+As already documented in v3: `IN_CLUSTER` traversal with `HAS_STANDARD_NAME`
+pre-resolution. Scope priority: **domain → global → ids**. Excludes `cocos_*`
+cluster types by default. Cap: 8 peers per source.
+
+### 2c.2b — Hybrid-search block (NEW — parallel, not fallback)
+
+For each source DD path in the compose/enrich batch, issue **two parallel
+hybrid queries** via `hybrid_dd_search()`:
+
+| Query text | Purpose |
+|---|---|
+| `path.description` (first 200 chars) | Physics-concept nearest neighbours |
+| `path.id` (path-like, text-only mode) | Structural cousins (same segment patterns) |
+
+Both queries receive:
+- `physics_domain` filter matching the source's domain when set
+- `ids_filter=None` (cross-IDS is the point)
+- `node_category="quantity"` (filters out structures/coordinates)
+- `max_results=10`
+
+Deduplicate across the two result sets; union capped at 15 per source path.
+
+**Pre-resolution**: after hybrid results return, issue a single graph query to
+batch-fetch `HAS_STANDARD_NAME` for every returned `IMASNode.id`. Emit as
+`name:<sn>` where minted, `dd:<path>` otherwise — same tagging scheme as
+cluster-peer block.
+
+**Difference from cluster-peer block**: hybrid search catches relatedness that
+the cluster authorship missed (authorship is imperfect), **and** captures
+text-match signal (literal segment overlap, e.g. `*_temperature_*` searches
+catch ALL temperature paths regardless of clustering). The two blocks are
+complementary — never substitute, always parallel.
+
+### 2c.2c — Pre-resolved SN-VEC block (unchanged from v3 but refined)
+
+For each source path's **description** (not the cluster label), issue
+`search_similar_sns_with_full_docs` top-5 with `min_score=0.75`.
+Returns full documentation and tags. Offered as authoritative examples.
+
+### 2c.2d — Identifier-schema peers (NEW, free)
+
+When a source path has `HAS_IDENTIFIER_SCHEMA`, fetch the other paths sharing
+the same schema with their minted SN where applicable. This catches the
+"same enum type across IDSs" case that cluster membership frequently misses.
+
+Cypher (verified pattern from existing queries):
+
+```cypher
+UNWIND $paths AS src_id
+MATCH (src:IMASNode {id: src_id})-[:HAS_IDENTIFIER_SCHEMA]->(schema)
+MATCH (peer:IMASNode)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
+WHERE peer.id <> src.id AND peer.node_category = 'quantity'
+OPTIONAL MATCH (peer)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+RETURN src.id, peer.id, peer.description, sn.id AS minted_name
+LIMIT 6
+```
+
+### 2c.2e — Version-history block (NEW, free)
+
+Attach `IMASNodeChange` entries (renames, unit changes, COCOS transforms) per
+source path. Already implemented in `prompt_tools.fetch_version_history` —
+just wire it into `sources/dd.py::_enrich_row` so it flows through
+compose_dd, enrich_user, and review prompts.
+
+### 2c.2f — Unified Jinja template block
+
+```jinja
+## RELATED REFERENCES
+
+{% for src in sources %}
+### For `{{ src.path }}` — {{ src.unit }}
+
+{% if src.cluster_peers %}
+**Cluster peers** ({{ src.cluster_context }}):
+{% for p in src.cluster_peers %}- `{{ p.tag }}` — {{ p.doc_short }}
+{% endfor %}{% endif %}
+
+{% if src.hybrid_neighbours %}
+**Hybrid-search neighbours** (physics-concept + structural):
+{% for p in src.hybrid_neighbours %}- `{{ p.tag }}` [{{ p.unit }}, {{ p.physics_domain }}] — {{ p.doc_short }}{% if p.cocos_label %} (COCOS {{ p.cocos_label }}){% endif %}
+{% endfor %}{% endif %}
+
+{% if src.identifier_peers %}
+**Shared identifier schema** (`{{ src.identifier_schema }}`):
+{% for p in src.identifier_peers %}- `{{ p.tag }}` — {{ p.doc_short }}
+{% endfor %}{% endif %}
+
+{% if src.sn_neighbours %}
+**Similar minted standard names**:
+{% for sn in src.sn_neighbours %}- `name:{{ sn.id }}` ({{ sn.unit }}, kind={{ sn.kind }}): {{ sn.description_short }}
+{% endfor %}{% endif %}
+
+{% if src.version_notes %}
+**Version history** ({{ src.path }} has changes):
+{% for v in src.version_notes %}- {{ v.change_type }} in DD {{ v.to_version }}: {{ v.detail }}
+{% endfor %}{% endif %}
+{% endfor %}
+```
+
+### 2c.2g — Token budget (revised)
+
+Per-source cost (worst case):
+- Cluster peers: 8 × ~130 chars = 1.0 kB
+- Hybrid neighbours: 15 × ~150 chars = 2.2 kB (richer — includes unit, domain, COCOS)
+- Identifier peers: 6 × ~100 chars = 0.6 kB
+- SN neighbours: 5 × ~180 chars = 0.9 kB
+- Version notes: avg 2 × ~80 chars = 0.2 kB
+- **Total: ~5 kB per source path × (batch N=5-10) = 25-50 kB**
+
+Plus static prefix (~4-5 kB) → total prompt ~30-55 kB. Well within context
+windows (128k+) and ~40-60% dynamic / 40-60% static cacheable.
+
+All caps tuneable via `[tool.imas-codex.sn.linking]` in pyproject.toml.
+
+---
+
+## Delta C — Phase 2c.3: extend ALL amplification blocks to enrich_user
+
+**Problem**: enrich prompt tells LLM to populate `links` but gives no
+candidates — root cause of B5 (0 / 927 names have links).
+
+**Change**: extend `enrich_workers._build_item_context` to compute
+identically-structured `cluster_peers`, `hybrid_neighbours`, `identifier_peers`,
+`sn_neighbours`, `version_notes` lists — one per DD source path attached to
+the SN being enriched (a single SN may have multiple DD paths; merge
+across them).
+
+New Jinja block in `enrich_user.md`:
+
+```jinja
+{% if item.link_candidates %}
+### Candidate cross-references (for `links` field)
+
+Prefer `name:` when the target is already minted. Use `dd:` for paths not
+yet named — the pipeline resolves them after this round.
+
+{% for c in item.link_candidates %}- `{{ c.tag }}` [{{ c.kind_hint }}] — {{ c.doc_short }}
+{% endfor %}{% endif %}
+```
+
+Where `link_candidates` merges all five blocks from 2c.2 and deduplicates.
+Cap at 20 to prevent prompt bloat.
+
+---
+
+## Delta D — Phase 2c.4: Signals compose parity (NEW — absorbs G3)
+
+`compose_signals.md` currently has **no graph context at all**. Upgrade to
+match DD compose's amplification:
+
+### For each signal in the batch:
+
+1. **SN-VEC against signal description** — top-5 minted SNs. Instructs
+   LLM to **reuse** when applicable rather than minting a duplicate.
+
+2. **Hybrid DD-search against signal description** (via `hybrid_dd_search`) —
+   finds nearest DD paths. For each returned path, pre-resolve
+   `HAS_STANDARD_NAME`; if present, offer the minted SN as the primary
+   reuse candidate. Critical: facility signals frequently map to a DD path
+   that has already been named.
+
+3. **Cross-facility same-signal** — other facilities' signals sharing
+   description similarity that already resolved to an SN.
+
+4. **Cluster peers via DD bridge** — when the best-matching DD path has
+   `IN_CLUSTER` edges, surface those peers too.
+
+New Jinja block in `compose_signals.md`:
+
+```jinja
+{% for item in items %}
+### Signal: {{ item.signal_id }}
+- Description: {{ item.description }}
+...
+
+{% if item.sn_reuse_candidates %}
+**Candidate standard names to reuse** (by description similarity):
+{% for sn in item.sn_reuse_candidates %}- `name:{{ sn.id }}` ({{ sn.unit }}): {{ sn.description_short }}
+{% endfor %}{% endif %}
+
+{% if item.dd_path_candidates %}
+**Nearest DD paths** (via hybrid search):
+{% for p in item.dd_path_candidates %}- `{{ p.tag }}` ({{ p.ids }}, {{ p.unit }}): {{ p.doc_short }}
+{% endfor %}{% endif %}
+
+{% if item.sibling_facilities %}
+**Other facilities' equivalents**:
+{% for s in item.sibling_facilities %}- `{{ s.facility_id }}:{{ s.signal_id }}` → `name:{{ s.standard_name }}`
+{% endfor %}{% endif %}
+{% endfor %}
+```
+
+**Severity**: HIGH — this is the largest missing context pool in the pipeline.
+
+---
+
+## Delta E — Phase 2c.5: Reviewer gets DD context (NEW — absorbs G4, new bug B12)
+
+**Problem**: reviewer scores "Semantic Accuracy" (20 pts) but doesn't see the
+DD path documentation the composer used. Can't catch semantic mismatches.
+
+**New bug B12**: Reviewer cannot validate semantic fidelity to source DD docs
+without seeing them.
+
+**Change**: `review/pipeline.py` build path — for each candidate in a review
+batch, fetch via a single batched Cypher:
+- `source_paths[0..n].documentation` and `.description` (the full DD text the
+  composer saw)
+- cluster_context + cluster_peers for cross-check
+- hybrid_neighbours (limited — top 5 sufficient for reviewer)
+
+Add to `review.md`:
+
+```jinja
+### Candidate {{ loop.index }}: `{{ item.standard_name }}`
+...
+**Source DD paths** (primary truth for semantic accuracy):
+{% for p in item.source_paths %}- `{{ p.id }}` [{{ p.unit }}]: {{ p.documentation or p.description }}
+{% endfor %}
+
+**Nearest minted peers** (semantic-accuracy sanity check):
+{% for n in item.nearest_peers %}- `name:{{ n.id }}`: {{ n.description_short }}
+{% endfor %}
+```
+
+Same block added to `review_docs.md` and `review_name_only.md`.
+
+Update review scoring rubric: D6a **"Description must match DD path documentation intent"** — reviewer penalised for approving name when DD docs say something materially different.
+
+---
+
+## Delta F — Phase 2c.6: Version-history wiring (Delta into existing + cleanup)
+
+Trivial wiring. `prompt_tools.fetch_version_history` exists. Edit
+`sources/dd.py::_enrich_row` to bulk-fetch `IMASNodeChange` per batch and
+attach as `item.version_notes`. Used by 2c.2e above.
+
+---
+
+## Delta G — Phase 2c.7: Retire the tool-calling variant
+
+Delete `compose_dd_tool_calling.md` and `prompt_tools.py` after B-G land.
+Pre-injection + prompt cache dominates tool-calling for this workload.
+
+---
+
+## Delta H — **Iteration loop design (mandatory)**
+
+All prior phases in v3 assumed zero-shot implementation correctness. With the
+volume of context amplification in Deltas B-F, this is unrealistic. Plan v4
+adds explicit iteration loops at every boundary.
+
+### Phase 4b verifier loop — expanded
+
+v3 already has a 20-name verifier run on equilibrium with 7 gate criteria.
+v4 adds:
+
+1. **Per-block verification** — each context block (cluster-peer /
+   hybrid / identifier / sn-vec / version-notes) must show measurable
+   contribution. Measurement: ablation study during verifier run.
+
+   Procedure: after first full verifier run, re-run the same batch with
+   each block **disabled in turn** (5 additional runs, ~$10 total). For each
+   block, measure:
+   - Links populated (absolute count + % with ≥1 link)
+   - Reviewer score delta (should be positive when block is ON)
+   - Unique-concept-coverage delta (block ON should surface references
+     the batch-only context missed)
+
+   Gate: each block must show **≥ 5 % positive delta on ≥ 1 metric**, else
+   deprecate it.
+
+2. **Link-resolution loop** — after compose + enrich + link phase, re-examine
+   unresolved `dd:` links. Gate: **≥ 60 % of `dd:` links resolve to a
+   minted `name:` within 3 rounds** (current system achieves 0 %).
+
+3. **Regression retry** — if any gate criterion fails, auto-iterate:
+
+   | Gate failure | Retry action |
+   |---|---|
+   | Low link count | Inspect block outputs, tighten Jinja template (often issue #1) |
+   | Low reviewer scores | Re-prompt with failed reasons injected as antipatterns |
+   | Block contributes nothing | Raise its cap (was too small) or deprecate |
+   | Cluster-peer pre-resolution stale | Force re-resolve and re-embed |
+
+   Cap: **3 retries per batch** at $0.50 each before human escalation.
+
+### Phase 4c domain-rotation loop — expanded
+
+After equilibrium lands gate-green, rotate through `core_profiles`,
+`magnetics`, `wall`, `transport` — each as a single verifier-gated batch.
+Before each domain:
+
+1. Re-run Phase 2c ablation on **prior domain's cluster** to confirm the
+   block mix still contributes.
+2. If any block's contribution dropped below 5 %, escalate before proceeding.
+
+### Phase 3.5 pre-flight loop — new
+
+Before ANY compose run against the refactored prompts:
+
+1. Dry-run against 5 already-minted names (equilibrium). Compare the new
+   prompt's token budget vs. v3. **Gate: ≤ 2x token growth**. If exceeded,
+   reduce caps (typically hybrid neighbours 15 → 10 and identifier peers
+   6 → 4).
+
+2. Smoke test: hybrid-search call for 5 known paths returns >= 3 results each.
+   If any returns 0, the hybrid function or embedding index is broken — halt.
+
+3. Cluster-peer pre-resolution: for 5 paths known to have `HAS_STANDARD_NAME`
+   peers, confirm at least 1 `name:` tag appears in their resolved candidate
+   list. If 0 for all 5 → pre-resolution is broken — halt.
+
+### Phase 2 itself (dev) — TDD retries
+
+Each of Deltas A-F gets:
+- **Unit tests** for the new data flow (hybrid_dd_search returns ≥ 1 hit,
+  pre-resolution correctness, Jinja block renders without errors on
+  empty/filled inputs)
+- **Integration tests** (one-source-path end-to-end: goes in as path id,
+  comes out as rendered prompt block with all 5 context types present)
+- **Fixture set**: 10 equilibrium paths covering edge cases (unclustered,
+  deprecated, with/without identifier_schema, with/without version history).
+  All integration tests run against these.
+- **Retry budget**: 3 implementation iterations per delta before escalating
+  to RD.
+
+---
+
+## Delta I — Documentation updates
+
+Add to Phase 6 documentation updates:
+
+1. `AGENTS.md` § "SN pipeline" — document the 5-block amplification model.
+2. `plans/features/standard-names/` — add
+   `prompt-amplification-architecture.md` explaining what each block
+   contributes, when it fires, and the token-cost accounting.
+3. `docs/architecture/standard-names.md` if it exists — include the
+   amplification section.
+4. `imas_codex/standard_names/README.md` if it exists — brief signpost.
+
+---
+
+## Revised plan structure summary
+
+```
+Phase 0  — ISN postfix rc22 [BLOCKING predecessor]
+Phase 1  — Schema cleanup + export exclusion + doc_resolution_status
+Phase 2  — Linking rebuild (B1-B11 + B12)
+  2a-2i  — bug fixes as in v3
+  2c     — GRAPH AMPLIFICATION (expanded):
+           2c.1 Source context (existing)
+           2c.2 Cluster-peer block (v3)
+           2c.3 Enrich extension (Delta C)       ← new
+           2c.4 Signals compose parity (Delta D) ← new
+           2c.5 Reviewer DD context (Delta E)    ← new
+           2c.6 Version-history wiring (Delta F) ← new
+           2c.7 Retire tool-calling variant      ← new
+Phase 3  — Prompt/model/rubric hardening
+Phase 3.5 — Pre-flight loop (Delta H) + smoke tests on existing 480
+Phase 4  — CLEAR + verifier loop
+  4a    — clear SN nodes
+  4b    — VERIFIER LOOP with ablation (Delta H)  ← expanded
+  4c    — domain-rotation with per-domain ablation regression check
+  4d    — bootstrap-derived-parents
+Phase 5  — Export + ISN PR
+Phase 6  — Docs (Delta I additions)              ← expanded
+```
+
+---
+
+## Outstanding questions to cross-check with RD round 3 response
+
+When RD round 3 returns, verify my Deltas against its findings:
+
+1. Does RD flag hybrid-search per-source token cost? (my estimate: 5 kB/source,
+   25-50 kB/batch — under budget but non-trivial)
+2. Does RD raise the pre-resolution staleness concern? (already addressed by
+   B7 graceful fallback in v3)
+3. Does RD propose ablation other than per-block toggle?
+4. Does RD flag Phase 4b cost (5 ablation reruns @ ~$2 each = ~$10 extra per
+   domain = ~$60 over 6 domains)? Worth it for gated gate criteria.
+5. Will the architect/engineer agents implementing this have enough context
+   from the plan alone, or should we spin up a supplementary design doc?
+
+Once RD round 3 returns, merge this file into plan 36 as v4 under a single
+commit and write_agent to RD for round 4 focused on the amplification design
+only.
+
+---
+
+## Delta J — Expand prompt-injection tool surface (tools audit)
+
+### Inventory: all DD / SN search+fetch tools in imas-codex
+
+Traced in `imas_codex/tools/graph_search.py`, `version_tool.py`, `migration_guide.py`:
+
+| Tool | Status in plan v3 | Delta |
+|------|--------------------|-------|
+| `search_dd_paths` (graph_search.py:367, `HybridDDSearch.search_dd_paths`) | Covered via Delta A refactor | — |
+| `check_dd_paths` (799) | Not useful at compose time | — |
+| `fetch_dd_paths` (981) | Implicit via source enrichment | — |
+| `fetch_error_fields` (1159) | **Not used** | **ADD J1** |
+| `list_dd_paths` (1227) | Not useful at compose time | — |
+| `get_dd_catalog` (1432) | Too coarse | — |
+| `search_dd_clusters` (1567) | Indirect via cluster-peer Cypher | — |
+| `get_dd_identifiers` (1920) | **Partially used** | **ADD J2** |
+| `find_related_dd_paths` (2163) | **NOT USED — biggest gap** | **ADD J3 (primary)** |
+| `get_ids_summary` (2329) | Too coarse | — |
+| `get_dd_cocos_fields` (2482) | Covered via source enrichment | — |
+| `get_dd_version_context` (version_tool.py:88) | Covered in Delta F | — |
+| `get_dd_changelog` (305) | Too noisy | — |
+| `get_dd_migration_guide` (migration_guide.py) | Out of scope | — |
+| `search_standard_names` (SN MCP) | Covered via SN-VEC | — |
+| `fetch_standard_names` | Covered via cluster-peer pre-resolution | — |
+| `list_standard_names` | Covered via Delta K tiered-exemplars | — |
+
+### J1 — Inject uncertainty companion fields (`fetch_error_fields`)
+
+**Problem**: a DD path with `_error_upper`/`_error_lower` children represents a *measured* quantity with quantified uncertainty. The LLM currently gets zero signal about this. Correct documentation should mention uncertainty bounds for such quantities.
+
+**Design**:
+- In `sources/dd._enrich_row`, call `fetch_error_fields(path)` per source (cached).
+- Emit new context field `has_error_fields: bool` and `error_field_paths: list[str]`.
+- Jinja block (compose & enrich):
+  ```
+  {% if source.has_error_fields %}
+  **Uncertainty**: source has companion error fields ({{ source.error_field_paths | join(', ') }}).
+  → Documentation MUST describe whether this quantity is measured/reconstructed/fitted
+    and reference the uncertainty channel rather than burying it in prose.
+  {% endif %}
+  ```
+- Cost: 1 Cypher per distinct source; cachable via source enrichment memoization.
+
+### J2 — Inject identifier-schema allowed values (`get_dd_identifiers`)
+
+**Problem**: when a source path has `identifier_schema` (e.g. `probe_type`, `coordinate_system`, `grid_type`), the LLM knows only the schema name. The *allowed values* are crucial grounding for naming and docs.
+
+**Design**:
+- Extend `sources/dd._enrich_row` to fetch allowed values via `get_dd_identifiers(query=schema_name)` when `identifier_schema` is present.
+- Emit `identifier_values: list[{name, index, description}]`.
+- Jinja block:
+  ```
+  {% if source.identifier_values %}
+  **Identifier schema** ({{ source.identifier_schema }}) — allowed values:
+  {% for v in source.identifier_values[:10] %}
+    - `{{ v.name }}` (index {{ v.index }}): {{ v.description }}
+  {% endfor %}
+  → If the name or description implies one specific value, state it explicitly.
+  {% endif %}
+  ```
+- Cost: 1 cached call per unique schema (typically <20 distinct schemas across a batch).
+
+### J3 — Swap naive cluster-peer Cypher for `find_related_dd_paths` (PRIMARY)
+
+**Problem**: the plan v3 Phase 2c.2 re-implements cluster-peer traversal in raw Cypher. This duplicates `find_related_dd_paths` (graph_search.py:2163) which already delivers FIVE relationship types in one call:
+
+1. **cluster_siblings** — IN_CLUSTER peers (with cross-IDS filter `sibling.ids <> p.ids` + noise exclusion for `error`/`metadata` categories)
+2. **coordinate_partners** — HAS_COORDINATE siblings (cross-IDS)
+3. **unit_companions** — HAS_UNIT siblings (cross-IDS, cross-domain)
+4. **identifier_links** — HAS_IDENTIFIER_SCHEMA siblings
+5. **cocos_kin** — COCOS-transformation peers (unioned from both property + `cocos_*` cluster sources)
+
+All with noise-category filtering baked in, all deterministic-ordered, already tested in production MCP tool.
+
+**Action**: Replace Delta B block 2c.2a (naive Cypher) with a call to `find_related_dd_paths`, filter relationship_types by config (`enable_cluster, enable_coordinate, enable_unit, enable_identifier, enable_cocos`), then do the `HAS_STANDARD_NAME` pre-resolution pass on each returned `path` in a single batched query:
+
+```cypher
+UNWIND $candidate_ids AS cid
+OPTIONAL MATCH (n:IMASNode {id: cid})-[:HAS_STANDARD_NAME]->(sn:StandardName)
+WHERE sn.validation_status = 'valid'
+RETURN cid, sn.id AS minted_name
+```
+
+Then the Jinja template emits `name:X` or `dd:X` per the pre-resolution result.
+
+**Refactor target**: like Delta A, extract a `related_dd_paths()` pure function into `imas_codex/graph/dd_search.py` alongside `hybrid_dd_search()`. MCP tool `find_related_dd_paths` delegates to it. Pipeline uses the pure function.
+
+**Token budget impact**:
+- 5 relationship types × ~4 peers each = ~20 candidate references per source (dedup across sections drops to ~12-15 unique).
+- At ~80 bytes per reference line → ~1.2 kB per source × 5-10 sources = 6-12 kB for the related-peers block.
+- Under the 25-50 kB batch budget; matches Delta B's original estimate.
+
+**Config**:
+```toml
+[tool.imas-codex.sn.linking]
+related_enable_cluster = true
+related_enable_coordinate = true
+related_enable_unit = true
+related_enable_identifier = true
+related_enable_cocos = false   # noisy for physics cross-referencing (Q4 RD guidance)
+related_max_per_type = 4
+related_unique_peers_per_source = 12
+```
+
+### J4 — Bonus: extend Delta D (`compose_signals.md`) with `search_signals` peers
+
+**Problem**: for facility-signals compose, the SN graph has cross-facility siblings (same concept different facility) that are invaluable exemplars.
+
+**Design**: inject top-3 `FacilitySignal` peers matched by description similarity + same `physics_domain`, with their `HAS_STANDARD_NAME` pre-resolution. Uses existing `search_signals` backend via `imas_codex/tools/graph_search.py` facility-signal path.
+
+Added to Phase 2c.4 (Delta D) spec.
+
+---
+
+## Delta K — Target-anchored examples, split by consumer, per-dimension reviewer context (NEW PHASE 2c.3)
+
+### K-1 — Delete `benchmark_calibration.yaml` and its loaders (dead path)
+
+Static calibration fixtures predate the review pipeline producing graph-stored reviewer output. Dynamic examples (K1-onwards) are strictly higher-signal: they reflect the current prompt regime, match the current graph's physics-domain distribution, and carry live per-dimension scores. The static fixtures cannot track prompt evolution and are now obsolete.
+
+**Surface to delete (atomic)**:
+
+| Path | Scope |
+|---|---|
+| `imas_codex/standard_names/benchmark_calibration.yaml` | Entire file |
+| `imas_codex/standard_names/calibration.py` | Entire file (22-line cached loader) |
+| `imas_codex/standard_names/benchmark.py:253-...` | `load_calibration_entries()` function |
+| `imas_codex/standard_names/benchmark.py:478` | Call site in benchmark runner |
+| `imas_codex/standard_names/review/pipeline.py:1251-...` | `_load_calibration_entries()` function |
+| `imas_codex/standard_names/review/pipeline.py:444` | Call site in review pipeline |
+| `tests/standard_names/test_benchmark.py` | Remove ~12 calibration-related test blocks |
+| `AGENTS.md` | Remove any reference to `benchmark_calibration.yaml` and `imas_codex/standard_names/calibration.py` |
+
+Verify post-delete: `rg "calibration_entries\|benchmark_calibration\|standard_names/calibration" imas_codex tests` returns zero hits.
+
+### K0 — Rubric alignment (prerequisite sub-delta)
+
+Three coupled rubric changes shipping as one atomic commit so schema, rubric, models, prompts, and fixtures stay consistent.
+
+**K0.a — Boundary move: `good` tier minimum 0.60 → 0.65**
+
+| Threshold | Current | New |
+|---|---|---|
+| `good` tier minimum | 0.60 | **0.65** |
+| Reviewer `accept` gate | 0.60 | **0.65** |
+| `sn publish --min-score` default | 0.65 | 0.65 (unchanged) |
+
+One threshold: `0.65`. Tier `good` ⇔ publishable; below `good` ⇔ fails publish.
+
+**K0.b — Rename `adequate` → `inadequate`**
+
+A name below the publish threshold is not adequate. Rename the enum value throughout the codebase.
+
+| Tier | Band after K0.a | Semantics |
+|---|---|---|
+| `outstanding` | ≥ 0.85 | Top-quality, publishable |
+| `good` | [0.65, 0.85) | Publishable baseline |
+| `inadequate` | [0.40, 0.65) | Below publish threshold (was "adequate") |
+| `poor` | [0.00, 0.40) | Clearly failing |
+
+Rename scope:
+
+| Location | Change |
+|---|---|
+| `imas_codex/schemas/standard_name.yaml:412-415, 947` | Enum value + descriptions |
+| `imas_codex/llm/config/sn_review_criteria.yaml:34` | Key rename |
+| `imas_codex/standard_names/models.py:215, 278, 362` | Tier-assignment return literal (3 sites) |
+| `imas_codex/standard_names/benchmark.py:823` | Histogram key |
+| `imas_codex/standard_names/graph_ops.py:443` | Docstring |
+| `imas_codex/llm/prompts/sn/review.md:180` | Rubric prose |
+| `imas_codex/llm/prompts/sn/review_docs.md:54` | Rubric prose |
+| `imas_codex/llm/prompts/sn/review_name_only.md:112` | Rubric prose |
+| `imas_codex/llm/prompts/shared/sn/_scoring_rubric.md:74` | Rubric prose |
+| Regression test | `grep '"adequate"'` in `imas_codex/standard_names/` must be empty |
+
+Because Phase 4 starts with `sn clear --all`, no data migration needed.
+
+**K0.c — Schema extension: per-dimension reviewer comments**
+
+Current state (verified):
+
+- `reviewer_scores` stores a JSON blob of 6 per-dimension integers — already usable.
+- `reviewer_comments` stores a **single aggregate** `reasoning` string from the Pydantic model — cannot be decomposed by dimension at render time.
+- `issues` (Pydantic field) and `verdict` are **not persisted** to the graph.
+
+To render per-dimension anchors to the review LLM ("a 15/20 on grammar looks like this because X; a 6/20 on documentation looks like this because Y"), the reviewer must *produce* per-dimension reasoning, and the graph must *store* it.
+
+**Schema additions to `standard_name.yaml`**:
+
+```yaml
+# New slot on StandardName
+reviewer_dimension_comments:
+  description: >-
+    JSON-encoded per-dimension reviewer reasoning, one string per dimension.
+    Keys mirror reviewer_scores: grammar, semantic, documentation, convention,
+    completeness, compliance (or the 4-dimension name-only subset).
+    Distinct from reviewer_comments, which is a single aggregate string.
+
+# New slot on StandardName
+reviewer_issues:
+  description: >-
+    JSON-encoded list of specific issues flagged by the reviewer during the
+    most recent review. Persisted for audit, example rendering, and reset
+    decision logic.
+
+# New slot on StandardName
+reviewer_verdict:
+  description: >-
+    Reviewer's verdict for the most recent review (accept, revise, reject).
+    Persisted alongside score so downstream tooling can filter on verdict
+    without recomputing from thresholds.
+```
+
+**Pydantic model additions to `standard_names/models.py`**:
+
+Introduce a parallel dimensional-comments container keyed by the same six (or four) dimensions as `StandardNameQualityScore`:
+
+```python
+class StandardNameQualityComments(BaseModel):
+    """Per-dimension reasoning for each rubric dimension (matches StandardNameQualityScore)."""
+    grammar: str = Field(description="Why grammar scored as it did (1-3 sentences)")
+    semantic: str = Field(description="Why semantic scored as it did (1-3 sentences)")
+    documentation: str = Field(description="Why documentation scored as it did (1-3 sentences)")
+    convention: str = Field(description="Why convention scored as it did (1-3 sentences)")
+    completeness: str = Field(description="Why completeness scored as it did (1-3 sentences)")
+    compliance: str = Field(description="Why compliance scored as it did (1-3 sentences)")
+
+
+class StandardNameQualityReview(BaseModel):
+    # ... existing fields ...
+    scores: StandardNameQualityScore
+    comments: StandardNameQualityComments    # NEW — required, one sentence per dimension
+    verdict: StandardNameReviewVerdict
+    reasoning: str                           # kept as aggregate summary
+    issues: list[str] = Field(default_factory=list)
+    # ... existing fields unchanged ...
+```
+
+Parallel name-only variant (`StandardNameQualityCommentsNameOnly`) and docs variant (`StandardNameQualityCommentsDocs`) subset the fields to match their 4-dimension rubrics.
+
+**Persistence update in `review/pipeline.py:965-969`**:
+
+```python
+original["reviewer_score"] = review.scores.score
+original["reviewer_scores"] = json.dumps(review.scores.model_dump())
+original["reviewer_dimension_comments"] = json.dumps(review.comments.model_dump())  # NEW
+original["reviewer_comments"] = review.reasoning
+original["reviewer_issues"] = json.dumps(review.issues)                               # NEW
+original["reviewer_verdict"] = review.verdict.value                                    # NEW
+original["review_tier"] = review.scores.tier
+```
+
+**Prompt update to `review.md`, `review_name_only.md`, `review_docs.md`**:
+
+Add per-dimension comment requirement to the response schema example, with a strict length guidance: each dimension's comment must be 1-3 sentences explaining *why this specific score*.
+
+**Parser for retrieval (`graph_ops.py`)**:
+
+`load_examples_for_review()` (K3 below) parses `reviewer_dimension_comments` JSON and delivers it to the Jinja template as a nested dict.
+
+### K1 — Four targets, one per tier, anchored at tier midpoints
+
+| Slot | Tier band after K0 | Target score |
+|---|---|---|
+| S1 | outstanding [0.85, 1.00] | **1.00** |
+| S2 | good [0.65, 0.85] | **0.75** |
+| S3 | inadequate [0.40, 0.65] | **0.52** |
+| S4 | poor [0.00, 0.40] | **0.20** |
+
+Tolerance ±0.05 for S2/S3/S4. S1 is "highest reviewed score with comments" — no lower bound.
+
+### K2 — Split library by consumer
+
+Different LLM tasks benefit from different example subsets. One `load_examples()` module, two rendering paths.
+
+| Consumer | Prompt | Slots consumed | Rationale |
+|---|---|---|---|
+| Generator | `compose_system.md`, `compose_dd.md`, `compose_signals.md` | **outstanding + good** (2) | Positive demonstration. Failing examples risk priming and eat tokens; validation + review catch failures downstream. |
+| Enricher | `enrich_system.md` | **outstanding + good** (2) | Emulation task. Same rationale. |
+| Reviewer | `review.md`, `review_name_only.md`, `review_docs.md` | **all four** (outstanding + good + inadequate + poor) with full per-dimension breakdown | Grader task. Full-range anchors stabilise the 0-20 integer scale across models and across batches; per-dimension breakdown mirrors the exact output shape the reviewer must produce. |
+
+**API**:
+
+```python
+# standard_names/examples.py
+TARGETS = [
+    ("outstanding", 1.00, 0.15),  # tolerance effectively unused; S1 takes max
+    ("good",        0.75, 0.05),
+    ("inadequate",  0.52, 0.05),
+    ("poor",        0.20, 0.05),
+]
+
+def load_examples_for_compose(sources: list[SourceRecord]) -> dict[str, Example]:
+    """Returns only {outstanding, good} slots."""
+    return _load_slots(sources, slot_subset={"outstanding", "good"})
+
+def load_examples_for_review(sources: list[SourceRecord]) -> dict[str, ExampleWithDimensions]:
+    """Returns all four slots, each carrying reviewer_scores + reviewer_dimension_comments."""
+    return _load_slots(sources, slot_subset={"outstanding", "good", "inadequate", "poor"},
+                       with_dimensions=True)
+```
+
+### K3 — Batch-context-aware physics-domain scoping
+
+Same as before — batch's surfaced physics_domains first; fall back to all-domains per-slot if empty. No CLI flag.
+
+Compose/enrich Cypher returns the same fields as in K3 of the prior draft. **Review Cypher additionally returns**:
+
+```cypher
+// Add to review-side query
+RETURN ..., sn.reviewer_scores AS reviewer_scores_json,
+       sn.reviewer_dimension_comments AS dimension_comments_json,
+       sn.reviewer_issues AS issues_json,
+       sn.reviewer_verdict AS verdict
+```
+
+`load_examples_for_review` parses all three JSON blobs into typed dicts before handing to Jinja.
+
+### K4 — Jinja rendering — two fragments, one per consumer type
+
+#### K4.a — Compose / enrich template: `shared/sn/_compose_scored_examples.md`
+
+Outstanding + good only. No failing block. Renders empty on cold graph.
+
+```jinja
+{% if examples and (examples.outstanding or examples.good) %}
+## REVIEW-SCORED EXAMPLES
+
+Reviewed standard names selected from the graph as reference patterns to
+emulate. Entries are deterministically chosen by closeness to target score
+and remain stable across runs once the graph settles.
+
+{% if examples.outstanding %}
+### Outstanding (score {{ "%.2f"|format(examples.outstanding.score) }}, {{ examples.outstanding.domain }})
+- **`{{ examples.outstanding.id }}`** [{{ examples.outstanding.unit or 'dimensionless' }}, kind={{ examples.outstanding.kind }}]
+  - Description: {{ examples.outstanding.description }}
+  - Documentation: {{ examples.outstanding.documentation | truncate(400, True, "…") }}
+  - Reviewer note: *{{ examples.outstanding.comments | truncate(200, True, "…") }}*
+{% endif %}
+
+{% if examples.good %}
+### Good (score {{ "%.2f"|format(examples.good.score) }}, {{ examples.good.domain }})
+- **`{{ examples.good.id }}`** [{{ examples.good.unit or 'dimensionless' }}, kind={{ examples.good.kind }}]
+  - {{ examples.good.description }}
+  - Reviewer note: *{{ examples.good.comments | truncate(200, True, "…") }}*
+{% endif %}
+{% endif %}
+```
+
+Included from: `compose_system.md`, `compose_dd.md`, `compose_signals.md`, `enrich_system.md`.
+
+#### K4.b — Review template: `shared/sn/_review_scored_examples.md`
+
+All four slots, each showing per-dimension score + per-dimension comment. Mirrors the reviewer's target output shape.
+
+```jinja
+{% if examples and (examples.outstanding or examples.good or
+                    examples.inadequate or examples.poor) %}
+## REVIEWER CALIBRATION EXAMPLES
+
+Previously reviewed standard names spanning the full score range. Each
+example shows the per-dimension 0-20 score you must produce and the
+reasoning tied to each dimension. Use these to anchor your own scores to
+a consistent absolute scale across batches.
+
+{% for slot in ['outstanding', 'good', 'inadequate', 'poor'] %}
+{% set ex = examples[slot] %}
+{% if ex %}
+### {{ slot | capitalize }} — aggregate score {{ "%.2f"|format(ex.score) }} ({{ ex.domain }})
+
+**`{{ ex.id }}`** [{{ ex.unit or 'dimensionless' }}, kind={{ ex.kind }}]
+Description: {{ ex.description }}
+
+Per-dimension scores and reasoning:
+{% for dim in ['grammar', 'semantic', 'documentation', 'convention', 'completeness', 'compliance'] %}
+{% if dim in ex.scores %}
+- **{{ dim }}: {{ ex.scores[dim] }}/20** — {{ ex.dimension_comments[dim] | default('(no per-dimension comment recorded)') }}
+{% endif %}
+{% endfor %}
+
+{% if ex.issues %}Reviewer-flagged issues: {{ ex.issues | join('; ') }}{% endif %}
+{% if ex.verdict %}Verdict: **{{ ex.verdict }}**{% endif %}
+{% endif %}
+{% endfor %}
+{% endif %}
+```
+
+Included from: `review.md`, `review_name_only.md`, `review_docs.md`. The `for dim in ...` loop filters by dimensions present in the example's `scores` dict so the same template handles 6-dim full review and 4-dim name-only review.
+
+### K5 — Automatic, no toggle
+
+Both fragments render unconditionally. Cold graph → empty block → zero tokens. Warm graph → block populates as reviews land. Phase 4b ablation keeps internal test-only kwargs (`_force_disable_examples_compose`, `_force_disable_examples_review`) for measurement.
+
+### K6 — Configuration
+
+```toml
+[tool.imas-codex.sn.examples]
+outstanding = { target = 1.00, tolerance = 0.15 }
+good        = { target = 0.75, tolerance = 0.05 }
+inadequate  = { target = 0.52, tolerance = 0.05 }
+poor        = { target = 0.20, tolerance = 0.05 }
+
+# Per-consumer slot filtering (not user-facing; documented for transparency).
+compose_slots = ["outstanding", "good"]
+review_slots  = ["outstanding", "good", "inadequate", "poor"]
+
+min_comment_chars = 40          # aggregate reviewer comment
+min_dim_comment_chars = 20      # each per-dimension comment
+```
+
+### K7 — Stability contract
+
+Both fragments cache-stable on identical inputs (graph snapshot + rubric YAML + batch physics_domain set). Expected prefix-cache lift: +5-10 pp on compose prompts, +10-15 pp on review prompts (review benefits more because its prompt has historically been shorter and more variable).
+
+### K8 — Lifecycle
+
+| Phase | Graph state | Compose block | Review block |
+|---|---|---|---|
+| Cold | 0 reviewed | Absent | Absent |
+| Thawing | First review pass completes | Partial (outstanding often fills first) | Partial (outstanding + good likely; inadequate + poor rare) |
+| Warm | Several review passes; inadequate + poor filled via revise-path + reject-path reviews | Full (2 slots) | Full (4 slots) |
+| Hot | Stable | Full, cache-stable | Full, cache-stable |
+
+### K9 — What explicitly NOT in Delta K
+
+- No `benchmark_calibration.yaml` / `calibration.py` (deleted in K-1)
+- No static bootstrap fixtures
+- No provisional / unreviewed fallback
+- No CLI flag (`--exemplar-domain` removed)
+- No new score bands or vocabulary beyond the `adequate`→`inadequate` rename
+
+### K10 — Dependencies
+
+- **K-1 (delete calibration)** runs first — no prerequisites, pure removal.
+- **K0.a, K0.b, K0.c (rubric + schema)** ship atomically in Phase 0 / Phase 2 pre-flight. K0.c requires `uv run build-models --force` and updates to reviewer Pydantic response model + 3 review prompts.
+- **K1-K8** depend on the review pipeline having produced at least some reviewed+commented entries. First meaningful fill happens after the first Phase 3 review pass.
+
+### K11 — Risks
+
+- **Schema extension (K0.c)**: extends the reviewer's response contract. Existing review prompts omit per-dimension reasoning, so the Pydantic parser will reject old response shapes. Mitigation: K0.c ships with the prompt updates in the same commit; `sn clear --all` ensures no stale graph state assumes the old shape.
+- **Increased reviewer token output**: +6 short reasoning strings per name ≈ +150-250 output tokens per review. Cost increase is measurable but small relative to reviewer model cost; offset by improved score calibration reducing rework. Track in Phase 4b ablation.
+- **Per-dimension reasoning may be rote**: reviewer LLMs may produce formulaic per-dimension strings. Mitigation: enforce `min_dim_comment_chars = 20` in example selection so only substantive anchors make it into the prompt; formulaic cases simply aren't chosen as examples.
+- **Sparse failing-slot review fills**: `inadequate` and `poor` slots rarely populate because publish-intent names rarely get reviewed to low scores. No-op render handles sparsity. Deliberate fills come from the revise-loop and reject pipeline.
+
+### K12 — Todos (SQL)
+
+- `k-1-calibration-remove` — delete `calibration.py`, `benchmark_calibration.yaml`, 2 loader call sites, ~12 test blocks, `AGENTS.md` references; verify `rg "calibration_entries|benchmark_calibration"` returns zero
+- `k0a-rubric-boundary` — `sn_review_criteria.yaml` good.min → 0.65, accept → 0.65
+- `k0b-tier-rename` — atomic `adequate`→`inadequate` across schema, rubric, models.py, benchmark.py, graph_ops.py, 4 prompt files; regression test asserts no `"adequate"` literal
+- `k0c-schema-dimension-comments` — add `reviewer_dimension_comments`, `reviewer_issues`, `reviewer_verdict` slots to `standard_name.yaml`; add `StandardNameQualityComments` Pydantic model (+ name-only + docs variants); update `review/pipeline.py` persistence; update `review.md`, `review_name_only.md`, `review_docs.md` response-schema sections; `uv run build-models --force`
+- `k1-examples-module` — implement `load_examples_for_compose` + `load_examples_for_review` in `standard_names/examples.py` with 4 targets + batch-domain → all-domain fallback
+- `k2-compose-fragment` — create `shared/sn/_compose_scored_examples.md`; include from compose + enrich system prompts
+- `k3-review-fragment` — create `shared/sn/_review_scored_examples.md`; include from 3 review prompts; loop dimensions adaptive to 6-dim or 4-dim rubric
+- `k4-config` — add `[tool.imas-codex.sn.examples]` + settings accessor
+- `k5-safeguard` — enforce `size(reviewer_comments) >= 40` and `size(dim_comment) >= 20` in selection Cypher; unit-test empty/short cases
+- `k6-ablation-hook` — test-only kwargs `_force_disable_examples_compose|review` on loaders; wire into Phase 4b matrix
+- `k7-plan-integration` — merge Delta K as Phase 2c.3 in `plans/features/standard-names/36-catalog-quality-refactor.md`
+- `k8-cache-metrics` — extend benchmark cache-% logging to track prefix-cache delta by consumer type (compose vs review)
+- `k9-docs` — update `AGENTS.md` SN section: unified 0.65 threshold, `inadequate` tier, dimension-comments schema, split example consumers; delete calibration references
