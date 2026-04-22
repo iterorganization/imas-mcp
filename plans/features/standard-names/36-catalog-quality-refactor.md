@@ -146,16 +146,16 @@ COCOS transformation is a graph relationship to a COCOS node (`(StandardName)-[:
 It's applied selectively (not all quantities COCOS-transform). Exporting a string
 field that is null for most entries adds noise without utility. Graph-only concern.
 
-### `kind` enum — ADD `complex`, `complex-scalar`, `vector`, `tensor`
+### `kind` enum — ADD `complex`, `vector`, `tensor`
 
-User directive. Closed enum: `scalar`, `vector`, `tensor`, `complex-scalar`,
+User directive. Closed enum: `scalar`, `vector`, `tensor`, `complex`,
 `metadata`. `complex` is a shape descriptor independent of rank (scalar vs vector
-complex-valued quantities exist — e.g. Fourier coefficient is complex-scalar;
+complex-valued quantities exist — e.g. Fourier coefficient is complex;
 polarization tensor is complex-tensor).
 
 **RD round 3 question**: do we need distinct `complex-vector` / `complex-tensor`
-kinds, or is `kind=complex-scalar` + grammar structure (`*_real_part` etc) sufficient?
-Current recommendation: start with `complex-scalar` only; `complex-vector` /
+kinds, or is `kind=complex` + grammar structure (`*_real_part` etc) sufficient?
+Current recommendation: start with `complex` only; `complex-vector` /
 `complex-tensor` added on demand when first DD-sourced occurrence lands.
 
 ### Summary of field decisions (v3)
@@ -165,7 +165,7 @@ Current recommendation: start with `complex-scalar` only; `complex-vector` /
 | `validity_domain` | REMOVE | Empty for most; belongs in docs prose |
 | `constraints` | REMOVE | Empty for most; belongs in docs prose |
 | `cocos_transformation_type` | REMOVE from catalog | Graph-only concern |
-| `kind` | EXTEND to {scalar, vector, tensor, complex-scalar, metadata} | User-requested |
+| `kind` | EXTEND to {scalar, vector, tensor, complex, metadata} | User-requested |
 | `links` | KEEP, REBUILD WORKFLOW | 11 bugs in Phase 2 |
 | `link_status` | KEEP | Already exists; wire correctly |
 | `doc_resolution_status` | ADD | Parallel to link_status for doc-text placeholders |
@@ -201,7 +201,7 @@ null loop; B7 closes any back-door survival.
 3. **Resolution phase** (`_run_link_phase`) sweeps unresolved names, rewrites
    `dd:<path>` → `name:<id>` when `(IMASNode {id: path})-[:HAS_STANDARD_NAME]->(sn)`
    exists.
-4. **Sibling auto-populate** (D5): after batch commit, for each `kind ∈ {vector, complex-scalar}`
+4. **Sibling auto-populate** (D5): after batch commit, for each `kind ∈ {vector, complex}`
    parent, query `MATCH (sn:StandardName) WHERE sn.id STARTS WITH parent.id + '_'` (postfix
    prefix-scan) + reserved suffix membership, append as `name:` links; reciprocate on each
    part.
@@ -300,7 +300,7 @@ Files in `~/Code/imas-standard-names`:
 3. `imas_standard_names/models.py`:
    - `StandardNameVectorEntry.magnitude` property: return `f"{self.name}_magnitude"` (was `f"magnitude_of_{self.name}"`).
    - Add `StandardNameComplexEntry` class with `.real_part`, `.imaginary_part`,
-     `.amplitude`, `.phase`, `.modulus` postfix-form properties. `kind = 'complex-scalar'`.
+     `.amplitude`, `.phase`, `.modulus` postfix-form properties. `kind = 'complex'`.
    - All 18 existing validators reviewed for prefix assumptions; no functional change
      expected (validators operate on decomposed segments, not raw strings).
 
@@ -350,7 +350,7 @@ Files in `~/Code/imas-standard-names`:
      `amplitude_of_*` and accepts `*_amplitude`.
    - NEW `derived_part_parent_presence_check` (unified for vector + complex): if name
      ends in any reserved suffix token, verify the stripped base exists as a parent
-     `kind ∈ {vector, complex-scalar}` StandardName.
+     `kind ∈ {vector, complex}` StandardName.
    - `kind_derivation` suffix rules rewritten: strip from right, match closed vocab,
      derive `(kind, base)`.
 
@@ -626,7 +626,7 @@ New `imas_codex/standard_names/enrich_workers.py` function:
 
 ```python
 def populate_sibling_links(batch_item_ids: set[str]) -> int:
-    """After compose commit, for each kind=vector/complex-scalar parent in batch,
+    """After compose commit, for each kind=vector/complex parent in batch,
     query its derived parts from graph and update both sides' links."""
     # 1. Find parents in batch
     # 2. For each parent, MATCH (sn) WHERE sn.id STARTS WITH parent.id + '_'
@@ -671,7 +671,7 @@ add-on.
 1. `imas_codex/standard_names/models.py`:
    - Remove `validity_domain`, `constraints`, `cocos_transformation_type` from
      `StandardNameDocumentation` / `StandardNameCompose*` response models.
-   - Add `kind: Literal[...]` with `complex-scalar` support.
+   - Add `kind: Literal[...]` with `complex` support.
 
 #### Phase 3b — Enrich style guide full rewrite (RD #8a)
 
@@ -744,7 +744,7 @@ Target domain: `equilibrium` (cleanest prior results, well-bounded vocabulary).
   `_run_link_phase` sweep (validates B5).
 - Any vector parent in the batch has all minted components in its `links` (validates
   B4+D5).
-- Any complex-scalar parent has all minted parts in its `links` (validates D5).
+- Any complex parent has all minted parts in its `links` (validates D5).
 - `missing_reverse` audit produces 0 findings for parent/component pairs
   (validates B6).
 - `range_unit_mixed` validator fires on synthetic-test entry containing
@@ -770,7 +770,7 @@ done
 
 Under postfix, parent/part derivation is unified. Rename
 `sn complex-bootstrap` → `sn bootstrap-derived-parents`. Operates on both
-`kind=vector` (if any parts exist without a parent) and `kind=complex-scalar`.
+`kind=vector` (if any parts exist without a parent) and `kind=complex`.
 
 Cap: `max(2.0, count * 0.10)`. `--max-stems` safety limit = 50.
 
@@ -810,7 +810,7 @@ Cap: `max(2.0, count * 0.10)`. `--max-stems` safety limit = 50.
    `_rate_of_change_of_`)?
 2. **`_amplitude` ambiguity**: safe to allow both `_amplitude` (complex) and
    `_magnitude` (vector) as closed-vocab suffixes? Or scope `_amplitude` to
-   `kind=complex-scalar` only and forbid on vectors?
+   `kind=complex` only and forbid on vectors?
 3. **`doc_resolution_status` parallel vs unified**: two status fields (links + docs)
    or one unified `resolution_status`? Trade-off: parallel is simpler to reason
    about per-field; unified reduces field count.
