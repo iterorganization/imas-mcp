@@ -557,9 +557,20 @@ def _hybrid_search_neighbours(
 # Cap for graph-relationship neighbour injection (per path).
 _RELATED_MAX_RESULTS = 5
 
-# Compose retry: on grammar/validation failure, retry once with expanded context.
-_RETRY_ATTEMPTS = 1
-_RETRY_K_EXPANSION = 12
+
+# Compose retry: on grammar/validation failure, retry with expanded context.
+# Values resolved from settings accessors; module-level constants kept for
+# backwards compatibility with any direct importers.
+def _retry_attempts() -> int:
+    from imas_codex.settings import get_sn_retry_attempts
+
+    return get_sn_retry_attempts()
+
+
+def _retry_k_expansion() -> int:
+    from imas_codex.settings import get_sn_retry_k_expansion
+
+    return get_sn_retry_k_expansion()
 
 
 def _related_path_neighbours(
@@ -1366,7 +1377,8 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
 
             # --- Delta H: bounded retry loop for failed compositions ---
             _total_compose_cost = 0.0
-            for _compose_attempt in range(_RETRY_ATTEMPTS + 1):
+            _max_retries = _retry_attempts()
+            for _compose_attempt in range(_max_retries + 1):
                 result, cost, tokens = await acall_llm_structured(
                     model=model,
                     messages=messages,
@@ -1388,7 +1400,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 except ImportError:
                     pass  # ISN not installed — skip check
 
-                if not _grammar_failures or _compose_attempt >= _RETRY_ATTEMPTS:
+                if not _grammar_failures or _compose_attempt >= _max_retries:
                     break
 
                 # Re-enrich items with expanded hybrid search for retry
@@ -1396,7 +1408,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     "Composition retry %d/%d: %d grammar failures (%s) "
                     "— re-composing with expanded DD context",
                     _compose_attempt + 1,
-                    _RETRY_ATTEMPTS,
+                    _max_retries,
                     len(_grammar_failures),
                     ", ".join(_grammar_failures[:3]),
                 )
@@ -1414,7 +1426,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                                 path,
                                 description=item.get("description"),
                                 physics_domain=item.get("physics_domain"),
-                                search_k=_RETRY_K_EXPANSION,
+                                search_k=_retry_k_expansion(),
                             )
                             if hybrid:
                                 item["hybrid_neighbours"] = hybrid

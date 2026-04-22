@@ -641,6 +641,85 @@ INCLUDE_ERROR_FIELDS = get_include_error_fields()
 EMBEDDING_DIMENSION = get_embedding_dimension()
 
 
+# ─── SN example-injection and retry tunables ───────────────────────────────
+
+_SN_DEFAULTS: dict[str, Any] = {
+    "example-target-scores": [1.0, 0.8, 0.65, 0.4],
+    "example-tolerance": 0.05,
+    "example-per-bucket": 1,
+    "retry-attempts": 1,
+    "retry-k-expansion": 12,
+}
+
+
+def get_sn_example_target_scores() -> tuple[float, ...]:
+    """Score thresholds for selecting exemplar StandardName nodes.
+
+    Each target defines a bucket; the example loader picks the closest
+    reviewed StandardName whose ``reviewer_score`` falls within
+    ``target ± tolerance``.
+
+    Priority: IMAS_CODEX_SN_EXAMPLE_TARGET_SCORES env (comma-separated)
+              → [sn].example-target-scores → ``(1.0, 0.8, 0.65, 0.4)``.
+    """
+    if env := os.getenv("IMAS_CODEX_SN_EXAMPLE_TARGET_SCORES"):
+        return tuple(float(v) for v in env.split(",") if v.strip())
+    section = _get_section("sn")
+    raw = section.get("example-target-scores", _SN_DEFAULTS["example-target-scores"])
+    return tuple(float(v) for v in raw)
+
+
+def get_sn_example_tolerance() -> float:
+    """Tolerance band around each target score for example selection.
+
+    Priority: IMAS_CODEX_SN_EXAMPLE_TOLERANCE env
+              → [sn].example-tolerance → ``0.05``.
+    """
+    if env := os.getenv("IMAS_CODEX_SN_EXAMPLE_TOLERANCE"):
+        return float(env)
+    section = _get_section("sn")
+    return float(section.get("example-tolerance", _SN_DEFAULTS["example-tolerance"]))
+
+
+def get_sn_example_per_bucket() -> int:
+    """Maximum number of examples per score bucket.
+
+    Priority: IMAS_CODEX_SN_EXAMPLE_PER_BUCKET env
+              → [sn].example-per-bucket → ``1``.
+    """
+    if env := os.getenv("IMAS_CODEX_SN_EXAMPLE_PER_BUCKET"):
+        return int(env)
+    section = _get_section("sn")
+    return int(section.get("example-per-bucket", _SN_DEFAULTS["example-per-bucket"]))
+
+
+def get_sn_retry_attempts() -> int:
+    """Max retry attempts on grammar/validation failure during compose.
+
+    Priority: IMAS_CODEX_SN_RETRY_ATTEMPTS env
+              → [sn].retry-attempts → ``1``.
+    """
+    if env := os.getenv("IMAS_CODEX_SN_RETRY_ATTEMPTS"):
+        return int(env)
+    section = _get_section("sn")
+    return int(section.get("retry-attempts", _SN_DEFAULTS["retry-attempts"]))
+
+
+def get_sn_retry_k_expansion() -> int:
+    """Hybrid-search k expansion factor used on compose retry.
+
+    On retry, the compose worker re-enriches items with an expanded
+    hybrid DD search using ``search_k=retry_k_expansion``.
+
+    Priority: IMAS_CODEX_SN_RETRY_K_EXPANSION env
+              → [sn].retry-k-expansion → ``12``.
+    """
+    if env := os.getenv("IMAS_CODEX_SN_RETRY_K_EXPANSION"):
+        return int(env)
+    section = _get_section("sn")
+    return int(section.get("retry-k-expansion", _SN_DEFAULTS["retry-k-expansion"]))
+
+
 # ─── SN review settings ────────────────────────────────────────────────────
 
 _SN_REVIEW_DEFAULTS: dict[str, Any] = {

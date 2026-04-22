@@ -72,17 +72,17 @@ class TestRetryReasonRendering:
 
 
 class TestRetryConstants:
-    """Module-level constants are correctly defined."""
+    """Retry tunables resolve via settings accessors."""
 
     def test_retry_attempts_is_one(self) -> None:
-        from imas_codex.standard_names.workers import _RETRY_ATTEMPTS
+        from imas_codex.standard_names.workers import _retry_attempts
 
-        assert _RETRY_ATTEMPTS == 1
+        assert _retry_attempts() == 1
 
     def test_retry_k_expansion_is_twelve(self) -> None:
-        from imas_codex.standard_names.workers import _RETRY_K_EXPANSION
+        from imas_codex.standard_names.workers import _retry_k_expansion
 
-        assert _RETRY_K_EXPANSION == 12
+        assert _retry_k_expansion() == 12
 
 
 class TestHybridSearchKParameter:

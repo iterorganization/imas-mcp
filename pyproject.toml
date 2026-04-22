@@ -303,6 +303,19 @@ batch-size = 12
 # Pre-flight token budget guard (same semantics as sn-run).
 max-tokens = 150000
 
+[tool.imas-codex.sn]
+# Scored-example injection targets: score thresholds for selecting
+# exemplar StandardName nodes into compose/review prompts.
+example-target-scores = [1.0, 0.8, 0.65, 0.4]
+# Tolerance band around each target when selecting the closest example.
+example-tolerance = 0.05
+# Maximum examples per score bucket.
+example-per-bucket = 1
+# Compose retry: max retry attempts on grammar/validation failure.
+retry-attempts = 1
+# Hybrid-search k expansion factor used on retry.
+retry-k-expansion = 12
+
 [tool.imas-codex.sn.review]
 # Reviewer models for `sn review`. N >= 1. The first entry is canonical —
 # its score/tier/comments mirror onto the StandardName node. Additional
