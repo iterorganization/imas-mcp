@@ -1863,148 +1863,21 @@ class GraphPathContextTool:
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Discover cross-IDS relationships for an IMAS path."""
-        dd_params: dict[str, Any] = {"path": path}
-        dd_clause = _dd_version_clause("sibling", dd_version, dd_params)
-        sections: dict[str, list[dict[str, Any]]] = {}
+        """Discover cross-IDS relationships for an IMAS path.
 
-        # Exclude noise categories (error fields, metadata subtrees) from all sections.
-        noise_clause = "AND NOT (sibling.node_category IN ['error','metadata'])"
+        Delegates to :func:`imas_codex.graph.dd_search.related_dd_search`
+        for the pure query logic and converts to the MCP dict format.
+        """
+        from imas_codex.graph.dd_search import related_dd_search
 
-        # Cluster siblings — paths in same cluster but different IDS
-        if relationship_types in ("all", "cluster"):
-            cluster_siblings = self._gc.query(
-                f"""
-                MATCH (p:IMASNode {{id: $path}})-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
-                      <-[:IN_CLUSTER]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {noise_clause} {dd_clause}
-                RETURN cl.label AS cluster, sibling.id AS path,
-                       sibling.ids AS ids,
-                       coalesce(nullIf(sibling.description, ''), sibling.documentation) AS doc,
-                       sibling.node_category AS node_category
-                ORDER BY cl.label, sibling.ids
-                LIMIT $limit
-                """,
-                **dd_params,
-                limit=max_results,
-            )
-            if cluster_siblings:
-                sections["cluster_siblings"] = cluster_siblings
-
-        # Coordinate partners — paths sharing coordinate spec
-        if relationship_types in ("all", "coordinate"):
-            coord_partners = self._gc.query(
-                f"""
-                MATCH (p:IMASNode {{id: $path}})-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
-                      <-[:HAS_COORDINATE]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {noise_clause} {dd_clause}
-                RETURN coord.id AS coordinate, sibling.id AS path,
-                       sibling.ids AS ids, sibling.data_type AS data_type,
-                       sibling.node_category AS node_category
-                ORDER BY coord.id, sibling.ids
-                LIMIT $limit
-                """,
-                **dd_params,
-                limit=max_results,
-            )
-            if coord_partners:
-                sections["coordinate_partners"] = coord_partners
-
-        # Unit companions — paths sharing the same unit across IDS boundaries.
-        # Note: physics_domain filter previously here collapsed results to zero
-        # for cross-domain unit peers (e.g. psi's Wb siblings live in
-        # transport/magnetic_field_diagnostics/edge — not equilibrium).
-        if relationship_types in ("all", "unit"):
-            unit_companions = self._gc.query(
-                f"""
-                MATCH (p:IMASNode {{id: $path}})-[:HAS_UNIT]->(u:Unit)
-                      <-[:HAS_UNIT]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {noise_clause} {dd_clause}
-                RETURN u.id AS unit, sibling.id AS path,
-                       sibling.ids AS ids,
-                       coalesce(nullIf(sibling.description, ''), sibling.documentation) AS doc,
-                       sibling.node_category AS node_category,
-                       sibling.physics_domain AS physics_domain
-                ORDER BY u.id, sibling.ids
-                LIMIT $limit
-                """,
-                **dd_params,
-                limit=max_results,
-            )
-            if unit_companions:
-                sections["unit_companions"] = unit_companions
-
-        # Identifier schema links
-        if relationship_types in ("all", "identifier"):
-            ident_links = self._gc.query(
-                f"""
-                MATCH (p:IMASNode {{id: $path}})-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema)
-                      <-[:HAS_IDENTIFIER_SCHEMA]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {noise_clause} {dd_clause}
-                RETURN s.name AS schema, sibling.id AS path,
-                       sibling.ids AS ids
-                ORDER BY s.name
-                LIMIT $limit
-                """,
-                **dd_params,
-                limit=max_results,
-            )
-            if ident_links:
-                sections["identifier_links"] = ident_links
-
-        # COCOS kin — peers sharing COCOS transformation across IDS.
-        # Combines two sources: cocos_transformation_type property and
-        # cocos_* cluster membership for comprehensive coverage.
-        if relationship_types in ("all", "cocos"):
-            cocos_kin = self._gc.query(
-                f"""
-                MATCH (p:IMASNode {{id: $path}})
-                // Source 1: property match
-                OPTIONAL MATCH (prop_sib:IMASNode)
-                WHERE p.cocos_transformation_type IS NOT NULL
-                  AND prop_sib.cocos_transformation_type = p.cocos_transformation_type
-                  AND prop_sib.ids <> p.ids
-                  AND prop_sib.id <> p.id
-                  {noise_clause.replace("sibling", "prop_sib")} {dd_clause.replace("sibling", "prop_sib")}
-                // Source 2: cluster membership match
-                OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
-                WHERE cl.id STARTS WITH 'cocos_'
-                OPTIONAL MATCH (cl_sib:IMASNode)-[:IN_CLUSTER]->(cl)
-                WHERE cl_sib.ids <> p.ids AND cl_sib.id <> p.id
-                  {noise_clause.replace("sibling", "cl_sib")} {dd_clause.replace("sibling", "cl_sib")}
-                // Union and deduplicate
-                WITH p,
-                     coalesce(p.cocos_transformation_type, substring(cl.id, 6)) AS cocos_type,
-                     collect(DISTINCT {{
-                         path: prop_sib.id, ids: prop_sib.ids,
-                         doc: coalesce(nullIf(prop_sib.description, ''), prop_sib.documentation),
-                         node_category: prop_sib.node_category
-                     }}) + collect(DISTINCT {{
-                         path: cl_sib.id, ids: cl_sib.ids,
-                         doc: coalesce(nullIf(cl_sib.description, ''), cl_sib.documentation),
-                         node_category: cl_sib.node_category
-                     }}) AS all_sibs
-                UNWIND all_sibs AS sib
-                WITH DISTINCT cocos_type, sib
-                WHERE sib.path IS NOT NULL
-                RETURN cocos_type,
-                       sib.path AS path, sib.ids AS ids,
-                       sib.doc AS doc, sib.node_category AS node_category
-                ORDER BY ids, path
-                LIMIT $limit
-                """,
-                **dd_params,
-                limit=max_results,
-            )
-            if cocos_kin:
-                sections["cocos_kin"] = cocos_kin
-
-        return {
-            "path": path,
-            "relationship_types": relationship_types,
-            "sections": sections,
-            "total_connections": sum(len(v) for v in sections.values()),
-        }
+        result = related_dd_search(
+            self._gc,
+            path,
+            relationship_types=relationship_types,
+            max_results=max_results,
+            dd_version=dd_version,
+        )
+        return result.to_mcp_dict()
 
 
 class GraphStructureTool:

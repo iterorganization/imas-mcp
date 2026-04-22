@@ -1,4 +1,4 @@
-"""Unit tests for hybrid_dd_search pure function.
+"""Unit tests for hybrid_dd_search and related_dd_search pure functions.
 
 Tests require a live Neo4j connection; they are skipped automatically
 when the graph is unreachable via the top-level pytest_collection_modifyitems
@@ -11,7 +11,12 @@ import os
 
 import pytest
 
-from imas_codex.graph.dd_search import hybrid_dd_search
+from imas_codex.graph.dd_search import (
+    RelatedPathHit,
+    RelatedPathResult,
+    hybrid_dd_search,
+    related_dd_search,
+)
 
 pytestmark = pytest.mark.graph
 
@@ -132,3 +137,120 @@ def test_empty_query_returns_empty(gc):
     hits = hybrid_dd_search(gc, "xyzzy_nonexistent_concept_12345", k=5)
     # May return empty or very few low-score results — not an error either way
     assert isinstance(hits, list)
+
+
+# ===========================================================================
+# related_dd_search — cross-IDS relationship discovery
+# ===========================================================================
+
+_PSI_PATH = "equilibrium/time_slice/profiles_1d/psi"
+
+
+class TestRelatedDdSearchBasic:
+    """Basic return-type and structure tests for related_dd_search."""
+
+    def test_returns_result_object(self, gc):
+        """related_dd_search returns a RelatedPathResult."""
+        result = related_dd_search(gc, _PSI_PATH)
+        assert isinstance(result, RelatedPathResult)
+        assert result.path == _PSI_PATH
+
+    def test_hits_are_related_path_hit_instances(self, gc):
+        """Each hit is a RelatedPathHit dataclass instance."""
+        result = related_dd_search(gc, _PSI_PATH)
+        assert result.hits
+        for hit in result.hits:
+            assert isinstance(hit, RelatedPathHit)
+            assert hit.path
+            assert hit.ids
+            assert hit.relationship_type in (
+                "cluster",
+                "coordinate",
+                "unit",
+                "identifier",
+                "cocos",
+            )
+
+    def test_total_connections_matches_hits(self, gc):
+        """total_connections property equals len(hits)."""
+        result = related_dd_search(gc, _PSI_PATH)
+        assert result.total_connections == len(result.hits)
+
+    def test_sections_groups_by_type(self, gc):
+        """sections property groups hits by relationship_type."""
+        result = related_dd_search(gc, _PSI_PATH)
+        sections = result.sections
+        total = sum(len(v) for v in sections.values())
+        assert total == result.total_connections
+
+    def test_hits_exclude_same_ids(self, gc):
+        """All hits should be from a different IDS than the query path."""
+        result = related_dd_search(gc, _PSI_PATH, max_results=50)
+        query_ids = "equilibrium"
+        for hit in result.hits:
+            if hit.relationship_type != "cocos":
+                assert hit.ids != query_ids, f"Hit {hit.path} is in same IDS {hit.ids}"
+
+
+class TestRelatedDdSearchFilters:
+    """Filter and parameter tests."""
+
+    def test_relationship_type_filter(self, gc):
+        """Filtering to a single relationship type returns only that type."""
+        result = related_dd_search(gc, _PSI_PATH, relationship_types="cluster")
+        assert result.relationship_types == "cluster"
+        for hit in result.hits:
+            assert hit.relationship_type == "cluster"
+
+    def test_max_results_limits(self, gc):
+        """max_results caps per-type results."""
+        result = related_dd_search(
+            gc, _PSI_PATH, relationship_types="cluster", max_results=3
+        )
+        assert len(result.hits) <= 3
+
+    def test_nonexistent_path_returns_empty(self, gc):
+        """A path that doesn't exist returns zero hits gracefully."""
+        result = related_dd_search(gc, "nonexistent/path/that/does/not/exist")
+        assert isinstance(result, RelatedPathResult)
+        assert result.total_connections == 0
+
+
+class TestRelatedDdSearchMcpCompat:
+    """MCP dict compatibility — to_mcp_dict matches original format."""
+
+    def test_mcp_dict_has_expected_keys(self, gc):
+        """to_mcp_dict returns the four top-level keys."""
+        result = related_dd_search(gc, _PSI_PATH)
+        d = result.to_mcp_dict()
+        assert set(d.keys()) == {
+            "path",
+            "relationship_types",
+            "sections",
+            "total_connections",
+        }
+        assert d["path"] == _PSI_PATH
+
+    def test_mcp_dict_section_keys(self, gc):
+        """Section keys match original naming convention."""
+        result = related_dd_search(gc, _PSI_PATH, relationship_types="all")
+        d = result.to_mcp_dict()
+        valid_sections = {
+            "cluster_siblings",
+            "coordinate_partners",
+            "unit_companions",
+            "identifier_links",
+            "cocos_kin",
+        }
+        for key in d["sections"]:
+            assert key in valid_sections, f"Unexpected section key: {key}"
+
+    def test_mcp_dict_cluster_entry_shape(self, gc):
+        """Cluster entries have cluster/path/ids/doc/node_category keys."""
+        result = related_dd_search(gc, _PSI_PATH, relationship_types="cluster")
+        d = result.to_mcp_dict()
+        if "cluster_siblings" in d["sections"]:
+            for entry in d["sections"]["cluster_siblings"]:
+                assert "path" in entry
+                assert "ids" in entry
+                assert "cluster" in entry

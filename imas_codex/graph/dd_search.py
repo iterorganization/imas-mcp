@@ -1,18 +1,18 @@
-"""Pure-function hybrid DD search for pipeline reuse.
+"""Pure-function DD search and relationship discovery for pipeline reuse.
 
 Extracts the core hybrid vector+text search logic from the MCP tool
-``GraphSearchTool.search_dd_paths`` into a standalone function that
-accepts a :class:`GraphClient` and returns structured
-:class:`SearchHit` rows.
+``GraphSearchTool.search_dd_paths`` into :func:`hybrid_dd_search`,
+and cross-IDS relationship discovery from
+``PathContextTool.find_related_dd_paths`` into :func:`related_dd_search`.
 
-This module is the single source of truth for hybrid DD search logic.
-Both the MCP tool and the SN generation pipeline call
-:func:`hybrid_dd_search` — the MCP tool adds only a formatting layer.
+Both MCP tools and the SN generation pipeline call these pure functions
+— the MCP tools add only formatting layers.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.core.node_categories import SEARCHABLE_CATEGORIES
@@ -24,6 +24,9 @@ if TYPE_CHECKING:
     from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
+
+# ── Noise categories excluded from cross-IDS relationship queries ────────
+_NOISE_CATEGORIES: list[str] = ["error", "metadata"]
 
 # ── Physics lookup tables (shared with graph_search.py via import) ───────
 
@@ -449,3 +452,354 @@ def _resolve_node_categories(node_category: str | None) -> list[str]:
     requested = {c.strip() for c in node_category.split(",") if c.strip()}
     valid = requested & SEARCHABLE_CATEGORIES
     return list(valid) if valid else list(SEARCHABLE_CATEGORIES)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Related DD search — cross-IDS relationship discovery
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class RelatedPathHit:
+    """A single cross-IDS relationship hit from :func:`related_dd_search`.
+
+    Unlike :class:`SearchHit` (scored search results), this represents a
+    *structural* relationship — a path in another IDS that shares a cluster,
+    coordinate spec, unit, identifier schema, or COCOS transformation with
+    the query path.
+
+    Design note (J3 extraction):
+        ``SearchHit`` carries 30+ fields for scored search results.
+        Relationship hits are fundamentally different: they are
+        un-scored structural connections with a relationship *type*
+        and an optional *via* label (cluster name, unit, schema, etc.).
+        A separate dataclass avoids forcing callers to handle 20+
+        ``None`` fields irrelevant to relationship queries.
+    """
+
+    path: str
+    """Full IMAS path of the related node."""
+
+    ids: str
+    """IDS this path belongs to."""
+
+    relationship_type: str
+    """One of: cluster, coordinate, unit, identifier, cocos."""
+
+    via: str = ""
+    """The connecting entity label (cluster label, unit id, schema name, etc.)."""
+
+    doc: str = ""
+    """Description or documentation of the related path."""
+
+    node_category: str = ""
+    """Node category of the related path (quantity, geometry, etc.)."""
+
+    physics_domain: str = ""
+    """Physics domain of the related path (populated for unit companions)."""
+
+
+@dataclass
+class RelatedPathResult:
+    """Structured result from :func:`related_dd_search`.
+
+    Groups :class:`RelatedPathHit` rows by relationship type alongside
+    summary metadata.
+    """
+
+    path: str
+    """The query path that was searched."""
+
+    relationship_types: str
+    """The relationship filter that was applied ('all' or specific type)."""
+
+    hits: list[RelatedPathHit] = field(default_factory=list)
+    """All relationship hits, ordered by (relationship_type, ids, path)."""
+
+    @property
+    def total_connections(self) -> int:
+        """Total number of connections found."""
+        return len(self.hits)
+
+    @property
+    def sections(self) -> dict[str, list[RelatedPathHit]]:
+        """Hits grouped by relationship type for backward compatibility."""
+        groups: dict[str, list[RelatedPathHit]] = {}
+        for hit in self.hits:
+            groups.setdefault(hit.relationship_type, []).append(hit)
+        return groups
+
+    def to_mcp_dict(self) -> dict[str, Any]:
+        """Convert to the dict format expected by the MCP tool formatter.
+
+        Returns the same structure as the original ``find_related_dd_paths``
+        MCP method so that the formatter layer needs zero changes.
+        """
+        sections: dict[str, list[dict[str, Any]]] = {}
+        _type_to_section = {
+            "cluster": "cluster_siblings",
+            "coordinate": "coordinate_partners",
+            "unit": "unit_companions",
+            "identifier": "identifier_links",
+            "cocos": "cocos_kin",
+        }
+        for hit in self.hits:
+            section_key = _type_to_section.get(
+                hit.relationship_type, hit.relationship_type
+            )
+            entry: dict[str, Any] = {"path": hit.path, "ids": hit.ids}
+
+            if hit.relationship_type == "cluster":
+                entry["cluster"] = hit.via
+                entry["doc"] = hit.doc
+                entry["node_category"] = hit.node_category
+            elif hit.relationship_type == "coordinate":
+                entry["coordinate"] = hit.via
+                entry["data_type"] = ""
+                entry["node_category"] = hit.node_category
+            elif hit.relationship_type == "unit":
+                entry["unit"] = hit.via
+                entry["doc"] = hit.doc
+                entry["node_category"] = hit.node_category
+                entry["physics_domain"] = hit.physics_domain
+            elif hit.relationship_type == "identifier":
+                entry["schema"] = hit.via
+            elif hit.relationship_type == "cocos":
+                entry["cocos_type"] = hit.via
+                entry["doc"] = hit.doc
+                entry["node_category"] = hit.node_category
+
+            sections.setdefault(section_key, []).append(entry)
+
+        return {
+            "path": self.path,
+            "relationship_types": self.relationship_types,
+            "sections": sections,
+            "total_connections": self.total_connections,
+        }
+
+
+def related_dd_search(
+    gc: GraphClient,
+    path: str,
+    *,
+    relationship_types: str = "all",
+    max_results: int = 20,
+    dd_version: int | None = None,
+) -> RelatedPathResult:
+    """Discover cross-IDS relationships for an IMAS path.
+
+    Combines five relationship queries (cluster, coordinate, unit,
+    identifier, COCOS) to find paths in other IDSs related to the
+    given path.  This is a **sync** function suitable for calling from
+    pipeline workers, CLI tools, and notebooks.
+
+    Args:
+        gc: Active graph client connected to Neo4j.
+        path: Exact IMAS path (e.g. ``"equilibrium/time_slice/profiles_1d/psi"``).
+        relationship_types: Filter to specific type — ``"cluster"``,
+            ``"coordinate"``, ``"unit"``, ``"identifier"``, ``"cocos"``,
+            or ``"all"`` (default).
+        max_results: Maximum results per relationship type.
+        dd_version: Filter by DD major version (e.g. 3 or 4).
+
+    Returns:
+        :class:`RelatedPathResult` containing typed relationship hits.
+    """
+    from imas_codex.tools.graph_search import _dd_version_clause
+
+    dd_params: dict[str, Any] = {"path": path}
+    dd_clause = _dd_version_clause("sibling", dd_version, dd_params)
+
+    # Parameterised noise exclusion — replaces the brittle
+    # `noise_clause.replace("sibling", ...)` string manipulation.
+    base_params = {
+        **dd_params,
+        "limit": max_results,
+        "noise_categories": _NOISE_CATEGORIES,
+    }
+
+    all_hits: list[RelatedPathHit] = []
+
+    # ── 1. Cluster siblings ─────────────────────────────────────────
+    if relationship_types in ("all", "cluster"):
+        rows = gc.query(
+            f"""
+            MATCH (p:IMASNode {{id: $path}})-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
+                  <-[:IN_CLUSTER]-(sibling:IMASNode)
+            WHERE sibling.ids <> p.ids
+              AND NOT (sibling.node_category IN $noise_categories)
+              {dd_clause}
+            RETURN cl.label AS cluster, sibling.id AS path,
+                   sibling.ids AS ids,
+                   coalesce(nullIf(sibling.description, ''), sibling.documentation) AS doc,
+                   sibling.node_category AS node_category
+            ORDER BY cl.label, sibling.ids
+            LIMIT $limit
+            """,
+            **base_params,
+        )
+        for r in rows or []:
+            all_hits.append(
+                RelatedPathHit(
+                    path=r["path"],
+                    ids=r["ids"],
+                    relationship_type="cluster",
+                    via=r.get("cluster") or "",
+                    doc=r.get("doc") or "",
+                    node_category=r.get("node_category") or "",
+                )
+            )
+
+    # ── 2. Coordinate partners ──────────────────────────────────────
+    if relationship_types in ("all", "coordinate"):
+        rows = gc.query(
+            f"""
+            MATCH (p:IMASNode {{id: $path}})-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
+                  <-[:HAS_COORDINATE]-(sibling:IMASNode)
+            WHERE sibling.ids <> p.ids
+              AND NOT (sibling.node_category IN $noise_categories)
+              {dd_clause}
+            RETURN coord.id AS coordinate, sibling.id AS path,
+                   sibling.ids AS ids, sibling.data_type AS data_type,
+                   sibling.node_category AS node_category
+            ORDER BY coord.id, sibling.ids
+            LIMIT $limit
+            """,
+            **base_params,
+        )
+        for r in rows or []:
+            all_hits.append(
+                RelatedPathHit(
+                    path=r["path"],
+                    ids=r["ids"],
+                    relationship_type="coordinate",
+                    via=r.get("coordinate") or "",
+                    node_category=r.get("node_category") or "",
+                )
+            )
+
+    # ── 3. Unit companions ──────────────────────────────────────────
+    if relationship_types in ("all", "unit"):
+        rows = gc.query(
+            f"""
+            MATCH (p:IMASNode {{id: $path}})-[:HAS_UNIT]->(u:Unit)
+                  <-[:HAS_UNIT]-(sibling:IMASNode)
+            WHERE sibling.ids <> p.ids
+              AND NOT (sibling.node_category IN $noise_categories)
+              {dd_clause}
+            RETURN u.id AS unit, sibling.id AS path,
+                   sibling.ids AS ids,
+                   coalesce(nullIf(sibling.description, ''), sibling.documentation) AS doc,
+                   sibling.node_category AS node_category,
+                   sibling.physics_domain AS physics_domain
+            ORDER BY u.id, sibling.ids
+            LIMIT $limit
+            """,
+            **base_params,
+        )
+        for r in rows or []:
+            all_hits.append(
+                RelatedPathHit(
+                    path=r["path"],
+                    ids=r["ids"],
+                    relationship_type="unit",
+                    via=r.get("unit") or "",
+                    doc=r.get("doc") or "",
+                    node_category=r.get("node_category") or "",
+                    physics_domain=r.get("physics_domain") or "",
+                )
+            )
+
+    # ── 4. Identifier schema links ──────────────────────────────────
+    if relationship_types in ("all", "identifier"):
+        rows = gc.query(
+            f"""
+            MATCH (p:IMASNode {{id: $path}})-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema)
+                  <-[:HAS_IDENTIFIER_SCHEMA]-(sibling:IMASNode)
+            WHERE sibling.ids <> p.ids
+              AND NOT (sibling.node_category IN $noise_categories)
+              {dd_clause}
+            RETURN s.name AS schema, sibling.id AS path,
+                   sibling.ids AS ids
+            ORDER BY s.name
+            LIMIT $limit
+            """,
+            **base_params,
+        )
+        for r in rows or []:
+            all_hits.append(
+                RelatedPathHit(
+                    path=r["path"],
+                    ids=r["ids"],
+                    relationship_type="identifier",
+                    via=r.get("schema") or "",
+                )
+            )
+
+    # ── 5. COCOS kin ────────────────────────────────────────────────
+    # Combines property match + cocos_* cluster membership.
+    # Uses per-alias DD version clauses and parameterised noise filter.
+    if relationship_types in ("all", "cocos"):
+        prop_params: dict[str, Any] = {"path": path}
+        prop_dd = _dd_version_clause("prop_sib", dd_version, prop_params)
+        cl_params: dict[str, Any] = {"path": path}
+        cl_dd = _dd_version_clause("cl_sib", dd_version, cl_params)
+
+        cocos_params = {**base_params, **prop_params, **cl_params}
+
+        rows = gc.query(
+            f"""
+            MATCH (p:IMASNode {{id: $path}})
+            OPTIONAL MATCH (prop_sib:IMASNode)
+            WHERE p.cocos_transformation_type IS NOT NULL
+              AND prop_sib.cocos_transformation_type = p.cocos_transformation_type
+              AND prop_sib.ids <> p.ids
+              AND prop_sib.id <> p.id
+              AND NOT (prop_sib.node_category IN $noise_categories)
+              {prop_dd}
+            OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
+            WHERE cl.id STARTS WITH 'cocos_'
+            OPTIONAL MATCH (cl_sib:IMASNode)-[:IN_CLUSTER]->(cl)
+            WHERE cl_sib.ids <> p.ids AND cl_sib.id <> p.id
+              AND NOT (cl_sib.node_category IN $noise_categories)
+              {cl_dd}
+            WITH p,
+                 coalesce(p.cocos_transformation_type, substring(cl.id, 6)) AS cocos_type,
+                 collect(DISTINCT {{
+                     path: prop_sib.id, ids: prop_sib.ids,
+                     doc: coalesce(nullIf(prop_sib.description, ''), prop_sib.documentation),
+                     node_category: prop_sib.node_category
+                 }}) + collect(DISTINCT {{
+                     path: cl_sib.id, ids: cl_sib.ids,
+                     doc: coalesce(nullIf(cl_sib.description, ''), cl_sib.documentation),
+                     node_category: cl_sib.node_category
+                 }}) AS all_sibs
+            UNWIND all_sibs AS sib
+            WITH DISTINCT cocos_type, sib
+            WHERE sib.path IS NOT NULL
+            RETURN cocos_type,
+                   sib.path AS path, sib.ids AS ids,
+                   sib.doc AS doc, sib.node_category AS node_category
+            ORDER BY ids, path
+            LIMIT $limit
+            """,
+            **cocos_params,
+        )
+        for r in rows or []:
+            all_hits.append(
+                RelatedPathHit(
+                    path=r["path"],
+                    ids=r["ids"],
+                    relationship_type="cocos",
+                    via=r.get("cocos_type") or "",
+                    doc=r.get("doc") or "",
+                    node_category=r.get("node_category") or "",
+                )
+            )
+
+    return RelatedPathResult(
+        path=path,
+        relationship_types=relationship_types,
+        hits=all_hits,
+    )
