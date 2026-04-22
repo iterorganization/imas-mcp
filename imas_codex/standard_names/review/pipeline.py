@@ -190,6 +190,8 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
                        sn.source_id AS source_id,
                        sn.generated_at AS generated_at,
                        sn.reviewed_at AS reviewed_at,
+                       sn.reviewed_name_at AS reviewed_name_at,
+                       sn.reviewed_docs_at AS reviewed_docs_at,
                        sn.link_status AS link_status
                 """
             )
@@ -230,6 +232,16 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
         if state.domain_filter:
             domain = name.get("physics_domain") or ""
             if domain.lower() != state.domain_filter.lower():
+                continue
+
+        # --target docs gate: skip names without prior name review
+        review_target = getattr(state, "target", "full")
+        if review_target == "docs":
+            if name.get("reviewed_name_at") is None:
+                wlog.debug("Docs gate: skipping %r — reviewed_name_at IS NULL", nid)
+                state.stats["docs_skipped_missing_name"] = (
+                    state.stats.get("docs_skipped_missing_name", 0) + 1
+                )
                 continue
 
         # --status filter
@@ -876,8 +888,8 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
     from imas_codex.cli.logging import WorkerLogAdapter
     from imas_codex.standard_names.graph_ops import (
         update_review_aggregates,
+        write_review_results,
         write_reviews,
-        write_standard_names,
     )
 
     wlog = WorkerLogAdapter(logger, worker_name="sn_review_persist")
@@ -905,9 +917,17 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
         if _compute_hash is not None:
             entry["review_input_hash"] = _compute_hash(entry)
 
-    # Write canonical scores to StandardName nodes
+    # Determine review mode from state.target
+    review_target = getattr(state, "target", "full")
+    _target_to_mode = {"names": "name", "docs": "docs", "full": "full"}
+    write_mode = _target_to_mode.get(review_target, "full")
+
+    # Write canonical scores to StandardName nodes using mode-aware writer
     def _write() -> int:
-        return write_standard_names(results)
+        if write_mode in ("name", "docs"):
+            return write_review_results(results, write_mode, stats=state.stats)
+        # Full mode: write via write_review_results for 3-score slot support
+        return write_review_results(results, "full", stats=state.stats)
 
     written = await asyncio.to_thread(_write)
 

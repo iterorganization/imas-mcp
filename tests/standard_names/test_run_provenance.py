@@ -199,7 +199,7 @@ class TestReviewNoRotationOverwrite:
         cfg = TurnConfig(domain="equilibrium", dry_run=True)
         result = await _run_review_phase(cfg)
 
-        assert result.name == "review"
+        assert result.name == "review_names"
         assert result.count == 0
 
 

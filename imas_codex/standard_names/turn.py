@@ -2,7 +2,7 @@
 
 Chains one full quality-improvement cycle for a single physics domain::
 
-    reconcile → generate → enrich → link → review → regen
+    reconcile → generate → enrich → link → review_names → review_docs → regen
 
 Each phase delegates to the same library functions used by the individual
 ``sn run``, ``sn enrich``, and ``sn review`` CLI commands — no pipeline
@@ -25,9 +25,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Default cost-budget split across the four LLM phases.
+# Default cost-budget split across the five LLM phases.
 # Values must sum to 1.0.
-TURN_SPLIT: tuple[float, float, float, float] = (0.40, 0.20, 0.20, 0.20)
+# Phases: generate (30%), enrich (25%), review_names (15%), review_docs (15%), regen (15%).
+TURN_SPLIT: tuple[float, float, float, float, float] = (0.30, 0.25, 0.15, 0.15, 0.15)
 
 # Valid --only phase choices (CLI enforces this set).
 TURN_PHASES: tuple[str, ...] = (
@@ -38,6 +39,8 @@ TURN_PHASES: tuple[str, ...] = (
     "consolidate",
     "persist",
     "review",
+    "review_names",
+    "review_docs",
     "link",
 )
 
@@ -50,7 +53,9 @@ _ONLY_TO_ACTIVE: dict[str, set[str]] = {
     "validate": {"generate"},
     "consolidate": {"generate"},
     "persist": {"generate"},
-    "review": {"review"},
+    "review": {"review_names", "review_docs"},
+    "review_names": {"review_names"},
+    "review_docs": {"review_docs"},
     "link": {"link"},
 }
 
@@ -75,7 +80,17 @@ class PhaseResult:
 
 @dataclass
 class TurnConfig:
-    """Configuration for a single turn (one domain × six phases)."""
+    """Configuration for a single turn (one domain × seven phases).
+
+    Phase budget split (5 LLM phases sharing ``cost_limit``):
+      - generate: 30%
+      - enrich: 25%
+      - review_names: 15%
+      - review_docs: 15%
+      - regen: 15%
+
+    Non-LLM phases (reconcile, link) have zero cost.
+    """
 
     domain: str
     cost_limit: float = 5.0
@@ -88,7 +103,7 @@ class TurnConfig:
     skip_review: bool = False
     skip_regen: bool = False
     only: str | None = None
-    split: tuple[float, float, float, float] = TURN_SPLIT
+    split: tuple[float, float, float, float, float] = TURN_SPLIT
     run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     turn_number: int = 1
     min_score: float | None = None
@@ -96,11 +111,11 @@ class TurnConfig:
     override_edits: list[str] | None = None
 
     def phase_budget(self, index: int) -> float:
-        """Return the cost budget allocated to LLM phase *index* (0–3).
+        """Return the cost budget allocated to LLM phase *index* (0–4).
 
-        The four LLM phases (generate, enrich, review, regen) share the
-        cost budget.  Non-LLM phases (reconcile, link) have
-        zero cost.
+        The five LLM phases (generate, enrich, review_names, review_docs,
+        regen) share the cost budget.  Non-LLM phases (reconcile, link)
+        have zero cost.
         """
         return self.cost_limit * self.split[index]
 
@@ -154,7 +169,7 @@ async def _run_generate_phase(
     ``cfg.min_score``.
     """
     phase_name = "regen" if regen else "generate"
-    phase_idx = 3 if regen else 0
+    phase_idx = 4 if regen else 0
     budget = cfg.phase_budget(phase_idx)
 
     if cfg.dry_run:
@@ -337,18 +352,17 @@ async def _run_link_phase(
     )
 
 
-async def _run_review_phase(cfg: TurnConfig) -> PhaseResult:
-    """Run the review pipeline phase.
+async def _run_review_names_phase(cfg: TurnConfig) -> PhaseResult:
+    """Run the name-review pipeline phase.
 
-    Reviews ``valid`` names in the given domain that are unreviewed or
-    have stale review hashes. Writes reviewer scores and comments onto
-    each name without status demotion — low-score selection for regen
-    is handled by the regen phase via ``--min-score``.
+    Reviews ``valid`` names in the given domain using the 4-dim name rubric.
+    Writes ``reviewer_score_name`` + ``reviewed_name_at``.  Bootstraps
+    ``reviewer_score`` from ``reviewer_score_name`` when null.
     """
     budget = cfg.phase_budget(2)
 
     if cfg.dry_run:
-        return PhaseResult(name="review", skipped=False, cost=0.0, count=0)
+        return PhaseResult(name="review_names", skipped=False, cost=0.0, count=0)
 
     from imas_codex.standard_names.review.budget import ReviewBudgetManager
     from imas_codex.standard_names.review.consolidation import run_consolidation
@@ -359,14 +373,12 @@ async def _run_review_phase(cfg: TurnConfig) -> PhaseResult:
         facility="dd",
         cost_limit=budget,
         domain_filter=cfg.domain,
-        # Pass status_filter=None so any pipeline_status is accepted.
-        # The generate pipeline writes 'named' or 'enriched', never 'drafted',
-        # so the default status_filter='drafted' would silently extract 0 names.
         status_filter=None,
         unreviewed_only=True,
         skip_audit=True,
         concurrency=cfg.concurrency,
         dry_run=False,
+        target="names",
         budget_manager=ReviewBudgetManager(budget),
     )
 
@@ -376,9 +388,9 @@ async def _run_review_phase(cfg: TurnConfig) -> PhaseResult:
         await run_sn_review_engine(state, stop_event=stop_event)
         run_consolidation(state)
     except Exception as exc:
-        logger.error("Phase review failed: %s", exc, exc_info=True)
+        logger.error("Phase review_names failed: %s", exc, exc_info=True)
         return PhaseResult(
-            name="review",
+            name="review_names",
             exit_code=1,
             cost=state.total_cost,
             elapsed=time.monotonic() - t0,
@@ -400,9 +412,9 @@ async def _run_review_phase(cfg: TurnConfig) -> PhaseResult:
             f"invariant violated: {len(state.target_names)} eligible names "
             "identified but zero persisted (not budget-exhausted)"
         )
-        logger.error("Phase review %s", msg)
+        logger.error("Phase review_names %s", msg)
         return PhaseResult(
-            name="review",
+            name="review_names",
             exit_code=1,
             cost=state.total_cost,
             elapsed=elapsed,
@@ -411,11 +423,101 @@ async def _run_review_phase(cfg: TurnConfig) -> PhaseResult:
         )
 
     return PhaseResult(
-        name="review",
+        name="review_names",
         cost=state.total_cost,
         elapsed=elapsed,
         count=persist_count,
     )
+
+
+async def _run_review_docs_phase(cfg: TurnConfig) -> PhaseResult:
+    """Run the docs-review pipeline phase.
+
+    Reviews ``valid`` names whose ``reviewed_name_at IS NOT NULL`` using
+    the 4-dim docs rubric.  Writes ``reviewer_score_docs`` +
+    ``reviewed_docs_at``.  Never touches ``reviewer_score``.
+    """
+    budget = cfg.phase_budget(3)
+
+    if cfg.dry_run:
+        return PhaseResult(name="review_docs", skipped=False, cost=0.0, count=0)
+
+    from imas_codex.standard_names.review.budget import ReviewBudgetManager
+    from imas_codex.standard_names.review.consolidation import run_consolidation
+    from imas_codex.standard_names.review.pipeline import run_sn_review_engine
+    from imas_codex.standard_names.review.state import StandardNameReviewState
+
+    state = StandardNameReviewState(
+        facility="dd",
+        cost_limit=budget,
+        domain_filter=cfg.domain,
+        status_filter=None,
+        unreviewed_only=True,
+        skip_audit=True,
+        concurrency=cfg.concurrency,
+        dry_run=False,
+        target="docs",
+        budget_manager=ReviewBudgetManager(budget),
+    )
+
+    t0 = time.monotonic()
+    try:
+        stop_event = asyncio.Event()
+        await run_sn_review_engine(state, stop_event=stop_event)
+        run_consolidation(state)
+    except Exception as exc:
+        logger.error("Phase review_docs failed: %s", exc, exc_info=True)
+        return PhaseResult(
+            name="review_docs",
+            exit_code=1,
+            cost=state.total_cost,
+            elapsed=time.monotonic() - t0,
+            count=state.stats.get("persist_count", 0),
+            error=str(exc),
+        )
+    elapsed = time.monotonic() - t0
+
+    persist_count = state.stats.get("persist_count", 0)
+    docs_skipped = state.stats.get("docs_skipped_missing_name", 0)
+
+    if docs_skipped > 0:
+        logger.info(
+            "Phase review_docs: %d names skipped (reviewed_name_at IS NULL)",
+            docs_skipped,
+        )
+
+    # Invariant: if eligible names were identified but nothing was persisted
+    # and we are not budget-exhausted, something silently failed.
+    if (
+        len(state.target_names) > 0
+        and persist_count == 0
+        and state.total_cost < budget * 0.5
+    ):
+        msg = (
+            f"invariant violated: {len(state.target_names)} eligible names "
+            "identified but zero persisted (not budget-exhausted)"
+        )
+        logger.error("Phase review_docs %s", msg)
+        return PhaseResult(
+            name="review_docs",
+            exit_code=1,
+            cost=state.total_cost,
+            elapsed=elapsed,
+            count=0,
+            error=msg,
+        )
+
+    return PhaseResult(
+        name="review_docs",
+        cost=state.total_cost,
+        elapsed=elapsed,
+        count=persist_count,
+    )
+
+
+# Keep _run_review_phase as a back-compat alias so existing callers
+# (including test_turn_review_gate.py and test_run_provenance.py) still work.
+_run_review_phase = _run_review_names_phase
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -475,7 +577,7 @@ def skip_flags_from_only(only_phase: str | None) -> dict[str, bool]:
     return {
         "skip_generate": "generate" not in active,
         "skip_enrich": "generate" not in active,  # enrich follows generate
-        "skip_review": "review" not in active,
+        "skip_review": "review_names" not in active and "review_docs" not in active,
         "skip_regen": "generate" not in active,
     }
 
@@ -484,9 +586,9 @@ def skip_flags_from_only(only_phase: str | None) -> dict[str, bool]:
 
 
 async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
-    """Execute one full turn (reconcile → generate → enrich → link → review → regen).
+    """Execute one full turn (reconcile → generate → enrich → link → review_names → review_docs → regen).
 
-    Runs the six phases in sequence, respecting skip flags.  Returns
+    Runs the seven phases in sequence, respecting skip flags.  Returns
     a list of :class:`PhaseResult` for every phase (including skipped
     ones).  Names created/updated by generate are tracked and passed
     to the link phase to scope link resolution.
@@ -499,6 +601,12 @@ async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
     _only_active = _ONLY_TO_ACTIVE.get(cfg.only, set()) if cfg.only else None
     _skip_reconcile = _only_active is not None and "reconcile" not in _only_active
     _skip_link = _only_active is not None and "link" not in _only_active
+    _skip_review_names = cfg.skip_review or (
+        _only_active is not None and "review_names" not in _only_active
+    )
+    _skip_review_docs = cfg.skip_review or (
+        _only_active is not None and "review_docs" not in _only_active
+    )
 
     phases: list[tuple[str, bool, Any]] = [
         ("reconcile", _skip_reconcile, lambda: _run_reconcile_phase(cfg)),
@@ -509,7 +617,8 @@ async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
             _skip_link,
             lambda: _run_link_phase(cfg, touched_names),
         ),
-        ("review", cfg.skip_review, lambda: _run_review_phase(cfg)),
+        ("review_names", _skip_review_names, lambda: _run_review_names_phase(cfg)),
+        ("review_docs", _skip_review_docs, lambda: _run_review_docs_phase(cfg)),
         (
             "regen",
             cfg.skip_regen,
