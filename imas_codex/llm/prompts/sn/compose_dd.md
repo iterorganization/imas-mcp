@@ -170,6 +170,11 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% for n in item.hybrid_neighbours %}  - `{{ n.tag }}` [{{ n.unit }}, {{ n.physics_domain }}]: {{ n.doc_short }}{% if n.cocos_label %} (COCOS {{ n.cocos_label }}){% endif %}
 {% endfor %}  → Reuse a `name:` entry above when your source measures the same quantity.
 {% endif %}
+{% if item.related_neighbours %}
+- **Graph-relationship neighbours** (explicit cross-IDS peers):
+{% for r in item.related_neighbours %}  - `{{ r.path }}` ({{ r.ids }}) — {{ r.relationship_type }}{% if r.via %} via {{ r.via }}{% endif %}
+{% endfor %}  → These paths share structural relationships (cluster, coordinate, unit, identifier, COCOS) with this path.
+{% endif %}
 {% if item.version_history %}
 - **Version history:**
 {% for vh in item.version_history %}  - {{ vh.version }}: {{ vh.change_type }}{% if vh.description %} — {{ vh.description }}{% endif %}

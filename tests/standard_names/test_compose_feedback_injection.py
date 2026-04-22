@@ -121,5 +121,64 @@ class TestReviewFeedbackInjection:
         assert "verbose_flux_name" in rendered
 
 
+class TestRelatedNeighboursInjection:
+    """The related-neighbours block renders when item.related_neighbours is set."""
+
+    def test_block_absent_without_related(self) -> None:
+        rendered = render_prompt("sn/compose_dd", _min_context([_min_item()]))
+        assert "Graph-relationship neighbours" not in rendered
+
+    def test_block_present_with_related(self) -> None:
+        related = [
+            {
+                "path": "core_profiles/profiles_1d/grid/psi",
+                "ids": "core_profiles",
+                "relationship_type": "cluster",
+                "via": "Poloidal magnetic flux profile",
+            },
+            {
+                "path": "mhd_linear/time_slice/toroidal_mode/psi",
+                "ids": "mhd_linear",
+                "relationship_type": "coordinate",
+                "via": "psi",
+            },
+        ]
+        item = _min_item(related_neighbours=related)
+        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+
+        assert "Graph-relationship neighbours" in rendered
+        assert "core_profiles/profiles_1d/grid/psi" in rendered
+        assert "core_profiles" in rendered
+        assert "cluster" in rendered
+        assert "Poloidal magnetic flux profile" in rendered
+        assert "mhd_linear" in rendered
+        assert "coordinate" in rendered
+
+    def test_both_hybrid_and_related_render(self) -> None:
+        """Hybrid and related are parallel channels — both should appear."""
+        hybrid = [
+            {
+                "tag": "name:electron_temperature",
+                "unit": "eV",
+                "physics_domain": "transport",
+                "doc_short": "Electron temperature",
+                "cocos_label": "",
+            }
+        ]
+        related = [
+            {
+                "path": "core_profiles/profiles_1d/electrons/temperature",
+                "ids": "core_profiles",
+                "relationship_type": "unit",
+                "via": "eV",
+            }
+        ]
+        item = _min_item(hybrid_neighbours=hybrid, related_neighbours=related)
+        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+
+        assert "Hybrid-search neighbours" in rendered
+        assert "Graph-relationship neighbours" in rendered
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

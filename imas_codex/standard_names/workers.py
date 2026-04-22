@@ -547,6 +547,53 @@ def _hybrid_search_neighbours(
     return neighbours
 
 
+# Cap for graph-relationship neighbour injection (per path).
+_RELATED_MAX_RESULTS = 5
+
+
+def _related_path_neighbours(
+    gc: Any,
+    path: str,
+    *,
+    max_results: int = _RELATED_MAX_RESULTS,
+) -> list[dict]:
+    """Fetch explicit graph-relationship neighbours for a DD path.
+
+    Calls :func:`related_dd_search` to discover paths related via
+    cluster membership, shared coordinates, matching units, identifier
+    schemas, or COCOS transformation type.  Returns a compact list of
+    dicts suitable for Jinja template injection.
+    """
+    from imas_codex.graph.dd_search import related_dd_search
+
+    try:
+        result = related_dd_search(
+            gc,
+            path,
+            relationship_types="all",
+            max_results=max_results,
+        )
+    except Exception:
+        logger.debug("related_dd_search failed for %s", path, exc_info=True)
+        return []
+
+    if not result.hits:
+        return []
+
+    neighbours: list[dict] = []
+    for hit in result.hits:
+        neighbours.append(
+            {
+                "path": hit.path,
+                "ids": hit.ids,
+                "relationship_type": hit.relationship_type,
+                "via": hit.via,
+            }
+        )
+
+    return neighbours
+
+
 def _enrich_batch_items(items: list[dict]) -> None:
     """Enrich batch items with rich DD context from the graph.
 
@@ -667,6 +714,12 @@ def _enrich_batch_items(items: list[dict]) -> None:
             )
             if hybrid:
                 item["hybrid_neighbours"] = hybrid
+
+            # Graph-relationship neighbours (cluster, coordinate, unit,
+            # identifier, COCOS — explicit graph edges, not vector search).
+            related = _related_path_neighbours(gc, path)
+            if related:
+                item["related_neighbours"] = related
 
 
 def _is_attachment_consistent(source_id: str, sn_name: str) -> tuple[bool, str]:
