@@ -300,19 +300,16 @@ class TestUnitSanity:
 class TestKindDerivation:
     """derive_kind deterministically assigns kind from name tokens."""
 
-    def test_component_of_returns_vector_component(self):
+    def test_component_of_returns_vector(self):
         from imas_codex.standard_names.kind_derivation import derive_kind
 
-        assert (
-            derive_kind("binormal_component_of_wave_electric_field")
-            == "vector_component"
-        )
+        assert derive_kind("binormal_component_of_wave_electric_field") == "vector"
 
-    def test_tensor_returns_tensor_component(self):
+    def test_tensor_returns_tensor(self):
         from imas_codex.standard_names.kind_derivation import derive_kind
 
-        assert derive_kind("contravariant_metric_tensor") == "tensor_component"
-        assert derive_kind("reynolds_stress_tensor_real_part") == "tensor_component"
+        assert derive_kind("contravariant_metric_tensor") == "tensor"
+        assert derive_kind("reynolds_stress_tensor_real_part") == "tensor"
 
     def test_eigenfunction_returns_eigenfunction(self):
         from imas_codex.standard_names.kind_derivation import derive_kind
@@ -329,15 +326,15 @@ class TestKindDerivation:
             == "spectrum"
         )
 
-    def test_real_part_returns_complex_part(self):
+    def test_real_part_returns_complex(self):
         from imas_codex.standard_names.kind_derivation import derive_kind
 
-        assert derive_kind("perturbed_velocity_real_part") == "complex_part"
+        assert derive_kind("perturbed_velocity_real_part") == "complex"
 
-    def test_imaginary_part_returns_complex_part(self):
+    def test_imaginary_part_returns_complex(self):
         from imas_codex.standard_names.kind_derivation import derive_kind
 
-        assert derive_kind("perturbed_velocity_imaginary_part") == "complex_part"
+        assert derive_kind("perturbed_velocity_imaginary_part") == "complex"
 
     def test_plain_scalar_returns_scalar(self):
         from imas_codex.standard_names.kind_derivation import derive_kind
@@ -346,8 +343,8 @@ class TestKindDerivation:
         assert derive_kind("plasma_current") == "scalar"
         assert derive_kind("safety_factor") == "scalar"
 
-    def test_priority_eigenfunction_over_complex_part(self):
-        """Eigenfunction check has priority over complex_part."""
+    def test_priority_eigenfunction_over_complex(self):
+        """Eigenfunction check has priority over complex."""
         from imas_codex.standard_names.kind_derivation import derive_kind
 
         # _eigenfunction appears before _real_part check
@@ -357,7 +354,7 @@ class TestKindDerivation:
 
     @pytest.mark.asyncio
     async def test_kind_overridden_in_worker(self):
-        """Full worker test: kind is overridden from scalar → vector_component."""
+        """Full worker test: kind is overridden from scalar → vector."""
         from imas_codex.standard_names.enrich_workers import enrich_validate_worker
 
         item = _make_item(
@@ -375,7 +372,7 @@ class TestKindDerivation:
         ):
             await enrich_validate_worker(state)
 
-        assert item["kind"] == "vector_component"
+        assert item["kind"] == "vector"
 
     @pytest.mark.asyncio
     async def test_kind_spectrum_set_in_worker(self):

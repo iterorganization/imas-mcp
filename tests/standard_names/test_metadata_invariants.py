@@ -336,9 +336,9 @@ class TestStandardNameKindEnum:
         # These are the kinds observed in the graph as of 2025-07 audit
         observed = {
             "scalar",
-            "vector_component",
-            "complex_part",
-            "tensor_component",
+            "vector",
+            "complex",
+            "tensor",
             "spectrum",
         }
         unknown = observed - allowed

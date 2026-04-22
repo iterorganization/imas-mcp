@@ -428,8 +428,10 @@ def _validate_entry(entry_dict: dict[str, Any]) -> dict[str, Any] | None:
     Returns the validated model_dump dict, or None if validation fails.
     """
     from imas_standard_names.models import (
+        StandardNameComplexEntry,
         StandardNameMetadataEntry,
         StandardNameScalarEntry,
+        StandardNameTensorEntry,
         StandardNameVectorEntry,
     )
 
@@ -437,6 +439,8 @@ def _validate_entry(entry_dict: dict[str, Any]) -> dict[str, Any] | None:
     model_cls = {
         "scalar": StandardNameScalarEntry,
         "vector": StandardNameVectorEntry,
+        "tensor": StandardNameTensorEntry,
+        "complex": StandardNameComplexEntry,
         "metadata": StandardNameMetadataEntry,
     }.get(kind, StandardNameScalarEntry)
 

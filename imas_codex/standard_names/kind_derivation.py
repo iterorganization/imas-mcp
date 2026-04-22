@@ -33,12 +33,10 @@ def _load_valid_kinds() -> frozenset[str]:
         {
             "scalar",
             "vector",
-            "vector_component",
             "tensor",
-            "tensor_component",
             "eigenfunction",
             "spectrum",
-            "complex_part",
+            "complex",
             "metadata",
         }
     )
@@ -57,12 +55,12 @@ def derive_kind(name: str) -> str:
 
     Pattern rules (evaluated in order — first match wins):
 
-    1. ``_component_of_`` → ``vector_component``
+    1. ``_component_of_`` → ``vector``
     2. ``_tensor`` token (e.g. ``metric_tensor``, ``stress_tensor``) →
-       ``tensor_component``
+       ``tensor``
     3. ``_eigenfunction`` → ``eigenfunction``
     4. endswith ``_spectrum`` → ``spectrum``
-    5. ``real_part`` or ``imaginary_part`` → ``complex_part``
+    5. ``real_part`` or ``imaginary_part`` → ``complex``
     6. default → ``scalar``
     """
     valid = _load_valid_kinds()
@@ -70,8 +68,6 @@ def derive_kind(name: str) -> str:
 
     # 1. Vector component
     if "_component_of_" in name_lower:
-        if "vector_component" in valid:
-            return "vector_component"
         if "vector" in valid:
             return "vector"
 
@@ -84,8 +80,6 @@ def derive_kind(name: str) -> str:
         import re
 
         if re.search(r"_tensor(?:_|$)", name_lower):
-            if "tensor_component" in valid:
-                return "tensor_component"
             if "tensor" in valid:
                 return "tensor"
 
@@ -101,27 +95,24 @@ def derive_kind(name: str) -> str:
 
     # 5. Complex part (real/imaginary)
     if "real_part" in name_lower or "imaginary_part" in name_lower:
-        if "complex_part" in valid:
-            return "complex_part"
+        if "complex" in valid:
+            return "complex"
 
     # 6. Default
     return "scalar"
 
 
-# Mapping from extended local kinds → ISN's 3-kind discriminator.
-# The ISN library (imas_standard_names) currently only validates
-# {scalar, vector, metadata}.  We retain the richer taxonomy in our
-# graph for filtering/search but collapse to ISN's vocabulary when
-# constructing the validation model via ``create_standard_name_entry``.
+# Mapping from extended local kinds → ISN's discriminator.
+# ISN now supports {scalar, vector, tensor, complex, metadata}.
+# Eigenfunction and spectrum are still codex-only extended kinds
+# that collapse to scalar for ISN validation.
 _ISN_KIND_MAP: dict[str, str] = {
     "scalar": "scalar",
     "vector": "vector",
-    "vector_component": "scalar",  # one component is a scalar field
-    "tensor": "scalar",
-    "tensor_component": "scalar",  # one component is a scalar field
+    "tensor": "tensor",
     "eigenfunction": "scalar",
     "spectrum": "scalar",
-    "complex_part": "scalar",
+    "complex": "complex",
     "metadata": "metadata",
 }
 
