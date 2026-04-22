@@ -61,7 +61,11 @@ class TestWriteStandardNames:
         assert "coalesce(b.validity_domain, sn.validity_domain)" in cypher
         assert "coalesce(b.constraints, sn.constraints)" in cypher
         assert "coalesce(b.confidence, sn.confidence)" in cypher
-        assert "coalesce(b.grammar_process, sn.grammar_process)" in cypher
+        assert "coalesce(b.grammar_parse_version, sn.grammar_parse_version)" in cypher
+        assert (
+            "coalesce(b.validation_diagnostics_json, sn.validation_diagnostics_json)"
+            in cypher
+        )
 
         # created_at should use coalesce(sn.created_at, datetime()) — preserve existing
         assert "coalesce(sn.created_at, datetime())" in cypher

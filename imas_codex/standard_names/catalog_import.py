@@ -126,9 +126,9 @@ def _derive_domain_from_path(yaml_path: Path) -> str | None:
 
 def _grammar_decomposition(name: str) -> dict[str, str | None]:
     """Parse name via ISN grammar, returning grammar_* fields."""
-    from imas_codex.standard_names.graph_ops import _grammar_decomposition
+    from imas_codex.standard_names.graph_ops import _parse_grammar_vnext
 
-    return _grammar_decomposition(name)
+    return _parse_grammar_vnext(name)
 
 
 # ---------------------------------------------------------------------------
