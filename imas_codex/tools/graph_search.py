@@ -36,7 +36,6 @@ from imas_codex.search.decorators import (
     mcp_tool,
     measure_performance,
 )
-from imas_codex.search.search_strategy import SearchHit
 from imas_codex.tools.utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
@@ -381,7 +380,12 @@ class GraphSearchTool:
         cocos_transformation_type: str | None = None,
         ctx: Context | None = None,
     ) -> SearchPathsResult:
-        """Search IMAS paths using hybrid vector + text search."""
+        """Search IMAS paths using hybrid vector + text search.
+
+        Delegates to :func:`imas_codex.graph.dd_search.hybrid_dd_search`
+        for the core search logic and wraps the result in a
+        :class:`SearchPathsResult` for MCP formatting.
+        """
         is_valid, error_message = validate_query(query, "search_dd_paths")
         if not is_valid:
             return SearchPathsResult(
@@ -393,169 +397,22 @@ class GraphSearchTool:
                 error="Query cannot be empty.",
             )
 
-        from imas_codex.core.paths import normalize_imas_path
+        from imas_codex.graph.dd_search import hybrid_dd_search
 
-        # Normalize dot-notation and bracket notation before any analysis
-        query = normalize_imas_path(query)
-
-        normalized_filter = normalize_ids_filter(ids_filter)
-
-        # Resolve effective node categories — restrict SEARCHABLE_CATEGORIES
-        # when the caller asks for a specific node_category.
-        effective_categories = _resolve_node_categories(node_category)
-
-        # Determine whether to exclude summary IDS paths.
-        # Only exclude when the user has not explicitly requested summary paths
-        # via ids_filter and has not opted in via include_summary_ids=True.
-        _filter_list = (
-            normalized_filter
-            if isinstance(normalized_filter, list)
-            else ([normalized_filter] if normalized_filter else [])
-        )
-        _exclude_summary_ids = not include_summary_ids and "summary" not in _filter_list
-        summary_clause = "AND path.ids <> 'summary'" if _exclude_summary_ids else ""
-
-        # Path-like queries (contain "/") should skip expensive vector search
-        # and rely on text/path matching instead.
-        # Short physics abbreviations (e.g. "ip", "q", "b0") use their expanded
-        # form for vector search: the embedding model maps "plasma current"
-        # correctly even though "ip" would map to "internet protocol".
-        is_path_query = "/" in query and " " not in query
-        is_short_physics_term = " " not in query.strip() and (
-            len(query.strip()) <= 3 or query.strip().lower() in _PHYSICS_SHORT_TERMS
-        )
-        if is_path_query:
-            embedding = None
-        elif is_short_physics_term:
-            expansion = _PHYSICS_SHORT_TERMS.get(query.strip().lower())
-            embedding = self._embed_query(expansion) if expansion else None
-        else:
-            embedding = self._embed_query(query)
-
-        # --- Vector search ---
-        vec_scores: dict[str, float] = {}
-        if embedding is not None:
-            filter_clause = ""
-            params: dict[str, Any] = {
-                "embedding": embedding,
-                "k": min(max_results * 5, 500),
-                "vector_limit": min(max_results * 3, 150),
-                "categories": effective_categories,
-            }
-            if normalized_filter:
-                filter_clause = "AND path.ids IN $ids_filter"
-                params["ids_filter"] = (
-                    normalized_filter
-                    if isinstance(normalized_filter, list)
-                    else [normalized_filter]
-                )
-
-            dd_clause = _dd_version_clause("path", dd_version, params)
-
-            vector_results = self._gc.query(
-                f"""
-                CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
-                YIELD node AS path, score
-                WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-                  AND path.node_category IN $categories
-                  AND (path.node_category <> 'identifier' OR path.description IS NOT NULL)
-                {filter_clause}
-                {summary_clause}
-                {dd_clause}
-                RETURN path.id AS id, score
-                ORDER BY score DESC
-                LIMIT $vector_limit
-                """,
-                **params,
-            )
-
-            for r in vector_results or []:
-                pid = r["id"]
-                vec_scores[pid] = round(r["score"], 4)
-
-        # --- Text search ---
-        text_results = _text_search_dd_paths(
+        hits = hybrid_dd_search(
             self._gc,
             query,
-            min(max_results * 3, 150),
-            normalized_filter,
+            ids_filter=ids_filter,
+            facility=facility,
+            include_version_context=include_version_context,
+            include_summary_ids=include_summary_ids,
+            physics_domain=physics_domain,
+            lifecycle_filter=lifecycle_filter,
+            node_category=node_category,
+            cocos_transformation_type=cocos_transformation_type,
             dd_version=dd_version,
-            exclude_summary=_exclude_summary_ids,
-            categories=effective_categories,
+            k=max_results,
         )
-        text_scores: dict[str, float] = {}
-        for r in text_results:
-            text_scores[r["id"]] = round(r["score"], 4)
-
-        # --- Weighted blend (preserves both signals) ---
-        # When vector search was skipped (path query or short physics term),
-        # text results use full weight (1.0) rather than the reduced TEXT_WEIGHT
-        # to avoid artificially penalising the only available signal.
-        text_only_mode = embedding is None
-        _VEC_WEIGHT = 0.6
-        _TEXT_WEIGHT = 0.4
-        all_ids = set(vec_scores) | set(text_scores)
-        scores: dict[str, float] = {}
-        for pid in all_ids:
-            vs = vec_scores.get(pid, 0.0)
-            ts = text_scores.get(pid, 0.0)
-            if text_only_mode:
-                scores[pid] = round(ts, 4)
-            elif vs > 0 and ts > 0:
-                scores[pid] = round(_VEC_WEIGHT * vs + _TEXT_WEIGHT * ts, 4)
-            elif vs > 0:
-                scores[pid] = round(vs * _VEC_WEIGHT, 4)
-            else:
-                scores[pid] = round(ts * _TEXT_WEIGHT, 4)
-
-        # --- Path segment tiebreaker ---
-        # Multiplicative boost for paths whose segments exactly match query
-        # words.  Use exact segment match to avoid substring false positives
-        # (e.g. "ip" matching "pipe" or "description").
-        query_words = [
-            w.lower()
-            for w in query.split()
-            if len(w) > 2 or w.lower() in _PHYSICS_SHORT_TERMS
-        ]
-        if query_words:
-            for pid in scores:
-                segments = pid.lower().split("/")
-                match_count = sum(
-                    1
-                    for w in query_words
-                    if any(w == seg for seg in segments)
-                    or (len(w) > 3 and any(w in seg for seg in segments))
-                )
-                if match_count > 0:
-                    scores[pid] = round(scores[pid] * (1 + 0.015 * match_count), 4)
-
-        # --- Accessor de-ranking ---
-        # Accessor terminals (data containers, time bases, validity flags) are
-        # rarely the user's intent for concept queries.  Apply a small penalty
-        # so the parent concept path ranks higher.
-        for pid in scores:
-            terminal = pid.rsplit("/", 1)[-1].lower()
-            if terminal in _ACCESSOR_TERMINALS:
-                scores[pid] = round(scores[pid] * 0.95, 4)
-
-        # --- IDS preference for unqualified queries ---
-        # When no explicit IDS filter is active, give a small boost to results
-        # from the canonical IDS for recognised concept keywords.
-        if not normalized_filter and query_words:
-            matched_ids_prefs: set[str] = set()
-            for w in query_words:
-                if w in _CONCEPT_IDS_PREFERENCE:
-                    matched_ids_prefs.add(_CONCEPT_IDS_PREFERENCE[w])
-            if matched_ids_prefs:
-                for pid in scores:
-                    result_ids = pid.split("/", 1)[0]
-                    if result_ids in matched_ids_prefs:
-                        scores[pid] = round(scores[pid] * 1.03, 4)
-
-        # Rank and limit
-        sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
-            :max_results
-        ]
 
         mode = (
             SearchMode(search_mode)
@@ -563,173 +420,11 @@ class GraphSearchTool:
             else SearchMode.AUTO
         )
 
-        if not sorted_ids:
-            return SearchPathsResult(
-                hits=[],
-                summary={
-                    "query": query,
-                    "search_mode": str(mode),
-                    "hits_returned": 0,
-                    "ids_coverage": [],
-                },
-                query=query,
-                search_mode=mode,
-                physics_domains=[],
-            )
+        # Update search_mode on each hit to reflect caller's request
+        for h in hits:
+            h.search_mode = mode
 
-        # --- Enrich with full metadata ---
-        enriched = self._gc.query(
-            """
-            UNWIND $path_ids AS pid
-            MATCH (path:IMASNode {id: pid})
-            OPTIONAL MATCH (path)-[:HAS_UNIT]->(u:Unit)
-            OPTIONAL MATCH (path)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
-            OPTIONAL MATCH (path)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
-            OPTIONAL MATCH (path)-[:INTRODUCED_IN]->(intro:DDVersion)
-            RETURN path.id AS id, path.name AS name, path.ids AS ids,
-                   path.documentation AS documentation, path.data_type AS data_type,
-                   path.physics_domain AS physics_domain, u.id AS units,
-                   path.node_type AS node_type,
-                   path.lifecycle_status AS lifecycle_status,
-                   path.lifecycle_version AS lifecycle_version,
-                   path.timebasepath AS timebase,
-                   path.path_doc AS structure_reference,
-                   path.coordinate1_same_as AS coordinate1,
-                   path.coordinate2_same_as AS coordinate2,
-                   path.cocos_transformation_type AS cocos_label,
-                   path.cocos_transformation_expression AS cocos_expression,
-                   path.description AS description,
-                   path.keywords AS keywords,
-                   path.enrichment_source AS enrichment_source,
-                   collect(DISTINCT coord.id) AS coordinates,
-                   ident IS NOT NULL AS has_identifier_schema,
-                   ident.name AS identifier_schema_name,
-                   ident.description AS identifier_schema_description,
-                   intro.id AS introduced_after_version
-            """,
-            path_ids=sorted_ids,
-        )
-
-        # Index by path ID for score lookup
-        enriched_by_id = {r["id"]: r for r in enriched or []}
-
-        # --- COCOS transformation filter (post-enrichment) ---
-        # Applied here rather than in Cypher WHERE so both vector and text
-        # search paths stay simple. The enriched query already fetches
-        # cocos_transformation_type, so no extra round-trip is needed.
-        if cocos_transformation_type:
-            enriched_by_id = {
-                pid: r
-                for pid, r in enriched_by_id.items()
-                if r.get("cocos_label") == cocos_transformation_type
-            }
-            sorted_ids = [pid for pid in sorted_ids if pid in enriched_by_id]
-
-        # --- Optional facility cross-references ---
-        facility_xrefs: dict[str, dict[str, Any]] = {}
-        if facility and sorted_ids:
-            facility_xrefs = _get_facility_crossrefs(self._gc, sorted_ids, facility)
-
-        # --- Optional version context ---
-        version_ctx: dict[str, dict[str, Any]] = {}
-        if include_version_context and sorted_ids:
-            version_ctx = _get_version_context(self._gc, sorted_ids)
-
-        # --- Rename lineage (always fetched) ---
-        rename_lineage_map = _fetch_rename_lineage(self._gc, sorted_ids)
-
-        hits = []
-        physics_domains = set()
-        for rank, pid in enumerate(sorted_ids, start=1):
-            r = enriched_by_id.get(pid)
-            if not r:
-                continue
-            xref = facility_xrefs.get(pid)
-            vctx = version_ctx.get(pid)
-            hits.append(
-                SearchHit(
-                    path=r["id"],
-                    ids_name=r["ids"] or "",
-                    documentation=r["documentation"] or "",
-                    data_type=r["data_type"],
-                    units=r["units"] or "",
-                    physics_domain=r["physics_domain"],
-                    node_type=r["node_type"],
-                    coordinates=r["coordinates"] or [],
-                    lifecycle_status=r["lifecycle_status"],
-                    lifecycle_version=r["lifecycle_version"],
-                    timebase=r["timebase"],
-                    structure_reference=r["structure_reference"],
-                    coordinate1=r["coordinate1"],
-                    coordinate2=r["coordinate2"],
-                    cocos_transformation_type=r["cocos_label"],
-                    cocos_transformation_expression=r["cocos_expression"],
-                    description=r.get("description"),
-                    keywords=r.get("keywords"),
-                    enrichment_source=r.get("enrichment_source"),
-                    has_identifier_schema=bool(r["has_identifier_schema"]),
-                    identifier_schema_name=r.get("identifier_schema_name"),
-                    identifier_schema_description=r.get(
-                        "identifier_schema_description"
-                    ),
-                    introduced_after_version=r["introduced_after_version"],
-                    score=scores.get(pid, 0.0),
-                    rank=rank,
-                    search_mode=mode,
-                    facility_xrefs=xref,
-                    version_context=vctx,
-                    rename_lineage=rename_lineage_map.get(pid),
-                )
-            )
-            if r["physics_domain"]:
-                physics_domains.add(r["physics_domain"])
-
-        # --- Post-filter by physics_domain and lifecycle_status ---
-        if physics_domain:
-            hits = [h for h in hits if h.physics_domain == physics_domain]
-        if lifecycle_filter:
-            hits = [h for h in hits if h.lifecycle_status == lifecycle_filter]
-
-        # --- Expand STRUCTURE hits with leaf children ---
-        _STRUCTURE_TYPES = {"structure", "struct_array", "STRUCTURE"}
-        structure_hits = [h for h in hits if h.data_type in _STRUCTURE_TYPES][:5]
-
-        if structure_hits:
-            parent_ids = [h.path for h in structure_hits]
-            child_results = self._gc.query(
-                """
-                UNWIND $parent_ids AS parent_id
-                MATCH (child:IMASNode)
-                WHERE child.id STARTS WITH parent_id + '/'
-                  AND NOT (child)-[:DEPRECATED_IN]->(:DDVersion)
-                  AND child.node_category IN $categories
-                  AND child.data_type IS NOT NULL
-                  AND NOT (toLower(child.data_type) IN ['structure', 'struct_array'])
-                  AND NOT (child.id CONTAINS '_error_')
-                WITH parent_id, child
-                ORDER BY child.id
-                WITH parent_id, collect({
-                    id: child.id,
-                    name: child.name,
-                    data_type: child.data_type,
-                    units: child.units
-                })[..10] AS children, count(child) AS total
-                RETURN parent_id, children, total
-                """,
-                parent_ids=parent_ids,
-                categories=effective_categories,
-            )
-
-            children_by_parent: dict[str, tuple[list, int]] = {
-                r["parent_id"]: (r["children"], r["total"]) for r in child_results or []
-            }
-
-            for hit in structure_hits:
-                child_data = children_by_parent.get(hit.path)
-                if child_data:
-                    children_list, total = child_data
-                    hit.children = children_list
-                    hit.children_total = total
+        physics_domains = sorted({h.physics_domain for h in hits if h.physics_domain})
 
         return SearchPathsResult(
             hits=hits,
@@ -741,7 +436,7 @@ class GraphSearchTool:
             },
             query=query,
             search_mode=mode,
-            physics_domains=sorted(physics_domains),
+            physics_domains=physics_domains,
         )
 
     def _embed_query(self, query: str) -> list[float]:
