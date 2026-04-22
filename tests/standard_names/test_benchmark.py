@@ -772,118 +772,8 @@ class TestCLICommand:
             assert "/" in m, f"Model ID should be provider/slug format: {m}"
 
 
-class TestCalibrationDataset:
-    """Test benchmark calibration dataset."""
-
-    def test_calibration_loads(self):
-        from imas_codex.standard_names.benchmark import load_calibration_entries
-
-        entries = load_calibration_entries()
-        assert isinstance(entries, list)
-        assert len(entries) == 33, f"Expected 33 entries, got {len(entries)}"
-
-    def test_calibration_tiers(self):
-        from imas_codex.standard_names.benchmark import load_calibration_entries
-
-        entries = load_calibration_entries()
-        tiers = {}
-        for entry in entries:
-            tier = entry["tier"]
-            tiers[tier] = tiers.get(tier, 0) + 1
-        assert tiers == {"outstanding": 13, "good": 7, "adequate": 5, "poor": 8}
-
-    def test_calibration_required_keys(self):
-        from imas_codex.standard_names.benchmark import load_calibration_entries
-
-        required = {"name", "tier", "expected_score", "description", "fields", "reason"}
-        entries = load_calibration_entries()
-        for entry in entries:
-            missing = required - set(entry.keys())
-            assert not missing, f"Entry {entry['name']} missing keys: {missing}"
-
-    # Names with known ISN parser ambiguities (e.g. greedy coordinate
-    # consumption of "poloidal" prefix before device token).  Tracked
-    # upstream; skip until the ISN parser is fixed.
-    _KNOWN_ROUNDTRIP_FAILURES: frozenset[str] = frozenset(
-        {
-            "poloidal_magnetic_field_probe_magnetic_field",
-        }
-    )
-
-    def test_calibration_names_round_trip(self):
-        """Every calibration entry name must survive parse→compose round-trip."""
-        from imas_codex.standard_names.benchmark import load_calibration_entries
-
-        entries = load_calibration_entries()
-        failures = []
-        for entry in entries:
-            name = entry["name"]
-            if name in self._KNOWN_ROUNDTRIP_FAILURES:
-                continue
-            try:
-                parsed = parse_standard_name(name)
-                rt = compose_standard_name(parsed)
-                if rt != name:
-                    failures.append(f"{name}: round-trip produced {rt!r}")
-            except Exception as e:
-                failures.append(f"{name}: {e!s:.80s}")
-        assert not failures, "Round-trip failures:\n" + "\n".join(failures)
-
-    def test_calibration_fields_compose_to_name(self):
-        """compose_standard_name(StandardName(**fields)) == name for each entry.
-
-        Entries marked ``fields_valid: false`` are skipped — these document
-        intentional field/name inconsistencies (anti-patterns) so they must
-        not be required to round-trip.
-        """
-        from imas_codex.standard_names.benchmark import load_calibration_entries
-
-        entries = load_calibration_entries()
-        failures = []
-        for entry in entries:
-            if entry.get("fields_valid") is False:
-                continue
-            try:
-                sn = imas_standard_names.grammar.StandardName(**entry["fields"])
-                composed = compose_standard_name(sn)
-                if composed != entry["name"]:
-                    failures.append(f"{entry['name']}: fields compose to {composed!r}")
-            except Exception as e:
-                failures.append(f"{entry['name']}: {e!s:.80s}")
-        assert not failures, "Field composition failures:\n" + "\n".join(failures)
-
-    def test_calibration_score_ranges(self):
-        """Verify expected_score falls within the tier's defined range."""
-        from imas_codex.standard_names.benchmark import load_calibration_entries
-
-        tier_ranges = {
-            "outstanding": (102, 120),
-            "good": (72, 101),
-            "adequate": (48, 71),
-            "poor": (0, 47),
-        }
-        entries = load_calibration_entries()
-        for entry in entries:
-            lo, hi = tier_ranges[entry["tier"]]
-            assert lo <= entry["expected_score"] <= hi, (
-                f"{entry['name']} ({entry['tier']}): score {entry['expected_score']} "
-                f"outside range [{lo}, {hi}]"
-            )
-
-    def test_calibration_no_duplicate_names(self):
-        """Entries may share a name to demonstrate tier-graded treatments
-        (e.g. ``elongation_of_plasma_boundary`` appears at ``outstanding``,
-        ``outstanding`` cycle-2, and ``poor`` to illustrate the collapse
-        anti-pattern). Uniqueness is therefore enforced on the
-        ``(name, tier, reason)`` triple, not on ``name`` alone.
-        """
-        from imas_codex.standard_names.benchmark import load_calibration_entries
-
-        entries = load_calibration_entries()
-        signatures = [(e["name"], e["tier"], e.get("reason", "")) for e in entries]
-        assert len(signatures) == len(set(signatures)), (
-            "Duplicate (name, tier, reason) in calibration dataset"
-        )
+class TestReviewerConfig:
+    """Test reviewer configuration and model result fields."""
 
     def test_reviewer_config_field(self):
         from imas_codex.standard_names.benchmark import BenchmarkConfig
@@ -1275,15 +1165,13 @@ class TestReviewerTemplate:
 
     def test_template_renders(self):
         from imas_codex.llm.prompt_loader import render_prompt
-        from imas_codex.standard_names.benchmark import load_calibration_entries
 
-        entries = load_calibration_entries()
         review_ctx = self._get_review_context()
         rendered = render_prompt(
             "sn/review",
             {
                 **review_ctx,
-                "calibration_entries": entries,
+                "review_scored_examples": [],
                 "items": [
                     {
                         "standard_name": "electron_temperature",
@@ -1310,28 +1198,6 @@ class TestReviewerTemplate:
         assert "Prompt Compliance" in rendered
         assert "outstanding" in rendered
 
-    def test_template_includes_calibration_examples(self):
-        from imas_codex.llm.prompt_loader import render_prompt
-        from imas_codex.standard_names.benchmark import load_calibration_entries
-
-        entries = load_calibration_entries()
-        review_ctx = self._get_review_context()
-        rendered = render_prompt(
-            "sn/review",
-            {
-                **review_ctx,
-                "calibration_entries": entries,
-                "items": [],
-                "existing_names": [],
-                "batch_context": "",
-            },
-        )
-        # All calibration entry names should appear
-        for entry in entries:
-            assert entry["name"] in rendered, (
-                f"Calibration entry {entry['name']} not in rendered template"
-            )
-
     def test_template_renders_empty_candidates(self):
         from imas_codex.llm.prompt_loader import render_prompt
 
@@ -1340,7 +1206,7 @@ class TestReviewerTemplate:
             "sn/review",
             {
                 **review_ctx,
-                "calibration_entries": [],
+                "review_scored_examples": [],
                 "items": [],
                 "existing_names": [],
                 "batch_context": "",

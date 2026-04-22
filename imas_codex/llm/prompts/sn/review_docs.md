@@ -63,6 +63,8 @@ Derive your verdict from the scores:
 
 When revising, fix ONLY documentation/description prose and equations. Do **not** rename the quantity or edit grammar fields.
 
+{% include "sn/_review_scored_examples.md" %}
+
 {% if batch_context %}
 ## Source Context (same as composer received)
 

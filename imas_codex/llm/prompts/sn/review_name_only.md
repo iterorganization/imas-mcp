@@ -121,6 +121,8 @@ Derive your verdict from the scores:
 
 When revising, fix ONLY grammar and naming issues. Do **not** invent documentation.
 
+{% include "sn/_review_scored_examples.md" %}
+
 {% if batch_context %}
 ## Source Context (same as composer received)
 

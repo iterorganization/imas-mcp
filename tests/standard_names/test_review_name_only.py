@@ -197,7 +197,7 @@ def test_full_prompt_still_renders_six_dimensions() -> None:
         "sn/review",
         {
             "items": [],
-            "calibration_entries": [],
+            "review_scored_examples": [],
             "existing_names": [],
             "batch_context": "",
             "nearby_existing_names": [],

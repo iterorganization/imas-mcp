@@ -31,7 +31,6 @@ from the returned dict — no private ISN imports.
 - **LLM evaluation**: 6-dimensional scoring (grammar, semantic, documentation, convention, completeness, compliance)
 - **Review criteria**: `imas_codex/llm/config/sn_review_criteria.yaml`
 - **Graph persistence**: StandardName nodes, relationships, validation issues
-- **Calibration**: `benchmark_calibration.yaml` for reviewer consistency
 - **Collision avoidance**: Vector search for similar existing names (`imas_codex/standard_names/search.py`)
 - **Prompt infrastructure**: Shared fragments via `{% include %}`, prompt configs via `load_prompt_config()`
 

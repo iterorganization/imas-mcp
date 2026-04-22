@@ -441,7 +441,6 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
     # Shared context for prompt rendering
     grammar_enums = _get_grammar_enums()
     compose_ctx = _get_compose_context_for_review()
-    calibration_entries = _load_calibration_entries()
 
     total_items = sum(len(b["names"]) for b in batches)
     state.review_stats.total = total_items
@@ -487,7 +486,6 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                     model=model,
                     grammar_enums=grammar_enums,
                     compose_ctx=compose_ctx,
-                    calibration_entries=calibration_entries,
                     batch_context=batch.get("group_key", ""),
                     neighborhood=batch.get("neighborhood", []),
                     audit_findings=batch.get("audit_findings", []),
@@ -568,7 +566,6 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                                 model=sec_model,
                                 grammar_enums=grammar_enums,
                                 compose_ctx=compose_ctx,
-                                calibration_entries=calibration_entries,
                                 batch_context=batch.get("group_key", ""),
                                 neighborhood=batch.get("neighborhood", []),
                                 audit_findings=batch.get("audit_findings", []),
@@ -1026,7 +1023,6 @@ async def _review_single_batch(
     model: str,
     grammar_enums: dict[str, list[str]],
     compose_ctx: dict[str, Any],
-    calibration_entries: list[dict],
     batch_context: str,
     neighborhood: list[dict],
     audit_findings: list[str],
@@ -1080,8 +1076,6 @@ async def _review_single_batch(
         prompt_name = "sn/review"
         response_model = StandardNameQualityReviewBatch
 
-    cal = calibration_entries or []
-
     # Enrich items with validation issues for reviewer context
     items_with_issues = []
     for item in names:
@@ -1097,19 +1091,19 @@ async def _review_single_batch(
         **base_ctx,
         "items": items_with_issues,
         "existing_names": [],  # not needed for standalone review
-        "calibration_entries": cal,
+        "review_scored_examples": [],
         "batch_context": batch_context,
         "nearby_existing_names": neighborhood,
         "audit_findings": audit_findings,
         **grammar_enums,
     }
 
-    # System prompt: rubric + calibration (cached across batches)
+    # System prompt: rubric (cached across batches)
     system_context = {
         **base_ctx,
         "items": [],
         "existing_names": [],
-        "calibration_entries": cal,
+        "review_scored_examples": [],
         "batch_context": "",
         "nearby_existing_names": [],
         "audit_findings": [],
@@ -1163,7 +1157,6 @@ async def _review_single_batch(
             model=model,
             grammar_enums=grammar_enums,
             compose_ctx=compose_ctx,
-            calibration_entries=calibration_entries,
             batch_context=batch_context,
             neighborhood=neighborhood,
             audit_findings=audit_findings,
@@ -1246,20 +1239,3 @@ def _get_compose_context_for_review() -> dict[str, Any]:
     except Exception:
         logger.debug("build_compose_context unavailable", exc_info=True)
         return {}
-
-
-def _load_calibration_entries() -> list[dict]:
-    """Load calibration entries from benchmark_calibration.yaml."""
-    from pathlib import Path
-
-    import yaml
-
-    cal_path = Path(__file__).parents[1] / "benchmark_calibration.yaml"
-    if not cal_path.exists():
-        return []
-    try:
-        with open(cal_path) as f:
-            data = yaml.safe_load(f)
-        return data.get("entries", [])
-    except Exception:
-        return []

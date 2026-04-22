@@ -526,6 +526,5 @@ Only `valid` names participate in `sn review`, consolidation, and `sn publish`.
 | `imas_codex/llm/prompts/shared/sn/_grammar_reference.md` | Shared grammar fragment (included by compose_system.md) |
 | `imas_codex/llm/prompts/shared/sn/_scoring_rubric.md` | Shared scoring rubric reference |
 | `imas_codex/llm/config/sn_review_criteria.yaml` | Review scoring config (dimensions, tiers, verdict rules) |
-| `imas_codex/standard_names/calibration.py` | Centralized loader (cached) for benchmark_calibration.yaml |
 | `imas_codex/standard_names/search.py` | Vector search for similar existing StandardName nodes |
 | `imas_codex/schemas/standard_name.yaml` | LinkML schema (v0.5.0) |

@@ -21,6 +21,8 @@ grammar fields, kind, or unit.
 
 {% include "sn/_exemplars_enrich.md" %}
 
+{% include "sn/_compose_scored_examples.md" %}
+
 ## Documentation Template
 
 For each name, the documentation field should cover (where applicable):

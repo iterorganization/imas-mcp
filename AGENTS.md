@@ -772,7 +772,6 @@ Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
 | `imas_codex/standard_names/models.py` | Pydantic response models (`StandardNameComposeBatch`, `StandardNameAttachment`) |
 | `imas_codex/standard_names/source_paths.py` | Central encode/parse/split/merge utilities for StandardName source paths |
 | `imas_codex/standard_names/context.py` | Grammar context builder (vocabulary, examples, tokamak ranges) |
-| `imas_codex/standard_names/calibration.py` | Centralized loader (cached) for `benchmark_calibration.yaml` |
 | `imas_codex/standard_names/search.py` | Vector search for similar existing StandardName nodes (collision avoidance) |
 
 **Unit safety:** Units flow exclusively from the DD `HAS_UNIT` relationship → EXTRACT → prompt
@@ -804,9 +803,7 @@ pyproject.toml. Output table includes a **Cache %** column showing the prompt-ca
 hit rate per model (provider-side via OpenRouter — not something we implement). Scoring is
 **6-dimensional**: grammar, semantic, documentation, convention, completeness, and compliance
 (each 0-20 integer, aggregate normalized to 0-1 via `sum / 120.0`), evaluated by a reviewer LLM.
-Scoring criteria are defined in `imas_codex/llm/config/sn_review_criteria.yaml`. The calibration
-dataset (`benchmark_calibration.yaml`) is loaded via `imas_codex/standard_names/calibration.py` (cached
-singleton) and provides known-quality examples for reviewer consistency checks.
+Scoring criteria are defined in `imas_codex/llm/config/sn_review_criteria.yaml`.
 
 **Qualified models** (benchmark evidence from equilibrium + core_profiles + magnetics):
 

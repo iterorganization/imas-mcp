@@ -53,7 +53,7 @@ def test_review_prompt_includes_validation_context():
             }
         ],
         "existing_names": [],
-        "calibration_entries": [],
+        "review_scored_examples": [],
         "batch_context": "",
     }
     # Should render without error — the template should handle validation_issues

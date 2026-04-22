@@ -254,7 +254,6 @@ async def test_single_batch_dispatch_selects_prompt_per_target(monkeypatch) -> N
                 "binary_operators": [],
             },
             compose_ctx={},
-            calibration_entries=[],
             batch_context="",
             neighborhood=[],
             audit_findings=[],

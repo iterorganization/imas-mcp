@@ -13,6 +13,8 @@ You are a physics nomenclature expert generating IMAS standard names for fusion 
 
 {% include "sn/_exemplars_name_only.md" %}
 
+{% include "sn/_compose_scored_examples.md" %}
+
 ### REJECT — Forbidden Name Tokens
 
 REJECT any candidate name that contains any of the following tokens or substrings,

@@ -1033,6 +1033,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 state.domain_filter,
             )
     context["reviewer_themes"] = reviewer_themes
+    context["compose_scored_examples"] = []
 
     system_prompt = render_prompt("sn/compose_system", context)
 

@@ -13,7 +13,6 @@ import logging
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from imas_standard_names.grammar import (
@@ -250,27 +249,9 @@ def compare_to_reference(
 # ---------------------------------------------------------------------------
 
 
-def load_calibration_entries() -> list[dict]:
-    """Load calibration entries from benchmark_calibration.yaml.
-
-    Returns a list of dicts, each with: name, tier, expected_score,
-    description, documentation, unit, kind, tags, fields, reason.
-    Returns empty list if file not found.
-    """
-    import yaml
-
-    cal_path = Path(__file__).parent / "benchmark_calibration.yaml"
-    if cal_path.exists():
-        with open(cal_path) as f:
-            data = yaml.safe_load(f) or {}
-        return data.get("entries", [])
-    return []
-
-
 async def score_with_reviewer(
     candidates: list[dict],
     reviewer_model: str,
-    calibration_entries: list[dict],
     target: str = "names",
 ) -> list[dict]:
     """Score candidates using the rubric matching the compose output fidelity.
@@ -326,12 +307,12 @@ async def score_with_reviewer(
         if k in compose_ctx
     }
 
-    # System prompt: rubric + calibration (cached across batches)
+    # System prompt: rubric (cached across batches)
     system_prompt = render_prompt(
         prompt_name,
         {
             **compose_ctx,
-            "calibration_entries": calibration_entries,
+            "review_scored_examples": [],
             "items": [],
             "existing_names": [],
             "batch_context": "",
@@ -367,7 +348,7 @@ async def score_with_reviewer(
             prompt_name,
             {
                 **compose_ctx,
-                "calibration_entries": calibration_entries,
+                "review_scored_examples": [],
                 "items": batch_items,
                 "existing_names": [],
                 "batch_context": "",
@@ -459,6 +440,7 @@ async def run_benchmark(
     from imas_codex.standard_names.context import build_compose_context
 
     context = build_compose_context()
+    context["compose_scored_examples"] = []
     system_prompt = render_prompt("sn/compose_system", context)
 
     for model in config.models:
@@ -475,13 +457,11 @@ async def run_benchmark(
 
     # --- 2b. Reviewer scoring (optional) ---
     if config.reviewer_model:
-        calibration_entries = load_calibration_entries()
         for result in results:
             if result.candidates:
                 reviews = await score_with_reviewer(
                     result.candidates,
                     config.reviewer_model,
-                    calibration_entries,
                     target=config.review_target,
                 )
                 result.quality_scores = reviews

@@ -865,7 +865,7 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
     )
 
     # Render system prompt once (identical across batches → prompt-cacheable)
-    system_prompt = render_prompt("sn/enrich_system")
+    system_prompt = render_prompt("sn/enrich_system", {"compose_scored_examples": []})
 
     # Fetch set of existing SN ids once for link-validation in the sanitizer.
     valid_names = _fetch_existing_sn_names()

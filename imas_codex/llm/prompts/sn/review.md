@@ -189,14 +189,7 @@ Derive your verdict from the scores:
 
 When revising, fix ONLY grammar and naming issues. Do not rewrite documentation.
 
-## Calibration Examples
-
-Use these scored examples to anchor your judgments:
-
-{% for entry in calibration_entries %}
-### {{ entry.name }} — {{ entry.tier }} ({{ entry.expected_score }}/120)
-{{ entry.reason }}
-{% endfor %}
+{% include "sn/_review_scored_examples.md" %}
 
 {% if batch_context %}
 ## Source Context (same as composer received)
