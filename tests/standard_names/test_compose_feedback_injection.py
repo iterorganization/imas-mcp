@@ -89,7 +89,7 @@ class TestReviewFeedbackInjection:
         fb = {
             "previous_name": "old_name",
             "reviewer_score": 0.45,
-            "review_tier": "adequate",
+            "review_tier": "inadequate",
             "reviewer_comments": "Needs sharper definition.",
             "reviewer_scores": None,
             "validation_status": "valid",

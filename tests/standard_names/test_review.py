@@ -196,7 +196,7 @@ class TestSNQualityReviewModels:
         assert score.tier == "good"
 
     def test_quality_score_tier_adequate(self):
-        """Score 48-77 is adequate."""
+        """Score 48-77 is inadequate."""
         from imas_codex.standard_names.models import StandardNameQualityScore
 
         score = StandardNameQualityScore(
@@ -208,7 +208,7 @@ class TestSNQualityReviewModels:
             compliance=6,
         )
         assert score.total == 52
-        assert score.tier == "adequate"
+        assert score.tier == "inadequate"
 
     def test_quality_score_tier_poor(self):
         """Score < 48 is poor."""

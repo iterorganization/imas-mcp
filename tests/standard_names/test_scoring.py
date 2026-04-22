@@ -93,7 +93,7 @@ def test_tier_boundaries():
     assert good_boundary.tier == "good"
 
     # Adequate boundary: 0.40 * 120 = 48
-    adequate = StandardNameQualityScore(
+    inadequate = StandardNameQualityScore(
         grammar=8,
         semantic=8,
         documentation=8,
@@ -101,8 +101,8 @@ def test_tier_boundaries():
         completeness=8,
         compliance=8,
     )
-    assert adequate.score == 48 / 120.0
-    assert adequate.tier == "adequate"
+    assert inadequate.score == 48 / 120.0
+    assert inadequate.tier == "inadequate"
 
     # Poor: below 0.40
     poor = StandardNameQualityScore(

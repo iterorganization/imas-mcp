@@ -109,7 +109,7 @@ grammar and convention scores.
 Map the total score (0-80) to a tier:
 - **outstanding** (68-80): Exemplary name ready for documentation enrichment
 - **good** (48-67): Solid name with minor improvements possible
-- **adequate** (32-47): Acceptable but needs refinement before enrichment
+- **inadequate** (32-47): Acceptable but needs refinement before enrichment
 - **poor** (0-31): Needs fundamental rework — likely a wrong decomposition
 
 ## Verdict Rules

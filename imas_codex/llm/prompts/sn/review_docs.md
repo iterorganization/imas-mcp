@@ -51,7 +51,7 @@ Rate each dimension from 0 to 20. The total score is the sum (0-80).
 Map the total score (0-80) to a tier:
 - **outstanding** (68-80): Publishable docs ready for users
 - **good** (48-67): Solid docs with minor polish possible
-- **adequate** (32-47): Usable but needs refinement
+- **inadequate** (32-47): Usable but needs refinement
 - **poor** (0-31): Fundamental physics or documentation issues — needs rewrite
 
 ## Verdict Rules

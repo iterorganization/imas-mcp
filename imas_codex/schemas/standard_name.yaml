@@ -411,7 +411,7 @@ classes:
         range: datetime
       review_tier:
         description: >-
-          Quality tier from review: outstanding, good, adequate, poor.
+          Quality tier from review: outstanding, good, inadequate, poor.
           Derived from reviewer_score thresholds.
       review_mode:
         description: >-
@@ -944,7 +944,7 @@ classes:
       scores_json:
         description: JSON-encoded per-dimension sub-scores
       tier:
-        description: Quality tier (outstanding, good, adequate, poor, unknown)
+        description: Quality tier (outstanding, good, inadequate, poor, unknown)
       comments:
         description: Free-text reviewer comments
       reviewed_at:

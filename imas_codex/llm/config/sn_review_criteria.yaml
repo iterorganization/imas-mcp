@@ -31,7 +31,7 @@ tiers:
     min: 0.85
   good:
     min: 0.65
-  adequate:
+  inadequate:
     min: 0.40
   poor:
     min: 0.0

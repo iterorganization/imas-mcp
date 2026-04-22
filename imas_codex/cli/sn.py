@@ -258,7 +258,7 @@ def _run_sn_loop_cmd(
     default=None,
     help=(
         "Only reset/regenerate names with review_tier in this comma-separated "
-        "list (e.g. 'poor,adequate'). Requires prior `sn review` run."
+        "list (e.g. 'poor,inadequate'). Requires prior `sn review` run."
     ),
 )
 @click.option(

@@ -71,7 +71,7 @@ Rate each dimension from 0 to 20. The total is normalized to a 0-1 score (sum / 
 Map the normalized score (0-1) to a tier:
 - **outstanding** (≥0.85): Exemplary entry ready for publication
 - **good** (≥0.60): Solid entry with minor improvements possible
-- **adequate** (≥0.40): Acceptable but needs enrichment
+- **inadequate** (≥0.40): Acceptable but needs enrichment
 - **poor** (<0.40): Needs fundamental rework
 
 ## Verdict Rules

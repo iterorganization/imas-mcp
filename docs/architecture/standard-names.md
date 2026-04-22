@@ -96,7 +96,7 @@ compliance. Defined in `imas_codex/llm/config/sn_review_criteria.yaml`.
 |------|---------------|
 | outstanding | ≥0.85 |
 | good | ≥0.60 |
-| adequate | ≥0.40 |
+| inadequate | ≥0.40 |
 | poor | <0.40 |
 
 **Verdict rules:** accept (≥0.60, no zero dimensions), reject (<0.40 or any
@@ -445,7 +445,7 @@ Each StandardName node carries a full audit trail:
 | `reviewer_scores` | Review worker | JSON: grammar, semantic, docs, convention, completeness, compliance (each 0-20) |
 | `reviewer_comments` | Review worker | Reasoning text |
 | `reviewed_at` | Review worker | Review timestamp |
-| `review_tier` | Review worker | outstanding/good/adequate/poor |
+| `review_tier` | Review worker | outstanding/good/inadequate/poor |
 | `vocab_gap_detail` | Compose worker | JSON: segment, needed_token, reason |
 | `catalog_commit_sha` | Import | Git SHA of catalog source |
 

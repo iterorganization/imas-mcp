@@ -903,7 +903,7 @@ def test_build_summary_report_scored_unscored_split():
         {
             "id": "plasma_current",
             "reviewer_score": 0.45,
-            "review_tier": "adequate",
+            "review_tier": "inadequate",
         },
         # 2 unscored entries (the bug case)
         {
@@ -936,7 +936,7 @@ def test_build_summary_report_scored_unscored_split():
     assert "unknown" not in summary.tier_distribution
     assert summary.tier_distribution.get("outstanding") == 1
     assert summary.tier_distribution.get("good") == 1
-    assert summary.tier_distribution.get("adequate") == 1
+    assert summary.tier_distribution.get("inadequate") == 1
     assert sum(summary.tier_distribution.values()) == 3
     # Coverage based on scored entries only
     assert summary.coverage_pct == 3.0  # 3/100 * 100

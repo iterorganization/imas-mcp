@@ -133,7 +133,7 @@ class TestFilterPlumbing:
                     "--below-score",
                     "0.6",
                     "--tier",
-                    "poor,adequate",
+                    "poor,inadequate",
                     "--reset-only",
                 ],
             )
@@ -141,7 +141,7 @@ class TestFilterPlumbing:
         mock_reset.assert_called_once()
         call_kwargs = mock_reset.call_args[1]
         assert call_kwargs["below_score"] == 0.6
-        assert call_kwargs["tiers"] == ["poor", "adequate"]
+        assert call_kwargs["tiers"] == ["poor", "inadequate"]
 
     def test_retry_quarantined_sets_validation_status(self, runner: CliRunner) -> None:
         """--retry-quarantined should set validation_status='quarantined'."""

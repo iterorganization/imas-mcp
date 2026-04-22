@@ -52,13 +52,13 @@ def test_docs_score_total_and_tier() -> None:
     # 57/80 = 0.7125 → good
     assert good.tier == "good"
 
-    adequate = StandardNameQualityScoreDocs(
+    inadequate = StandardNameQualityScoreDocs(
         description_quality=10,
         documentation_quality=10,
         completeness=10,
         physics_accuracy=10,
     )
-    assert adequate.tier == "adequate"
+    assert inadequate.tier == "inadequate"
 
     poor = StandardNameQualityScoreDocs(
         description_quality=5,

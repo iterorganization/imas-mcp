@@ -744,11 +744,11 @@ class TestResetStandardNamesFilters:
     def test_tiers_filter(self) -> None:
         """--tier should add a review_tier IN clause."""
         mock_gc = MagicMock()
-        self._call_reset(mock_gc, from_status="drafted", tiers=["poor", "adequate"])
+        self._call_reset(mock_gc, from_status="drafted", tiers=["poor", "inadequate"])
         cypher = self._get_count_cypher(mock_gc)
         params = self._get_count_params(mock_gc)
         assert "sn.review_tier IN $tiers" in cypher
-        assert params["tiers"] == ["poor", "adequate"]
+        assert params["tiers"] == ["poor", "inadequate"]
 
     def test_validation_status_filter(self) -> None:
         """--validation_status should add a validation_status = clause."""

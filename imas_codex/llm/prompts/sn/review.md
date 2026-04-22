@@ -177,7 +177,7 @@ grammar and convention scores.
 Map the total score (0-120) to a tier:
 - **outstanding** (102-120): Exemplary entry ready for publication
 - **good** (72-101): Solid entry with minor improvements possible
-- **adequate** (48-71): Acceptable but needs enrichment
+- **inadequate** (48-71): Acceptable but needs enrichment
 - **poor** (0-47): Needs fundamental rework
 
 ## Verdict Rules

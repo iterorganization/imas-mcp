@@ -440,7 +440,7 @@ def fetch_review_feedback_for_sources(
         - ``previous_description`` (str | None)
         - ``previous_documentation`` (str | None)
         - ``reviewer_score`` (float | None): composite 0–1 score
-        - ``review_tier`` (str | None): ``outstanding|good|adequate|poor``
+        - ``review_tier`` (str | None): ``outstanding|good|inadequate|poor``
         - ``reviewer_comments`` (str | None): free-form reviewer critique
         - ``reviewer_scores`` (dict | None): parsed 6-dimensional rubric scores
         - ``validation_status`` (str | None): graph lifecycle state at

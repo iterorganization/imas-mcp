@@ -47,10 +47,10 @@ def test_name_only_score_total_and_tier() -> None:
     )
     assert poor.tier == "poor"
 
-    adequate = StandardNameQualityScoreNameOnly(
+    inadequate = StandardNameQualityScoreNameOnly(
         grammar=10, semantic=10, convention=10, completeness=10
     )
-    assert adequate.tier == "adequate"
+    assert inadequate.tier == "inadequate"
 
 
 def test_name_only_batch_model_parses_minimal_json() -> None:

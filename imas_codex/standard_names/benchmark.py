@@ -800,7 +800,7 @@ def render_comparison_table(report: BenchmarkReport) -> None:
                     f"{dist.get('good', 0)} ({dist.get('good', 0) / n_reviews * 100:.0f}%)"
                     if n_reviews
                     else "—",
-                    f"{dist.get('adequate', 0)} ({dist.get('adequate', 0) / n_reviews * 100:.0f}%)"
+                    f"{dist.get('inadequate', 0)} ({dist.get('inadequate', 0) / n_reviews * 100:.0f}%)"
                     if n_reviews
                     else "—",
                     f"{dist.get('poor', 0)} ({dist.get('poor', 0) / n_reviews * 100:.0f}%)"
