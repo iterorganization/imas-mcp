@@ -1,0 +1,256 @@
+"""Dynamic scored-example loader for standard-name prompt injection.
+
+Queries reviewed StandardName nodes from the graph at fixed absolute
+score targets and returns them as dicts ready for Jinja template rendering.
+
+Two public functions share the same underlying Cypher logic:
+
+- ``load_compose_examples`` — injected into compose system prompts.
+- ``load_review_examples`` — injected into review/review_name_only/review_docs prompts.
+
+Zero-opp at cold start: returns ``[]`` when no reviewed names exist.
+Naturally rich as the graph fills with reviewed entries.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from imas_codex.graph.client import GraphClient
+
+logger = logging.getLogger(__name__)
+
+# Default target scores span the full quality range:
+#   1.00 = outstanding, 0.80 = good, 0.65 = publish threshold, 0.40 = poor
+_DEFAULT_TARGETS: tuple[float, ...] = (1.00, 0.80, 0.65, 0.40)
+_DEFAULT_TOLERANCE: float = 0.05
+_DEFAULT_PER_BUCKET: int = 1
+
+
+def _parse_json_field(value: Any) -> dict:
+    """Parse a JSON string field into a dict, tolerating None and bad JSON."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+def _query_examples_for_target(
+    gc: GraphClient,
+    target: float,
+    tolerance: float,
+    per_bucket: int,
+    physics_domains: list[str],
+) -> list[dict[str, Any]]:
+    """Query reviewed StandardName nodes closest to a single target score.
+
+    Tries domain-scoped query first; falls back to all domains when
+    the scoped query returns zero rows.
+    """
+    # --- Domain-scoped query ---
+    if physics_domains:
+        rows = gc.query(
+            """
+            MATCH (sn:StandardName)
+            WHERE sn.reviewer_score IS NOT NULL
+              AND sn.reviewer_verdict IS NOT NULL
+              AND sn.physics_domain IN $domains
+              AND abs(sn.reviewer_score - $target) <= $tolerance
+            RETURN sn.id AS id,
+                   sn.description AS description,
+                   sn.documentation AS documentation,
+                   sn.kind AS kind,
+                   sn.unit AS unit,
+                   sn.reviewer_score AS reviewer_score,
+                   sn.reviewer_verdict AS reviewer_verdict,
+                   sn.reviewer_scores AS reviewer_scores_json,
+                   sn.reviewer_comments_per_dim AS reviewer_comments_per_dim_json,
+                   sn.reviewer_comments AS reviewer_comments,
+                   sn.physics_domain AS physics_domain
+            ORDER BY abs(sn.reviewer_score - $target) ASC, sn.id ASC
+            LIMIT $per_bucket
+            """,
+            domains=physics_domains,
+            target=target,
+            tolerance=tolerance,
+            per_bucket=per_bucket,
+        )
+        if rows:
+            return [dict(r) for r in rows]
+
+    # --- Fallback: all domains ---
+    rows = gc.query(
+        """
+        MATCH (sn:StandardName)
+        WHERE sn.reviewer_score IS NOT NULL
+          AND sn.reviewer_verdict IS NOT NULL
+          AND abs(sn.reviewer_score - $target) <= $tolerance
+        RETURN sn.id AS id,
+               sn.description AS description,
+               sn.documentation AS documentation,
+               sn.kind AS kind,
+               sn.unit AS unit,
+               sn.reviewer_score AS reviewer_score,
+               sn.reviewer_verdict AS reviewer_verdict,
+               sn.reviewer_scores AS reviewer_scores_json,
+               sn.reviewer_comments_per_dim AS reviewer_comments_per_dim_json,
+               sn.reviewer_comments AS reviewer_comments,
+               sn.physics_domain AS physics_domain
+        ORDER BY abs(sn.reviewer_score - $target) ASC, sn.id ASC
+        LIMIT $per_bucket
+        """,
+        target=target,
+        tolerance=tolerance,
+        per_bucket=per_bucket,
+    )
+    return [dict(r) for r in rows] if rows else []
+
+
+def _project_example(row: dict[str, Any], target: float) -> dict[str, Any]:
+    """Project a raw graph row into the dict shape expected by templates.
+
+    Template keys:
+      - id, description, documentation, kind, unit
+      - reviewer_score (float), reviewer_verdict (str)
+      - scores (dict — parsed from reviewer_scores_json)
+      - dimension_comments (dict — parsed from reviewer_comments_per_dim_json)
+      - reviewer_comments (str)
+      - physics_domain (str)
+      - target_score (float — the bucket this example was selected for)
+
+    Template aliases (backwards-compat with existing template variables):
+      - score → reviewer_score
+      - tier → reviewer_verdict
+      - domain → physics_domain
+      - issues → [] (not tracked at row level)
+      - verdict → reviewer_verdict
+    """
+    scores = _parse_json_field(row.get("reviewer_scores_json"))
+    comments = _parse_json_field(row.get("reviewer_comments_per_dim_json"))
+
+    return {
+        # Core fields
+        "id": row.get("id", ""),
+        "description": row.get("description", ""),
+        "documentation": row.get("documentation", ""),
+        "kind": row.get("kind", ""),
+        "unit": row.get("unit", ""),
+        # Review fields
+        "reviewer_score": row.get("reviewer_score"),
+        "reviewer_verdict": row.get("reviewer_verdict", ""),
+        "scores": scores,
+        "dimension_comments": comments,
+        "reviewer_comments": row.get("reviewer_comments", ""),
+        "physics_domain": row.get("physics_domain", ""),
+        "target_score": target,
+        # Template aliases
+        "score": row.get("reviewer_score"),
+        "tier": row.get("reviewer_verdict", ""),
+        "domain": row.get("physics_domain", ""),
+        "issues": [],
+        "verdict": row.get("reviewer_verdict", ""),
+    }
+
+
+def _load_examples(
+    gc: GraphClient,
+    physics_domains: list[str],
+    *,
+    target_scores: tuple[float, ...] = _DEFAULT_TARGETS,
+    tolerance: float = _DEFAULT_TOLERANCE,
+    per_bucket: int = _DEFAULT_PER_BUCKET,
+) -> list[dict[str, Any]]:
+    """Shared loader used by both compose and review example functions.
+
+    Iterates target_scores in descending order, querying per-bucket
+    examples for each target. Returns deterministic ordering:
+    (target_score DESC, name.id ASC).
+    """
+    results: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for target in sorted(target_scores, reverse=True):
+        rows = _query_examples_for_target(
+            gc, target, tolerance, per_bucket, physics_domains
+        )
+        for row in rows:
+            name_id = row.get("id", "")
+            if name_id and name_id not in seen_ids:
+                seen_ids.add(name_id)
+                results.append(_project_example(row, target))
+
+    if results:
+        logger.debug(
+            "Loaded %d scored examples (domains=%s, targets=%s)",
+            len(results),
+            physics_domains or "all",
+            target_scores,
+        )
+
+    return results
+
+
+def load_compose_examples(
+    gc: GraphClient,
+    physics_domains: list[str],
+    *,
+    target_scores: tuple[float, ...] = _DEFAULT_TARGETS,
+    tolerance: float = _DEFAULT_TOLERANCE,
+    per_bucket: int = _DEFAULT_PER_BUCKET,
+) -> list[dict[str, Any]]:
+    """Query reviewed StandardName nodes closest to each target score.
+
+    For each target in *target_scores*, find up to *per_bucket* names whose
+    ``reviewer_score`` is closest (``|score - target| <= tolerance``),
+    preferring names whose ``physics_domain`` is in *physics_domains*.
+    Fall back to all domains when the domain-scoped query returns nothing
+    for a given target.
+
+    Ordering: deterministic by (target_score DESC, name.id ASC) so that once
+    the graph stabilises, the example set becomes static and cacheable.
+
+    Returns list of dicts projecting only fields the prompt needs::
+
+        {id, description, documentation, reviewer_score, reviewer_verdict,
+         scores (parsed dict), dimension_comments (parsed dict),
+         physics_domain, ...}
+    """
+    return _load_examples(
+        gc,
+        physics_domains,
+        target_scores=target_scores,
+        tolerance=tolerance,
+        per_bucket=per_bucket,
+    )
+
+
+def load_review_examples(
+    gc: GraphClient,
+    physics_domains: list[str],
+    *,
+    target_scores: tuple[float, ...] = _DEFAULT_TARGETS,
+    tolerance: float = _DEFAULT_TOLERANCE,
+    per_bucket: int = _DEFAULT_PER_BUCKET,
+) -> list[dict[str, Any]]:
+    """Query reviewed StandardName nodes for review prompt calibration.
+
+    Same logic as :func:`load_compose_examples` — the distinction exists
+    so callers can evolve projection or target defaults independently.
+    """
+    return _load_examples(
+        gc,
+        physics_domains,
+        target_scores=target_scores,
+        tolerance=tolerance,
+        per_bucket=per_bucket,
+    )
