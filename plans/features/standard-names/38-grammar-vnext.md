@@ -2,9 +2,23 @@
 
 > **Status**: DRAFT — awaiting RD review then fleet dispatch
 > **Supersedes**: plan 37 (grammar-identity-prefix)
-> **Scope**: ISN grammar + vocabulary rework (`imas-standard-names` repo) and
+> **Scope**: ISN grammar + vocabulary rework (`imas-standard-names` repo),
+> ISNC corpus preservation (`imas-standard-names-catalog` fork), and
 > downstream codex integration (schema simplification, prompt rewrite,
 > exemplar rewrite, full regeneration validation).
+
+---
+
+## Terminology
+
+| Term | Expansion | Meaning in this plan |
+|---|---|---|
+| **IR** | Intermediate Representation | A structured in-memory form of a standard name, sitting between the raw string and the rendered canonical string. The parser produces an IR, the generator consumes an IR. Round-trip safety is defined against the IR: `compose(parse(name)).string == name`. See §A1 for the 5-group IR structure. |
+| **ISN** | `imas-standard-names` | The upstream grammar & vocabulary Python package (`imas_standard_names`). |
+| **ISNC** | `imas-standard-names-catalog` | The YAML catalog repo holding published `StandardNameEntry` files exported from codex. Current contents (fork `main`, tag `v0.2.0-rc20-corpus`): 479 names across 23 physics domains. |
+| **rc20 corpus** | The 479 names in ISNC tag `v0.2.0-rc20-corpus` | The frozen, reviewed pre-vNext corpus — used to mine vocab gaps and test round-trip behaviour. |
+| **Round-trip safe** | `compose(parse(name)).string == name` | A name whose parser-IR renders back byte-for-byte to the same string. Goal G3. |
+| **Canonical form** | Single unique rendering | The one string the strict generator produces for a given IR. Multiple non-canonical inputs may parse to the same IR; the generator emits exactly one canonical output. |
 
 ---
 
@@ -63,8 +77,18 @@ the ISN parser the single source of truth.
 
 ## Part A — ISN Grammar vNext (rc21)
 
-Executed in the `imas-standard-names` repo. Greenfield breaking change;
-no backwards compatibility.
+### A-1. ISNC rc20 corpus preservation (prerequisite — COMPLETED)
+
+The imas-standard-names-catalog fork (`origin`,
+`github.com:Simon-McIntosh/imas-standard-names-catalog`) has been tagged
+with **`v0.2.0-rc20-corpus`** capturing the 479-name, 23-domain published
+corpus exported at codex commit `0bb79adf` under ISN `v0.7.0rc20`. This
+tag is the frozen mining substrate for §A9 vocabulary curation and the
+baseline against which grammar vNext improvements are measured (§D4).
+
+Fork-only — **not pushed to upstream (`iterorganization`)**. Upstream
+promotion happens separately after grammar vNext stabilises, so the
+upstream catalog is not published with names we intend to supersede.
 
 ### A0. Canonical-form philosophy (documentation pre-work)
 
@@ -298,26 +322,94 @@ def parse(name: str) -> ParseResult:
   records a diagnostic.
 - Round-trip gate enforced in CI for the curated corpus.
 
-### A9. Vocabulary curation pass
+### A9. Vocabulary curation pass — driven by ISNC rc20 corpus
 
-Real-corpus driven expansion:
+Real-corpus driven expansion. **Primary source**: ISNC tag
+`v0.2.0-rc20-corpus` (479 names across 23 physics domains — see §A-1).
+Secondary sources fill in what the corpus does not yet cover.
 
-- Extract distinct tokens from:
-  - Current codex graph (38 names × ~13 segments)
-  - Existing rc20 vocabularies
-  - IMAS DD paths surfaced by EXTRACT pass (subset of DD IDSes)
-  - Calibration dataset (`benchmark_calibration.yaml` — before it's removed per user's prior decision)
-- Manual curation by Copilot (senior reviewer role) against the new IR
-- Specifically close:
-  - `physical_bases.yml` — new, ~200 tokens
-  - `geometry_carriers.yml` — new, ~30 tokens
-  - `locus_registry.yml` — new, merges object+position+geometry+device
-  - `coordinate_axes.yml` — new, separate from components
-- Deprecate/remove rc20 files: `objects.yml`, `positions.yml`,
-  `geometric_bases.yml` (partial — carriers split out), old
-  `transformations.yml`, `decomposition.yml`
-- Update `subjects.yml` (species list) and `processes.yml` (mechanism list)
-  only additively.
+Sources, in priority order:
+
+1. **ISNC rc20 corpus** — 479 curated, published names; the main mining
+   substrate. Every token that appears in a published name is a candidate
+   for inclusion in one of the vNext closed vocabularies, classified by
+   its grammatical role.
+2. **rc20 ISN vocabularies** — seed for well-known tokens
+   (subjects, processes, components, regions, etc.).
+3. **IMAS DD paths** surfaced by the current EXTRACT pass.
+4. **Physics convention references** (CF metadata conventions, plasma
+   physics glossaries) for gap-filling where the corpus and DD don't
+   surface a canonical term.
+
+#### A9.1 Corpus-derived vocabulary gap analysis
+
+Preliminary token mining on the rc20 corpus already shows **130 tokens
+with frequency ≥ 3** that are **not in any rc20 ISN vocabulary**. Top
+examples (frequency in parentheses):
+
+```
+momentum (31)     gyrokinetic (17)    eigenmode (16)    diffusivity (15)
+radiated (14)     angle (12)          waveform (11)     moment (11)
+potential (11)    torque (9)          rate (9)          weight (9)
+effective (8)     gradient (8)        flag (8)          convective (7)
+exact (7)         width (6)           decay (6)         length (6)
+count (6)         angular (5)         electrostatic (5) reconstruction (5)
+accumulated (4)   prefill (4)         magnetization (4) simulation (4)
+collisional (3)   beta (3)            launched (3)      flow (3)
+sputtering (3)    emissivity (3)      fraction (3)      stored (3)
+```
+
+These belong in one of: `physical_bases.yml` (new, closed),
+`operators.yml` (new unified), `subjects.yml` (additive), or
+`locus_registry.yml` (new typed). Classification is a deliverable of A9.
+
+#### A9.2 Curation deliverables
+
+Specifically close, populated from the corpus:
+
+- **`physical_bases.yml`** (NEW, closed) — every unique `physical_base`
+  token that appears as a name's residue after IR decomposition. From
+  the corpus: ~180 distinct physical bases (temperature, pressure,
+  number_density, current_density, magnetic_flux, safety_factor,
+  effective_charge, radiated_power, torque_density, …).
+- **`geometry_carriers.yml`** (NEW, closed) — position, outline, centroid,
+  trajectory, line_of_sight, etc.; ~30 tokens from corpus.
+- **`locus_registry.yml`** (NEW, typed) — merge of rc20
+  `objects.yml` + `positions.yml` + `geometry` tokens + `device` enums,
+  each tagged with its allowed relations. ~230 tokens from corpus
+  (plasma_boundary, magnetic_axis, separatrix, wall, divertor_target,
+  flux_loop, x_point, ion_cyclotron_heating_antenna, …).
+- **`coordinate_axes.yml`** (NEW) — separate from components; ~12 tokens.
+- **`operators.yml`** (NEW, unified) — merges rc20 transformations +
+  decomposition + reductions + binary operators, with precedence,
+  arg-type, and rendering metadata. Expected ~45 operators including
+  corpus-surfaced ones like `moment` (postfix), `gyroaveraged` (postfix),
+  `maximum_of` (prefix), `derivative_of_X_with_respect_to_Y` (binary-like
+  with coordinate qualifier), `line_integrated`, `flux_surface_averaged`,
+  `accumulated`, `prefill`.
+
+Deprecate/remove rc20 files: `objects.yml`, `positions.yml`,
+`geometric_bases.yml` (partial — carriers split out), old
+`transformations.yml`, `decomposition.yml`.
+
+Update additively: `subjects.yml` (species list; add `counter_passing`,
+`co_passing`, `thermal`, `fast` if not already), `processes.yml`
+(mechanism list; add `coulomb_collisions`, `thermalization`, `impurity_radiation`,
+`diamagnetic_drift`, `perpendicular_viscosity`), `regions.yml` (add
+`pedestal`, `separatrix` as region-typed where applicable).
+
+#### A9.3 Curation workflow
+
+1. Extract distinct tokens from all 479 corpus names (grouping by position
+   in rc20 parse IR).
+2. Cross-reference with rc20 vocabulary files.
+3. Copilot (senior-reviewer role, Opus 4.6) classifies each
+   unknown/ambiguous token into the correct vNext segment.
+4. Generate draft vocab files; parse every corpus name through the new
+   parser; any `ParseError` triggers a vocab review cycle.
+5. Target: ≥ 95% of corpus names parse cleanly on first pass (the
+   remaining ≤ 5% are expected to be legitimate diagnostics where the
+   name itself is non-canonical and will be regenerated).
 
 ### A10. Test suite
 
@@ -334,13 +426,126 @@ Expand ISN tests:
   parse (possibly with non-canonical diagnostic) so pre-existing corpora
   survive.
 
-### A11. ISN release
+### A11. ISN release — rc21 gate for codex work
 
-- Version: `v0.7.0rc21`
-- Tag `rc21-grammar-vnext` on ISN main
-- PyPI pre-release
-- Changelog: breaking change list, migration guide from rc20
-- Bump `imas-codex` pin to `imas-standard-names>=0.7.0rc21,<0.8`
+This is the **hard gate** between ISN work and codex work. Codex Part B/C/D
+cannot start until ISN rc21 is released to PyPI pre-releases and the codex
+`pyproject.toml` pin is updated. The gate ensures codex teams `uv sync`
+against a stable grammar surface before rewriting prompts and schema.
+
+Steps:
+
+1. All §A10 tests pass.
+2. Run full round-trip parse against ISNC rc20 corpus (§A-1, 479 names);
+   ≥ 95% parse cleanly, remaining ≤ 5% fail with actionable diagnostics.
+3. Bump ISN version: `pyproject.toml` → `0.7.0rc21`
+4. Tag ISN: `git tag v0.7.0rc21 && git push origin v0.7.0rc21`
+5. Publish pre-release to PyPI (ISN project uses trusted-publisher CI
+   triggered on tag; verify release page shows 0.7.0rc21).
+6. In imas-codex: update `pyproject.toml` pin to
+   `imas-standard-names>=0.7.0rc21,<0.8`; run `uv sync --refresh`;
+   commit the bump.
+7. **Only after step 6 completes, Part B/C work begins.**
+
+Changelog content for rc21:
+- Grammar vNext 5-group IR (breaking)
+- Vocabulary closure: `physical_bases`, `geometry_carriers`,
+  `locus_registry`, `coordinate_axes` (new, closed)
+- Operator unification (transformations + decomposition + reductions +
+  binary → single `operators.yml`)
+- `_of_` disambiguation
+- Round-trip gate enforced in CI
+- Deprecation list: `objects.yml`, `positions.yml`, partial
+  `geometric_bases.yml`, old `transformations.yml`, `decomposition.yml`,
+  `reductions.py`
+- Public API: `parse()`, `compose()`, `get_grammar_context()`,
+  `validate_round_trip()`
+
+### A12. Current-vs-proposed name table — demonstrating the uplift
+
+This table is the concrete evidence that vNext is demonstrably better.
+Every row is a real corpus name from ISNC tag `v0.2.0-rc20-corpus`, shown
+in both the rc20 form (as published today) and the vNext canonical form
+it would parse to or be rewritten as.
+
+Each row's commentary flags the specific defect it exposes in rc20 and
+what invariant vNext restores. The vNext column shows the strict
+canonical rendering.
+
+| # | Domain | Current (rc20) | vNext canonical | Uplift commentary |
+|---|---|---|---|---|
+| 1 | equilibrium | `elongation_of_plasma_boundary` | `elongation_of_plasma_boundary` | Unchanged. `_of_` is the *single* permitted locus suffix pointing to an entity-typed LocusToken. Canonical under both grammars. Demonstrates vNext preserves clean names. |
+| 2 | equilibrium | `minor_radius_of_plasma_boundary` | `minor_radius_of_plasma_boundary` | Unchanged for the same reason as #1. Rejects plan 37's proposed `plasma_boundary_minor_radius` — the `_of_` form is grammatically clearer because `_of_` is reserved for this one role. |
+| 3 | equilibrium | `major_radius_of_x_point` | `major_radius_of_x_point` | Unchanged. `x_point` now typed as `position` in `locus_registry`; the `_of` relation is valid for position-typed loci. Under rc20 `x_point` collided between `objects` and `positions` — vNext resolves. |
+| 4 | equilibrium | `flux_surface_averaged_inverse_major_radius` | `flux_surface_averaged_major_radius_inverse` OR keep as `flux_surface_averaged_inverse_of_major_radius` | Reveals rc20 reductions-not-wired: `flux_surface_averaged` is a reduction operator but rc20 parser treated the whole string as `physical_base`. vNext routes it through unified operators and can render either form unambiguously (postfix `_inverse` or prefix `inverse_of_`). **Decision needed**: whether `inverse` is a unary postfix op. Recommendation: yes, same treatment as `magnitude`. |
+| 5 | equilibrium | `derivative_of_flux_surface_cross_sectional_area_with_respect_to_radial_coordinate` | `derivative_with_respect_to_radial_coordinate_of_flux_surface_cross_sectional_area` OR retain `derivative_of_X_with_respect_to_Y` | In rc20 the `derivative_of_X_with_respect_to_Y` form is implicit — not parsed as an operator. vNext promotes `derivative_with_respect_to_<Y>` to a **parametric unary prefix operator** where `Y` is a CoordinateAxis or known independent variable. Parser recognises the pattern. Recommended canonical: `derivative_of_<X>_with_respect_to_<Y>` kept, but now *structurally decomposed* rather than parsed as one big base. |
+| 6 | equilibrium | `contravariant_metric_tensor` | `contravariant_metric_tensor` | Unchanged. Listed as a closed `physical_base`. rc20 accepts it via open-fallback; vNext accepts it via closed-vocab match — same string, much stronger guarantee. |
+| 7 | edge_plasma_physics | `parallel_component_of_current_density_due_to_perpendicular_viscosity` | `current_density_parallel_component_due_to_perpendicular_viscosity` | Component moves from prefix `_of_` form to postfix. `perpendicular_viscosity` is a `process` (already in rc20). The `_due_to_` suffix remains. Result: `_of_` is freed for locus use only; component boundary marked by closed-vocab postfix `_parallel_component`. |
+| 8 | edge_plasma_physics | `parallel_component_of_electron_momentum_convective_velocity` | `electron_momentum_convective_velocity_parallel_component` | Same component inversion as #7. Reads left-to-right as "electron momentum convective velocity, parallel component". |
+| 9 | edge_plasma_physics | `ion_momentum_flux_due_to_diamagnetic_drift` | `ion_momentum_flux_due_to_diamagnetic_drift` | Unchanged. `_due_to_` is a unique mechanism marker in both grammars. `diamagnetic_drift` added to `processes.yml`. |
+| 10 | fast_particles | `fast_particle_toroidal_torque_density_due_to_coulomb_collisions_with_electrons` | `fast_particle_toroidal_torque_density_due_to_coulomb_collisions_with_electrons` | Unchanged, but `coulomb_collisions_with_electrons` becomes a *compound process token* in `processes.yml` rather than a string the open-fallback swallowed. `with_<subject>` is a process modifier. |
+| 11 | fast_particles | `ion_collisional_toroidal_torque_density_on_thermal_population_due_to_fast_ions` | `collisional_toroidal_torque_density_on_thermal_ion_population_due_to_fast_ions` | Clarifies where `thermal` / `fast_ions` / `ion` apply. vNext: qualifier `thermal_ion` (compound subject), process `coulomb_collisions` implicit in `collisional`, agent `fast_ions` via `due_to_`. Removes the ambiguity of "is `ion` a species or qualifier?" from rc20. |
+| 12 | transport | `derivative_of_ion_poloidal_velocity_with_respect_to_normalized_toroidal_flux_coordinate` | `derivative_of_ion_poloidal_velocity_with_respect_to_normalized_toroidal_flux_coordinate` | Unchanged surface form; vNext *structurally decomposes* as `{op: derivative, wrt: normalized_toroidal_flux_coordinate}` around `{subject: ion, base: poloidal_velocity}`. The rc20 parser treats this as one opaque string. **Demonstrably better**: vNext can answer "what are all derivatives with respect to normalized_toroidal_flux_coordinate?" from IR without substring search. |
+| 13 | transport | `counter_passing_particle_number_density` | `counter_passing_particle_number_density` | Unchanged. `counter_passing` promoted to an additive `subjects.yml` entry (pitch-angle species qualifier). rc20 parsed via open-fallback. |
+| 14 | general | `maximum_of_derivative_of_electron_pressure_with_respect_to_normalized_poloidal_flux_at_pedestal` | `maximum_of_derivative_of_electron_pressure_with_respect_to_normalized_poloidal_flux_at_pedestal` | Unchanged surface form; vNext decomposes as nested operators: `maximum_of(derivative_wrt(normalized_poloidal_flux, electron_pressure))_at_pedestal`. Parser correctly peels two prefix operators AND an `_at_` locus suffix. rc20 parser cannot represent this composition. **Big uplift**: operator stack recursion is a vNext first-class feature. |
+| 15 | gyrokinetics | `gyrokinetic_eigenmode_normalized_gyrocenter_parallel_current_density_moment_gyroaveraged` | `gyroaveraged_moment_of_parallel_gyrocenter_current_density_of_gyrokinetic_eigenmode` OR canonical shorter form TBD | Exposes rc20's flat-parse failure on nested operators. vNext decomposes: operators [`gyroaveraged` postfix, `moment` postfix], projection `parallel/component`, qualifier `gyrocenter`, base `current_density`, locus `gyrokinetic_eigenmode` (entity). Canonical ordering puts operators outer-first. **Demonstrably better**: legibility improves and parser answers "all `gyroaveraged` quantities" from IR. |
+| 16 | magnetohydrodynamics | `neoclassical_tearing_mode_seed_island_width` | `seed_island_width_of_neoclassical_tearing_mode` | In rc20, `neoclassical_tearing_mode` prefixed as source_entity and `seed_island_width` fell to open physical_base. vNext: `seed_island_width` is a closed `physical_base`; `neoclassical_tearing_mode` is an entity-typed locus. The relation `_of_` is now required — makes the subject-object relation explicit and parseable. |
+| 17 | magnetohydrodynamics | `normalized_toroidal_flux_coordinate_at_sawtooth_inversion_radius` | `normalized_toroidal_flux_coordinate_at_sawtooth_inversion_radius` | Unchanged. `normalized_toroidal_flux_coordinate` is a `geometry_carrier` (new closed vocab, §A9); `sawtooth_inversion_radius` is a position-typed locus. `_at_` relation valid for position loci. |
+| 18 | plasma_control | `electron_cyclotron_beam_toroidal_steering_angle_reference_waveform` | `electron_cyclotron_beam_toroidal_steering_angle_reference_waveform` | Unchanged surface form, but `reference_waveform` becomes a closed *postfix operator* (kind=unary_postfix) in `operators.yml`. rc20 treats it as part of an open physical_base. vNext uplift: "all reference waveforms" queryable from IR; semantic type tracked (time series of reference values). |
+| 19 | plasma_control | `lower_hybrid_antenna_parallel_refractive_index_reference_waveform` | `lower_hybrid_antenna_parallel_refractive_index_reference_waveform` | Same as #18 — postfix operator `_reference_waveform`. Demonstrates vNext's uniform operator treatment across diverse bases. |
+| 20 | gyrokinetics | `gyrokinetic_eigenmode_normalized_parallel_temperature_moment_gyroaveraged_real_part` | `gyroaveraged_real_part_of_moment_of_parallel_temperature_of_gyrokinetic_eigenmode_normalized` OR shorter canonical | Triple-operator: `real_part` postfix, `gyroaveraged` postfix, `moment` postfix. rc20 open-fallback. vNext IR captures full structure. **Demonstrably better**: the distinction between `_real_part` and `_imaginary_part` is an operator, not a magic string — composers cannot mint novel `_<complex_op>_part` forms. |
+| 21 | particle_measurement_diagnostics | `neutron_detector_line_integrated_emissivity` | `line_integrated_emissivity_of_neutron_detector` | `neutron_detector` becomes entity-typed locus; `line_integrated` becomes a closed reduction operator (currently in rc20 as an unused pattern). Generator emits canonical order: operator outer, locus last. |
+| 22 | plasma_wall_interactions | `maximum_of_power_flux_density_at_inner_divertor_target` | `maximum_of_power_flux_density_at_inner_divertor_target` | Unchanged surface form. IR: operator stack = [`maximum` unary_prefix], base = `power_flux_density`, locus = `inner_divertor_target` (position). Correct decomposition enables reduction-aware queries. |
+| 23 | auxiliary_heating | `vertical_coordinate_of_ion_cyclotron_heating_antenna` | `vertical_coordinate_of_ion_cyclotron_heating_antenna` | Unchanged. `vertical_coordinate` = CoordinateAxis(vertical) + GeometryCarrier(coordinate). This row demonstrates the vNext projection/carrier model (A4). rc20 parses `vertical` as coordinate but leaves `coordinate` alone as a meaningless base. vNext binds `vertical_coordinate` to the typed carrier. |
+| 24 | magnetic_field_systems | `toroidal_component_of_magnetic_field_at_ferritic_element_centroid` | `magnetic_field_toroidal_component_at_ferritic_element_centroid` | Component inversion (postfix) + `_at_` locus preserved. `ferritic_element_centroid` is a new entity-typed locus. Reads left-to-right as "magnetic field, toroidal component, at ferritic-element centroid". |
+| 25 | magnetic_field_systems | `toroidal_component_of_magnetic_moment_of_ferritic_element_centroid` | `magnetic_moment_toroidal_component_of_ferritic_element_centroid` | **Critical**: rc20 has two `_of_` in this name with different meanings — component relation and locus relation. vNext eliminates this ambiguity: component is postfix, only `_of_` remaining is the locus relation. This is the single most compelling per-name demonstration of `_of_` disambiguation. |
+| 26 | structural_components | `coolant_outlet_temperature_of_breeding_blanket_module` | `coolant_outlet_temperature_of_breeding_blanket_module` | Unchanged. `coolant_outlet_temperature` is a compound physical_base (closed), `breeding_blanket_module` is an entity-typed locus, `_of_` is the sole locus relation. Demonstrates vNext can accept engineering-domain compound bases without reaching for open-fallback. |
+| 27 | turbulence | `gyrokinetic_eigenmode_normalized_gyrocenter_parallel_current_density_moment_bessel_0` | `bessel_0_moment_of_parallel_gyrocenter_current_density_of_gyrokinetic_eigenmode_normalized` OR canonical TBD | `bessel_0`, `bessel_1` are indexed postfix operators (parametric, like `fourier_coefficient_<m>_<n>`). vNext operators registry allows indexed operators. rc20 open-fallback. |
+| 28 | plant_systems | `toroidal_angle_of_soft_xray_detector_line_of_sight_second_point` | `toroidal_angle_of_soft_xray_detector_line_of_sight_second_point` | Unchanged. `toroidal_angle` is a GeometryCarrier (angle with a direction), `soft_xray_detector_line_of_sight_second_point` is a compound entity-typed locus. **Note**: the `line_of_sight_second_point` pattern should be factored into `locus_registry` as a position-on-line-of-sight composite. |
+
+---
+
+#### A12.1 Summary of demonstrable uplift
+
+**Invariants vNext establishes that rc20 does not**:
+
+1. **Each `_of_` in a name has exactly one role** — row 25 alone would be
+   ambiguous without vNext's disambiguation.
+2. **Operators are first-class** — rows 12, 14, 15, 20, 21, 22 were flat
+   strings in rc20; vNext exposes nested IR enabling queries like "all
+   derivatives with respect to X", "all gyroaveraged quantities", "all
+   reference waveforms".
+3. **Loci are typed** — row 3 resolves the `x_point` object-vs-position
+   collision. Relations `_of_`, `_at_`, `_over_` are validated against
+   locus type.
+4. **Projection is typed** — row 23 shows the coordinate-vs-component
+   distinction enforced by base type (QuantityBase vs GeometryCarrier).
+5. **Physical bases are closed** — rows 6, 10, 16, 18, 26 expose the rc20
+   open-fallback; vNext either accepts them into the closed vocabulary
+   (with provenance) or rejects with an actionable diagnostic.
+6. **Canonical generator is deterministic** — rows 7, 8, 11, 15, 16, 24,
+   25 show rewrites where the vNext canonical form is different from rc20.
+   The parser accepts both (liberal) during rc21 transition; the generator
+   emits only canonical (strict).
+7. **Round-trip safety** — every row passes `compose(parse(name)).string
+   == name` for its canonical form. Goal G3 measurable per-name.
+
+**Counter-examples (deliberately unchanged)**:
+
+Rows 1, 2, 9, 13, 17 demonstrate vNext preserves clean rc20 names
+byte-for-byte. The redesign is not cosmetic churn — it targets only the
+structural defects.
+
+**Macro-metric targets** (quantified in D4, evaluated against the full
+479-name corpus):
+
+- Round-trip success ≥ 99% (stretch 100%)
+- Names requiring non-canonical rewrite: 30–40% (rows 4, 7, 8, 11, 15, 16,
+  18, 19, 20, 21, 24, 25, 27 class)
+- Names passing unchanged: 60–70% (row 1, 2, 3, 6, 9, 10, 12, 13, 14, 17,
+  22, 23, 26, 28 class)
+- Zero ambiguous `_of_` usages (row 25 class eliminated)
+- Zero open-fallback physical_base hits after §A9 curation completes
 
 ---
 
@@ -602,23 +807,36 @@ Every affected doc on both repos, per plan-lifecycle rules:
 ```
 Phase 0 (this plan) — RD review → user approval
    ↓
-Phase 1 — ISN A0 (docs)           ] parallel
-Phase 2 — ISN A1..A7 (grammar)    ]
-Phase 3 — ISN A8 (parser rewrite)
-Phase 4 — ISN A9 (vocab curation) — blocks Phase 5 and 6
-Phase 5 — ISN A10 (tests)         ] parallel with codex Phase 6, 7
-Phase 6 — ISN A11 (rc21 release)
+Phase 1  — ISNC rc20 corpus tag (DONE: v0.2.0-rc20-corpus on fork)
    ↓
-Phase 7 — Codex B1..B5 (schema simplification) ] parallel
-Phase 8 — Codex C1..C6 (prompt overhaul)       ]
+Phase 2  — ISN A0 (docs)           ] parallel
+Phase 3  — ISN A1..A8 (grammar,    ] parallel (no corpus dep yet)
+             parser, IR, ops)      ]
    ↓
-Phase 9 — Codex D1..D5 (validation & bootstrap)
+Phase 4  — ISN A9 (vocab curation DRIVEN BY ISNC rc20 corpus)
    ↓
-Phase 10 — Part E (documentation)
+Phase 5  — ISN A10 (tests incl. round-trip on 479-name corpus)
+   ↓
+Phase 6  — ┌──────────────────────────────────────────────────┐
+           │  HARD GATE: ISN v0.7.0rc21 released to PyPI      │
+           │  imas-codex pyproject.toml pin bumped & uv sync  │
+           └──────────────────────────────────────────────────┘
+   ↓
+Phase 7  — Codex B1..B5 (schema simplification) ] parallel
+Phase 8  — Codex C1..C6 (prompt overhaul)       ]
+   ↓
+Phase 9  — Codex D1..D5 (validation & bootstrap)
+   ↓
+Phase 10 — Part E (documentation, both repos)
 ```
 
-Critical path: ISN parser rewrite and vocab curation (A8 + A9) are the
-pacing items. Codex Part B + C can start once ISN rc21 is pinned.
+**Critical path**: A9 vocab curation (driven by ISNC corpus) → A10 tests
+→ A11 release gate. Codex Part B/C cannot begin until the rc21 release
+completes and codex is pinned.
+
+**Why the gate matters**: without the release, codex prompt and schema
+changes reference a moving target. The gate ensures all downstream work
+builds against a stable, tagged grammar surface installed via `uv sync`.
 
 ---
 
