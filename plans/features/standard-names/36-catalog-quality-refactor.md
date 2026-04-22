@@ -187,7 +187,7 @@ null loop; B7 closes any back-door survival.
 | B8 | LLM never receives the DD-path list of the current batch — no grounding signal | Missing prompt context | HIGH | New Jinja `{% for path in batch_dd_paths %}` block in `enrich_user.md` enumerating DD paths the LLM may emit as `dd:` placeholders |
 | B9 | No re-queue when `failed` names later become resolvable | `graph_ops.py:2327-2328` | MEDIUM | On new SN persist, run `reactivate_failed_links(new_name_id)` to flip any failed name whose unresolved target matches the new name back to `unresolved` with retry_count reset |
 | B10 | `#` in junk-strip collides with URL fragments | `enrich_workers.py:120` | LOW | Remove `#` from junk prefix list |
-| B11 | DD semantic-cluster siblings / identifier-schema relatives not used as candidate links | Missing feature | MEDIUM | Phase 3.5: post-compose pass adds `dd:` candidates from the source DD path's semantic cluster peers |
+| B11 | DD semantic-cluster siblings / identifier-schema relatives not used as candidate links | Missing feature | **MEDIUM → MERGED INTO 2c** | Phase 2c.2 (graph-backed cluster-peer injection) |
 
 ### Link generation strategy (v3)
 
@@ -455,14 +455,123 @@ Remove the entire junk-prefix strip; the valid-prefix allow-list is sufficient.
    *"MUST use the `name:foo_bar` prefix"* with the tri-prefix rule from the style
    guide.
 
-#### Phase 2c — DD-path context injection (B8)
+#### Phase 2c — Graph-backed link-context injection (B8 + B11 unified)
 
-1. `context.py`: new `build_dd_path_context(batch_items)` returns list of
-   `(path, description, unit)` tuples from IMASNode graph for the paths in the batch.
-2. `enrich_user.md` Jinja: new block `{% if dd_paths %}AVAILABLE DD PATHS (emit as dd:<path>):\n{% for p in dd_paths %}- {{p.path}} ({{p.unit}}): {{p.description}}\n{% endfor %}{% endif %}`.
-3. Similar injection for "KNOWN STANDARD NAMES" — the existing names in the current
-   compose session's physics_domain + any global accepted names, so LLM can reuse
-   `name:` prefixes when valid.
+The graph already provides far richer link-candidate infrastructure than a flat DD
+path list. `IN_CLUSTER` (22,841 edges) groups semantically-related IMASNodes;
+`HAS_STANDARD_NAME` gives free `dd:` → `name:` pre-resolution;
+`standard_name_desc_embedding` vector-searches minted SN descriptions. Phase 2c
+replaces the flat-list approach with three graph-backed context blocks, absorbing
+bug **B11** (previously marked optional) as mandatory.
+
+##### 2c.1 Source-path context (already in batch data)
+
+Each source DD path's full description, unit, physics_domain, keywords. Already
+loaded by the extract phase; no new code.
+
+##### 2c.2 Cluster-peer block (traversal-backed)
+
+New `imas_codex/standard_names/link_context.py` :: `build_cluster_peer_context(
+batch_source_paths, cluster_peer_cap=8, cluster_scope_priority=('domain','global'),
+exclude_cluster_types=('cocos',)) -> list[LinkCandidate]`.
+
+Verified Cypher (tested in REPL):
+
+```cypher
+UNWIND $paths AS src_id
+MATCH (src:IMASNode {id: src_id})-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+WHERE c.scope IN $scope_priority
+  AND NOT any(t IN $exclude_types WHERE c.id STARTS WITH t)
+WITH src, c
+ORDER BY CASE c.scope WHEN 'domain' THEN 0 ELSE 1 END
+WITH src, collect(DISTINCT c)[..3] AS clusters
+UNWIND clusters AS cluster
+MATCH (peer:IMASNode)-[:IN_CLUSTER]->(cluster)
+WHERE peer.id <> src.id
+  AND peer.node_category = 'quantity'
+  AND NOT (peer)-[:DEPRECATED_IN]->(:DDVersion)
+OPTIONAL MATCH (peer)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+WITH src, cluster, peer, sn
+LIMIT $cap
+RETURN src.id AS source, cluster.description AS cluster_context,
+       peer.id AS peer_path, peer.unit AS unit,
+       substring(peer.description, 0, 140) AS peer_doc,
+       sn.id AS minted_name
+```
+
+Each peer emitted as either `name:<minted>` (pre-resolved when `HAS_STANDARD_NAME`
+edge exists) or `dd:<peer_path>` (placeholder). Cluster-scope priority defaults to
+**domain > global** for domain-scoped compose runs (`--physics-domain X`), and
+**global > domain** for cross-domain bootstrap runs. `cocos_*` clusters excluded
+by default (transformation-shared noise, not physics-shared peers) — can be
+re-enabled via CLI flag for COCOS-specific compose runs.
+
+##### 2c.3 Semantic-neighbour block (vector-index-backed)
+
+For each source DD path with a non-empty description, vector-search
+`standard_name_desc_embedding` with top-5 minted-SN neighbours (similarity ≥ 0.75).
+Offered as `name:` candidates. Implementation: reuses `semantic_search()` helper
+from `imas_codex/graph/vector_search.py`. Skipped on early domains when few minted
+SNs exist.
+
+##### 2c.4 Prompt template integration
+
+New `compose_user.md` and `enrich_user.md` Jinja block:
+
+```jinja
+{% if link_candidates %}
+## RELATED REFERENCES (link to these via the `links` field)
+
+The following are semantically related to the current batch. Prefer `name:` when
+shown; use `dd:` for DD paths not yet minted (pipeline will resolve later).
+
+{% for src in link_candidates %}
+### For source `{{ src.path }}`:
+
+**Cluster peers** ({{ src.cluster_context }}):
+{% for p in src.peers %}
+- `{{ p.tag }}` [{{ p.unit }}]: {{ p.doc }}
+{% endfor %}
+
+{% if src.semantic_neighbours %}
+**Similar minted names**:
+{% for sn in src.semantic_neighbours %}
+- `name:{{ sn.id }}`: {{ sn.description_short }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}
+```
+
+##### 2c.5 Token-budget analysis
+
+Per-source cost: (8 peers × ~130 chars) + (5 SN-neighbours × ~130 chars) ≈ 1.7 kB.
+Per-batch (N=5-10): 8-17 kB. Static system section (~4-5 kB) remains cacheable.
+Target split: ~40% cacheable / ~60% dynamic. Peer cap tuneable via
+`[tool.imas-codex.sn.linking]` in pyproject.toml.
+
+##### 2c.6 Pre-resolution correctness
+
+Pre-resolving `dd:X` → `name:Y` at prompt-construction time carries zero additional
+staleness risk: (a) the graph read is the same source of truth the resolution loop
+uses later, (b) if `Y` is deleted/renamed between prompt construction and response
+write, the B7 graceful-fallback `_sanitize_links` path handles it — `name:Y` that
+doesn't exist at write time gets logged and dropped or (if the origin DD path is
+recoverable) rewritten back to `dd:X` for the resolution loop to retry.
+
+##### 2c.7 CLI tuning surface
+
+`pyproject.toml` additions:
+
+```toml
+[tool.imas-codex.sn.linking]
+cluster_peer_cap = 8
+semantic_neighbour_cap = 5
+semantic_neighbour_min_score = 0.75
+exclude_cluster_types = ["cocos"]
+cluster_scope_priority_domain = ["domain", "global"]
+cluster_scope_priority_global = ["global", "domain"]
+```
 
 #### Phase 2d — `_sanitize_links` valid_names graceful fallback (B7)
 
@@ -543,12 +652,12 @@ RETURN count(sn) AS reactivated
 
 Called after every persist-new-SN commit.
 
-#### Phase 2i — DD semantic-cluster candidate links (B11, optional)
+#### Phase 2i — (merged into 2c)
 
-For each name's DD source path, look up its semantic cluster; pre-populate `links`
-with `dd:` candidates from cluster peers. Offered to the LLM as prompt context
-("CLUSTER PEERS — consider linking"), not forcibly injected. Low-priority; include
-only if Phase 2a–h close the link-zero-count gap.
+Originally scoped as optional DD semantic-cluster candidate link injection.
+**Absorbed into Phase 2c.2** (cluster-peer context block) and promoted to
+mandatory — the graph infrastructure makes this the right default, not an
+add-on.
 
 ---
 
