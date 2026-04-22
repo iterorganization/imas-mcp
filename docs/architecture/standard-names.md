@@ -363,6 +363,49 @@ Assembles grammar rules, vocabulary sections, segment descriptions, curated
 examples, and tokamak parameter ranges. Module-level cache avoids redundant
 computation across batches.
 
+### Per-Item DD Context Injection
+
+Beyond the static grammar context, each DD path item is enriched with four
+channels of Data Dictionary context during the extract phase:
+
+1. **Hybrid DD search neighbours** (`hybrid_neighbours`) — concept-similar DD
+   paths found via vector similarity + keyword search. The `hybrid_dd_search`
+   function in `imas_codex/graph/dd_search.py` runs description-based and
+   path-based queries in parallel, deduplicates results, and pre-resolves
+   existing standard names for each neighbour.
+
+2. **Related DD paths** (`related_neighbours`) — cross-IDS structural siblings
+   discovered via explicit graph relationships: cluster membership, shared
+   coordinates, matching units, identifier schemas, and COCOS transformation
+   type. Uses `find_related_dd_paths` from `dd_search.py`.
+
+3. **Error companions** (`error_fields`) — uncertainty/error field paths
+   (`_error_upper`, `_error_lower`, `_error_index`) associated with each DD
+   path. Gives the composer awareness of the quantity's measurement context.
+
+4. **Identifier enum values** (`identifier_values`) — when a DD path references
+   an identifier schema, the allowed enumeration values (name, index,
+   description) are injected so the composer can use them for disambiguation.
+
+**Compose retry loop:** On grammar/validation failure, the compose worker
+retries up to `retry_attempts` times (configurable via `[tool.imas-codex.sn]`),
+re-enriching items with expanded hybrid search (`search_k=retry_k_expansion`)
+before resubmission.
+
+**Scored-example injection:** Both compose and review prompts include
+dynamically selected exemplar StandardName nodes at target score thresholds
+`(1.0, 0.8, 0.65, 0.4)`. Examples are graph-backed and selected at runtime
+by the example loader. Context keys: `compose_scored_examples`,
+`review_scored_examples`.
+
+### Per-Dim Reviewer Output
+
+The review worker now persists per-dimension data alongside aggregate scores:
+
+- `reviewer_scores` — JSON dict: `{grammar: N, semantic: N, documentation: N, convention: N, completeness: N, compliance: N}` (each 0–20)
+- `reviewer_comments_per_dim` — JSON dict: per-dimension reviewer commentary
+- `reviewer_verdict` — `accept` / `reject` / `revise` (from the canonical reviewer)
+
 ### Response Model
 
 ```python
@@ -444,6 +487,8 @@ Each StandardName node carries a full audit trail:
 | `reviewer_score` | Review worker | 0–1 quality score (normalized from 6×0-20) |
 | `reviewer_scores` | Review worker | JSON: grammar, semantic, docs, convention, completeness, compliance (each 0-20) |
 | `reviewer_comments` | Review worker | Reasoning text |
+| `reviewer_comments_per_dim` | Review worker | JSON: per-dimension reviewer commentary keyed by dimension name |
+| `reviewer_verdict` | Review worker | accept/reject/revise — canonical reviewer verdict |
 | `reviewed_at` | Review worker | Review timestamp |
 | `review_tier` | Review worker | outstanding/good/inadequate/poor |
 | `vocab_gap_detail` | Compose worker | JSON: segment, needed_token, reason |

@@ -1049,7 +1049,9 @@ by the model.
 
 **Provenance fields** (v0.5.0): `reviewer_model`, `reviewer_score` (float 0-1, normalized from
 6×0-20), `reviewer_scores` (JSON: grammar/semantic/documentation/convention/completeness/compliance,
-each 0-20), `reviewer_comments`, `reviewed_at`, `review_tier` (outstanding/good/adequate/poor),
+each 0-20), `reviewer_comments`, `reviewer_comments_per_dim` (JSON: per-dimension reviewer
+commentary keyed by dimension name), `reviewer_verdict` (accept/reject/revise — from the
+canonical reviewer), `reviewed_at`, `review_tier` (outstanding/good/inadequate/poor),
 `vocab_gap_detail` (JSON: segment/needed_token/reason),
 `validation_issues` (list of tagged strings), `validation_layer_summary` (JSON).
 
@@ -1083,6 +1085,19 @@ ISN owns grammar, vocabulary, and validation. Codex owns the pipeline, evaluatio
 - `parse_standard_name()` / `compose_standard_name()` — grammar round-trip
 
 **Rules:** Never import from ISN private modules. Never hardcode grammar rules — get them from `get_grammar_context()`. Review criteria and scoring live in codex (`sn_review_criteria.yaml`).
+
+### Prompt Context Injection
+
+Four context channels are injected per-item into compose, review, and enrich prompts:
+
+1. **Hybrid DD search neighbours** — concept-similar DD paths found via vector similarity + keyword search (`_hybrid_search_neighbours` in `workers.py`, backed by `hybrid_dd_search` in `dd_search.py`). Injected as `hybrid_neighbours` per item.
+2. **Related DD paths** — cross-IDS structural siblings via explicit graph relationships (cluster membership, shared coordinates, matching units, identifier schemas, COCOS transformation type). Injected as `related_neighbours` per item via `_related_path_neighbours`.
+3. **Error companions** — uncertainty/error fields (`_error_upper`, `_error_lower`, `_error_index`) associated with each DD path. Injected as `error_fields` per item.
+4. **Identifier enum values** — when a DD path references an identifier schema, the allowed enumeration values (name, index, description) are injected as `identifier_values` per item.
+
+**Compose retry with expanded context:** On grammar/validation failure, the compose worker retries up to `retry_attempts` times (default 1), re-enriching items with expanded hybrid search (`search_k=retry_k_expansion`, default 12) before resubmission. Configurable via `[tool.imas-codex.sn]` or `IMAS_CODEX_SN_RETRY_*` env vars.
+
+**Scored-example injection:** Compose and review prompts include dynamically selected exemplar StandardName nodes at target score thresholds `(1.0, 0.8, 0.65, 0.4)`. Examples are graph-backed and selected by the example loader (W3-K3K4); `benchmark_calibration.yaml` and the static calibration code path have been removed. Context keys: `compose_scored_examples`, `review_scored_examples`.
 
 ### Prompt Infrastructure
 
