@@ -400,12 +400,26 @@ classes:
         range: float
       reviewer_scores:
         description: >-
-          JSON-encoded dimensional scores: grammar, semantic,
-          documentation, convention, completeness (each 0-20)
+          JSON-encoded dimensional scores. Schema depends on review_mode -
+          full (6-dim) grammar, semantic, documentation, convention,
+          completeness, compliance (each 0-20). name_only (4-dim) grammar,
+          semantic, convention, completeness (each 0-20). docs (4-dim)
+          description_quality, documentation_quality, completeness,
+          physics_accuracy (each 0-20).
       reviewer_comments:
         description: >-
           LLM reviewer reasoning about this name's quality.
           Persisted for audit trail and regeneration context.
+      reviewer_comments_per_dim:
+        description: >-
+          JSON-encoded per-dimension reviewer comments. Keys match the
+          score dimensions for the review_mode used (full 6-dim,
+          name_only 4-dim, or docs 4-dim with independent names).
+          Null values mean no comment for that dimension.
+      reviewer_verdict:
+        description: >-
+          Verdict from reviewer (accept, reject, or revise).
+          Captures the LLM overall disposition independent of score.
       reviewed_at:
         description: When LLM review occurred
         range: datetime
@@ -942,7 +956,13 @@ classes:
         description: Normalized reviewer score (0-1)
         range: float
       scores_json:
-        description: JSON-encoded per-dimension sub-scores
+        description: >-
+          JSON-encoded per-dimension sub-scores. Schema depends on review
+          mode (full 6-dim, name_only 4-dim, docs 4-dim independent).
+      comments_per_dim_json:
+        description: >-
+          JSON-encoded per-dimension reviewer comments matching scores_json
+          dimensions. Values are optional strings (null for no comment).
       tier:
         description: Quality tier (outstanding, good, inadequate, poor, unknown)
       comments:

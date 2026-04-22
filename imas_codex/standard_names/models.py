@@ -171,6 +171,59 @@ class StandardNameReviewBatch(BaseModel):
     reviews: list[StandardNameReviewItem]
 
 
+class StandardNameQualityComments(BaseModel):
+    """Per-dimension comments for the full 6-dimensional review rubric."""
+
+    grammar: str | None = Field(default=None, description="Comment on grammar score")
+    semantic: str | None = Field(default=None, description="Comment on semantic score")
+    documentation: str | None = Field(
+        default=None, description="Comment on documentation score"
+    )
+    convention: str | None = Field(
+        default=None, description="Comment on convention score"
+    )
+    completeness: str | None = Field(
+        default=None, description="Comment on completeness score"
+    )
+    compliance: str | None = Field(
+        default=None, description="Comment on compliance score"
+    )
+
+
+class StandardNameQualityCommentsNameOnly(BaseModel):
+    """Per-dimension comments for the 4-dimensional name-only review rubric."""
+
+    grammar: str | None = Field(default=None, description="Comment on grammar score")
+    semantic: str | None = Field(default=None, description="Comment on semantic score")
+    convention: str | None = Field(
+        default=None, description="Comment on convention score"
+    )
+    completeness: str | None = Field(
+        default=None, description="Comment on completeness score"
+    )
+
+
+class StandardNameQualityCommentsDocs(BaseModel):
+    """Per-dimension comments for the 4-dimensional docs review rubric.
+
+    Note: uses independent dimension names (description_quality etc.),
+    NOT a subset of the full 6-dim names.
+    """
+
+    description_quality: str | None = Field(
+        default=None, description="Comment on description quality score"
+    )
+    documentation_quality: str | None = Field(
+        default=None, description="Comment on documentation quality score"
+    )
+    completeness: str | None = Field(
+        default=None, description="Comment on completeness score"
+    )
+    physics_accuracy: str | None = Field(
+        default=None, description="Comment on physics accuracy score"
+    )
+
+
 # =============================================================================
 # Unified quality review models (used by both mint and benchmark)
 # =============================================================================
@@ -222,6 +275,9 @@ class StandardNameQualityReview(BaseModel):
     source_id: str = Field(description="Source entity ID being reviewed")
     standard_name: str = Field(description="The standard name under review")
     scores: StandardNameQualityScore = Field(description="6-dimensional quality scores")
+    comments: StandardNameQualityComments | None = Field(
+        default=None, description="Per-dimension reviewer comments"
+    )
     verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
     reasoning: str = Field(description="Specific justification per dimension")
     revised_name: str | None = Field(
@@ -286,6 +342,9 @@ class StandardNameQualityReviewNameOnly(BaseModel):
     standard_name: str = Field(description="The standard name under review")
     scores: StandardNameQualityScoreNameOnly = Field(
         description="4-dimensional quality scores"
+    )
+    comments: StandardNameQualityCommentsNameOnly | None = Field(
+        default=None, description="Per-dimension reviewer comments"
     )
     verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
     reasoning: str = Field(description="Specific justification per dimension")
@@ -370,6 +429,9 @@ class StandardNameQualityReviewDocs(BaseModel):
     standard_name: str = Field(description="The standard name under review")
     scores: StandardNameQualityScoreDocs = Field(
         description="4-dimensional docs quality scores"
+    )
+    comments: StandardNameQualityCommentsDocs | None = Field(
+        default=None, description="Per-dimension reviewer comments"
     )
     verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
     reasoning: str = Field(description="Specific justification per dimension")

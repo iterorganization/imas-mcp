@@ -638,6 +638,8 @@ def write_standard_names(
                 sn.reviewer_score = coalesce(b.reviewer_score, sn.reviewer_score),
                 sn.reviewer_scores = coalesce(b.reviewer_scores, sn.reviewer_scores),
                 sn.reviewer_comments = coalesce(b.reviewer_comments, sn.reviewer_comments),
+                sn.reviewer_comments_per_dim = coalesce(b.reviewer_comments_per_dim, sn.reviewer_comments_per_dim),
+                sn.reviewer_verdict = coalesce(b.reviewer_verdict, sn.reviewer_verdict),
                 sn.reviewed_at = coalesce(b.reviewed_at, sn.reviewed_at),
                 sn.review_tier = coalesce(b.review_tier, sn.review_tier),
                 sn.vocab_gap_detail = coalesce(b.vocab_gap_detail, sn.vocab_gap_detail),
@@ -689,6 +691,10 @@ def write_standard_names(
                     "reviewer_score": n.get("reviewer_score"),
                     "reviewer_scores": _ensure_json(n.get("reviewer_scores")),
                     "reviewer_comments": n.get("reviewer_comments"),
+                    "reviewer_comments_per_dim": _ensure_json(
+                        n.get("reviewer_comments_per_dim")
+                    ),
+                    "reviewer_verdict": n.get("reviewer_verdict"),
                     "reviewed_at": n.get("reviewed_at"),
                     "review_tier": n.get("review_tier"),
                     "vocab_gap_detail": _ensure_json(n.get("vocab_gap_detail")),
@@ -858,6 +864,7 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
                 r.scores_json = b.scores_json,
                 r.tier = b.tier,
                 r.comments = b.comments,
+                r.comments_per_dim_json = b.comments_per_dim_json,
                 r.reviewed_at = b.reviewed_at,
                 r.llm_model = b.llm_model,
                 r.llm_cost = b.llm_cost,
@@ -880,6 +887,9 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
                     "scores_json": _ensure_json(r.get("scores_json") or "{}"),
                     "tier": r.get("tier") or "unknown",
                     "comments": r.get("comments") or "",
+                    "comments_per_dim_json": _ensure_json(
+                        r.get("comments_per_dim_json")
+                    ),
                     "reviewed_at": r.get("reviewed_at"),
                     "llm_model": r.get("llm_model"),
                     "llm_cost": r.get("llm_cost"),

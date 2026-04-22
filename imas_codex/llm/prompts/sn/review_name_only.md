@@ -176,6 +176,12 @@ Return a JSON object with a `reviews` array. Each review MUST include:
         "convention": 19,
         "completeness": 18
       },
+      "comments": {
+        "grammar": "Optional per-dimension comment",
+        "semantic": null,
+        "convention": null,
+        "completeness": null
+      },
       "verdict": "accept",
       "reasoning": "Brief specific justification covering each dimension",
       "revised_name": null,

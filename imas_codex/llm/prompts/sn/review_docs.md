@@ -120,6 +120,12 @@ Return a JSON object with a `reviews` array. Each review MUST include:
         "completeness": 17,
         "physics_accuracy": 20
       },
+      "comments": {
+        "description_quality": "Optional per-dimension comment",
+        "documentation_quality": null,
+        "completeness": null,
+        "physics_accuracy": null
+      },
       "verdict": "accept",
       "reasoning": "Brief specific justification covering each dimension",
       "revised_description": null,

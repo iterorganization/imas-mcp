@@ -79,6 +79,7 @@ def _build_review_record(
     cost_usd: float | None = None,
     tokens_in: int | None = None,
     tokens_out: int | None = None,
+    comments_per_dim: dict | None = None,
 ) -> dict:
     """Build a Review graph record for a scored item."""
     sn_id = item.get("id") or ""
@@ -107,6 +108,11 @@ def _build_review_record(
             comments if comments is not None else item.get("reviewer_comments")
         )
         or "",
+        "comments_per_dim_json": (
+            json.dumps(comments_per_dim)
+            if comments_per_dim
+            else item.get("reviewer_comments_per_dim")
+        ),
         "reviewed_at": reviewed_at,
         "llm_model": model,
         "llm_cost": cost_usd,
@@ -964,6 +970,11 @@ def _match_reviews_to_entries(
         original["reviewer_scores"] = json.dumps(review.scores.model_dump())
         original["reviewer_comments"] = review.reasoning
         original["review_tier"] = review.scores.tier
+        if hasattr(review, "comments") and review.comments is not None:
+            original["reviewer_comments_per_dim"] = json.dumps(
+                review.comments.model_dump()
+            )
+        original["reviewer_verdict"] = review.verdict.value
         original["review_mode"] = review_mode
 
         # Review writes score/tier/comments but does NOT demote
