@@ -1,6 +1,6 @@
-# Plan 36 — Catalog Quality Refactor (v4)
+# Plan 36 — Catalog Quality Refactor (v4+round4)
 
-> **Status**: PLANNING (RD round 4 pending on v4 amplification + example deltas)
+> **Status**: READY FOR FLEET DISPATCH (RD round 4 complete, 6 findings folded at end of file)
 > **Supersedes**: v1 (complex parent/part addition), v2 (complex-SUFFIX asymmetric), v3 (postfix + linking)
 > **v4 scope additions**: graph-backed DD context amplification in SN prompts (Deltas A–J);
 > target-anchored dynamic example library split by consumer with per-dimension reviewer
@@ -1795,3 +1795,167 @@ Both fragments cache-stable on identical inputs (graph snapshot + rubric YAML + 
 - `k7-plan-integration` — merge Delta K as Phase 2c.3 in `plans/features/standard-names/36-catalog-quality-refactor.md`
 - `k8-cache-metrics` — extend benchmark cache-% logging to track prefix-cache delta by consumer type (compose vs review)
 - `k9-docs` — update `AGENTS.md` SN section: unified 0.65 threshold, `inadequate` tier, dimension-comments schema, split example consumers; delete calibration references
+
+---
+
+# v4 deltas — RD round 4 reconciliation
+
+RD round 4 (rubber-duck opus-4.6) returned **6 findings, no BLOCKING**. All fold-ins are concrete scope expansions that would otherwise cause test failures or silent data loss during implementation. No user decisions required — reconciliation is mechanical.
+
+## H-1 (HIGH) — K0.b rename scope expansion
+
+**Symptom**: Plan verification grep `grep '"adequate"' in imas_codex/standard_names/` is too narrow. Implementing K0.b as specified leaves ~20 broken test assertions and one CLI help string.
+
+**Expanded K0.b rename scope** (additions in **bold**):
+
+- `imas_codex/schemas/standard_name.yaml:412-415, 947` — enum + description
+- `imas_codex/llm/config/sn_review_criteria.yaml:34` — rubric key
+- `imas_codex/standard_names/models.py:215, 278, 362` — 3 literal returns
+- `imas_codex/standard_names/models.py:210-216` — hardcoded tier threshold property (confirm all 3 tier property methods: `StandardNameQualityScore.tier`, `StandardNameQualityScoreNameOnly.tier`, `StandardNameQualityScoreDocs.tier`)
+- `imas_codex/standard_names/benchmark.py:823` — tier bucket key
+- `imas_codex/llm/prompts/sn/review.md:180`, `review_docs.md:54`, `review_name_only.md:112`, `shared/sn/_scoring_rubric.md:74`
+- **`imas_codex/cli/sn.py:261`** — `--tier` flag help text `'poor,adequate'` → `'poor,inadequate'`
+- **`tests/cli/test_sn_generate_cli.py:136, 144`** — CLI assertion
+- **`tests/standard_names/test_review.py:198, 199, 211`** — rename `test_quality_score_tier_adequate` → `test_quality_score_tier_inadequate`, update 2 literal assertions
+- **`tests/standard_names/test_scoring.py:96, 104, 105`** — variable `adequate` → `inadequate`, 2 literal assertions
+- **`tests/standard_names/test_review_pipeline.py:908, 941`** — 2 fixture literals
+- **`tests/standard_names/test_fetch_review_feedback_for_sources.py:91, 114, 138`** — 3 fixture literals
+- **`tests/standard_names/test_compose_feedback_injection.py:92`** — 1 fixture literal
+- **`tests/standard_names/test_review_name_only.py:50, 53`** — 4-dim tier test
+- **`tests/standard_names/test_benchmark.py:793, 862`** — tier distribution + tier-range assertions
+- **`tests/standard_names/test_review_rubrics.py:55, 61`** — docs tier test
+- **`tests/standard_names/test_graph_ops.py:747, 751`** — tier filter literal
+- **`docs/architecture/standard-names.md`** — grep for `adequate`, update all tier references
+
+**Verification grep** (replaces narrow grep in K0.b):
+```bash
+rg '"?\badequate\b"?' imas_codex tests docs scripts --glob '!*.yaml'
+# Must return zero matches after K0.b lands.
+```
+
+## H-2 (HIGH) — K-1 calibration deletion is a signature refactor
+
+**Symptom**: Plan describes K-1 as "atomic deletion" but `calibration_entries` is a threaded function parameter and Jinja template variable. Simple file deletion leaves broken signatures and dangling Jinja block.
+
+**Expanded K-1 scope** (additions in **bold**):
+
+Files to DELETE:
+- `imas_codex/standard_names/benchmark_calibration.yaml`
+- `imas_codex/standard_names/calibration.py`
+- **`tests/standard_names/test_calibration.py`** (entire file — imports from deleted module)
+
+Call sites to EDIT:
+- `imas_codex/standard_names/benchmark.py` — remove import, remove `load_calibration_entries()` definition (~line 253), remove call at line 478
+- **`imas_codex/standard_names/benchmark.py:273`** — remove `calibration_entries` from `score_with_reviewer()` signature (required positional parameter)
+- **`imas_codex/standard_names/benchmark.py:334, 370`** — remove `"calibration_entries": cal` from template context dict
+- `imas_codex/standard_names/review/pipeline.py` — remove `_load_calibration_entries()` definition (~line 1251), remove call at line 444
+- **`imas_codex/standard_names/review/pipeline.py:1029`** — remove `calibration_entries` kwarg from `_review_single_batch()` signature
+- **`imas_codex/standard_names/review/pipeline.py:490, 571, 1166`** — remove `calibration_entries=calibration_entries` from 3 call sites
+- **`imas_codex/standard_names/review/pipeline.py:1083, 1100, 1112`** — remove template-context injection at 3 sites
+- **`imas_codex/llm/prompts/sn/review.md:192-199`** — remove `{% for entry in calibration_entries %}` Jinja block (see M-3 for pairing with K4)
+- **`scripts/model_comparison_study.py:277, 361`** — remove 2 references (the script is not under `standard_names/` so not caught by narrow grep)
+- **`docs/architecture/standard-names.md:529`** — remove reference
+
+AGENTS.md references to remove:
+- `imas_codex/standard_names/calibration.py` row in Key Modules table
+- `benchmark_calibration.yaml` mentions in Benchmark section
+
+**Verification grep**:
+```bash
+rg "calibration|_load_calibration_entries|load_calibration_entries" imas_codex tests docs scripts AGENTS.md
+# Must return zero matches after K-1 lands.
+```
+
+## M-1 (MEDIUM) — Docs rubric has independent dimension names, not subset
+
+**Symptom**: Docs rubric uses `description_quality / documentation_quality / completeness / physics_accuracy` — NOT a subset of the full rubric's `grammar / semantic / documentation / convention / completeness / compliance`. K4.b hardcoded dimension loop produces zero output for docs-reviewed examples.
+
+**Fix in K0.c**:
+- Define `StandardNameQualityCommentsDocs` with **independent fields** matching `StandardNameQualityScoreDocs`: `description_quality`, `documentation_quality`, `completeness`, `physics_accuracy` (1-3 sentences each, all required).
+- Full/name-only retain subset relationship as originally specified.
+
+**Fix in K4.b** — replace hardcoded dimension list at plan line 1713:
+```jinja
+{# BEFORE #}
+{% for dim in ['grammar', 'semantic', 'documentation', 'convention', 'completeness', 'compliance'] %}
+{% if dim in ex.scores %}
+{{ dim }}: {{ ex.scores[dim] }}/20 — {{ ex.dimension_comments[dim] }}
+{% endif %}
+{% endfor %}
+
+{# AFTER — iterate over actual dimension keys present on the example #}
+{% for dim, score in ex.scores.items() if dim in ex.dimension_comments %}
+{{ dim }}: {{ score }}/20 — {{ ex.dimension_comments[dim] }}
+{% endfor %}
+```
+
+Also: the load path in K3 must return `dimension_comments` as a dict keyed by the dimension names actually stored — do not assume 6-dim shape. The `{% for dim, score in ex.scores.items() %}` pattern handles all three rubric variants uniformly.
+
+## M-2 (MEDIUM) — graph_ops.py persistence path incomplete in K0.c
+
+**Symptom**: K0.c sets 3 new properties on `original` dict in pipeline.py but `write_standard_names()` has a fixed Cypher SET block that explicitly names every persisted property. Without extending it, the 3 new properties are silently dropped.
+
+**Additional files in K0.c scope**:
+
+1. **`imas_codex/standard_names/graph_ops.py:637-648`** — extend MERGE SET block for `write_standard_names()`:
+   ```cypher
+   sn.reviewer_dimension_comments = coalesce(b.reviewer_dimension_comments, sn.reviewer_dimension_comments),
+   sn.reviewer_issues = coalesce(b.reviewer_issues, sn.reviewer_issues),
+   sn.reviewer_verdict = coalesce(b.reviewer_verdict, sn.reviewer_verdict),
+   ```
+
+2. **`imas_codex/standard_names/graph_ops.py:~693`** — extend batch-construction dict:
+   ```python
+   "reviewer_dimension_comments": _ensure_json(n.get("reviewer_dimension_comments")),
+   "reviewer_issues": _ensure_json(n.get("reviewer_issues")),
+   "reviewer_verdict": n.get("reviewer_verdict"),
+   ```
+
+3. **`imas_codex/standard_names/graph_ops.py:821-895`** — `write_reviews()` persists Review nodes separately. If K3 reads per-dimension comments via Review nodes (plan line ~1648), add the same 3 properties to the Review MERGE block + batch dict. If K3 reads directly from StandardName node, skip this step but document the decision in K3.
+
+**Verification**:
+```bash
+# After K0.c lands, run:
+uv run pytest tests/standard_names/test_graph_ops.py -k reviewer -xvs
+# And post-persistence sanity check:
+uv run imas-codex graph shell <<< "MATCH (sn:StandardName) WHERE sn.reviewer_verdict IS NOT NULL RETURN count(sn) LIMIT 1"
+```
+
+## M-3 (MEDIUM) — K-1/K4 coupling in `review.md`
+
+**Symptom**: K-1 removes calibration Jinja block from `review.md`; K4 adds dynamic-examples include. If K-1 ships before K4, the review prompt has no calibration anchor during the window.
+
+**Fix**: K-1 and K4.b's `review.md` edit must ship in the **same commit** (or K-1 stubs the include path while K4 fills it in). Update K10 dependencies section:
+
+- K-1 **may ship in the same commit as** K4.b (the `review.md` Jinja edit is pure swap: remove block, add include).
+- Concretely: K-1's verification grep above is satisfied immediately after both land.
+- Compose/enrich paths in K-1 are independent — they can ship before K4.a lands (the include line will be a no-op against empty graph, matching K4.a's zero-lookup behavior).
+
+Alternative: K-1 replaces the Jinja block with a comment placeholder `{# K4 dynamic examples injected here #}` which K4.b then fills with `{% include ... %}`. Both sequences are valid; pick per-implementer convenience.
+
+## L-1 (LOW) — Delta J3 `find_related_dd_paths` is larger than Delta A
+
+**Symptom**: Plan describes J3 as "like Delta A" but extraction involves async→sync change, 5-query fan-out, and a `noise_clause.replace("sibling", "prop_sib")` string-manipulation pattern.
+
+**Fix**: Note in J3 that the extraction is larger than Delta A:
+- Remove `async` and replace with sync signature taking `gc: GraphClient`; all J3 callers (compose, enrich workers) already run sync or inside `asyncio.to_thread`
+- Clean up the `noise_clause` string-replace pattern during extraction — use parameterized Cypher with both parameter names directly, not runtime string substitution
+- 5-query fan-out is fine as-is; do not collapse
+
+No correctness risk; implementer will encounter during development.
+
+---
+
+## Round-4 verdict
+
+All 6 findings are mechanical scope expansions. No design changes. No user decisions. Plan 36 v4+round4 is **ready for fleet dispatch**.
+
+**Fleet ordering** (unchanged from K10, minor amendment from M-3):
+1. K-1 + K4.b `review.md` edit — same commit
+2. K0.a, K0.b, K0.c — atomic commit each (three separate commits)
+3. Delta A (hybrid_dd_search extraction) — blocking prerequisite for B-F
+4. Deltas B-F — parallelizable after A
+5. Deltas G, H, I, J — parallelizable with B-F
+6. K4.a, K5-K8 — after K0.c persists per-dim data
+7. K11 iteration loop — last
+
