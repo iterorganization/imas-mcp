@@ -18,23 +18,27 @@ class TestConstantNodeTypeExtraction:
     """Verify that constant-type DD nodes pass extraction filters."""
 
     def test_extraction_query_includes_constant(self):
-        """The enriched extraction query must accept node_type='constant'."""
-        # The query template has a {where_clause} placeholder, but
-        # extract_dd_candidates builds the WHERE clause with node_type filter.
-        # Verify the function constructs the correct filter.
+        """The extraction query must gate on node_category, not node_type.
+
+        Previously the query filtered ``node_type IN ['dynamic', 'constant']``.
+        rc22 B3 removed this clause: ``node_category`` is the authoritative
+        namability taxonomy, and ``node_type`` (temporal classification) must
+        not gate extraction.  Constant-type gyrokinetics paths still flow
+        through because their ``node_category='quantity'`` satisfies the
+        remaining filter.
+        """
         import inspect
 
-        from imas_codex.standard_names.sources.dd import (
-            _ENRICHED_QUERY,
-            extract_dd_candidates,
-        )
+        from imas_codex.standard_names.sources.dd import extract_dd_candidates
 
         src = inspect.getsource(extract_dd_candidates)
-        assert "constant" in src, (
-            "extract_dd_candidates must include 'constant' in node_type filter"
+        # node_category must be the gate, not node_type
+        assert "node_category IN $sn_categories" in src, (
+            "extract_dd_candidates must filter by node_category IN $sn_categories"
         )
-        assert "'dynamic'" in src, (
-            "extract_dd_candidates must still include 'dynamic' in node_type filter"
+        # The old node_type IN ['dynamic', 'constant'] filter must be gone
+        assert "node_type IN ['dynamic'" not in src, (
+            "extract_dd_candidates must NOT filter by node_type (rc22 B3)"
         )
 
     def test_graph_ops_query_includes_constant(self):

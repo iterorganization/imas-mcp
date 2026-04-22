@@ -260,6 +260,94 @@ RETURN cluster_id, sibling.id AS sibling_path,
 ORDER BY cluster_id, sibling_path
 """
 
+# Breakdown diagnostic queries — grouped counts and random samples for non-dynamic
+# node_type buckets (i.e., newly-admitted paths after node_type filter removal).
+_BREAKDOWN_QUERY = """
+MATCH (n:IMASNode)-[:IN_IDS]->(ids:IDS)
+WHERE n.node_category IN $sn_categories
+  AND n.description IS NOT NULL
+  AND n.description <> ''
+  AND ids.id <> 'core_instant_changes'
+RETURN n.node_type AS node_type, n.node_category AS node_category, count(*) AS cnt
+ORDER BY node_type, node_category
+"""
+
+_BREAKDOWN_SAMPLES_QUERY = """
+MATCH (n:IMASNode)-[:IN_IDS]->(ids:IDS)
+WHERE n.node_category IN $sn_categories
+  AND n.description IS NOT NULL
+  AND n.description <> ''
+  AND ids.id <> 'core_instant_changes'
+  AND (n.node_type IS NULL OR NOT n.node_type IN ['dynamic'])
+RETURN n.node_type AS node_type, n.node_category AS node_category, n.id AS path
+ORDER BY rand()
+LIMIT $sample_limit
+"""
+
+
+def report_extract_breakdown(facility_ids: list[str] | None = None) -> dict:
+    """Return a diagnostic breakdown of extractable DD paths by node_type and
+    node_category.
+
+    Queries the graph for all nodes matching the post-fix extraction filter
+    (``node_category IN SN_SOURCE_CATEGORIES``) and returns counts grouped by
+    ``(node_type, node_category)`` plus up to 5 random sample paths per
+    non-dynamic bucket.
+
+    Args:
+        facility_ids: Reserved for future filtering; not currently used.
+            DD nodes are not facility-scoped.
+
+    Returns:
+        Dict with keys:
+
+        - **total** (*int*): Total qualifying nodes.
+        - **by_node_type** (*dict*): Count per ``node_type`` value (``None`` key
+          for nodes where ``node_type`` is not set).
+        - **by_category** (*dict*): Count per ``node_category`` value.
+        - **samples** (*dict*): Up to 5 random path IDs per
+          ``"{node_type}/{node_category}"`` bucket for non-dynamic node_types.
+    """
+    from imas_codex.graph.client import GraphClient
+
+    params = {"sn_categories": list(SN_SOURCE_CATEGORIES)}
+
+    with GraphClient() as gc:
+        count_rows = list(gc.query(_BREAKDOWN_QUERY, **params))
+        sample_rows = list(
+            gc.query(_BREAKDOWN_SAMPLES_QUERY, sample_limit=50, **params)
+        )
+
+    total = 0
+    by_node_type: dict = {}
+    by_category: dict = {}
+
+    for row in count_rows:
+        nt = row["node_type"]
+        nc = row["node_category"]
+        cnt = row["cnt"]
+        total += cnt
+        by_node_type[nt] = by_node_type.get(nt, 0) + cnt
+        by_category[nc] = by_category.get(nc, 0) + cnt
+
+    # Collect up to 5 sample paths per (node_type, node_category) bucket
+    # for newly-admitted (non-dynamic) node_types.
+    samples: dict[str, list[str]] = {}
+    for row in sample_rows:
+        nt = row["node_type"] or "none"
+        nc = row["node_category"]
+        key = f"{nt}/{nc}"
+        bucket = samples.setdefault(key, [])
+        if len(bucket) < 5:
+            bucket.append(row["path"])
+
+    return {
+        "total": total,
+        "by_node_type": by_node_type,
+        "by_category": by_category,
+        "samples": samples,
+    }
+
 
 def extract_dd_candidates(
     *,
@@ -308,6 +396,23 @@ def extract_dd_candidates(
     """
     from imas_codex.graph.client import GraphClient
 
+    # Emit a diagnostic breakdown of eligible DD paths (grouped by
+    # node_type × node_category) before any graph query or LLM spend.
+    if logger.isEnabledFor(logging.INFO):
+        try:
+            _bd = report_extract_breakdown()
+            logger.info(
+                "DD extract breakdown — total=%d | node_types=%s | categories=%s",
+                _bd["total"],
+                {str(k): v for k, v in _bd["by_node_type"].items()},
+                _bd["by_category"],
+            )
+            if _bd["samples"]:
+                for bucket, paths in sorted(_bd["samples"].items()):
+                    logger.info("  sample[%s]: %s", bucket, paths[:3])
+        except Exception as exc:
+            logger.debug("report_extract_breakdown skipped: %s", exc)
+
     def _status(text: str) -> None:
         if on_status:
             on_status(text)
@@ -336,7 +441,8 @@ def extract_dd_candidates(
 
         params: dict = {"limit": limit, "sn_categories": list(SN_SOURCE_CATEGORIES)}
         where_parts = [
-            "n.node_type IN ['dynamic', 'constant']",
+            # node_category is the authoritative namability taxonomy; node_type
+            # (dynamic/static/constant) is orthogonal and must NOT gate extraction.
             "n.node_category IN $sn_categories",
             "n.description IS NOT NULL",
             "n.description <> ''",
