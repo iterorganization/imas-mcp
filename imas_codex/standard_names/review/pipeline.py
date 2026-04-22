@@ -597,6 +597,35 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
     grammar_enums = _get_grammar_enums()
     compose_ctx = _get_compose_context_for_review()
 
+    # --- K3: Load scored examples for review calibration ---
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.standard_names.example_loader import load_review_examples
+
+    # Derive physics_domains from domain_filter or batch items
+    review_domains: list[str] = []
+    if state.domain_filter:
+        review_domains = [state.domain_filter]
+    else:
+        _domains = {
+            n.get("physics_domain")
+            for batch in batches
+            for n in batch.get("names", [])
+            if n.get("physics_domain")
+        }
+        review_domains = sorted(_domains)
+
+    def _load_review_scored() -> list[dict]:
+        with GraphClient() as gc:
+            return load_review_examples(gc, physics_domains=review_domains)
+
+    review_scored = await asyncio.to_thread(_load_review_scored)
+    if review_scored:
+        wlog.info(
+            "K3: Loaded %d scored examples for review (domains=%s)",
+            len(review_scored),
+            review_domains or "all",
+        )
+
     total_items = sum(len(b["names"]) for b in batches)
     state.review_stats.total = total_items
 
@@ -648,6 +677,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                     name_only=state.name_only,
                     target=getattr(state, "target", None)
                     or ("names" if state.name_only else "full"),
+                    review_scored_examples=review_scored,
                 )
                 batch_cost = batch_scored.pop("_cost", 0.0)
                 batch_tokens = batch_scored.pop("_tokens", 0)
@@ -728,6 +758,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                                 name_only=state.name_only,
                                 target=getattr(state, "target", None)
                                 or ("names" if state.name_only else "full"),
+                                review_scored_examples=review_scored,
                             )
                             sec_items = sec_result.get("_items", [])
                             sec_cost = sec_result.get("_cost", 0.0)
@@ -1192,6 +1223,7 @@ async def _review_single_batch(
     name_only: bool = False,
     target: str | None = None,
     _is_retry: bool = False,
+    review_scored_examples: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Review a single batch via LLM — mirrors ``_review_batch()`` from workers.py.
 
@@ -1247,13 +1279,14 @@ async def _review_single_batch(
 
     # Merge compose context with review-specific keys
     base_ctx = dict(compose_ctx) if compose_ctx else {}
+    _scored_examples = review_scored_examples if review_scored_examples else []
 
     # Build context for prompt rendering
     context = {
         **base_ctx,
         "items": items_with_issues,
         "existing_names": [],  # not needed for standalone review
-        "review_scored_examples": [],
+        "review_scored_examples": _scored_examples,
         "batch_context": batch_context,
         "nearby_existing_names": neighborhood,
         "audit_findings": audit_findings,
@@ -1265,7 +1298,7 @@ async def _review_single_batch(
         **base_ctx,
         "items": [],
         "existing_names": [],
-        "review_scored_examples": [],
+        "review_scored_examples": _scored_examples,
         "batch_context": "",
         "nearby_existing_names": [],
         "audit_findings": [],
@@ -1326,6 +1359,7 @@ async def _review_single_batch(
             name_only=name_only,
             target=target,
             _is_retry=True,
+            review_scored_examples=review_scored_examples,
         )
 
         scored.extend(retry_result.get("_items", []))

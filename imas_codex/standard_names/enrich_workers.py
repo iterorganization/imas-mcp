@@ -994,7 +994,34 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
     )
 
     # Render system prompt once (identical across batches → prompt-cacheable)
-    system_prompt = render_prompt("sn/enrich_system", {"compose_scored_examples": []})
+    # --- K3: Load scored examples for enrich prompt ---
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.standard_names.example_loader import load_compose_examples
+
+    enrich_domains: list[str] = list(state.domain or [])
+    if not enrich_domains:
+        _domains = {
+            item.get("physics_domain")
+            for batch in state.batches
+            for item in batch.get("items", [])
+            if item.get("physics_domain")
+        }
+        enrich_domains = sorted(_domains)
+
+    def _load_enrich_scored() -> list[dict]:
+        with GraphClient() as gc:
+            return load_compose_examples(gc, physics_domains=enrich_domains)
+
+    compose_scored_examples = await asyncio.to_thread(_load_enrich_scored)
+    if compose_scored_examples:
+        wlog.info(
+            "K3: Loaded %d scored examples for enrich (domains=%s)",
+            len(compose_scored_examples),
+            enrich_domains or "all",
+        )
+    system_prompt = render_prompt(
+        "sn/enrich_system", {"compose_scored_examples": compose_scored_examples}
+    )
 
     # Fetch set of existing SN ids once for link-validation in the sanitizer.
     valid_names = _fetch_existing_sn_names()

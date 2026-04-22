@@ -1252,7 +1252,37 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 state.domain_filter,
             )
     context["reviewer_themes"] = reviewer_themes
-    context["compose_scored_examples"] = []
+
+    # --- K3: Scored-example injection ---
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.standard_names.example_loader import load_compose_examples
+
+    # Derive physics_domains from domain_filter and batch items
+    batch_domains: list[str] = []
+    if state.domain_filter:
+        batch_domains = [state.domain_filter]
+    else:
+        # Collect unique domains from all batch items
+        _domains = {
+            item.get("physics_domain")
+            for batch in state.extracted
+            for item in batch.items
+            if item.get("physics_domain")
+        }
+        batch_domains = sorted(_domains)
+
+    def _load_scored_examples() -> list[dict]:
+        with GraphClient() as gc:
+            return load_compose_examples(gc, physics_domains=batch_domains)
+
+    compose_scored_examples = await asyncio.to_thread(_load_scored_examples)
+    if compose_scored_examples:
+        wlog.info(
+            "K3: Loaded %d scored examples for compose (domains=%s)",
+            len(compose_scored_examples),
+            batch_domains or "all",
+        )
+    context["compose_scored_examples"] = compose_scored_examples
 
     system_prompt = render_prompt("sn/compose_system", context)
 
