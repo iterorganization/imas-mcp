@@ -142,7 +142,7 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% if item.documentation and item.documentation != item.description %}- **DD Documentation:** {{ item.documentation }}{% endif %}
 - **Unit:** {{ item.unit or 'dimensionless' }} *(authoritative from DD — use for naming context only, do NOT output)*
 - **Data type:** {{ item.data_type or 'unspecified' }}
-{% if item.node_type %}- **Node type:** {{ item.node_type }}  {# dynamic=time-varying, static=machine-fixed, constant=single-value #}{% endif %}
+{% if item.node_type %}- **Node type:** {{ item.node_type }} *(dynamic=time-varying quantity; static=machine-fixed parameter, e.g. wall geometry; constant=single scalar value; none=unclassified — use other context)*{% endif %}
 {% if item.physics_domain %}- **Physics domain:** {{ item.physics_domain }}{% endif %}
 {% if item.ndim is not none %}- **Dimensions:** {{ item.ndim }}D{% endif %}
 {% if item.lifecycle_status %}- **Lifecycle:** {{ item.lifecycle_status }} ⚠️{% endif %}
@@ -189,7 +189,7 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% if item.error_fields %}
 - **DD error companions:**
 {% for ef in item.error_fields %}  - `{{ ef }}`
-{% endfor %}  → This path has uncertainty companions. Consider producing an `*_uncertainty` variant, or skip if this path IS the error field.
+{% endfor %}  → Error/uncertainty companions are minted deterministically — do NOT produce `*_uncertainty` variants. Skip this path entirely if it IS an error field (`_error_upper`, `_error_lower`, `_error_index`).
 {% endif %}
 {% if item.version_history %}
 - **Version history:**
@@ -200,7 +200,7 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% for sib in item.sibling_fields %}  - `{{ sib.path }}`: {{ sib.description or 'no description' }} ({{ sib.data_type or '?' }})
 {% endfor %}{% endif %}
 {% if item.previous_name %}
-- **⟳ Previous generation:** `{{ item.previous_name.name }}` ({{ item.previous_name.review_status or 'drafted' }}{% if item.previous_name.reviewer_score %}, score={{ item.previous_name.reviewer_score | round(2) }}{% endif %}{% if item.previous_name.review_tier %}, {{ item.previous_name.review_tier }}{% endif %})
+- **⟳ Previous generation:** `{{ item.previous_name.name }}` ({{ item.previous_name.pipeline_status or 'drafted' }}{% if item.previous_name.reviewer_score %}, score={{ item.previous_name.reviewer_score | round(2) }}{% endif %}{% if item.previous_name.review_tier %}, {{ item.previous_name.review_tier }}{% endif %})
 {% if item.previous_name.description %}- **Prior description:** {{ item.previous_name.description }}{% endif %}
 {% if item.previous_name.documentation %}- **Prior documentation:** {{ item.previous_name.documentation }}{% endif %}
 {% if item.previous_name.tags %}- **Prior tags:** {{ item.previous_name.tags | join(', ') if item.previous_name.tags is iterable and item.previous_name.tags is not string else item.previous_name.tags }}{% endif %}
@@ -209,7 +209,7 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% if item.previous_name.linked_dd_paths %}- **Other DD paths sharing this name:** These paths were also mapped to `{{ item.previous_name.name }}` — your generated name should be appropriate for all of them:
 {% for ldp in item.previous_name.linked_dd_paths %}  - `{{ ldp }}`
 {% endfor %}{% endif %}
-{% if item.previous_name.review_status == 'accepted' %}- **⚠️ This name was human-accepted** — only replace with a clearly better alternative.{% endif %}
+{% if item.previous_name.pipeline_status == 'accepted' %}- **⚠️ This name was human-accepted** — only replace with a clearly better alternative.{% endif %}
 {% endif %}
 {% if item.review_feedback %}
 - **📝 Prior reviewer feedback — you MUST address the issues below in your new name:**

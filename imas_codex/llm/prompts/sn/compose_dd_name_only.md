@@ -123,14 +123,14 @@ they match; otherwise use them to calibrate style and specificity.
 - **Description:** {{ item.description }}
 - **Unit:** {{ item.unit or 'dimensionless' }} *(authoritative — do NOT output)*
 {% if item.data_type %}- **Data type:** {{ item.data_type }}{% endif %}
-{% if item.node_type %}- **Node type:** {{ item.node_type }}  {# dynamic=time-varying, static=machine-fixed, constant=single-value #}{% endif %}
+{% if item.node_type %}- **Node type:** {{ item.node_type }} *(dynamic=time-varying quantity; static=machine-fixed parameter, e.g. wall geometry; constant=single scalar value; none=unclassified — use other context)*{% endif %}
 {% if item.physics_domain %}- **Physics domain:** {{ item.physics_domain }}{% endif %}
 {% if item.ndim is not none %}- **Dimensions:** {{ item.ndim }}D{% endif %}
 {% if item.lifecycle_status %}- **Lifecycle:** {{ item.lifecycle_status }} ⚠️{% endif %}
 {% if item.keywords %}- **Keywords:** {{ item.keywords | join(', ') if item.keywords is iterable and item.keywords is not string else item.keywords }}{% endif %}
 {% if item.cocos_label %}- **COCOS transformation type:** `{{ item.cocos_label }}` — include a brief sign-convention sentence in documentation.{% endif %}
 {% if item.parent_path %}- **Parent:** {{ item.parent_path }}{% endif %}
-{% if item.previous_name %}- **⟳ Previous generation:** `{{ item.previous_name.name }}`{% if item.previous_name.review_status %} ({{ item.previous_name.review_status }}){% endif %}{% endif %}
+{% if item.previous_name %}- **⟳ Previous generation:** `{{ item.previous_name.name }}`{% if item.previous_name.pipeline_status %} ({{ item.previous_name.pipeline_status }}){% endif %}{% endif %}
 
 {% endfor %}
 

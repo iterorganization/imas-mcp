@@ -1,6 +1,8 @@
 # Review scoring criteria — codex-owned evaluation framework.
 # Per-dimension scoring uses integers 0-20 in the LLM prompt.
-# Aggregate score is normalized to 0-1 (sum / 120).
+# Full mode: aggregate score is normalized to 0-1 (sum / 120).
+# Name mode: aggregate score is normalized to 0-1 (sum / 80).
+# Docs mode: aggregate score is normalized to 0-1 (sum / 80).
 dimensions:
   grammar:
     max_score: 20
@@ -21,8 +23,73 @@ dimensions:
     max_score: 20
     description: "Follows compose prompt instructions exactly"
 
+# --- Review mode definitions ------------------------------------------------
+# Three review modes are supported. Each maps to a dedicated prompt file and
+# a subset of the dimensions above. Thresholds are expressed as fractions of
+# the mode's maximum score.
+#
+# Prompt files:
+#   name  → imas_codex/llm/prompts/sn/review_name_only.md
+#   docs  → imas_codex/llm/prompts/sn/review_docs.md
+#   full  → imas_codex/llm/prompts/sn/review.md
+modes:
+  name:
+    description: >-
+      Four-dimension name review. Applied after composition (before enrichment).
+      Evaluates the standard_name string and grammar fields only.
+      Does NOT penalise missing description/documentation.
+    dimensions: [grammar, semantic, convention, completeness]
+    max_raw_score: 80
+    prompt: "sn/review_name_only.md"
+    tiers:
+      outstanding: {raw_min: 68}   # 85 %
+      good:        {raw_min: 48}   # 60 %
+      inadequate:  {raw_min: 32}   # 40 %
+      poor:        {raw_min: 0}
+    verdict_rules:
+      accept: "raw_score >= 48 AND no dimension is 0"
+      reject: "raw_score < 32 OR any dimension is 0"
+      revise: "all other cases"
+
+  docs:
+    description: >-
+      Four-dimension docs review. Applied after enrichment (docs pass).
+      Gate: skips entries where reviewed_name_at IS NULL.
+      Evaluates description/documentation prose only; does NOT re-score the name.
+    dimensions: [description_quality, documentation_quality, completeness, physics_accuracy]
+    max_raw_score: 80
+    prompt: "sn/review_docs.md"
+    tiers:
+      outstanding: {raw_min: 68}   # 85 %
+      good:        {raw_min: 48}   # 60 %
+      inadequate:  {raw_min: 32}   # 40 %
+      poor:        {raw_min: 0}
+    verdict_rules:
+      accept: "raw_score >= 48 AND no dimension is 0"
+      reject: "raw_score < 32 OR any dimension is 0"
+      revise: "all other cases"
+
+  full:
+    description: >-
+      Six-dimension full review. Used for --target full runs or for standalone
+      benchmark scoring. Covers both name quality and documentation quality.
+    dimensions: [grammar, semantic, documentation, convention, completeness, compliance]
+    max_raw_score: 120
+    prompt: "sn/review.md"
+    tiers:
+      outstanding: {raw_min: 102}  # 85 %
+      good:        {raw_min: 72}   # 60 %
+      inadequate:  {raw_min: 48}   # 40 %
+      poor:        {raw_min: 0}
+    verdict_rules:
+      accept: "raw_score >= 72 AND no dimension is 0"
+      reject: "raw_score < 48 OR any dimension is 0"
+      revise: "all other cases"
+
+# Normalized (0-1) verdict thresholds — used by Python code that normalises
+# raw scores before comparing. Consistent with all three mode definitions.
 verdict_rules:
-  accept: "score >= 0.65 AND no dimension is 0"
+  accept: "score >= 0.60 AND no dimension is 0"
   reject: "score < 0.40 OR any dimension is 0"
   revise: "all other cases"
 
@@ -30,7 +97,7 @@ tiers:
   outstanding:
     min: 0.85
   good:
-    min: 0.65
+    min: 0.60
   inadequate:
     min: 0.40
   poor:
