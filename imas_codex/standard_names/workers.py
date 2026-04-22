@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any
 
 from imas_codex.standard_names.source_paths import (
     encode_source_path,
-    parse_source_path,
     strip_dd_prefix,
 )
 
@@ -1798,20 +1797,16 @@ def _validate_via_isn(
     }
 
     # Map codex dict keys to ISN model fields
-    # Strip dd: prefix for ISN export (catalog uses bare DD paths)
-    raw_paths = entry.get("source_paths", [])
-    isn_dd_paths = [
-        strip_dd_prefix(p) for p in raw_paths if parse_source_path(p)[0] == "dd"
-    ]
     from imas_codex.standard_names.kind_derivation import to_isn_kind
 
+    # Name-only ISN variants forbid dd_paths and physics_domain — those
+    # fields only exist on the full (non-name-only) model. Compose is
+    # always name-only (ADR-1), so we omit them here. DD-path provenance
+    # is retained on the codex graph node via `source_paths`.
     isn_dict: dict[str, Any] = {
         "name": entry.get("id", ""),
         "kind": to_isn_kind(entry.get("kind", "scalar")),
-        "dd_paths": isn_dd_paths,
     }
-    # ISN requires physics_domain — fall back to "general" when DD has no domain
-    isn_dict["physics_domain"] = entry.get("physics_domain") or "general"
     # ISN metadata kind forbids unit field entirely
     if isn_dict["kind"] != "metadata":
         unit = entry.get("unit") or "1"  # ISN requires '1' for dimensionless
