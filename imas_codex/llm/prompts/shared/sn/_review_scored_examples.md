@@ -7,17 +7,20 @@ tied to each dimension. Use these to anchor your own scores to a consistent
 absolute scale across batches.
 
 {% for ex in review_scored_examples %}
-### {{ ex.tier | capitalize }} — aggregate score {{ "%.2f"|format(ex.score) }} ({{ ex.domain }})
+### {{ ex.reviewer_verdict | capitalize }} — aggregate score {{ "%.2f"|format(ex.reviewer_score) }}
 
 **`{{ ex.id }}`** [{{ ex.unit or 'dimensionless' }}, kind={{ ex.kind }}]
 Description: {{ ex.description }}
+{% if ex.documentation %}Documentation: {{ ex.documentation }}{% endif %}
 
 Per-dimension scores and reasoning:
-{% for dim, score in ex.scores.items() if dim in ex.dimension_comments %}
-- **{{ dim }}: {{ score }}/20** — {{ ex.dimension_comments[dim] | default('(no per-dimension comment recorded)') }}
+{% for dim, score in ex.scores.items() %}
+- **{{ dim }}: {{ score }}/20** — {{ ex.dimension_comments.get(dim, '(no per-dimension comment recorded)') }}
 {% endfor %}
 
-{% if ex.issues %}Reviewer-flagged issues: {{ ex.issues | join('; ') }}{% endif %}
-{% if ex.verdict %}Verdict: **{{ ex.verdict }}**{% endif %}
+{% if ex.reviewer_comments %}Reviewer summary: *{{ ex.reviewer_comments }}*{% endif %}
+{% if ex.reviewer_verdict %}Verdict: **{{ ex.reviewer_verdict }}**{% endif %}
+{% if ex.physics_domain %}Physics domain: {{ ex.physics_domain }}{% endif %}
+
 {% endfor %}
 {% endif %}
