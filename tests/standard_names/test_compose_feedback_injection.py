@@ -206,5 +206,57 @@ class TestErrorFieldsInjection:
         assert "DD error companions" not in rendered
 
 
+class TestIdentifierValuesInjection:
+    """The identifier enum values block renders when item.identifier_values is set."""
+
+    def test_block_absent_without_identifier_values(self) -> None:
+        rendered = render_prompt("sn/compose_dd", _min_context([_min_item()]))
+        assert "Identifier enum values" not in rendered
+
+    def test_block_present_with_identifier_values(self) -> None:
+        values = [
+            {
+                "name": "rectangular",
+                "index": 1,
+                "description": "Rectangular coordinates",
+            },
+            {
+                "name": "cylindrical",
+                "index": 2,
+                "description": "Cylindrical coordinates",
+            },
+            {"name": "toroidal", "index": 3, "description": "Toroidal coordinates"},
+        ]
+        item = _min_item(identifier_values=values)
+        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+
+        assert "Identifier enum values" in rendered
+        assert "rectangular" in rendered
+        assert "cylindrical" in rendered
+        assert "toroidal" in rendered
+        assert "(1)" in rendered
+        assert "(2)" in rendered
+        assert "Rectangular coordinates" in rendered
+
+    def test_block_absent_with_empty_identifier_values(self) -> None:
+        item = _min_item(identifier_values=[])
+        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        assert "Identifier enum values" not in rendered
+
+    def test_identifier_values_after_identifier_schema(self) -> None:
+        """Identifier values block should appear after identifier schema line."""
+        values = [{"name": "linear", "index": 1, "description": "Linear interpolation"}]
+        item = _min_item(
+            identifier_schema="interpolation_type",
+            identifier_values=values,
+        )
+        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        assert "interpolation_type" in rendered
+        assert "Identifier enum values" in rendered
+        schema_pos = rendered.index("interpolation_type")
+        values_pos = rendered.index("Identifier enum values")
+        assert schema_pos < values_pos
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

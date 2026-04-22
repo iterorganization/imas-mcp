@@ -375,6 +375,7 @@ RETURN n.coordinate1_same_as AS coordinate1,
        cs.coordinate_description AS coordinate_spec_description,
        ident.name AS identifier_schema_name,
        ident.documentation AS identifier_schema_doc,
+       ident.options AS identifier_options,
        parent.id AS parent_path,
        parent.description AS parent_description,
        sibling_fields
@@ -658,6 +659,28 @@ def _enrich_batch_items(items: list[dict]) -> None:
                 ident_doc = row.get("identifier_schema_doc")
                 if ident_doc:
                     item["identifier_schema_doc"] = ident_doc
+
+                # Parse identifier enum values from JSON-encoded options
+                raw_options = row.get("identifier_options")
+                if raw_options:
+                    try:
+                        parsed = (
+                            json.loads(raw_options)
+                            if isinstance(raw_options, str)
+                            else raw_options
+                        )
+                        if isinstance(parsed, list):
+                            item["identifier_values"] = [
+                                {
+                                    "name": opt.get("name", ""),
+                                    "index": opt.get("index", 0),
+                                    "description": opt.get("description", ""),
+                                }
+                                for opt in parsed[:20]
+                                if opt.get("name")
+                            ]
+                    except (json.JSONDecodeError, TypeError):
+                        pass
 
             # Sibling fields (same parent, different leaf paths)
             siblings = row.get("sibling_fields") or []

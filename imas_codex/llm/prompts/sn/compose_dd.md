@@ -158,6 +158,10 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
   viewed from above"). If you cannot supply a concrete condition, omit that paragraph
   entirely and write `This quantity has no sign ambiguity.` instead.{% endif %}
 {% if item.identifier_schema %}- **Identifier schema:** {{ item.identifier_schema }}{% if item.identifier_schema_doc %} — {{ item.identifier_schema_doc }}{% endif %}{% endif %}
+{% if item.identifier_values %}
+- **Identifier enum values:**
+{% for iv in item.identifier_values %}  - `{{ iv.name }}` ({{ iv.index }}): {{ iv.description | default('', true) }}
+{% endfor %}{% endif %}
 {% if item.coord_path %}- **Coordinate:** {{ item.coord_path }}{% if item.coord_unit %} ({{ item.coord_unit }}){% endif %}{% endif %}
 {% if item.parent_path %}- **Parent structure:** {{ item.parent_path }} ({{ item.parent_type or 'STRUCTURE' }}){% endif %}
 {% if item.parent_description %}- **Parent description:** {{ item.parent_description }}{% endif %}
