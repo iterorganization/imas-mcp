@@ -157,6 +157,18 @@ These names already exist in the catalog. Flag candidates that duplicate them:
 - {{ issue }}
 {% endfor %}
 {% endif %}
+{% if item.dd_source_docs %}
+**Source DD paths**:
+{% for p in item.dd_source_docs %}- `{{ p.id }}` [{{ p.unit }}]: {{ p.documentation or p.description }}
+{% endfor %}{% endif %}
+{% if item.nearest_peers %}
+**DD neighbours** `[hybrid]` (cross-IDS naming consistency):
+{% for n in item.nearest_peers %}- `{{ n.tag }}` [{{ n.unit }}, {{ n.physics_domain }}]: {{ n.doc_short }}{% if n.cocos_label %} (COCOS {{ n.cocos_label }}){% endif %}
+{% endfor %}{% endif %}
+{% if item.related_neighbours %}
+**DD relatives** `[related]` (cluster + unit siblings):
+{% for r in item.related_neighbours %}{% if r.relationship_type in ['cluster', 'unit'] %}- `{{ r.path }}` ({{ r.ids }}) — {{ r.relationship_type }}{% if r.via %} via {{ r.via }}{% endif %}
+{% endif %}{% endfor %}{% endif %}
 
 {% endfor %}
 
