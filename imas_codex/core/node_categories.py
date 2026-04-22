@@ -21,7 +21,10 @@ SEARCHABLE_CATEGORIES: frozenset[str] = (
 )
 
 # Nodes eligible for standard-name extraction.
-SN_SOURCE_CATEGORIES: frozenset[str] = QUANTITY_CATEGORIES
+# Includes 'coordinate' because normalized flux coordinates, grid axes, and
+# similar scalar leaves are first-class namable quantities — not mere bookkeeping.
+# The leaf invariant (data_type NOT IN STRUCTURE/STRUCT_ARRAY) gates containers.
+SN_SOURCE_CATEGORIES: frozenset[str] = QUANTITY_CATEGORIES | {"coordinate"}
 
 # Nodes that enter the LLM enrichment pipeline
 # (description generation, keyword extraction).

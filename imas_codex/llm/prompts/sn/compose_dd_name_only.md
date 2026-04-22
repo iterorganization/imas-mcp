@@ -123,6 +123,7 @@ they match; otherwise use them to calibrate style and specificity.
 - **Description:** {{ item.description }}
 - **Unit:** {{ item.unit or 'dimensionless' }} *(authoritative — do NOT output)*
 {% if item.data_type %}- **Data type:** {{ item.data_type }}{% endif %}
+{% if item.node_type %}- **Node type:** {{ item.node_type }}  {# dynamic=time-varying, static=machine-fixed, constant=single-value #}{% endif %}
 {% if item.physics_domain %}- **Physics domain:** {{ item.physics_domain }}{% endif %}
 {% if item.ndim is not none %}- **Dimensions:** {{ item.ndim }}D{% endif %}
 {% if item.lifecycle_status %}- **Lifecycle:** {{ item.lifecycle_status }} ⚠️{% endif %}

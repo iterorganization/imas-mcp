@@ -142,6 +142,7 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% if item.documentation and item.documentation != item.description %}- **DD Documentation:** {{ item.documentation }}{% endif %}
 - **Unit:** {{ item.unit or 'dimensionless' }} *(authoritative from DD — use for naming context only, do NOT output)*
 - **Data type:** {{ item.data_type or 'unspecified' }}
+{% if item.node_type %}- **Node type:** {{ item.node_type }}  {# dynamic=time-varying, static=machine-fixed, constant=single-value #}{% endif %}
 {% if item.physics_domain %}- **Physics domain:** {{ item.physics_domain }}{% endif %}
 {% if item.ndim is not none %}- **Dimensions:** {{ item.ndim }}D{% endif %}
 {% if item.lifecycle_status %}- **Lifecycle:** {{ item.lifecycle_status }} ⚠️{% endif %}

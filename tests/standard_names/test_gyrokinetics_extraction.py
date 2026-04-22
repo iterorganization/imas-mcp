@@ -91,6 +91,7 @@ class TestConstantNodeTypeExtraction:
                 "unit": "-",
                 "unit_from_rel": "-",
                 "data_type": "FLT_0D",
+                "node_type": "constant",
                 "physics_domain": "gyrokinetics",
                 "keywords": None,
                 "node_category": "quantity",
@@ -109,6 +110,7 @@ class TestConstantNodeTypeExtraction:
                 "coord_unit": None,
                 "cocos_label": None,
                 "cocos_expression": None,
+                "error_node_ids": [],
             },
             {
                 "path": "gyrokinetics/species_all/beta_reference",
@@ -117,6 +119,7 @@ class TestConstantNodeTypeExtraction:
                 "unit": "-",
                 "unit_from_rel": "-",
                 "data_type": "FLT_0D",
+                "node_type": "constant",
                 "physics_domain": "gyrokinetics",
                 "keywords": None,
                 "node_category": "quantity",
@@ -135,6 +138,7 @@ class TestConstantNodeTypeExtraction:
                 "coord_unit": None,
                 "cocos_label": None,
                 "cocos_expression": None,
+                "error_node_ids": [],
             },
         ]
 

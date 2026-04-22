@@ -222,12 +222,15 @@ OPTIONAL MATCH (n)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
 OPTIONAL MATCH (n)-[:HAS_PARENT]->(parent:IMASNode)
 OPTIONAL MATCH (n)-[:HAS_COORDINATE]->(coord:IMASNode)
 OPTIONAL MATCH (coord)-[:HAS_UNIT]->(cu:Unit)
+OPTIONAL MATCH (n)-[:HAS_ERROR]->(err:IMASNode)
+WITH n, ids, u, c, parent, coord, cu, collect(DISTINCT err.id) AS error_node_ids
 RETURN n.id AS path,
        n.description AS description,
        n.documentation AS documentation,
        n.unit AS unit,
        u.id AS unit_from_rel,
        n.data_type AS data_type,
+       n.node_type AS node_type,
        n.physics_domain AS physics_domain,
        n.keywords AS keywords,
        n.node_category AS node_category,
@@ -245,7 +248,8 @@ RETURN n.id AS path,
        coord.description AS coord_description,
        cu.id AS coord_unit,
        n.cocos_transformation_type AS cocos_label,
-       n.cocos_transformation_expression AS cocos_expression
+       n.cocos_transformation_expression AS cocos_expression,
+       error_node_ids
 ORDER BY ids.id, n.id
 """
 
@@ -262,14 +266,18 @@ ORDER BY cluster_id, sibling_path
 
 # Breakdown diagnostic queries — grouped counts and random samples for non-dynamic
 # node_type buckets (i.e., newly-admitted paths after node_type filter removal).
+# Both queries enforce the leaf invariant (data_type NOT IN STRUCTURE/STRUCT_ARRAY)
+# so breakdown totals reflect exactly what extraction admits.
 _BREAKDOWN_QUERY = """
 MATCH (n:IMASNode)-[:IN_IDS]->(ids:IDS)
 WHERE n.node_category IN $sn_categories
   AND n.description IS NOT NULL
   AND n.description <> ''
   AND ids.id <> 'core_instant_changes'
-RETURN n.node_type AS node_type, n.node_category AS node_category, count(*) AS cnt
-ORDER BY node_type, node_category
+  AND NOT (n.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
+RETURN n.node_type AS node_type, n.node_category AS node_category,
+       n.data_type AS data_type, count(*) AS cnt
+ORDER BY node_type, node_category, data_type
 """
 
 _BREAKDOWN_SAMPLES_QUERY = """
@@ -278,10 +286,23 @@ WHERE n.node_category IN $sn_categories
   AND n.description IS NOT NULL
   AND n.description <> ''
   AND ids.id <> 'core_instant_changes'
+  AND NOT (n.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
   AND (n.node_type IS NULL OR NOT n.node_type IN ['dynamic'])
 RETURN n.node_type AS node_type, n.node_category AS node_category, n.id AS path
 ORDER BY rand()
 LIMIT $sample_limit
+"""
+
+# Count candidates that have at least one HAS_ERROR sibling (B9 prep).
+_BREAKDOWN_ERRORS_QUERY = """
+MATCH (n:IMASNode)-[:IN_IDS]->(ids:IDS)
+WHERE n.node_category IN $sn_categories
+  AND n.description IS NOT NULL
+  AND n.description <> ''
+  AND ids.id <> 'core_instant_changes'
+  AND NOT (n.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
+  AND EXISTS { (n)-[:HAS_ERROR]->(:IMASNode) }
+RETURN count(n) AS has_errors_count
 """
 
 
@@ -289,10 +310,11 @@ def report_extract_breakdown(facility_ids: list[str] | None = None) -> dict:
     """Return a diagnostic breakdown of extractable DD paths by node_type and
     node_category.
 
-    Queries the graph for all nodes matching the post-fix extraction filter
-    (``node_category IN SN_SOURCE_CATEGORIES``) and returns counts grouped by
-    ``(node_type, node_category)`` plus up to 5 random sample paths per
-    non-dynamic bucket.
+    Queries the graph for all nodes matching the extraction filter
+    (``node_category IN SN_SOURCE_CATEGORIES`` AND leaf invariant
+    ``data_type NOT IN STRUCTURE/STRUCT_ARRAY``) and returns counts grouped by
+    ``(node_type, node_category, data_type)`` plus up to 5 random sample paths
+    per non-dynamic bucket and the count of candidates with HAS_ERROR siblings.
 
     Args:
         facility_ids: Reserved for future filtering; not currently used.
@@ -305,6 +327,10 @@ def report_extract_breakdown(facility_ids: list[str] | None = None) -> dict:
         - **by_node_type** (*dict*): Count per ``node_type`` value (``None`` key
           for nodes where ``node_type`` is not set).
         - **by_category** (*dict*): Count per ``node_category`` value.
+        - **by_data_type** (*dict*): Count per ``data_type`` value — proves no
+          STRUCTURE/STRUCT_ARRAY containers are admitted.
+        - **has_errors_count** (*int*): Number of candidates with at least one
+          HAS_ERROR sibling (B9 prep — error-sibling minting).
         - **samples** (*dict*): Up to 5 random path IDs per
           ``"{node_type}/{node_category}"`` bucket for non-dynamic node_types.
     """
@@ -317,18 +343,24 @@ def report_extract_breakdown(facility_ids: list[str] | None = None) -> dict:
         sample_rows = list(
             gc.query(_BREAKDOWN_SAMPLES_QUERY, sample_limit=50, **params)
         )
+        errors_rows = list(gc.query(_BREAKDOWN_ERRORS_QUERY, **params))
 
     total = 0
     by_node_type: dict = {}
     by_category: dict = {}
+    by_data_type: dict = {}
 
     for row in count_rows:
         nt = row["node_type"]
         nc = row["node_category"]
+        dt = row["data_type"]
         cnt = row["cnt"]
         total += cnt
         by_node_type[nt] = by_node_type.get(nt, 0) + cnt
         by_category[nc] = by_category.get(nc, 0) + cnt
+        by_data_type[dt] = by_data_type.get(dt, 0) + cnt
+
+    has_errors_count = errors_rows[0]["has_errors_count"] if errors_rows else 0
 
     # Collect up to 5 sample paths per (node_type, node_category) bucket
     # for newly-admitted (non-dynamic) node_types.
@@ -345,6 +377,8 @@ def report_extract_breakdown(facility_ids: list[str] | None = None) -> dict:
         "total": total,
         "by_node_type": by_node_type,
         "by_category": by_category,
+        "by_data_type": by_data_type,
+        "has_errors_count": has_errors_count,
         "samples": samples,
     }
 
@@ -402,10 +436,13 @@ def extract_dd_candidates(
         try:
             _bd = report_extract_breakdown()
             logger.info(
-                "DD extract breakdown — total=%d | node_types=%s | categories=%s",
+                "DD extract breakdown — total=%d | node_types=%s | categories=%s"
+                " | data_types=%s | has_errors=%d",
                 _bd["total"],
                 {str(k): v for k, v in _bd["by_node_type"].items()},
                 _bd["by_category"],
+                _bd["by_data_type"],
+                _bd["has_errors_count"],
             )
             if _bd["samples"]:
                 for bucket, paths in sorted(_bd["samples"].items()):
@@ -446,6 +483,12 @@ def extract_dd_candidates(
             "n.node_category IN $sn_categories",
             "n.description IS NOT NULL",
             "n.description <> ''",
+            # Leaf invariant: exclude container nodes (STRUCTURE/STRUCT_ARRAY).
+            # A STRUCTURE wraps sub-fields; it has no physics value itself.
+            # This replaces the old node_type=['dynamic','constant'] gate — it
+            # correctly admits static/geometry and coordinate leaves while
+            # blocking wrappers like summary/global_quantities/q_95{value,source}.
+            "NOT (n.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])",
             # S1 equivalent at query level: core_instant_changes is a whole-IDS
             # dedup policy (duplicates core_profiles with "change in X" prefix).
             # Push into Cypher so LIMIT/ORDER BY pagination doesn't fill a batch
@@ -478,6 +521,13 @@ def extract_dd_candidates(
         if not results:
             logger.info("No DD paths found matching filters")
             return []
+
+        # Materialise has_errors / error_node_ids from the pattern comprehension.
+        # error_node_ids is a Cypher list (may be empty list, not None).
+        for row in results:
+            error_ids = row.get("error_node_ids") or []
+            row["error_node_ids"] = list(error_ids)
+            row["has_errors"] = bool(error_ids)
 
         _status(f"found {len(results)} paths, resolving units…")
 
