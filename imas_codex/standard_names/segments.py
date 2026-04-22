@@ -17,15 +17,18 @@ segment ``grammar_ambiguity`` — these are grammar findings, not missing
 tokens, and are likewise filtered.
 
 When the ISN package is unavailable at import time we fall back to a
-conservative hard-coded set so tests and offline tools still behave sensibly.
+conservative empty set so all real-segment gaps are preserved.  In vNext
+(rc21+) ``physical_base`` is intended to be a closed vocabulary; it is
+therefore no longer in the fallback.
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
 
-# Hard fallback (matches imas-standard-names v0.7.0rc18).
-_FALLBACK_OPEN_SEGMENTS: frozenset[str] = frozenset({"physical_base"})
+# Hard fallback (used when imas-standard-names is unavailable at import time).
+# vNext (rc21+) closes ``physical_base``; no segment is guaranteed open by default.
+_FALLBACK_OPEN_SEGMENTS: frozenset[str] = frozenset()
 
 # Pseudo segments reported by the composer but that are not real grammar
 # segments — these are structural findings, not missing tokens.  Treated as

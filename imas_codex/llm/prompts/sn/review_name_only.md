@@ -11,49 +11,18 @@ You are a quality reviewer for IMAS standard name entries in fusion plasma physi
 
 Do **not** penalise entries for missing or terse `description`/`documentation`. Those fields were intentionally skipped in name-only mode and will be filled in by a later enrichment pass.
 
-## Standard Name Grammar
+{% include "sn/_grammar_reference.md" %}
 
-A valid standard name is composed from optional segments in a specific order:
+{% include "sn/_exemplars.md" %}
 
-**Canonical pattern:** `[process] [transformation] [subject] [component] physical_base [position] [object]`
+## Closed `physical_base` Vocabulary
 
-Or with geometric_base: `[process] [transformation] [subject] [component] geometric_base [position] [object]`
+`physical_base` is a **closed vocabulary** (~250 tokens). If a candidate name
+uses a `physical_base` token not in the registry, it is a grammar defect —
+the reviewer should flag `vocab_gap` and dock grammar points.
 
-Every name MUST have either a `physical_base` (open vocabulary) or a `geometric_base` (restricted vocabulary), but never both.
-
-### Segment Vocabulary
-
-- **subject**: species or population ({{ subjects | join(', ') }})
-- **component**: vector/tensor component ({{ components | join(', ') }})
-- **position**: spatial location ({{ positions | join(', ') }})
-- **process**: physical mechanism ({{ processes | join(', ') }})
-- **transformation**: mathematical operation ({{ transformations | join(', ') }})
-- **geometric_base**: geometric quantity ({{ geometric_bases | join(', ') }})
-- **object**: device component ({{ objects | join(', ') }})
-- **binary_operator**: for compound names ({{ binary_operators | join(', ') }})
-
-## Open-Vocabulary `physical_base` — do not flag parse-valid compounds
-
-`physical_base` is an **open vocabulary**: any lowercase snake_case token is
-admissible if the name round-trips through
-`parse_standard_name → compose_standard_name`. This means compounds like
-`distance_between_plasma_boundary_and_closest_wall_point`,
-`gap_angle_of_plasma_boundary`, or `minor_radius_of_plasma_boundary` all parse
-successfully — the whole compound lands in `physical_base` (with `position`
-captured when an `_of_<position>` suffix matches the closed `positions`
-vocabulary).
-
-You **must not** mark such a compound as "unparseable grammar" or penalise the
-grammar / convention dimensions on that basis alone. Use the semantic and
-convention dimensions to judge whether the compound is *well-chosen*
-(e.g. NC-14: `distance_between_X_and_Y` is the canonical form for separation
-between two named features; NC-8: names must be self-describing, not a bare
-generic noun). Grammar correctness = does it round-trip; it does not require
-every token to come from a closed vocabulary.
-
-When in doubt, remember: the benchmark runner independently calls
-`parse_standard_name` on every candidate and reports a `Valid %`. If that
-check passes, grammar is valid.
+Compound `physical_base` tokens like `poloidal_flux` or `minor_radius` are
+valid only when they appear as single entries in the registry.
 
 ## Scoring Dimensions
 
@@ -64,26 +33,28 @@ genuine quality problems or false positives. Factor genuine issues into your
 grammar and convention scores.
 
 ### 1. Grammar Correctness (0-20)
-- Does the name parse correctly under the standard name grammar?
-- Are all segments valid enum values from the vocabulary?
-- Is the field decomposition consistent with the composed name?
-- Does the name round-trip: `parse(name) → compose() == name`?
-- A compound `physical_base` is **grammar-valid** as long as the whole name
-  round-trips — do not dock grammar points merely because the compound uses
-  prepositions (`_between_`, `_and_`, `_of_`) that look "non-canonical".
-- **Decomposition audit** — inspect the `physical_base` slot and flag any
-  closed-vocab token (from `subjects`, `components`, `coordinates`,
-  `transformations`, `processes`, `positions`, `objects`, `geometric_bases`
-  above) that appears as a whole underscore-separated substring. Each
-  candidate defect:
-    - `toroidal_torque` → component=`toroidal` + physical_base=`torque`
-    - `volume_averaged_electron_temperature` → transformation=`volume_averaged` + subject=`electron` + physical_base=`temperature`
-    - `flux_surface_cross_sectional_area` → position=`flux_surface` + physical_base=`cross_sectional_area`
+**0**: Would fail vNext grammar validation, uses unknown `physical_base` token, or prefix/postfix operator confusion.
+**20**: Perfect 5-group IR decomposition with correct operator form and in-vocabulary base.
+
+- Is the `physical_base` token in the closed vocabulary?
+- Are prefix operators written with explicit `_of_` scope marker?
+- Are postfix operators (`_magnitude`, `_real_part`, etc.) correctly appended (not prefix `_of_` form)?
+- Is locus correctly expressed with `_of_`/`_at_`/`_over_` prepositions?
+- Is mechanism expressed with `_due_to_`?
+- **[I4.6] Decomposition audit** — inspect the `physical_base` slot for
+  potential group absorption. Flag any known group token (from operators,
+  subjects, components, coordinates, locus, process registries) that
+  appears as a whole underscore-separated substring of the `physical_base`
+  when it should occupy its own IR group. Each such defect is a **candidate
+  decomposition error**:
+    - `toroidal_torque` → projection=`toroidal` + base=`torque`
+    - `volume_averaged_electron_temperature` → operator=`volume_averaged` + qualifier=`electron` + base=`temperature`
+    - `flux_surface_cross_sectional_area` → locus=`flux_surface` + base=`cross_sectional_area`
   Allow genuine lexicalised atomic terms (`poloidal_flux`, `minor_radius`,
   `cross_sectional_area`, `safety_factor`). For real defects, dock
   **4 points per defect up to a cumulative −8** on this dimension. Record
   each absorbed token in the `issues` field as
-  `decomposition: <token>(<segment>) absorbed into physical_base`.
+  `decomposition: <token>(<group>) absorbed into physical_base`.
 
 ### 2. Semantic Accuracy (0-20)
 - Does the name accurately describe the physical quantity implied by the source path?

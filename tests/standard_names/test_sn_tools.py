@@ -185,8 +185,8 @@ class TestSearchStandardNames:
         assert "electron_temperature" in result
         assert "equilibrium_shape" not in result
 
-    def test_result_format_includes_grammar(self):
-        """Result format includes grammar fields."""
+    def test_result_format_no_grammar_fields(self):
+        """Result format no longer includes grammar_* fields (vNext)."""
         from imas_codex.llm.sn_tools import _search_standard_names
 
         mock_gc = MagicMock()
@@ -200,8 +200,6 @@ class TestSearchStandardNames:
                     "tags": [],
                     "pipeline_status": "drafted",
                     "documentation": None,
-                    "grammar_physical_base": "temperature",
-                    "grammar_subject": "electron",
                     "score": 0.92,
                 }
             ]
@@ -212,9 +210,11 @@ class TestSearchStandardNames:
         ):
             result = _search_standard_names("electron temperature", gc=mock_gc)
 
-        assert "physical_base=temperature" in result
-        assert "subject=electron" in result
+        assert "electron_temperature" in result
         assert "0.92" in result
+        # Grammar fields are no longer stored on nodes or displayed
+        assert "physical_base=" not in result
+        assert "subject=" not in result
 
 
 class TestFetchStandardNames:

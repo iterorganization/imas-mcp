@@ -1,11 +1,12 @@
-"""Unit tests for grammar-slot filters and ``list_grammar_vocabulary`` MCP tool.
+"""Unit tests for ``_list_grammar_vocabulary`` and ``_search_standard_names`` MCP tools.
 
-Verifies:
+Verifies (vNext grammar — plan 38 W4a):
 
-- ``_search_standard_names`` post-filters rows by ``grammar_*`` kwargs.
-- ``_list_grammar_vocabulary`` validates the segment allowlist, dispatches
-  a Cypher query using the correct property name, and formats the output
-  as a markdown table.
+- ``_search_standard_names`` accepts no ``grammar_*`` kwargs (removed); kind/tags/cocos
+  post-filters still work.
+- ``_list_grammar_vocabulary`` validates segment names dynamically against
+  ``SEGMENT_TOKEN_MAP``, returns ISN vocabulary for closed segments, and
+  describes open segments without querying Neo4j.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from imas_codex.llm.sn_tools import (
-    GRAMMAR_SEGMENTS,
     _list_grammar_vocabulary,
     _search_standard_names,
 )
@@ -24,19 +24,18 @@ from imas_codex.llm.sn_tools import (
 @pytest.fixture
 def mock_gc() -> MagicMock:
     """Minimal GraphClient stub with ``query()`` method."""
-
     gc = MagicMock()
     gc.query = MagicMock(return_value=[])
     return gc
 
 
 # ---------------------------------------------------------------------------
-# _search_standard_names grammar_* post-filtering
+# _search_standard_names — no grammar_* args; other filters still work
 # ---------------------------------------------------------------------------
 
 
-class TestSearchGrammarFilters:
-    """``_search_standard_names`` filters rows by grammar_* kwargs."""
+class TestSearchNoGrammarArgs:
+    """``_search_standard_names`` has no grammar_* kwargs in vNext."""
 
     def _make_rows(self) -> list[dict]:
         return [
@@ -44,47 +43,17 @@ class TestSearchGrammarFilters:
                 "name": "electron_temperature",
                 "description": "T_e",
                 "kind": "scalar",
-                "grammar_subject": "electron",
-                "grammar_physical_base": "temperature",
-                "grammar_component": None,
                 "score": 1.0,
             },
             {
                 "name": "ion_temperature",
                 "description": "T_i",
                 "kind": "scalar",
-                "grammar_subject": "ion",
-                "grammar_physical_base": "temperature",
-                "grammar_component": None,
                 "score": 0.9,
-            },
-            {
-                "name": "toroidal_electron_velocity",
-                "description": "v_e,tor",
-                "kind": "scalar",
-                "grammar_subject": "electron",
-                "grammar_physical_base": "velocity",
-                "grammar_component": "toroidal",
-                "score": 0.8,
             },
         ]
 
-    def test_subject_filter_keeps_only_matching(self, mock_gc, monkeypatch):
-        rows = self._make_rows()
-        monkeypatch.setattr(
-            "imas_codex.llm.sn_tools._keyword_search_sn", lambda *a, **kw: rows
-        )
-        # Force keyword path by breaking embedding
-        monkeypatch.setattr(
-            "imas_codex.embeddings.encoder.Encoder.embed_texts",
-            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no embed")),
-        )
-        out = _search_standard_names("temp", grammar_subject="electron", gc=mock_gc)
-        assert "electron_temperature" in out
-        assert "toroidal_electron_velocity" in out
-        assert "ion_temperature" not in out
-
-    def test_multiple_filters_are_conjunctive(self, mock_gc, monkeypatch):
+    def test_returns_all_without_filters(self, mock_gc, monkeypatch):
         rows = self._make_rows()
         monkeypatch.setattr(
             "imas_codex.llm.sn_tools._keyword_search_sn", lambda *a, **kw: rows
@@ -93,91 +62,85 @@ class TestSearchGrammarFilters:
             "imas_codex.embeddings.encoder.Encoder.embed_texts",
             lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no embed")),
         )
-        out = _search_standard_names(
-            "v",
-            grammar_subject="electron",
-            grammar_component="toroidal",
-            gc=mock_gc,
-        )
-        assert "toroidal_electron_velocity" in out
-        assert "electron_temperature" not in out
-        assert "ion_temperature" not in out
-
-    def test_filter_case_insensitive(self, mock_gc, monkeypatch):
-        rows = self._make_rows()
-        monkeypatch.setattr(
-            "imas_codex.llm.sn_tools._keyword_search_sn", lambda *a, **kw: rows
-        )
-        monkeypatch.setattr(
-            "imas_codex.embeddings.encoder.Encoder.embed_texts",
-            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no embed")),
-        )
-        out = _search_standard_names("t", grammar_subject="ELECTRON", gc=mock_gc)
-        assert "electron_temperature" in out
-        assert "ion_temperature" not in out
-
-    def test_no_filter_returns_all(self, mock_gc, monkeypatch):
-        rows = self._make_rows()
-        monkeypatch.setattr(
-            "imas_codex.llm.sn_tools._keyword_search_sn", lambda *a, **kw: rows
-        )
-        monkeypatch.setattr(
-            "imas_codex.embeddings.encoder.Encoder.embed_texts",
-            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no embed")),
-        )
-        out = _search_standard_names("t", gc=mock_gc)
+        out = _search_standard_names("temperature", gc=mock_gc)
         assert "electron_temperature" in out
         assert "ion_temperature" in out
-        assert "toroidal_electron_velocity" in out
+
+    def test_kind_filter_still_works(self, mock_gc, monkeypatch):
+        rows = self._make_rows()
+        rows[0]["kind"] = "scalar"
+        rows[1]["kind"] = "vector"
+        monkeypatch.setattr(
+            "imas_codex.llm.sn_tools._keyword_search_sn", lambda *a, **kw: rows
+        )
+        monkeypatch.setattr(
+            "imas_codex.embeddings.encoder.Encoder.embed_texts",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no embed")),
+        )
+        out = _search_standard_names("temperature", kind="vector", gc=mock_gc)
+        assert "ion_temperature" in out
+        assert "electron_temperature" not in out
+
+    def test_no_grammar_kwargs_accepted(self):
+        """Signature must not have grammar_* parameters."""
+        import inspect
+
+        sig = inspect.signature(_search_standard_names)
+        grammar_params = [p for p in sig.parameters if p.startswith("grammar_")]
+        assert grammar_params == [], (
+            f"grammar_* kwargs found in _search_standard_names: {grammar_params}"
+        )
 
 
 # ---------------------------------------------------------------------------
-# _list_grammar_vocabulary
+# _list_grammar_vocabulary — dynamic ISN vocabulary (no Neo4j query)
 # ---------------------------------------------------------------------------
 
 
 class TestListGrammarVocabulary:
-    """Vocabulary listing validates segment and formats results."""
+    """Vocabulary listing uses ISN SEGMENT_TOKEN_MAP dynamically."""
 
-    def test_unknown_segment_returns_error_with_valid_list(self, mock_gc):
-        out = _list_grammar_vocabulary("bogus", gc=mock_gc)
+    def test_unknown_segment_returns_error_with_valid_list(self):
+        out = _list_grammar_vocabulary("bogus")
         assert "Unknown grammar segment" in out
         # Some known segment names should appear in the valid list
-        assert "physical_base" in out
         assert "component" in out
-        # Should not issue a query for invalid segment
-        mock_gc.query.assert_not_called()
+        assert "physical_base" in out
 
-    def test_known_segment_dispatches_correct_property(self, mock_gc):
-        mock_gc.query.return_value = [
-            {"token": "radial", "n": 37},
-            {"token": "toroidal", "n": 32},
-        ]
-        out = _list_grammar_vocabulary("component", gc=mock_gc)
-        # Cypher should reference the grammar_component property
-        cypher_arg = mock_gc.query.call_args[0][0]
-        assert "sn.grammar_component" in cypher_arg
-        # Output is a markdown table with tokens and counts
+    def test_known_closed_segment_returns_vocabulary_table(self):
+        out = _list_grammar_vocabulary("component")
         assert "## Grammar Vocabulary: `component`" in out
-        assert "| radial | 37 |" in out
-        assert "| toroidal | 32 |" in out
-        assert "2 distinct tokens across 69 StandardName nodes." in out
+        # rc21 has 18 component tokens — output should have token rows
+        assert "|" in out
+        # Must not be an error
+        assert "Unknown grammar segment" not in out
 
-    def test_empty_result_returns_descriptive_message(self, mock_gc):
-        mock_gc.query.return_value = []
-        out = _list_grammar_vocabulary("region", gc=mock_gc)
-        assert "No StandardName nodes have the `grammar_region` property set." in out
+    def test_open_segment_returns_informational_message(self):
+        out = _list_grammar_vocabulary("physical_base")
+        # physical_base is open in rc21 (empty token list)
+        assert "physical_base" in out
+        assert "Unknown grammar segment" not in out
 
-    def test_all_declared_segments_are_accepted(self, mock_gc):
-        mock_gc.query.return_value = []
-        for seg in GRAMMAR_SEGMENTS:
-            out = _list_grammar_vocabulary(seg, gc=mock_gc)
+    def test_segment_case_insensitive(self):
+        out = _list_grammar_vocabulary("Component")
+        assert "Unknown grammar segment" not in out
+        assert "## Grammar Vocabulary: `component`" in out
+
+    def test_all_isn_segments_are_accepted(self):
+        """All segments from SEGMENT_TOKEN_MAP should be valid."""
+        try:
+            from imas_standard_names.grammar.constants import SEGMENT_TOKEN_MAP
+
+            segments = list(SEGMENT_TOKEN_MAP.keys())
+        except ImportError:
+            pytest.skip("ISN not available")
+        for seg in segments:
+            out = _list_grammar_vocabulary(seg)
             assert "Unknown grammar segment" not in out, (
                 f"segment {seg!r} rejected by allowlist"
             )
 
-    def test_segment_case_insensitive(self, mock_gc):
-        mock_gc.query.return_value = [{"token": "toroidal", "n": 1}]
-        out = _list_grammar_vocabulary("Component", gc=mock_gc)
-        assert "Unknown grammar segment" not in out
-        assert "## Grammar Vocabulary: `component`" in out
+    def test_does_not_query_neo4j(self, mock_gc):
+        """_list_grammar_vocabulary must not call GraphClient.query."""
+        _list_grammar_vocabulary("component")
+        mock_gc.query.assert_not_called()

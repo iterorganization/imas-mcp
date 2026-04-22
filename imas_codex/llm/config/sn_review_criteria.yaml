@@ -4,7 +4,7 @@
 dimensions:
   grammar:
     max_score: 20
-    description: "Parse/compose round-trip, segment ordering, vocabulary compliance"
+    description: "vNext 5-group IR compliance: operator scope markers, closed physical_base, projection prefix, postfix locus, _of_ disambiguation"
   semantic:
     max_score: 20
     description: "Name accurately describes the physical quantity"
@@ -196,32 +196,29 @@ common_issues:
 
     I4.6_physical_base_decomposition:
       description: >-
-        Closed-vocabulary tokens (subject, component, coordinate,
-        transformation, position, process, geometry, object, region,
-        device, geometric_base) absorbed into an open ``physical_base``
-        compound instead of being lifted to their dedicated grammar
-        segment. A parse-valid compound is not grammar-wrong — but a
-        compound that hides structure in ``physical_base`` is a
-        decomposition defect because it defeats per-segment search and
-        grammatical composition.
+        Closed-vocabulary tokens (qualifiers, operators, projection axes,
+        locus, process) absorbed into the ``physical_base`` compound
+        instead of being expressed through the vNext 5-group IR. A
+        parse-valid compound is not grammar-wrong — but a compound that
+        hides structure in ``physical_base`` defeats operator/projection
+        search and grammatical composition.
       rule: >-
-        For each candidate, inspect the ``physical_base`` slot of the
-        parsed grammar fields and list any closed-vocab tokens present
-        as whole underscore-separated substrings. Treat each hit as a
-        candidate decomposition defect unless the compound is a
-        well-known lexicalised atomic quantity
+        For each candidate, inspect the ``physical_base`` token and list
+        any closed-vocab tokens present as whole underscore-separated
+        substrings. Treat each hit as a candidate decomposition defect
+        unless the compound is a well-known lexicalised atomic quantity
         (e.g. ``poloidal_flux``, ``minor_radius``,
         ``cross_sectional_area``).
       examples_bad:
         - name: "toroidal_torque"
-          hit: "toroidal (component)"
-          correction: "component=toroidal + physical_base=torque"
+          hit: "toroidal (projection axis)"
+          correction: "projection=toroidal + base=torque"
         - name: "volume_averaged_electron_temperature"
-          hit: "volume_averaged (transformation), electron (subject)"
-          correction: "transformation=volume_averaged + subject=electron + physical_base=temperature"
+          hit: "volume_averaged (operator), electron (qualifier)"
+          correction: "operator=volume_averaged + qualifier=electron + base=temperature"
         - name: "normalized_poloidal_flux"
-          hit: "normalized (transformation), poloidal (coordinate)"
-          correction: "transformation=normalized + physical_base=poloidal_flux (poloidal_flux is an accepted atomic term)"
+          hit: "normalized (operator), poloidal (projection)"
+          correction: "operator=normalized + base=poloidal_flux (poloidal_flux is an accepted atomic term)"
       examples_allowed:
         - "poloidal_flux (atomic — widely lexicalised as a named quantity)"
         - "cross_sectional_area (atomic geometric property)"

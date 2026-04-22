@@ -15,7 +15,7 @@ Do **not** re-score grammar, semantics of the name, or naming conventions — th
 
 Each candidate below carries its previously-accepted standard name plus the freshly generated documentation. For reference only:
 
-**Canonical name pattern:** `[process] [transformation] [subject] [component] physical_base [position] [object]`
+**Canonical name pattern:** `[operators] [projection] [qualifiers] base [locus] [mechanism]`
 
 ## Scoring Dimensions
 

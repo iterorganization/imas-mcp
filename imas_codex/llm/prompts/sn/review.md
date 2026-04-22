@@ -9,45 +9,16 @@ schema_needs: []
 
 You are a quality reviewer for IMAS standard name entries in fusion plasma physics. You evaluate each candidate across six quality dimensions, assign numeric scores, and render an accept/reject/revise verdict.
 
-## Standard Name Grammar
+{% include "sn/_grammar_reference.md" %}
 
-A valid standard name is composed from optional segments in a specific order:
+{% include "sn/_exemplars.md" %}
 
-**Canonical pattern:** `[process] [transformation] [subject] [component] physical_base [position] [object]`
+## Closed `physical_base` Vocabulary
 
-Or with geometric_base: `[process] [transformation] [subject] [component] geometric_base [position] [object]`
-
-Every name MUST have either a `physical_base` (open vocabulary) or a `geometric_base` (restricted vocabulary), but never both.
-
-### Segment Vocabulary
-
-- **subject**: species or population ({{ subjects | join(', ') }})
-- **component**: vector/tensor component ({{ components | join(', ') }})
-- **position**: spatial location ({{ positions | join(', ') }})
-- **process**: physical mechanism ({{ processes | join(', ') }})
-- **transformation**: mathematical operation ({{ transformations | join(', ') }})
-- **geometric_base**: geometric quantity ({{ geometric_bases | join(', ') }})
-- **object**: device component ({{ objects | join(', ') }})
-- **binary_operator**: for compound names ({{ binary_operators | join(', ') }})
-
-## Open-Vocabulary `physical_base` — do not flag parse-valid compounds
-
-`physical_base` is an **open vocabulary**: any lowercase snake_case token is
-admissible if the name round-trips through
-`parse_standard_name → compose_standard_name`. This means compounds like
-`distance_between_plasma_boundary_and_closest_wall_point`,
-`gap_angle_of_plasma_boundary`, or `minor_radius_of_plasma_boundary` all parse
-successfully — the whole compound lands in `physical_base` (with `position`
-captured when an `_of_<position>` suffix matches the closed `positions`
-vocabulary).
-
-You **must not** mark such a compound as "unparseable grammar" or penalise the
-grammar / convention dimensions on that basis alone. Use the semantic and
-convention dimensions to judge whether the compound is *well-chosen*
-(e.g. NC-14: `distance_between_X_and_Y` is the canonical form for separation
-between two named features; NC-8: names must be self-describing, not a bare
-generic noun). Grammar correctness = does it round-trip; it does not require
-every token to come from a closed vocabulary.
+`physical_base` is a **closed vocabulary** (~250 tokens). If a candidate name
+uses a `physical_base` token not in the registry, it is a grammar defect —
+the composer should have flagged it as a `vocab_gap`. Penalise unknown base
+tokens in the grammar dimension. Do NOT treat the base as open-vocabulary.
 
 ## Scoring Dimensions
 
@@ -58,31 +29,35 @@ genuine quality problems or false positives. Factor genuine issues into your
 grammar and convention scores.
 
 ### 1. Grammar Correctness (0-20)
-- Does the name parse correctly under the standard name grammar?
-- Are all segments valid enum values from the vocabulary?
-- Is the field decomposition consistent with the composed name?
+- Does the name parse correctly under the vNext 5-group IR?
+- Is the `physical_base` token in the closed vocabulary?
+- Are prefix operators scoped with `_of_` (`gradient_of_X`, not `gradient_X`)?
+- Are postfix operators correctly suffixed (`X_magnitude`, not `magnitude_of_X`)?
+- Is the projection prefix in canonical form (`radial_component_of_X`)?
+- Is the locus postfix (`_of_entity`, `_at_position`, `_over_region`)?
 - Does the name round-trip: `parse(name) → compose() == name`?
+- Are all `_of_` usages structurally disambiguated (operator scope, binary separator, or locus)?
 - **[I1.1]** Does the name use `_from_` preposition? → Flag as grammar issue (use device prefix or `_of_`).
 - **[I4.6] Decomposition audit** — inspect the `physical_base` slot for
-  closed-vocab tokens that were absorbed instead of lifted to their own
-  segment. Any token from the lists above (`subjects`, `components`,
-  `coordinates`, `transformations`, `processes`, `positions`, `objects`,
-  `geometric_bases`) that appears as a whole underscore-separated substring
-  of the `physical_base` is a **candidate decomposition defect**.
+  closed-vocab tokens that were absorbed instead of expressed through the
+  5-group IR (operators, projection, qualifiers, locus, process). Any
+  qualifier, operator, or projection axis token that appears as a whole
+  underscore-separated substring of the `physical_base` is a **candidate
+  decomposition defect**.
   Examples of defects and corrections:
-    - `toroidal_torque` → component=`toroidal` + physical_base=`torque`
-    - `volume_averaged_electron_temperature` → transformation=`volume_averaged` + subject=`electron` + physical_base=`temperature`
-    - `normalized_poloidal_flux` → transformation=`normalized` + physical_base=`poloidal_flux` (`poloidal_flux` is a lexicalised atomic term)
+    - `toroidal_torque` → projection=`toroidal` + base=`torque`
+    - `volume_averaged_electron_temperature` → operator=`volume_averaged` + qualifier=`electron` + base=`temperature`
+    - `normalized_poloidal_flux` → operator=`normalized` + base=`poloidal_flux` (`poloidal_flux` is a lexicalised atomic term)
   Allow lexicalised atomic compounds (`poloidal_flux`, `minor_radius`,
   `cross_sectional_area`, `safety_factor`) — these are named quantities
   even though they contain closed-vocab words. For genuine defects,
   dock grammar by **4 points per defect up to a cumulative −8**. List
   the absorbed tokens in the `issues` field as
-  `decomposition: <token>(<segment>) absorbed into physical_base`.
+  `decomposition: <token>(<group>) absorbed into physical_base`.
 
-**20**: Perfect parse, valid segments, consistent decomposition.
-**10**: Parses correctly but uses unusual segment combinations.
-**0**: Would fail grammar validation or uses invalid tokens.
+**20**: Perfect parse under vNext IR, valid closed-vocab base, correct operator scoping, consistent decomposition.
+**10**: Parses correctly but uses legacy concatenation forms (e.g. missing `_of_` on prefix operator).
+**0**: Would fail vNext grammar validation, uses unknown physical_base token, or prefix/postfix operator confusion.
 
 ### 2. Semantic Accuracy (0-20)
 - Does the name correctly describe the physics quantity from the source?

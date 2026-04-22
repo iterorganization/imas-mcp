@@ -30,52 +30,40 @@ def _ensure_json(value: Any) -> str | None:
     return json.dumps(value)
 
 
-_GRAMMAR_DECOMPOSITION_FIELDS: tuple[str, ...] = (
-    "component",
-    "coordinate",
-    "subject",
-    "physical_base",
-    "geometric_base",
-    "process",
-    "transformation",
-    "object",
-    "geometry",
-    "position",
-    "device",
-    "secondary_base",
-    "binary_operator",
-)
+def _parse_grammar_vnext(name: str) -> dict[str, str | None]:
+    """Parse ``name`` with the vNext ISN grammar API.
 
-
-def _grammar_decomposition(name: str) -> dict[str, str | None]:
-    """Parse ``name`` via ISN grammar and return grammar_* field dict.
-
-    Returns a dict with keys ``grammar_component``, ``grammar_subject``,
-    ``grammar_physical_base``, … mapped to string values (enum ``.value``
-    extracted where applicable) or ``None``. Returns a dict of all-None
-    values if ISN is unavailable or parsing fails.
+    Returns a dict with ``grammar_parse_version`` (ISN package version string)
+    and ``validation_diagnostics_json`` (JSON array of diagnostic objects).
+    The parse version is always set when ISN is available; diagnostics default
+    to ``"[]"`` on parse failure so the field is never ``null`` after the first
+    successful stamp.
     """
-    empty = {f"grammar_{f}": None for f in _GRAMMAR_DECOMPOSITION_FIELDS}
     try:
-        from imas_standard_names.grammar import parse_standard_name
-    except ImportError:
-        return empty
-    try:
-        parsed = parse_standard_name(name)
-    except Exception:
-        logger.debug("Grammar parse failed for '%s' — grammar_* left unset", name)
-        return empty
+        import dataclasses
 
-    out: dict[str, str | None] = {}
-    for field in _GRAMMAR_DECOMPOSITION_FIELDS:
-        value = getattr(parsed, field, None)
-        if value is None:
-            out[f"grammar_{field}"] = None
-        elif hasattr(value, "value"):  # enum
-            out[f"grammar_{field}"] = str(value.value)
-        else:
-            out[f"grammar_{field}"] = str(value)
-    return out
+        import imas_standard_names
+        from imas_standard_names.grammar.parser import ParseError, parse
+
+        version: str = imas_standard_names.__version__
+    except ImportError:
+        return {"grammar_parse_version": None, "validation_diagnostics_json": None}
+
+    try:
+        result = parse(name)
+        diags = json.dumps([dataclasses.asdict(d) for d in result.diagnostics])
+    except ParseError:
+        logger.debug(
+            "vNext grammar parse rejected '%s' — storing empty diagnostics", name
+        )
+        diags = "[]"
+    except Exception:
+        logger.debug(
+            "vNext grammar parse failed for '%s' — storing empty diagnostics", name
+        )
+        diags = "[]"
+
+    return {"grammar_parse_version": version, "validation_diagnostics_json": diags}
 
 
 def _compute_link_status(links: list[str] | None) -> str | None:
@@ -650,19 +638,8 @@ def write_standard_names(
                 sn.review_input_hash = b.review_input_hash,
                 sn.embedding = coalesce(b.embedding, sn.embedding),
                 sn.embedded_at = coalesce(b.embedded_at, sn.embedded_at),
-                sn.grammar_component = coalesce(b.grammar_component, sn.grammar_component),
-                sn.grammar_coordinate = coalesce(b.grammar_coordinate, sn.grammar_coordinate),
-                sn.grammar_subject = coalesce(b.grammar_subject, sn.grammar_subject),
-                sn.grammar_physical_base = coalesce(b.grammar_physical_base, sn.grammar_physical_base),
-                sn.grammar_geometric_base = coalesce(b.grammar_geometric_base, sn.grammar_geometric_base),
-                sn.grammar_process = coalesce(b.grammar_process, sn.grammar_process),
-                sn.grammar_transformation = coalesce(b.grammar_transformation, sn.grammar_transformation),
-                sn.grammar_object = coalesce(b.grammar_object, sn.grammar_object),
-                sn.grammar_geometry = coalesce(b.grammar_geometry, sn.grammar_geometry),
-                sn.grammar_position = coalesce(b.grammar_position, sn.grammar_position),
-                sn.grammar_device = coalesce(b.grammar_device, sn.grammar_device),
-                sn.grammar_secondary_base = coalesce(b.grammar_secondary_base, sn.grammar_secondary_base),
-                sn.grammar_binary_operator = coalesce(b.grammar_binary_operator, sn.grammar_binary_operator),
+                sn.grammar_parse_version = coalesce(b.grammar_parse_version, sn.grammar_parse_version),
+                sn.validation_diagnostics_json = coalesce(b.validation_diagnostics_json, sn.validation_diagnostics_json),
                 sn.created_at = coalesce(sn.created_at, datetime())
             """,
             batch=[
@@ -707,7 +684,7 @@ def write_standard_names(
                     "review_input_hash": n.get("review_input_hash"),
                     "embedding": n.get("embedding"),
                     "embedded_at": n.get("embedded_at"),
-                    **_grammar_decomposition(n["id"]),
+                    **_parse_grammar_vnext(n["id"]),
                 }
                 for n in names
             ],
@@ -1182,11 +1159,6 @@ def persist_composed_batch(
         entry.setdefault("pipeline_status", "named")
         entry.setdefault("validation_status", "pending")
         entry.setdefault("generated_at", now)
-        # Legacy grammar fields (physical_base, subject, etc.) previously
-        # extracted from compose fields dict are now dropped from the schema.
-        # Grammar decomposition into grammar_* fields is handled by
-        # _grammar_decomposition() inside write_standard_names().
-
         # D5/P0.3: derive kind from name structure (overrides LLM default).
         name = entry.get("id") or ""
         if name:
@@ -1526,13 +1498,6 @@ def claim_names_for_validation(limit: int = 50) -> tuple[str, list[dict[str, Any
                    sn.documentation AS documentation, sn.kind AS kind,
                    sn.unit AS unit, sn.tags AS tags, sn.links AS links,
                    sn.source_paths AS source_paths,
-                   sn.grammar_physical_base AS physical_base,
-                   sn.grammar_subject AS subject,
-                   sn.grammar_component AS component,
-                   sn.grammar_coordinate AS coordinate,
-                   sn.grammar_position AS position,
-                   sn.grammar_process AS process,
-                   sn.grammar_geometric_base AS geometric_base,
                    sn.object AS object,
                    sn.confidence AS confidence,
                    sn.physics_domain AS physics_domain,
@@ -2381,8 +2346,7 @@ def get_enrichment_candidates(
     """Get StandardName nodes that need documentation enrichment.
 
     Returns dicts with: id, description, documentation, kind, unit, tags,
-    grammar_physical_base, grammar_subject, grammar_component, grammar_coordinate,
-    grammar_position, grammar_process, plus all linked DD paths aggregated with
+    physics_domain, pipeline_status, plus all linked DD paths aggregated with
     their documentation.
     """
     with GraphClient() as gc:
@@ -2431,13 +2395,6 @@ def get_enrichment_candidates(
                    sn.links AS links,
                    sn.validity_domain AS validity_domain,
                    sn.constraints AS constraints,
-                   sn.grammar_physical_base AS physical_base,
-                   sn.grammar_subject AS subject,
-                   sn.grammar_component AS component,
-                   sn.grammar_coordinate AS coordinate,
-                   sn.grammar_position AS position,
-                   sn.grammar_process AS process,
-                   sn.grammar_geometric_base AS geometric_base,
                    sn.physics_domain AS physics_domain,
                    sn.pipeline_status AS pipeline_status,
                    dd_paths
@@ -2470,7 +2427,7 @@ def write_enrichment_results(
     validity_domain, constraints. Clears review_input_hash to invalidate
     stale reviews.
 
-    Does NOT touch: id, kind, unit, model, grammar_* fields, etc.
+    Does NOT touch: id, kind, unit, model, grammar_parse_version, validation_diagnostics_json, etc.
 
     Parameters
     ----------

@@ -1,4 +1,4 @@
-"""Tests for SN compose prompt rendering — live transformation injection + exemplar alignment."""
+"""Tests for SN compose prompt rendering — vNext grammar reference + exemplar alignment."""
 
 from __future__ import annotations
 
@@ -19,40 +19,39 @@ def rendered_compose_system() -> str:
     return render_prompt("sn/compose_system", context)
 
 
-@pytest.fixture()
-def live_transformation_tokens() -> list[str]:
-    """Return the full list of Transformation enum values from ISN."""
-    from imas_standard_names.grammar import Transformation
-
-    return [t.value for t in Transformation]
-
-
 class TestTransformationInjection:
-    """B.2 — Verify static 4-token list replaced with live enum."""
+    """W4b — Verify vNext grammar reference replaces rc20 transformation injection."""
 
-    def test_rendered_prompt_contains_live_tokens(
-        self, rendered_compose_system: str, live_transformation_tokens: list[str]
-    ) -> None:
-        """Every ISN Transformation token must appear in the rendered prompt."""
-        for token in live_transformation_tokens:
-            assert token in rendered_compose_system, (
-                f"Live transformation token '{token}' missing from rendered compose_system.md"
-            )
+    def test_vnext_grammar_heading_present(self, rendered_compose_system: str) -> None:
+        """The vNext grammar reference heading must be present."""
+        assert "Standard Name Grammar (vNext" in rendered_compose_system
 
     def test_old_static_list_not_present(self, rendered_compose_system: str) -> None:
         """The old static heading 'Transformation Boundaries' must be gone."""
         assert "Transformation Boundaries" not in rendered_compose_system
         assert "Only these 4 transformation tokens" not in rendered_compose_system
 
-    def test_live_heading_present(self, rendered_compose_system: str) -> None:
-        """The new heading must be present."""
+    def test_old_live_heading_gone(self, rendered_compose_system: str) -> None:
+        """The old rc20 heading must be gone — replaced by vNext grammar."""
         assert (
-            "Transformations (live from imas-standard-names)" in rendered_compose_system
+            "Transformations (live from imas-standard-names)"
+            not in rendered_compose_system
         )
+
+    def test_five_group_ir_present(self, rendered_compose_system: str) -> None:
+        """The 5-Group IR table must appear in the rendered prompt."""
+        assert "5-Group Internal Representation" in rendered_compose_system
+        for group in ["operators", "projection", "qualifiers", "base", "locus"]:
+            assert group in rendered_compose_system
+
+    def test_operator_scope_examples(self, rendered_compose_system: str) -> None:
+        """Key operator examples must appear (prefix _of_, postfix concat)."""
+        assert "gradient_of_" in rendered_compose_system
+        assert "_magnitude" in rendered_compose_system
 
 
 class TestExemplarAlignment:
-    """B.1/B.3 — Verify exemplar P3/P8 rewrite and anti-patterns landed."""
+    """W4b — Verify vNext exemplars and anti-patterns landed."""
 
     def test_no_vertical_position_of_x_point(
         self, rendered_compose_system: str

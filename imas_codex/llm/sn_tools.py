@@ -35,24 +35,6 @@ def _neo4j_error_message(e: Exception) -> str:
 # ---------------------------------------------------------------------------
 
 
-GRAMMAR_SEGMENTS: tuple[str, ...] = (
-    "physical_base",
-    "subject",
-    "component",
-    "coordinate",
-    "transformation",
-    "position",
-    "process",
-    "geometry",
-    "object",
-    "geometric_base",
-    "device",
-    "region",
-    "secondary_base",
-    "binary_operator",
-)
-
-
 def _search_standard_names(
     query: str,
     *,
@@ -60,17 +42,6 @@ def _search_standard_names(
     tags: list[str] | None = None,
     pipeline_status: str | None = None,
     cocos_type: str | None = None,
-    grammar_physical_base: str | None = None,
-    grammar_subject: str | None = None,
-    grammar_component: str | None = None,
-    grammar_coordinate: str | None = None,
-    grammar_transformation: str | None = None,
-    grammar_position: str | None = None,
-    grammar_process: str | None = None,
-    grammar_object: str | None = None,
-    grammar_geometry: str | None = None,
-    grammar_geometric_base: str | None = None,
-    grammar_device: str | None = None,
     k: int = 20,
     gc: GraphClient | None = None,
 ) -> str:
@@ -78,10 +49,6 @@ def _search_standard_names(
 
     Hybrid search (vector + keyword) over StandardName descriptions.
     Falls back to keyword-only if no embeddings present.
-
-    ``grammar_*`` parameters are post-filters applied to the parsed
-    grammar segment properties persisted on each StandardName. They
-    compare by exact string match (case-insensitive).
     """
     try:
         if gc is None:
@@ -130,25 +97,6 @@ def _search_standard_names(
             r for r in rows if (r.get("cocos_transformation_type") or "") == cocos_type
         ]
 
-    grammar_filters = {
-        "grammar_physical_base": grammar_physical_base,
-        "grammar_subject": grammar_subject,
-        "grammar_component": grammar_component,
-        "grammar_coordinate": grammar_coordinate,
-        "grammar_transformation": grammar_transformation,
-        "grammar_position": grammar_position,
-        "grammar_process": grammar_process,
-        "grammar_object": grammar_object,
-        "grammar_geometry": grammar_geometry,
-        "grammar_geometric_base": grammar_geometric_base,
-        "grammar_device": grammar_device,
-    }
-    for key, expected in grammar_filters.items():
-        if expected is None:
-            continue
-        expected_lc = expected.lower()
-        rows = [r for r in rows if (r.get(key) or "").lower() == expected_lc]
-
     return _format_search_report(query, rows)
 
 
@@ -163,17 +111,6 @@ RETURN sn.id AS name, sn.description AS description,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
        sn.tags AS tags, sn.pipeline_status AS pipeline_status,
        sn.documentation AS documentation,
-       sn.grammar_physical_base AS grammar_physical_base,
-       sn.grammar_subject AS grammar_subject,
-       sn.grammar_component AS grammar_component,
-       sn.grammar_coordinate AS grammar_coordinate,
-       sn.grammar_transformation AS grammar_transformation,
-       sn.grammar_position AS grammar_position,
-       sn.grammar_process AS grammar_process,
-       sn.grammar_object AS grammar_object,
-       sn.grammar_geometry AS grammar_geometry,
-       sn.grammar_geometric_base AS grammar_geometric_base,
-       sn.grammar_device AS grammar_device,
        sn.cocos_transformation_type AS cocos_transformation_type,
        sn.cocos AS cocos,
        score
@@ -194,17 +131,6 @@ RETURN sn.id AS name, sn.description AS description,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
        sn.tags AS tags, sn.pipeline_status AS pipeline_status,
        sn.documentation AS documentation,
-       sn.grammar_physical_base AS grammar_physical_base,
-       sn.grammar_subject AS grammar_subject,
-       sn.grammar_component AS grammar_component,
-       sn.grammar_coordinate AS grammar_coordinate,
-       sn.grammar_transformation AS grammar_transformation,
-       sn.grammar_position AS grammar_position,
-       sn.grammar_process AS grammar_process,
-       sn.grammar_object AS grammar_object,
-       sn.grammar_geometry AS grammar_geometry,
-       sn.grammar_geometric_base AS grammar_geometric_base,
-       sn.grammar_device AS grammar_device,
        sn.cocos_transformation_type AS cocos_transformation_type,
        sn.cocos AS cocos,
        1.0 AS score
@@ -233,13 +159,6 @@ def _format_search_report(query: str, rows: list[dict]) -> str:
         pipeline_status = row.get("pipeline_status") or ""
         description = row.get("description") or ""
         documentation = row.get("documentation") or ""
-        physical_base = row.get("grammar_physical_base") or ""
-        subject = row.get("grammar_subject") or ""
-        component = row.get("grammar_component") or ""
-        coordinate = row.get("grammar_coordinate") or ""
-        transformation = row.get("grammar_transformation") or ""
-        position = row.get("grammar_position") or ""
-        process = row.get("grammar_process") or ""
         cocos_transformation_type = row.get("cocos_transformation_type") or ""
         cocos = row.get("cocos")
 
@@ -263,20 +182,6 @@ def _format_search_report(query: str, rows: list[dict]) -> str:
             lines.append(
                 f"- **Documentation:** {documentation[:200]}{'...' if len(documentation) > 200 else ''}"
             )
-        grammar_parts = []
-        for label, val in (
-            ("physical_base", physical_base),
-            ("subject", subject),
-            ("component", component),
-            ("coordinate", coordinate),
-            ("transformation", transformation),
-            ("position", position),
-            ("process", process),
-        ):
-            if val:
-                grammar_parts.append(f"{label}={val}")
-        if grammar_parts:
-            lines.append(f"- **Grammar:** {', '.join(grammar_parts)}")
         lines.append("")
 
     return "\n".join(lines)
@@ -324,9 +229,6 @@ RETURN sn.id AS name, sn.description AS description,
        sn.tags AS tags, sn.links AS links,
        sn.source_paths AS source_paths, sn.constraints AS constraints,
        sn.validity_domain AS validity_domain,
-       sn.grammar_physical_base AS physical_base, sn.grammar_subject AS subject,
-       sn.grammar_component AS component, sn.grammar_coordinate AS coordinate,
-       sn.grammar_position AS position, sn.grammar_process AS process,
        sn.pipeline_status AS pipeline_status,
        sn.confidence AS confidence, sn.model AS model,
        sn.cocos_transformation_type AS cocos_transformation_type,
@@ -371,12 +273,6 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
         dd_paths = row.get("source_paths") or []
         constraints = row.get("constraints") or []
         validity_domain = row.get("validity_domain") or ""
-        physical_base = row.get("physical_base") or ""
-        subject = row.get("subject") or ""
-        component = row.get("component") or ""
-        coordinate = row.get("coordinate") or ""
-        position = row.get("position") or ""
-        process = row.get("process") or ""
         pipeline_status = row.get("pipeline_status") or ""
         confidence = row.get("confidence")
         model = row.get("model") or ""
@@ -408,21 +304,6 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
             lines.append(f"- **COCOS:** {cocos}")
         if dd_version:
             lines.append(f"- **DD Version:** {dd_version}")
-
-        # Grammar
-        grammar_parts = []
-        for field_name, val in [
-            ("physical_base", physical_base),
-            ("subject", subject),
-            ("component", component),
-            ("coordinate", coordinate),
-            ("position", position),
-            ("process", process),
-        ]:
-            if val:
-                grammar_parts.append(f"{field_name}={val}")
-        if grammar_parts:
-            lines.append(f"- **Grammar:** {', '.join(grammar_parts)}")
 
         if tags:
             tag_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
@@ -583,63 +464,53 @@ def _format_list_report(
 
 def _list_grammar_vocabulary(
     segment: str,
-    *,
-    gc: GraphClient | None = None,
 ) -> str:
-    """List the distinct vocabulary observed in a grammar segment.
+    """List the valid vocabulary for a grammar segment.
 
-    Aggregates the values of ``sn.grammar_<segment>`` across all
-    persisted StandardName nodes, grouped by token with usage counts.
-    Useful for discovering the de-facto vocabulary of a segment (closed
-    or open) and for picking exact tokens to pass to the grammar_*
-    filters on ``search_standard_names``.
+    Queries ``imas_standard_names.grammar.constants.SEGMENT_TOKEN_MAP``
+    to return the ISN-defined token list for the requested segment.
+    Segments with an empty token list (open vocabulary) are reported as
+    such.  This replaces the old per-node ``grammar_<segment>`` property
+    query; grammar decomposition is now derived on demand via
+    ``imas_standard_names.grammar.parser.parse()``.
 
     Args:
-        segment: Segment name without the ``grammar_`` prefix (e.g.
-            ``"physical_base"``, ``"component"``, ``"subject"``).
+        segment: Segment name (e.g. ``"physical_base"``, ``"component"``,
+            ``"subject"``). Case-insensitive. Valid values come from the
+            installed ISN package's ``SEGMENT_TOKEN_MAP`` keys.
 
     Returns:
-        Markdown table ordered by descending usage count.
+        Markdown table of tokens in closed-vocabulary segments, or a
+        description message for open-vocabulary segments.
     """
+    try:
+        from imas_standard_names.grammar.constants import SEGMENT_TOKEN_MAP
+    except ImportError:
+        return "ISN package unavailable — cannot list grammar vocabulary."
+
     seg_lc = (segment or "").strip().lower()
-    if seg_lc not in GRAMMAR_SEGMENTS:
-        valid = ", ".join(sorted(GRAMMAR_SEGMENTS))
+    valid_segments = tuple(sorted(SEGMENT_TOKEN_MAP.keys()))
+    if seg_lc not in valid_segments:
+        valid = ", ".join(valid_segments)
         return f"Unknown grammar segment '{segment}'. Valid segments: {valid}."
 
-    prop = f"grammar_{seg_lc}"
-    # Property name is validated against GRAMMAR_SEGMENTS allowlist above,
-    # so formatted interpolation is safe (no parameter injection risk).
-    cypher = (
-        f"MATCH (sn:StandardName) WHERE sn.{prop} IS NOT NULL "
-        f"RETURN sn.{prop} AS token, count(*) AS n ORDER BY n DESC, token ASC"
-    )
-
-    try:
-        if gc is None:
-            gc = GraphClient()
-        rows = gc.query(cypher)
-    except ServiceUnavailable:
-        return NEO4J_NOT_RUNNING_MSG
-    except Exception as e:
-        return f"Error: {_neo4j_error_message(e)}"
-
-    if not rows:
+    tokens = SEGMENT_TOKEN_MAP.get(seg_lc, ())
+    if not tokens:
         return (
             f"## Grammar Vocabulary: `{seg_lc}`\n\n"
-            f"No StandardName nodes have the `{prop}` property set."
+            f"Segment `{seg_lc}` has open vocabulary — any token is admissible by "
+            f"design. No closed token list is defined in the installed ISN package."
         )
 
-    total = sum(int(r.get("n") or 0) for r in rows)
+    sorted_tokens = sorted(tokens)
     lines = [
         f"## Grammar Vocabulary: `{seg_lc}`",
         "",
-        f"{len(rows)} distinct tokens across {total} StandardName nodes.",
+        f"{len(sorted_tokens)} tokens in closed vocabulary (ISN source of truth).",
         "",
-        "| Token | Count |",
-        "|-------|-------|",
+        "| Token |",
+        "|-------|",
     ]
-    for r in rows:
-        tok = r.get("token") or ""
-        n = r.get("n") or 0
-        lines.append(f"| {tok} | {n} |")
+    for tok in sorted_tokens:
+        lines.append(f"| {tok} |")
     return "\n".join(lines)

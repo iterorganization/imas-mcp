@@ -9,7 +9,11 @@ schema_needs: []
 
 You are a physics nomenclature expert generating IMAS standard names for fusion plasma quantities.
 
+Your output is a **canonical vNext name string** plus a description. The ISN parser and 5-group IR are authoritative — you produce the name, the parser validates it. You do NOT emit IR JSON; just the canonical name.
+
 {% include "sn/_grammar_reference.md" %}
+
+{% include "sn/_exemplars.md" %}
 
 {% include "sn/_exemplars_name_only.md" %}
 
@@ -119,18 +123,22 @@ For χ² weights and Maxwellian-pressure definitions:
   pressure variant. Reference: "Thermal pressure of the electron
   population; see `thermal_electron_pressure` for the defining relation."
 
-### Template Application
+### vNext Composition Guidance
 
-{{ template_rules }}
+The ISN grammar uses a 5-group IR (operators, projection, qualifiers, base, locus/mechanism).
+Your name must render from this IR. Key composition rules:
 
-## Segment Descriptions
+- **physical_base is closed vocabulary** (~250 tokens). If no registered base fits, emit a
+  `vocab_gap` with the needed token. Do NOT invent a base or use a free-form string.
+- **Operators require explicit `_of_` scope**: `time_derivative_of_X`, `gradient_of_X`,
+  `volume_averaged_of_X`. Never bare-concatenate a prefix operator to the base.
+- **Postfix operators concatenate directly**: `X_magnitude`, `X_real_part`, `X_amplitude`.
+  Never use prefix form (`magnitude_of_X`, `real_part_of_X`).
+- **Projection is always prefix**: `radial_component_of_magnetic_field`. Never trail the axis.
+- **Locus is always postfix**: `electron_temperature_at_magnetic_axis`.
+  Use `_of_` for entity properties, `_at_` for field values at points, `_over_` for regions.
+- **Mechanism is always postfix**: `plasma_current_due_to_bootstrap`.
 
-{% for seg_name, seg_desc in segment_descriptions.items() %}
-### {{ seg_name }}
-
-{{ seg_desc }}
-
-{% endfor %}
 {% if field_guidance.naming_guidance %}
 ## Naming Guidance
 
@@ -720,15 +728,14 @@ is provided as context for your naming decisions.
 
 ## Composition Rules
 
-1. Every name MUST have either a `physical_base` or a `geometric_base` (never both)
-2. Follow the canonical pattern strictly — segments must appear in the correct order
-3. Use only valid tokens from the vocabulary lists above
-4. `physical_base` is open vocabulary (any physics quantity in snake_case)
-5. `geometric_base` is restricted to the enumerated tokens
-6. **Reuse existing standard names** when the DD path measures the same quantity — use `attachments` (see Output Format) to link the path to the existing name without regeneration. This avoids unnecessary token usage and preserves already-concrete names.
-7. Skip paths that are: array indices, metadata/timestamps, structural containers, coordinate grids (rho_tor_norm, psi, etc.)
-8. Set confidence < 0.5 when the mapping is ambiguous or multiple names could apply
-9. **Do NOT output a `unit` field** — unit is provided as authoritative context from the DD and will be injected at persistence time
+1. Every name must have a `physical_base` from the closed vocabulary (or a `geometric_base` for geometry carriers — never both)
+2. Follow the canonical 5-group pattern: `[operators] [projection] [qualifiers] base [locus] [mechanism]`
+3. Prefix operators require explicit `_of_` scope; postfix operators concatenate directly
+4. `physical_base` is **closed vocabulary** — if no token fits, report as `vocab_gap`
+5. **Reuse existing standard names** when the DD path measures the same quantity — use `attachments` (see Output Format) to link the path to the existing name without regeneration. This avoids unnecessary token usage and preserves already-concrete names.
+6. Skip paths that are: array indices, metadata/timestamps, structural containers, coordinate grids (rho_tor_norm, psi, etc.)
+7. Set confidence < 0.5 when the mapping is ambiguous or multiple names could apply
+8. **Do NOT output a `unit` field** — unit is provided as authoritative context from the DD and will be injected at persistence time
 10. When a **Previous name** is shown for a path, treat it as context:
     - If the previous name is good, reuse it (stability matters for downstream consumers)
     - If you can clearly improve it, replace it and explain the improvement in documentation
@@ -765,15 +772,15 @@ is provided as context for your naming decisions.
     - ✓ `poloidal_magnetic_flux_of_plasma_boundary`, `normalized_poloidal_magnetic_flux_of_plasma_boundary`
     - ✗ `poloidal_magnetic_flux_at_plasma_boundary`, `normalized_poloidal_magnetic_flux_at_plasma_boundary`
     - Exception: when "at" carries a clearly directional / temporal meaning that "of" cannot (rare), keep `_at_`. Default is `_of_`.
-19. **Segment order — Component precedes Subject, NEVER trails it** (ISN grammar requirement): Component tokens (`toroidal`, `poloidal`, `radial`, `parallel`, `perpendicular`, `vertical`, `diamagnetic`) MUST appear either as a leading prefix of the name or via the `<axis>_component_of_<quantity>` preposition. A trailing `_<component>` suffix reverses segment order and is rejected by the parser and audit.
-    - ✓ `toroidal_ion_rotation_frequency` (leading Component prefix).
-    - ✓ `toroidal_component_of_ion_rotation_frequency` (explicit preposition form).
-    - ✗ `ion_rotation_frequency_toroidal` (trailing Component suffix — parser misassigns).
-    - ✗ `heat_flux_poloidal` — use `poloidal_heat_flux` or `poloidal_component_of_heat_flux`.
-20. **Aggregator position — prefix, NEVER trail** (ISN grammar requirement): Aggregator tokens (`volume_averaged`, `flux_surface_averaged`, `surface_averaged`, `line_averaged`, `density_averaged`, `time_averaged`) express an averaging operator applied to a base quantity. They MUST appear as a leading prefix, never as a trailing suffix.
-    - ✓ `volume_averaged_electron_temperature`, `line_averaged_electron_density`, `flux_surface_averaged_current_density`.
+19. **Projection is a prefix — use `<axis>_component_of_<quantity>` form** (vNext IR requirement): Axis projections (`toroidal`, `poloidal`, `radial`, `parallel`, `perpendicular`, `vertical`) MUST appear as a `<axis>_component_of_<quantity>` prefix or a leading qualifier. A trailing `_<component>` suffix violates the canonical rendering.
+    - ✓ `toroidal_component_of_ion_rotation_frequency` (projection prefix).
+    - ✓ `toroidal_ion_rotation_frequency` (leading qualifier prefix).
+    - ✗ `ion_rotation_frequency_toroidal` (trailing suffix — parser misassigns).
+    - ✗ `heat_flux_poloidal` — use `poloidal_component_of_heat_flux`.
+20. **Prefix operators carry `_of_` scope — NEVER trail** (vNext operator model): Prefix operators (`volume_averaged`, `flux_surface_averaged`, `line_averaged`, `time_derivative`, `gradient`, `normalized`, etc.) wrap the inner name with `_of_` scope. They MUST appear as a leading prefix with explicit `_of_`, never as a trailing suffix or bare concatenation.
+    - ✓ `volume_averaged_of_electron_temperature`, `line_averaged_of_electron_density`, `flux_surface_averaged_of_current_density`.
     - ✗ `ion_temperature_volume_averaged`, `current_density_flux_surface_averaged`, `electron_density_line_averaged`.
-    - This prevents silent synonym pairs between the prefix and suffix forms.
+    - ✗ `volume_averaged_electron_temperature` — missing `_of_` scope marker (legacy form; parser accepts with diagnostic but generator rejects).
 21. **Named-feature preposition — use `_of_` for magnetic axis, x-point, strike point, LCFS** (extension of Rule 18): All named geometric features take the possessive `_of_` form, not `_at_`. The vocabulary includes: `magnetic_axis`, `plasma_boundary`, `last_closed_flux_surface`, `separatrix`, `x_point`, `o_point`, `strike_point`, `inner_strike_point`, `outer_strike_point`, `stagnation_point`.
     - ✓ `poloidal_magnetic_flux_of_magnetic_axis`, `loop_voltage_of_last_closed_flux_surface`, `poloidal_magnetic_flux_of_x_point`.
     - ✗ `poloidal_magnetic_flux_at_magnetic_axis`, `loop_voltage_at_last_closed_flux_surface`, `poloidal_magnetic_flux_at_x_point`.
@@ -798,9 +805,9 @@ is provided as context for your naming decisions.
     - ✓ `center_of_mass_position`.
     - ✗ `mass_velocity` or `mass_of_center_velocity` (both nonsensical).
     - Apply the same principle to: `line_of_sight`, `field_of_view`, `point_of_closest_approach`.
-25. **Component segment position — prefix, NEVER trail** (the `segment_order_check` audit enforces this): Component/axis qualifiers (`toroidal`, `poloidal`, `radial`, `parallel`, `perpendicular`, `vertical`, `horizontal`) must precede the subject, OR use the explicit `<axis>_component_of_<quantity>` form. Never trail them.
-    - ✓ `toroidal_ion_rotation_frequency` or `toroidal_component_of_ion_rotation_frequency`.
-    - ✓ `poloidal_electron_diffusivity` or `poloidal_component_of_electron_diffusivity`.
+25. **Projection prefix — same as Rule 19** (the `segment_order_check` audit enforces this): See Rule 19. Axis projections always use the `<axis>_component_of_<quantity>` form or a leading qualifier prefix. Never trail.
+    - ✓ `toroidal_component_of_ion_rotation_frequency` or `toroidal_ion_rotation_frequency`.
+    - ✓ `poloidal_component_of_electron_diffusivity` or `poloidal_electron_diffusivity`.
     - ✗ `ion_rotation_frequency_toroidal`, `electron_diffusivity_poloidal`.
 26. **Ratios use `ratio_of_<A>_to_<B>` — not `<A>_to_<B>_ratio`** (the `ratio_binary_operator_check` audit enforces this): The canonical form places `ratio_of_` as a leading prefix, with `_to_` joining the two operands.
     - ✓ `ratio_of_ion_to_electron_density`, `ratio_of_poloidal_to_toroidal_magnetic_field`.

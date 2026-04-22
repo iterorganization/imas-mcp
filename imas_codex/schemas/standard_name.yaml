@@ -614,81 +614,25 @@ classes:
           Reviewer comments that triggered the last regeneration cycle.
           Captured from ``reviewer_comments`` at regen time so the
           reason survives subsequent review overwrites.
-      # --- Grammar decomposition (from imas_standard_names.grammar.parse_standard_name) ---
-      grammar_component:
+      # --- Grammar parse provenance (vNext — imas-standard-names >= 0.7.0rc21) ---
+      grammar_parse_version:
         description: >-
-          Component prefix from grammar decomposition (e.g. ``radial``,
-          ``toroidal``, ``poloidal``). Persisted from
-          ``parse_standard_name().component`` to enable per-segment queries.
+          Version of ``imas-standard-names`` used when the vNext parser
+          last processed this name (e.g. ``"0.7.0rc21"``). Stamped at
+          write time with ``imas_standard_names.__version__``. Enables
+          staleness checks when the grammar parser is upgraded.
+          ``null`` means parse has not been run with the vNext API.
         range: string
-      grammar_coordinate:
+      validation_diagnostics_json:
         description: >-
-          Coordinate qualifier from grammar decomposition (e.g. ``r``,
-          ``z``, ``phi``). Persisted from ``parse_standard_name().coordinate``.
-        range: string
-      grammar_subject:
-        description: >-
-          Particle/species subject from grammar decomposition (e.g.
-          ``electron``, ``ion``, ``neutral``). Persisted from
-          ``parse_standard_name().subject``.
-        range: string
-      grammar_physical_base:
-        description: >-
-          Core physical quantity base from grammar decomposition
-          (e.g. ``temperature``, ``density``, ``velocity``). Persisted
-          from ``parse_standard_name().physical_base``.
-        range: string
-      grammar_geometric_base:
-        description: >-
-          Geometric base token from grammar decomposition (e.g.
-          ``area``, ``volume``). Persisted from
-          ``parse_standard_name().geometric_base``.
-        range: string
-      grammar_process:
-        description: >-
-          Process / ``due_to_`` token from grammar decomposition.
-          Persisted from ``parse_standard_name().process``.
-        range: string
-      grammar_transformation:
-        description: >-
-          Transformation prefix from grammar decomposition (e.g.
-          ``time_derivative_of``). Persisted from
-          ``parse_standard_name().transformation``.
-        range: string
-      grammar_object:
-        description: >-
-          Named physical object from grammar decomposition (e.g.
-          ``separatrix``, ``magnetic_axis``). Persisted from
-          ``parse_standard_name().object``.
-        range: string
-      grammar_geometry:
-        description: >-
-          Geometric qualifier from grammar decomposition (e.g.
-          ``flux_surface_averaged``, ``line_integrated``). Persisted
-          from ``parse_standard_name().geometry``.
-        range: string
-      grammar_position:
-        description: >-
-          Position qualifier from grammar decomposition (e.g.
-          ``at_magnetic_axis``, ``at_boundary``). Persisted from
-          ``parse_standard_name().position``.
-        range: string
-      grammar_device:
-        description: >-
-          Device/instrument qualifier from grammar decomposition.
-          Persisted from ``parse_standard_name().device``.
-        range: string
-      grammar_secondary_base:
-        description: >-
-          Secondary base token from grammar decomposition (used in
-          binary-operator compositions). Persisted from
-          ``parse_standard_name().secondary_base``.
-        range: string
-      grammar_binary_operator:
-        description: >-
-          Binary operator token from grammar decomposition (e.g.
-          ``ratio_of``, ``difference_of``). Persisted from
-          ``parse_standard_name().binary_operator``.
+          JSON-serialised list of parser diagnostics from the last vNext
+          parse, one object per diagnostic with keys: ``category``,
+          ``layer``, ``message``, ``suggestion``, ``severity``.
+          An empty JSON array (``"[]"``) means no diagnostics were
+          emitted; ``null`` means the vNext parse has not run yet.
+          Grammar decomposition is derived on demand via
+          ``imas_standard_names.grammar.parser.parse()``; per-segment
+          properties are no longer stored on the node.
         range: string
       # --- REFERENCES relationship (enrich link graph) ---
       references:

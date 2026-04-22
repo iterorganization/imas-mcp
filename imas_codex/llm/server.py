@@ -3091,23 +3091,11 @@ class AgentsServer:
                 review_status: str | None = None,
                 k: int = 20,
                 cocos_type: str | None = None,
-                grammar_physical_base: str | None = None,
-                grammar_subject: str | None = None,
-                grammar_component: str | None = None,
-                grammar_coordinate: str | None = None,
-                grammar_transformation: str | None = None,
-                grammar_position: str | None = None,
-                grammar_process: str | None = None,
-                grammar_object: str | None = None,
-                grammar_geometry: str | None = None,
-                grammar_geometric_base: str | None = None,
-                grammar_device: str | None = None,
             ) -> str:
                 """Search standard names by physics concept.
 
                 Hybrid search (vector + keyword) over StandardName descriptions
-                and documentation. Enriched with DD path links, unit info, and
-                grammar decomposition.
+                and documentation.
 
                 Args:
                     query: Natural-language description of the quantity to find
@@ -3118,28 +3106,10 @@ class AgentsServer:
                     k: Maximum results to return (default 20).
                     cocos_type: Filter by COCOS transformation type (e.g. "psi_like",
                         "ip_like", "b0_like"). Only returns names with that transformation.
-                    grammar_physical_base: Filter by parsed ``physical_base`` slot
-                        (open vocabulary, e.g. "temperature", "flux", "velocity").
-                    grammar_subject: Filter by subject slot (e.g. "electron", "ion").
-                    grammar_component: Filter by component slot (e.g. "toroidal",
-                        "poloidal", "radial").
-                    grammar_coordinate: Filter by coordinate slot.
-                    grammar_transformation: Filter by transformation slot
-                        (e.g. "volume_averaged", "normalized").
-                    grammar_position: Filter by position slot.
-                    grammar_process: Filter by process slot
-                        (e.g. "conduction", "radiation").
-                    grammar_object: Filter by object slot.
-                    grammar_geometry: Filter by geometry slot.
-                    grammar_geometric_base: Filter by geometric_base slot.
-                    grammar_device: Filter by device slot.
-
-                    Use ``list_grammar_vocabulary`` to discover the available
-                    tokens for a given segment.
 
                 Returns:
                     Formatted text report with matched standard names, descriptions,
-                    units, tags, grammar fields, and relevance scores.
+                    units, tags, and relevance scores.
                 """
                 from imas_codex.llm.sn_tools import _search_standard_names as _ssn
 
@@ -3150,17 +3120,6 @@ class AgentsServer:
                     pipeline_status=review_status,
                     k=k,
                     cocos_type=cocos_type,
-                    grammar_physical_base=grammar_physical_base,
-                    grammar_subject=grammar_subject,
-                    grammar_component=grammar_component,
-                    grammar_coordinate=grammar_coordinate,
-                    grammar_transformation=grammar_transformation,
-                    grammar_position=grammar_position,
-                    grammar_process=grammar_process,
-                    grammar_object=grammar_object,
-                    grammar_geometry=grammar_geometry,
-                    grammar_geometric_base=grammar_geometric_base,
-                    grammar_device=grammar_device,
                 )
 
             @self.mcp.tool()
@@ -3213,24 +3172,24 @@ class AgentsServer:
 
             @self.mcp.tool()
             def list_grammar_vocabulary(segment: str) -> str:
-                """List the distinct vocabulary observed in a grammar segment.
+                """List the valid vocabulary for a grammar segment.
 
-                Aggregates values of ``sn.grammar_<segment>`` across all
-                persisted StandardName nodes, grouped by token with usage
-                counts. Useful for discovering the de-facto vocabulary of
-                a segment (closed or open) and for picking exact tokens
-                to pass to the ``grammar_*`` filters of
-                ``search_standard_names``.
+                Queries the installed ISN package's ``SEGMENT_TOKEN_MAP``
+                to return the defined token list for the requested segment.
+                Segments with open vocabulary (empty token list) are reported
+                as such. Grammar decomposition is derived on demand via
+                ``parse()``; per-node grammar properties are no longer stored.
 
                 Args:
-                    segment: Segment name without the ``grammar_`` prefix.
-                        Valid values: physical_base, subject, component,
-                        coordinate, transformation, position, process,
-                        geometry, object, geometric_base, device, region,
-                        secondary_base, binary_operator.
+                    segment: Segment name (case-insensitive). Valid values are
+                        determined dynamically from the installed ISN package
+                        (e.g. component, coordinate, subject, device,
+                        geometric_base, physical_base, object, geometry,
+                        position, region, process).
 
                 Returns:
-                    Markdown table ordered by descending usage count.
+                    Markdown table of tokens for closed-vocabulary segments,
+                    or an informational message for open-vocabulary segments.
                 """
                 from imas_codex.llm.sn_tools import (
                     _list_grammar_vocabulary as _lgv,
