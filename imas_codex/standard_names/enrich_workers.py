@@ -757,6 +757,57 @@ def _fetch_link_candidates(
     return result
 
 
+def _fetch_related_neighbours(
+    gc: Any,
+    dd_data: dict[str, dict[str, Any]],
+    items: list[dict[str, Any]],
+) -> dict[str, list[dict]]:
+    """Fetch graph-relationship neighbours for each SN's DD paths.
+
+    For each SN, calls :func:`related_dd_search` across all its linked
+    DD paths and merges the results.  Returns compact dicts with
+    ``{path, ids, relationship_type, via}`` suitable for template injection.
+
+    Returns ``{sn_id: [{path, ids, relationship_type, via}, ...]}``.
+    """
+    from imas_codex.standard_names.workers import _related_path_neighbours
+
+    result: dict[str, list[dict]] = {}
+    for item in items:
+        sid = item["id"]
+        dd_info = dd_data.get(sid, {})
+        dd_paths = dd_info.get("dd_paths", [])
+
+        if not dd_paths:
+            result[sid] = []
+            continue
+
+        seen: dict[str, dict] = {}  # path → hit dict (dedup)
+        for dp in dd_paths:
+            path = dp.get("path", "")
+            if not path:
+                continue
+            try:
+                neighbours = _related_path_neighbours(gc, path)
+            except Exception:
+                logger.debug(
+                    "Related search failed for %s (DD %s)",
+                    sid,
+                    path,
+                    exc_info=True,
+                )
+                continue
+
+            for n in neighbours:
+                npath = n["path"]
+                if npath not in seen:
+                    seen[npath] = n
+
+        result[sid] = list(seen.values())
+
+    return result
+
+
 async def enrich_contextualise_worker(
     state: StandardNameEnrichState, **_kwargs
 ) -> None:
@@ -818,12 +869,17 @@ async def enrich_contextualise_worker(
                 nearby_data = _fetch_nearby_sns(gc, _items)
                 sibling_data = _fetch_domain_siblings(gc, _items)
                 link_data = _fetch_link_candidates(gc, dd_data, _items)
-            return dd_data, nearby_data, sibling_data, link_data
+                related_data = _fetch_related_neighbours(gc, dd_data, _items)
+            return dd_data, nearby_data, sibling_data, link_data, related_data
 
         try:
-            dd_data, nearby_data, sibling_data, link_data = await asyncio.to_thread(
-                _fetch_context
-            )
+            (
+                dd_data,
+                nearby_data,
+                sibling_data,
+                link_data,
+                related_data,
+            ) = await asyncio.to_thread(_fetch_context)
         except Exception:
             wlog.warning(
                 "Graph error fetching context for batch %d — skipping",
@@ -847,6 +903,7 @@ async def enrich_contextualise_worker(
                 item["nearby"] = nearby_data.get(sid, [])
                 item["siblings"] = sibling_data.get(sid, [])
                 item["link_candidates"] = link_data.get(sid, [])
+                item["related_neighbours"] = related_data.get(sid, [])
                 item["grammar"] = _build_grammar(item)
 
                 # Preserve existing description/documentation as "current"

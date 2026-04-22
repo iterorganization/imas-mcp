@@ -56,6 +56,11 @@ yet named — the pipeline resolves them after this round.
 {% for c in item.link_candidates %}- `{{ c.tag }}` [{{ c.kind_hint }}] — {{ c.doc_short }}
 {% endfor %}{% endif %}
 
+{% if item.related_neighbours %}### Graph-relationship neighbours (explicit cross-IDS peers)
+
+{% for r in item.related_neighbours %}- `{{ r.path }}` ({{ r.ids }}) — {{ r.relationship_type }}{% if r.via %} via {{ r.via }}{% endif %}
+{% endfor %}{% endif %}
+
 {% endfor %}
 
 Return a JSON object matching the output schema with one entry per name above.
