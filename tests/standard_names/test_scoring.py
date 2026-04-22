@@ -54,7 +54,7 @@ def test_quality_score_zero():
 
 
 def test_tier_boundaries():
-    """Tier thresholds at 0.85/0.60/0.40."""
+    """Tier thresholds at 0.85/0.65/0.40."""
     from imas_codex.standard_names.models import StandardNameQualityScore
 
     # Outstanding boundary: 0.85 * 120 = 102
@@ -80,16 +80,16 @@ def test_tier_boundaries():
     )
     assert good.tier == "good"
 
-    # Good boundary: 0.60 * 120 = 72
+    # Good boundary: 0.65 * 120 = 78
     good_boundary = StandardNameQualityScore(
-        grammar=12,
-        semantic=12,
-        documentation=12,
-        convention=12,
-        completeness=12,
-        compliance=12,
+        grammar=13,
+        semantic=13,
+        documentation=13,
+        convention=13,
+        completeness=13,
+        compliance=13,
     )
-    assert good_boundary.score == 72 / 120.0
+    assert good_boundary.score == 78 / 120.0
     assert good_boundary.tier == "good"
 
     # Adequate boundary: 0.40 * 120 = 48

@@ -209,7 +209,7 @@ class StandardNameQualityScore(BaseModel):
         s = self.score
         if s >= 0.85:
             return "outstanding"
-        elif s >= 0.60:
+        elif s >= 0.65:
             return "good"
         elif s >= 0.40:
             return "adequate"
@@ -272,7 +272,7 @@ class StandardNameQualityScoreNameOnly(BaseModel):
         s = self.score
         if s >= 0.85:
             return "outstanding"
-        elif s >= 0.60:
+        elif s >= 0.65:
             return "good"
         elif s >= 0.40:
             return "adequate"
@@ -356,7 +356,7 @@ class StandardNameQualityScoreDocs(BaseModel):
         s = self.score
         if s >= 0.85:
             return "outstanding"
-        elif s >= 0.60:
+        elif s >= 0.65:
             return "good"
         elif s >= 0.40:
             return "adequate"

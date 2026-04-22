@@ -22,7 +22,7 @@ dimensions:
     description: "Follows compose prompt instructions exactly"
 
 verdict_rules:
-  accept: "score >= 0.60 AND no dimension is 0"
+  accept: "score >= 0.65 AND no dimension is 0"
   reject: "score < 0.40 OR any dimension is 0"
   revise: "all other cases"
 
@@ -30,7 +30,7 @@ tiers:
   outstanding:
     min: 0.85
   good:
-    min: 0.60
+    min: 0.65
   adequate:
     min: 0.40
   poor:

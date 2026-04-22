@@ -181,7 +181,7 @@ class TestSNQualityReviewModels:
         assert score.tier == "outstanding"
 
     def test_quality_score_tier_good(self):
-        """Score 72-101 is good."""
+        """Score 78-101 is good."""
         from imas_codex.standard_names.models import StandardNameQualityScore
 
         score = StandardNameQualityScore(
@@ -190,13 +190,13 @@ class TestSNQualityReviewModels:
             documentation=12,
             convention=13,
             completeness=11,
-            compliance=10,
+            compliance=13,
         )
-        assert score.total == 75
+        assert score.total == 78
         assert score.tier == "good"
 
     def test_quality_score_tier_adequate(self):
-        """Score 48-71 is adequate."""
+        """Score 48-77 is adequate."""
         from imas_codex.standard_names.models import StandardNameQualityScore
 
         score = StandardNameQualityScore(
