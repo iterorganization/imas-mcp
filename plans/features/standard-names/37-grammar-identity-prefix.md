@@ -1,6 +1,12 @@
-# Plan 37 — Grammar Identity-Prefix Completion (ISN rc21)
+# [SUPERSEDED by plan 38] Plan 37 — Grammar Identity-Prefix Completion (ISN rc21)
 
-> **Status**: DRAFT — awaiting RD review then fleet dispatch
+> **Status**: SUPERSEDED — RD review and self-review both rejected this plan.
+> The preposition-stripping approach destroys the traceability that `_of_`,
+> `_at_`, `_over_`, `_due_to_` provide as segment-boundary markers. The real
+> defect is not "too many prepositions" but `_of_` overloading across 7
+> distinct roles, and several vocabulary/parser issues unrelated to
+> prep-stripping. See `plans/features/standard-names/38-grammar-vnext.md`
+> for the replacement plan.
 > **Supersedes**: Plan 36 Phase 0 (component postfix inversion, never landed in ISN)
 > **Extends**: Plan 36 Phase 0 with Option E geometry/object prefix-lift
 
