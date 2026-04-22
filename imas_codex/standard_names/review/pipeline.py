@@ -981,7 +981,7 @@ def _match_reviews_to_entries(
         # validation_status. Regeneration targeting is driven by the
         # ``sn run --min-score F`` threshold instead, which selects names
         # purely by reviewer_score without touching lifecycle state.
-        if review.verdict == StandardNameReviewVerdict.revise and review.revised_name:
+        if review.verdict == StandardNameReviewVerdict.revise and getattr(review, "revised_name", None):
             if not _valid_sn_id(review.revised_name):
                 # Reviewer hallucinated garbage into revised_name (e.g. embedded
                 # stream-of-consciousness reasoning). Keep original and log.

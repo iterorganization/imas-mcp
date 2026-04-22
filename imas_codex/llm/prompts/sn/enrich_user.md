@@ -48,6 +48,14 @@ _(none available)_
 {% if item.current.links %}- **Links:** {{ item.current.links | join(", ") }}{% endif %}
 {% endif %}
 
+{% if item.link_candidates %}### Candidate cross-references (for `links` field)
+
+Prefer `name:` when the target is already minted. Use `dd:` for paths not
+yet named — the pipeline resolves them after this round.
+
+{% for c in item.link_candidates %}- `{{ c.tag }}` [{{ c.kind_hint }}] — {{ c.doc_short }}
+{% endfor %}{% endif %}
+
 {% endfor %}
 
 Return a JSON object matching the output schema with one entry per name above.

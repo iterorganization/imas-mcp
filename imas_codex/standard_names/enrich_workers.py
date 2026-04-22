@@ -689,6 +689,74 @@ def _fetch_domain_siblings(
     return result
 
 
+def _fetch_link_candidates(
+    gc: Any,
+    dd_data: dict[str, dict[str, Any]],
+    items: list[dict[str, Any]],
+    max_per_sn: int = 20,
+) -> dict[str, list[dict]]:
+    """Compute link candidates for each SN via hybrid DD search.
+
+    For each SN, runs hybrid DD search across all its linked DD paths
+    (from *dd_data*) and merges results.  Pre-resolves
+    ``HAS_STANDARD_NAME`` to tag candidates as ``name:`` or ``dd:``.
+    Deduplicates and caps per SN at *max_per_sn*.
+
+    Returns ``{sn_id: [{tag, path, ids, kind_hint, doc_short, ...}, ...]}``.
+    """
+    from imas_codex.standard_names.workers import _hybrid_search_neighbours
+
+    result: dict[str, list[dict]] = {}
+    for item in items:
+        sid = item["id"]
+        dd_info = dd_data.get(sid, {})
+        dd_paths = dd_info.get("dd_paths", [])
+
+        if not dd_paths:
+            result[sid] = []
+            continue
+
+        # Merge hybrid search results across all DD paths for this SN
+        seen: dict[str, dict] = {}  # path → best candidate dict
+        for dp in dd_paths:
+            path = dp.get("path", "")
+            if not path:
+                continue
+            try:
+                neighbours = _hybrid_search_neighbours(
+                    gc,
+                    path,
+                    description=dp.get("description"),
+                    physics_domain=item.get("physics_domain"),
+                    max_results=10,
+                )
+            except Exception:
+                logger.debug(
+                    "Hybrid search failed for %s (DD %s)",
+                    sid,
+                    path,
+                    exc_info=True,
+                )
+                continue
+
+            for n in neighbours:
+                npath = n["path"]
+                if npath not in seen:
+                    # Add kind_hint: "name" if already minted, "dd" otherwise
+                    n["kind_hint"] = "name" if n["tag"].startswith("name:") else "dd"
+                    seen[npath] = n
+
+        # Sort by pre-existing tag priority (name: first) then truncate
+        candidates = sorted(
+            seen.values(),
+            key=lambda c: 0 if c["tag"].startswith("name:") else 1,
+        )[:max_per_sn]
+
+        result[sid] = candidates
+
+    return result
+
+
 async def enrich_contextualise_worker(
     state: StandardNameEnrichState, **_kwargs
 ) -> None:
@@ -749,10 +817,13 @@ async def enrich_contextualise_worker(
                 dd_data = _fetch_dd_paths_batch(gc, _sn_ids)
                 nearby_data = _fetch_nearby_sns(gc, _items)
                 sibling_data = _fetch_domain_siblings(gc, _items)
-            return dd_data, nearby_data, sibling_data
+                link_data = _fetch_link_candidates(gc, dd_data, _items)
+            return dd_data, nearby_data, sibling_data, link_data
 
         try:
-            dd_data, nearby_data, sibling_data = await asyncio.to_thread(_fetch_context)
+            dd_data, nearby_data, sibling_data, link_data = await asyncio.to_thread(
+                _fetch_context
+            )
         except Exception:
             wlog.warning(
                 "Graph error fetching context for batch %d — skipping",
@@ -775,6 +846,7 @@ async def enrich_contextualise_worker(
                 item["cocos"] = dd_info.get("cocos")
                 item["nearby"] = nearby_data.get(sid, [])
                 item["siblings"] = sibling_data.get(sid, [])
+                item["link_candidates"] = link_data.get(sid, [])
                 item["grammar"] = _build_grammar(item)
 
                 # Preserve existing description/documentation as "current"
