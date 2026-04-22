@@ -180,5 +180,31 @@ class TestRelatedNeighboursInjection:
         assert "Graph-relationship neighbours" in rendered
 
 
+class TestErrorFieldsInjection:
+    """The error-companions block renders when item.error_fields is set."""
+
+    def test_block_absent_without_error_fields(self) -> None:
+        rendered = render_prompt("sn/compose_dd", _min_context([_min_item()]))
+        assert "DD error companions" not in rendered
+
+    def test_block_present_with_error_fields(self) -> None:
+        error_fields = [
+            "equilibrium/time_slice/profiles_1d/psi_error_upper",
+            "equilibrium/time_slice/profiles_1d/psi_error_lower",
+        ]
+        item = _min_item(error_fields=error_fields)
+        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+
+        assert "DD error companions" in rendered
+        assert "psi_error_upper" in rendered
+        assert "psi_error_lower" in rendered
+        assert "uncertainty" in rendered.lower()
+
+    def test_block_absent_with_empty_error_fields(self) -> None:
+        item = _min_item(error_fields=[])
+        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        assert "DD error companions" not in rendered
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

@@ -175,6 +175,11 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% for r in item.related_neighbours %}  - `{{ r.path }}` ({{ r.ids }}) — {{ r.relationship_type }}{% if r.via %} via {{ r.via }}{% endif %}
 {% endfor %}  → These paths share structural relationships (cluster, coordinate, unit, identifier, COCOS) with this path.
 {% endif %}
+{% if item.error_fields %}
+- **DD error companions:**
+{% for ef in item.error_fields %}  - `{{ ef }}`
+{% endfor %}  → This path has uncertainty companions. Consider producing an `*_uncertainty` variant, or skip if this path IS the error field.
+{% endif %}
 {% if item.version_history %}
 - **Version history:**
 {% for vh in item.version_history %}  - {{ vh.version }}: {{ vh.change_type }}{% if vh.description %} — {{ vh.description }}{% endif %}

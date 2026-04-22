@@ -402,6 +402,11 @@ WHERE vc.change_type IN [
 RETURN vc.id AS change_id, vc.change_type AS change_type
 """
 
+_ERROR_FIELDS_QUERY = """
+MATCH (d:IMASNode {id: $path})-[:HAS_ERROR]->(e:IMASNode)
+RETURN e.id AS error_path
+"""
+
 _IDS_CONTEXT_QUERY = """
 MATCH (ids:IDS {id: $ids_name})
 OPTIONAL MATCH (child:IMASNode)-[:IN_IDS]->(ids)
@@ -720,6 +725,15 @@ def _enrich_batch_items(items: list[dict]) -> None:
             related = _related_path_neighbours(gc, path)
             if related:
                 item["related_neighbours"] = related
+
+            # Error companion fields (uncertainty: _error_upper/lower/index)
+            error_rows = list(gc.query(_ERROR_FIELDS_QUERY, path=path))
+            if error_rows:
+                error_fields = [
+                    ef["error_path"] for ef in error_rows if ef.get("error_path")
+                ]
+                if error_fields:
+                    item["error_fields"] = error_fields
 
 
 def _is_attachment_consistent(source_id: str, sn_name: str) -> tuple[bool, str]:
