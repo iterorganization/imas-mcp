@@ -208,7 +208,7 @@ async def run_sn_loop(
                     summary.names_composed += phase.count
                 elif phase.name == "enrich":
                     summary.names_enriched += phase.count
-                elif phase.name == "review":
+                elif phase.name in ("review_names", "review_docs"):
                     summary.names_reviewed += phase.count
                 elif phase.name == "regen":
                     summary.names_regenerated += phase.count
