@@ -1,7 +1,8 @@
 """Tests for the N-reviewer SN review pipeline.
 
 Covers:
-- Settings accessor get_sn_review_models() reads [sn.review].models correctly
+- Settings accessor get_sn_review_names_models() / get_sn_review_docs_models()
+  read [sn.review.names/docs].models correctly
 - StandardNameReviewState has new fields (review_models, review_records,
   canonical_review_model) and backward-compat secondary_models alias
 - Pipeline helpers (_model_slug, _derive_model_family, _build_review_record)
@@ -21,30 +22,46 @@ import pytest
 # =============================================================================
 
 
-def test_get_sn_review_models_default():
-    """get_sn_review_models() returns at least one string model."""
-    from imas_codex.settings import get_sn_review_models
+def test_get_sn_review_names_models_default():
+    """get_sn_review_names_models() returns at least one string model."""
+    from imas_codex.settings import get_sn_review_names_models
 
-    models = get_sn_review_models()
+    models = get_sn_review_names_models()
     assert isinstance(models, list)
-    assert len(models) >= 1
+    assert 1 <= len(models) <= 3
     for m in models:
         assert isinstance(m, str)
         assert m  # non-empty
 
 
-def test_get_sn_review_models_override(monkeypatch):
-    """get_sn_review_models() reads from [sn.review].models override."""
+def test_get_sn_review_names_models_override(monkeypatch):
+    """get_sn_review_names_models() reads from [sn.review.names].models override."""
     from imas_codex import settings as settings_mod
 
     def fake_get_section(name: str) -> dict:
         if name == "sn":
-            return {"review": {"models": ["a", "b", "c"]}}
+            return {"review": {"names": {"models": ["a", "b", "c"]}}}
         return {}
 
     monkeypatch.setattr(settings_mod, "_get_section", fake_get_section)
-    models = settings_mod.get_sn_review_models()
+    settings_mod._load_pyproject_settings.cache_clear()
+    models = settings_mod.get_sn_review_names_models()
     assert models == ["a", "b", "c"]
+
+
+def test_get_sn_review_docs_models_override(monkeypatch):
+    """get_sn_review_docs_models() reads from [sn.review.docs].models override."""
+    from imas_codex import settings as settings_mod
+
+    def fake_get_section(name: str) -> dict:
+        if name == "sn":
+            return {"review": {"docs": {"models": ["x", "y"]}}}
+        return {}
+
+    monkeypatch.setattr(settings_mod, "_get_section", fake_get_section)
+    settings_mod._load_pyproject_settings.cache_clear()
+    models = settings_mod.get_sn_review_docs_models()
+    assert models == ["x", "y"]
 
 
 # =============================================================================

@@ -779,6 +779,7 @@ def sn_run(
     log_print(f"  Cost limit: ${cost_limit:.2f}")
     log_print("")
 
+    from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.pipeline import run_sn_pipeline
     from imas_codex.standard_names.state import StandardNameBuildState
 
@@ -825,6 +826,7 @@ def sn_run(
         from_model=from_model,
         name_only=name_only,
         name_only_batch_size=name_only_batch_size,
+        budget_manager=BudgetManager(cost_limit),
     )
 
     if display:
@@ -2400,7 +2402,8 @@ def sn_clear(
     default=None,
     help=(
         "Ad-hoc override for the reviewer list as comma-separated model "
-        "ids. First entry is canonical. Overrides [sn.review].models."
+        "ids. Overrides [sn.review.names].models or [sn.review.docs].models "
+        "depending on --target."
     ),
 )
 @click.option(
@@ -2472,7 +2475,7 @@ def sn_review(
     """
     import asyncio
 
-    from imas_codex.standard_names.review.budget import ReviewBudgetManager
+    from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.review.state import StandardNameReviewState
 
     # Resolve --target.
@@ -2486,13 +2489,16 @@ def sn_review(
     # Load reviewer list (N>=1). CLI --models overrides pyproject.
     from imas_codex.settings import (
         get_sn_review_disagreement_threshold,
-        get_sn_review_models,
+        get_sn_review_docs_models,
+        get_sn_review_names_models,
     )
 
     if models_override:
         review_models = [m.strip() for m in models_override.split(",") if m.strip()]
+    elif target_normalized == "names":
+        review_models = get_sn_review_names_models()
     else:
-        review_models = get_sn_review_models()
+        review_models = get_sn_review_docs_models()
     disagreement_threshold = get_sn_review_disagreement_threshold()
 
     # Build state
@@ -2512,7 +2518,7 @@ def sn_review(
         dry_run=dry_run,
         name_only=name_only,
         target=target_normalized,
-        budget_manager=ReviewBudgetManager(cost_limit),
+        budget_manager=BudgetManager(cost_limit),
         review_models=review_models,
         disagreement_threshold=disagreement_threshold,
     )

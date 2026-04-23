@@ -10,7 +10,9 @@ Configuration is organized into subsections:
   [tool.imas-codex.vision]         — vision models for image/document tasks
   [tool.imas-codex.agent]          — agent models for planning/exploration tasks
   [tool.imas-codex.compaction]     — compaction models for summarization tasks
-  [tool.imas-codex.sn.review]      — cross-family reviewer model diversity settings
+  [tool.imas-codex.sn.review]       — shared disagreement threshold and max-cycles
+  [tool.imas-codex.sn.review.names] — name-axis reviewer model chain (primary/secondary/escalator)
+  [tool.imas-codex.sn.review.docs]  — docs-axis reviewer model chain (primary/secondary/escalator)
   [tool.imas-codex.sn.benchmark]   — SN benchmark compose-models and reviewer-model
 
 All settings support environment variable overrides (IMAS_CODEX_* prefix / NEO4J_*).
@@ -723,23 +725,102 @@ def get_sn_retry_k_expansion() -> int:
 # ─── SN review settings ────────────────────────────────────────────────────
 
 _SN_REVIEW_DEFAULTS: dict[str, Any] = {
-    "models": ["openrouter/anthropic/claude-opus-4.6"],
-    "disagreement-threshold": 0.2,
+    "names-models": ["openrouter/anthropic/claude-opus-4.6"],
+    "docs-models": ["openrouter/anthropic/claude-opus-4.6"],
+    "disagreement-threshold": 0.15,
+    "max-cycles": 3,
 }
 
 
-def get_sn_review_models() -> list[str]:
-    """Return the ordered reviewer-model list for ``sn review``.
+def _validate_review_models(models: list[str], axis: str) -> list[str]:
+    """Validate a review model list for the given axis.
 
-    The first entry is the canonical reviewer. Additional entries
-    produce Review graph nodes for cross-model diversity.
+    Args:
+        models: Raw list of model strings from config.
+        axis: Axis name ("names" or "docs") used in error messages.
 
-    Priority: ``[sn.review].models`` in pyproject.toml → default
+    Returns:
+        Validated list of model strings.
+
+    Raises:
+        ValueError: If the list length is 0 or >3, or any entry is empty.
+    """
+    import logging as _logging
+
+    if len(models) == 0:
+        raise ValueError(
+            f"[sn.review.{axis}].models must have at least 1 entry; got 0. "
+            f"Set 1 model to disable quorum, 2 for blind pair, 3 for full RD-quorum."
+        )
+    if len(models) > 3:
+        raise ValueError(
+            f"[sn.review.{axis}].models accepts at most 3 entries "
+            f"(primary, secondary, escalator); got {len(models)}."
+        )
+    validated: list[str] = []
+    for m in models:
+        if not isinstance(m, str) or not m.strip():
+            raise ValueError(
+                f"[sn.review.{axis}].models entries must be non-empty strings; "
+                f"got {m!r}."
+            )
+        if not m.startswith("openrouter/"):
+            _logging.getLogger(__name__).warning(
+                "[sn.review.%s].models entry %r does not have the 'openrouter/' prefix; "
+                "prompt caching will not be available for this model.",
+                axis,
+                m,
+            )
+        validated.append(m)
+    return validated
+
+
+def get_sn_review_names_models() -> list[str]:
+    """Return the ordered reviewer-model chain for the names review axis.
+
+    Length semantics:
+      * 1 model  → quorum disabled (single reviewer, mirrors legacy behaviour)
+      * 2 models → blind primary + blind secondary, no escalator
+      * 3 models → full RD-quorum: [0] primary (blind), [1] secondary (blind),
+                   [2] escalator (sees both reviews, authoritative)
+      * 4+       → rejected at config load time (``ValueError``)
+
+    Priority: ``[sn.review.names].models`` in pyproject.toml → default
     (a single canonical model).
+
+    Raises:
+        ValueError: If list is empty or has more than 3 entries.
+    """
+    section = _get_section("sn").get("review", {}).get("names", {})
+    raw = section.get("models", _SN_REVIEW_DEFAULTS["names-models"])
+    return _validate_review_models([str(m) for m in raw if m], "names")
+
+
+def get_sn_review_docs_models() -> list[str]:
+    """Return the ordered reviewer-model chain for the docs review axis.
+
+    Same length semantics as :func:`get_sn_review_names_models`.
+
+    Priority: ``[sn.review.docs].models`` in pyproject.toml → default
+    (a single canonical model).
+
+    Raises:
+        ValueError: If list is empty or has more than 3 entries.
+    """
+    section = _get_section("sn").get("review", {}).get("docs", {})
+    raw = section.get("models", _SN_REVIEW_DEFAULTS["docs-models"])
+    return _validate_review_models([str(m) for m in raw if m], "docs")
+
+
+def get_sn_review_max_cycles() -> int:
+    """Get the maximum number of RD-quorum review cycles.
+
+    1 → primary only, 2 → blind pair (no escalator), 3 → full quorum.
+
+    Priority: ``[sn.review].max-cycles`` → ``3``.
     """
     section = _get_section("sn").get("review", {})
-    models = section.get("models", _SN_REVIEW_DEFAULTS["models"])
-    return [str(m) for m in models if m]
+    return int(section.get("max-cycles", _SN_REVIEW_DEFAULTS["max-cycles"]))
 
 
 def get_sn_review_disagreement_threshold() -> float:
@@ -748,7 +829,7 @@ def get_sn_review_disagreement_threshold() -> float:
     When N >= 2 reviewers are configured, ``review_disagreement`` is
     set ``true`` if ``max(scores) - min(scores) >= threshold``.
 
-    Priority: ``[sn.review].disagreement-threshold`` → ``0.2``.
+    Priority: ``[sn.review].disagreement-threshold`` → ``0.15``.
     """
     section = _get_section("sn").get("review", {})
     return float(
@@ -788,11 +869,16 @@ def get_sn_benchmark_reviewer_model() -> str:
     """Reviewer model for SN benchmark scoring.
 
     Priority: ``[sn.benchmark].reviewer-model`` →
-    ``[sn.review].models[0]`` → default.
+    ``[sn.review.names].models[0]`` → default.
     """
     section = _get_section("sn").get("benchmark", {})
-    review_models = get_sn_review_models()
-    fallback = (
-        review_models[0] if review_models else _SN_BENCHMARK_DEFAULTS["reviewer-model"]
-    )
+    try:
+        review_models = get_sn_review_names_models()
+        fallback = (
+            review_models[0]
+            if review_models
+            else _SN_BENCHMARK_DEFAULTS["reviewer-model"]
+        )
+    except (ValueError, IndexError):
+        fallback = _SN_BENCHMARK_DEFAULTS["reviewer-model"]
     return section.get("reviewer-model", fallback)

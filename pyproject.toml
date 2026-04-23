@@ -317,12 +317,34 @@ retry-attempts = 1
 retry-k-expansion = 12
 
 [tool.imas-codex.sn.review]
-# Reviewer models for `sn review`. N >= 1. The first entry is canonical —
-# its score/tier/comments mirror onto the StandardName node. Additional
-# entries produce Review graph nodes linked via REVIEWS for diversity.
-models = ["openrouter/anthropic/claude-opus-4.6"]
+# Shared review settings (apply to both axes).
 # Disagreement detection: true iff N>=2 AND max(score) - min(score) >= threshold.
-disagreement-threshold = 0.2
+disagreement-threshold = 0.15
+# Maximum RD-quorum cycles (1 = primary only, 2 = blind pair, 3 = full quorum).
+max-cycles = 3
+
+[tool.imas-codex.sn.review.names]
+# Reviewer model chain for the name-quality axis (grammar/semantic/convention/completeness).
+# Length semantics:
+#   1 model  → quorum disabled (single reviewer, mirrors legacy behaviour)
+#   2 models → blind primary + blind secondary, no escalator
+#   3 models → full RD-quorum: models[0] primary (blind), models[1] secondary (blind),
+#              models[2] escalator (sees both, authoritative)
+#   4+       → rejected at config load time (ValueError)
+models = [
+  "openrouter/anthropic/claude-opus-4.6",    # cycle 0 primary (blind)
+  "openrouter/openai/gpt-5.4",              # cycle 1 secondary (blind)
+  "openrouter/anthropic/claude-sonnet-4.6", # cycle 2 escalator (sees both)
+]
+
+[tool.imas-codex.sn.review.docs]
+# Reviewer model chain for the documentation-quality axis.
+# Same length semantics as [sn.review.names].
+models = [
+  "openrouter/anthropic/claude-opus-4.6",
+  "openrouter/anthropic/claude-sonnet-4.6",
+  "openrouter/openai/gpt-5.4",
+]
 
 [tool.imas-codex.sn.benchmark]
 # Models to evaluate for standard name composition.
