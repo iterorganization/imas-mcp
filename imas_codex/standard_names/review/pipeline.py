@@ -608,16 +608,27 @@ def _fetch_review_dd_context(names: list[dict]) -> None:
 
 
 async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -> None:
-    """Run LLM quality review on each enriched batch.
+    """Run LLM quality review on each enriched batch using RD-quorum protocol.
 
-    Reuses the existing ``_review_batch()`` pattern from ``workers.py``
-    with additions:
-    - Budget management (reserve/reconcile)
-    - Neighborhood context in prompts
-    - Audit findings in prompts
+    RD-quorum tight loop per batch:
+      cycle 0: primary (blind) — scores the full batch
+      cycle 1: secondary (blind) — scores the same batch independently
+      cycle 2: (optional) escalator — sees BOTH prior critiques and
+               resolves disputed items only (per-item mini-batch)
+
+    Budget management: one lease per batch, reserving worst-case cost
+    upfront and charging each cycle's actual cost.
     """
+    import copy as _copy
+    import uuid as _uuid
+
     from imas_codex.cli.logging import WorkerLogAdapter
-    from imas_codex.settings import get_model
+    from imas_codex.settings import (
+        get_sn_review_disagreement_threshold,
+        get_sn_review_docs_models,
+        get_sn_review_max_cycles,
+        get_sn_review_names_models,
+    )
 
     wlog = WorkerLogAdapter(logger, worker_name="sn_review_review")
 
@@ -628,8 +639,28 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
         state.review_phase.mark_done()
         return
 
-    model = state.review_model or get_model("language")
-    wlog.info("Reviewing %d batches (model=%s)", len(batches), model)
+    # --- Resolve axis-specific config -----------------------------------------
+    review_target = getattr(state, "target", None) or (
+        "names" if state.name_only else "names"
+    )
+    if review_target == "docs":
+        models = state.review_models or get_sn_review_docs_models()
+        review_axis = "docs"
+    else:
+        models = state.review_models or get_sn_review_names_models()
+        review_axis = "names"
+
+    max_cycles = get_sn_review_max_cycles()
+    tolerance = get_sn_review_disagreement_threshold()
+
+    wlog.info(
+        "Reviewing %d batches (models=%s, max_cycles=%d, tolerance=%.2f, axis=%s)",
+        len(batches),
+        models,
+        max_cycles,
+        tolerance,
+        review_axis,
+    )
 
     # Shared context for prompt rendering
     grammar_enums = _get_grammar_enums()
@@ -639,7 +670,6 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
     from imas_codex.graph.client import GraphClient
     from imas_codex.standard_names.example_loader import load_review_examples
 
-    # Derive physics_domains from domain_filter or batch items
     review_domains: list[str] = []
     if state.domain_filter:
         review_domains = [state.domain_filter]
@@ -652,22 +682,14 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
         }
         review_domains = sorted(_domains)
 
-    # Derive axis from review target: name_only/names → "name",
-    # docs → "docs", full → "full"
-    _review_target = getattr(state, "target", None) or (
-        "names" if state.name_only else "full"
+    _review_axis_example: Literal["name", "docs", "full"] = (
+        "docs" if review_target == "docs" else "name"
     )
-    if _review_target in ("names", "name"):
-        _review_axis: Literal["name", "docs", "full"] = "name"
-    elif _review_target == "docs":
-        _review_axis = "docs"
-    else:
-        _review_axis = "full"
 
     def _load_review_scored() -> list[dict]:
         with GraphClient() as gc:
             return load_review_examples(
-                gc, physics_domains=review_domains, axis=_review_axis
+                gc, physics_domains=review_domains, axis=_review_axis_example
             )
 
     review_scored = await asyncio.to_thread(_load_review_scored)
@@ -693,6 +715,12 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
     async def _process_batch(
         batch_idx: int, batch: dict
     ) -> tuple[list[dict], list[dict]]:
+        """RD-quorum loop for a single review batch.
+
+        Returns ``(scored_items, review_records)`` — scored items carry
+        the final resolved scores, review records are one-per-cycle
+        for graph persistence.
+        """
         nonlocal total_cost, total_tokens, errors, revised, unscored
 
         async with sem:
@@ -703,14 +731,9 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
             if not names:
                 return [], []
 
-            # Estimate cost and reserve budget (worst-case accounts
-            # for ALL review models, not just the primary one)
-            models = state.review_models or (
-                [state.review_model] if state.review_model else []
-            )
-            num_models = max(len(models), 1)
-            estimated_cost = len(names) * 0.002  # ~$0.002 per name heuristic
-            worst_case = estimated_cost * num_models * 1.3
+            # --- Budget reservation (worst-case: all cycles) -----------------
+            estimated_cost = len(names) * 0.002
+            worst_case = estimated_cost * len(models) * 1.3
             lease = None
 
             if state.budget_manager:
@@ -722,10 +745,16 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                     )
                     return [], []
 
+            review_group_id = str(_uuid.uuid4())
+            batch_review_records: list[dict] = []
+
             try:
-                batch_scored = await _review_single_batch(
-                    names=names,
-                    model=model,
+                # ============================================================
+                # CYCLE 0 — Primary reviewer (blind)
+                # ============================================================
+                result_0 = await _review_single_batch(
+                    names=_copy.deepcopy(names),
+                    model=models[0],
                     grammar_enums=grammar_enums,
                     compose_ctx=compose_ctx,
                     batch_context=batch.get("group_key", ""),
@@ -733,136 +762,305 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                     audit_findings=batch.get("audit_findings", []),
                     wlog=wlog,
                     name_only=state.name_only,
-                    target=getattr(state, "target", None)
-                    or ("names" if state.name_only else "full"),
+                    target=review_target,
                     review_scored_examples=review_scored,
+                    prior_reviews=None,  # blind — no prior context
                 )
-                batch_cost = batch_scored.pop("_cost", 0.0)
-                batch_tokens = batch_scored.pop("_tokens", 0)
-                batch_input_tokens = batch_scored.pop("_input_tokens", 0)
-                batch_output_tokens = batch_scored.pop("_output_tokens", 0)
-                batch_revised = batch_scored.pop("_revised", 0)
-                batch_items = batch_scored.pop("_items", [])
-                batch_unscored = batch_scored.pop("_unscored", 0)
+                c0_cost = result_0.get("_cost", 0.0)
+                c0_items = result_0.get("_items", [])
+                c0_tokens = result_0.get("_tokens", 0)
+                c0_input = result_0.get("_input_tokens", 0)
+                c0_output = result_0.get("_output_tokens", 0)
+                revised += result_0.get("_revised", 0)
 
-                total_cost += batch_cost
-                total_tokens += batch_tokens
-                revised += batch_revised
-                unscored += batch_unscored
+                total_cost += c0_cost
+                total_tokens += c0_tokens
+                state.review_stats.cost += c0_cost
 
-                # Charge primary review cost to budget lease
                 if lease:
-                    lease.charge(batch_cost)
+                    lease.charge(c0_cost)
 
-                # Only count actually scored items as processed
-                actually_scored = len(batch_items)
-                state.review_stats.cost += batch_cost
-                state.review_stats.processed += actually_scored
-                state.review_stats.record_batch(actually_scored)
-
-                # Stream progress — distinguish scored from unscored
-                desc = f"{actually_scored} scored  ${batch_cost:.3f}"
-                if batch_unscored > 0:
-                    desc += f"  ({batch_unscored} unscored)"
-                state.review_stats.stream_queue.add(
-                    [
-                        {
-                            "primary_text": f"batch {batch_idx + 1}",
-                            "description": desc,
-                        }
-                    ]
-                )
-                # --- Build Review records for each configured model -----------
-                batch_review_records: list[dict] = []
-                if models and batch_items:
-                    # Canonical model (models[0]) — items already scored above.
-                    # Amortize batch-level cost/tokens across items so each
-                    # Review node records its fair share.
-                    canonical_ts = datetime.now(UTC).isoformat()
-                    n_items = max(len(batch_items), 1)
-                    per_cost = batch_cost / n_items
-                    per_in = batch_input_tokens // n_items if batch_input_tokens else 0
-                    per_out = (
-                        batch_output_tokens // n_items if batch_output_tokens else 0
+                # Build cycle-0 Review records
+                c0_ts = datetime.now(UTC).isoformat()
+                n_c0 = max(len(c0_items), 1)
+                for item in c0_items:
+                    sn_id = item.get("id", "")
+                    rec = _build_review_record(
+                        item,
+                        model=models[0],
+                        is_canonical=True,
+                        reviewed_at=c0_ts,
+                        cost_usd=c0_cost / n_c0,
+                        tokens_in=c0_input // n_c0 if c0_input else 0,
+                        tokens_out=c0_output // n_c0 if c0_output else 0,
                     )
-                    for item in batch_items:
-                        rec = _build_review_record(
-                            item,
-                            model=models[0],
-                            is_canonical=True,
-                            reviewed_at=canonical_ts,
-                            cost_usd=per_cost,
-                            tokens_in=per_in,
-                            tokens_out=per_out,
+                    if rec:
+                        rec["id"] = f"{sn_id}:{review_axis}:{review_group_id}:0"
+                        rec["review_axis"] = review_axis
+                        rec["cycle_index"] = 0
+                        rec["review_group_id"] = review_group_id
+                        rec["resolution_role"] = "primary"
+                        rec["resolution_method"] = None
+                        batch_review_records.append(rec)
+
+                # Persist cycle-0 Review nodes immediately
+                if batch_review_records:
+                    await asyncio.to_thread(
+                        _persist_review_records_sync, batch_review_records
+                    )
+
+                # --- Single-model shortcut ---
+                if len(models) == 1:
+                    # Stamp resolution_method on the just-persisted records
+                    for rec in batch_review_records:
+                        rec["resolution_method"] = "single_review"
+                    await asyncio.to_thread(
+                        _persist_review_records_sync, batch_review_records
+                    )
+
+                    _update_batch_stats(state, batch_idx, c0_items, c0_cost, result_0)
+                    return c0_items, batch_review_records
+
+                # ============================================================
+                # CYCLE 1 — Secondary reviewer (blind, identical input)
+                # ============================================================
+                result_1 = await _review_single_batch(
+                    names=_copy.deepcopy(names),
+                    model=models[1],
+                    grammar_enums=grammar_enums,
+                    compose_ctx=compose_ctx,
+                    batch_context=batch.get("group_key", ""),
+                    neighborhood=batch.get("neighborhood", []),
+                    audit_findings=batch.get("audit_findings", []),
+                    wlog=wlog,
+                    name_only=state.name_only,
+                    target=review_target,
+                    review_scored_examples=review_scored,
+                    prior_reviews=None,  # blind — no primary context
+                )
+                c1_cost = result_1.get("_cost", 0.0)
+                c1_items = result_1.get("_items", [])
+                c1_tokens = result_1.get("_tokens", 0)
+                c1_input = result_1.get("_input_tokens", 0)
+                c1_output = result_1.get("_output_tokens", 0)
+                revised += result_1.get("_revised", 0)
+
+                total_cost += c1_cost
+                total_tokens += c1_tokens
+                state.review_stats.cost += c1_cost
+
+                if lease:
+                    lease.charge(c1_cost)
+
+                # Build cycle-1 Review records
+                c1_ts = datetime.now(UTC).isoformat()
+                n_c1 = max(len(c1_items), 1)
+                c1_review_records: list[dict] = []
+                for item in c1_items:
+                    sn_id = item.get("id", "")
+                    rec = _build_review_record(
+                        item,
+                        model=models[1],
+                        is_canonical=False,
+                        reviewed_at=c1_ts,
+                        cost_usd=c1_cost / n_c1,
+                        tokens_in=c1_input // n_c1 if c1_input else 0,
+                        tokens_out=c1_output // n_c1 if c1_output else 0,
+                    )
+                    if rec:
+                        rec["id"] = f"{sn_id}:{review_axis}:{review_group_id}:1"
+                        rec["review_axis"] = review_axis
+                        rec["cycle_index"] = 1
+                        rec["review_group_id"] = review_group_id
+                        rec["resolution_role"] = "secondary"
+                        rec["resolution_method"] = None
+                        c1_review_records.append(rec)
+
+                # Persist cycle-1 Review nodes immediately
+                if c1_review_records:
+                    await asyncio.to_thread(
+                        _persist_review_records_sync, c1_review_records
+                    )
+                batch_review_records.extend(c1_review_records)
+
+                # --- Disagreement detection (per-dimension per-item) ---------
+                c0_by_id = {it.get("id"): it for it in c0_items}
+                c1_by_id = {it.get("id"): it for it in c1_items}
+
+                all_ids = {n.get("id") for n in names}
+                final_items: list[dict] = []
+                disputed_ids: set[str] = set()
+                resolution_methods: dict[str, str] = {}
+
+                for nid in all_ids:
+                    in_c0 = nid in c0_by_id
+                    in_c1 = nid in c1_by_id
+
+                    # Partial-failure handling
+                    if not in_c0 and not in_c1:
+                        # Both missing — item will be quarantined
+                        resolution_methods[nid] = "retry_item"
+                        unscored += 1
+                        continue
+                    if not in_c0:
+                        # Cycle 0 missing, cycle 1 present → single_review
+                        final_items.append(c1_by_id[nid])
+                        resolution_methods[nid] = "single_review"
+                        continue
+                    if not in_c1:
+                        # Cycle 1 missing, cycle 0 present → single_review
+                        final_items.append(c0_by_id[nid])
+                        resolution_methods[nid] = "single_review"
+                        continue
+
+                    # Both present — check per-dimension disagreement
+                    item_0 = c0_by_id[nid]
+                    item_1 = c1_by_id[nid]
+                    is_disputed = _check_per_dim_disagreement(
+                        item_0, item_1, tolerance, review_target
+                    )
+
+                    if is_disputed:
+                        disputed_ids.add(nid)
+                    else:
+                        # Agreement → mean of both
+                        merged = _merge_review_items(item_0, item_1, review_target)
+                        final_items.append(merged)
+                        resolution_methods[nid] = "quorum_consensus"
+
+                # --- Determine resolution and cycle-2 ----------------------
+                if not disputed_ids:
+                    # All items agreed → quorum_consensus
+                    resolution = "quorum_consensus"
+                    # Stamp resolution on last cycle records
+                    for rec in c1_review_records:
+                        rec["resolution_method"] = resolution
+                    await asyncio.to_thread(
+                        _persist_review_records_sync, c1_review_records
+                    )
+
+                    _update_batch_stats(
+                        state, batch_idx, final_items, c0_cost + c1_cost, None
+                    )
+                    return final_items, batch_review_records
+
+                # ============================================================
+                # CYCLE 2 — Escalator (only disputed items, sees prior context)
+                # ============================================================
+                if len(models) < 3:
+                    # No escalator available → max_cycles_reached
+                    for nid in disputed_ids:
+                        merged = _merge_review_items(
+                            c0_by_id[nid], c1_by_id[nid], review_target
                         )
-                        if rec:
-                            batch_review_records.append(rec)
+                        final_items.append(merged)
+                        resolution_methods[nid] = "max_cycles_reached"
 
-                    # Additional models — deep-copy canonical items, re-review
-                    import copy as _copy
+                    # Stamp resolution on cycle-1 records
+                    for rec in c1_review_records:
+                        rec["resolution_method"] = "max_cycles_reached"
+                    await asyncio.to_thread(
+                        _persist_review_records_sync, c1_review_records
+                    )
 
-                    for sec_model in models[1:]:
-                        try:
-                            sec_input = _copy.deepcopy(batch_items)
-                            sec_result = await _review_single_batch(
-                                names=sec_input,
-                                model=sec_model,
-                                grammar_enums=grammar_enums,
-                                compose_ctx=compose_ctx,
-                                batch_context=batch.get("group_key", ""),
-                                neighborhood=batch.get("neighborhood", []),
-                                audit_findings=batch.get("audit_findings", []),
-                                wlog=wlog,
-                                name_only=state.name_only,
-                                target=getattr(state, "target", None)
-                                or ("names" if state.name_only else "full"),
-                                review_scored_examples=review_scored,
-                            )
-                            sec_items = sec_result.get("_items", [])
-                            sec_cost = sec_result.get("_cost", 0.0)
-                            sec_input_tokens = sec_result.get("_input_tokens", 0)
-                            sec_output_tokens = sec_result.get("_output_tokens", 0)
-                            total_cost += sec_cost
-                            state.review_stats.cost += sec_cost
+                    _update_batch_stats(
+                        state,
+                        batch_idx,
+                        final_items,
+                        c0_cost + c1_cost,
+                        None,
+                    )
+                    return final_items, batch_review_records
 
-                            # Charge secondary review cost to budget lease
-                            if lease:
-                                lease.charge(sec_cost)
+                # Build escalator mini-batch with ONLY disputed items
+                disputed_names = [n for n in names if n.get("id") in disputed_ids]
 
-                            sec_ts = datetime.now(UTC).isoformat()
-                            sec_by_id = {s["id"]: s for s in sec_items if "id" in s}
-                            n_sec = max(len(sec_items), 1)
-                            sec_per_cost = sec_cost / n_sec
-                            sec_per_in = (
-                                sec_input_tokens // n_sec if sec_input_tokens else 0
-                            )
-                            sec_per_out = (
-                                sec_output_tokens // n_sec if sec_output_tokens else 0
-                            )
-                            for item in batch_items:
-                                sec = sec_by_id.get(item.get("id", ""))
-                                if sec is None:
-                                    continue
-                                rec = _build_review_record(
-                                    sec,
-                                    model=sec_model,
-                                    is_canonical=False,
-                                    reviewed_at=sec_ts,
-                                    cost_usd=sec_per_cost,
-                                    tokens_in=sec_per_in,
-                                    tokens_out=sec_per_out,
-                                )
-                                if rec:
-                                    batch_review_records.append(rec)
-                        except Exception:
-                            wlog.warning(
-                                "Additional reviewer %s failed for batch %d — skipped",
-                                sec_model,
-                                batch_idx,
-                                exc_info=True,
-                            )
+                # Build prior_reviews context for escalator prompt
+                prior_reviews_ctx = _build_prior_reviews_context(
+                    c0_items, c1_items, disputed_ids, models
+                )
 
-                return batch_items, batch_review_records
+                result_2 = await _review_single_batch(
+                    names=_copy.deepcopy(disputed_names),
+                    model=models[2],
+                    grammar_enums=grammar_enums,
+                    compose_ctx=compose_ctx,
+                    batch_context=batch.get("group_key", ""),
+                    neighborhood=batch.get("neighborhood", []),
+                    audit_findings=batch.get("audit_findings", []),
+                    wlog=wlog,
+                    name_only=state.name_only,
+                    target=review_target,
+                    review_scored_examples=review_scored,
+                    prior_reviews=prior_reviews_ctx,
+                )
+                c2_cost = result_2.get("_cost", 0.0)
+                c2_items = result_2.get("_items", [])
+                c2_tokens = result_2.get("_tokens", 0)
+                c2_input = result_2.get("_input_tokens", 0)
+                c2_output = result_2.get("_output_tokens", 0)
+                revised += result_2.get("_revised", 0)
+
+                total_cost += c2_cost
+                total_tokens += c2_tokens
+                state.review_stats.cost += c2_cost
+
+                if lease:
+                    lease.charge(c2_cost)
+
+                # Build cycle-2 Review records
+                c2_ts = datetime.now(UTC).isoformat()
+                n_c2 = max(len(c2_items), 1)
+                c2_review_records: list[dict] = []
+                for item in c2_items:
+                    sn_id = item.get("id", "")
+                    rec = _build_review_record(
+                        item,
+                        model=models[2],
+                        is_canonical=False,
+                        reviewed_at=c2_ts,
+                        cost_usd=c2_cost / n_c2,
+                        tokens_in=c2_input // n_c2 if c2_input else 0,
+                        tokens_out=c2_output // n_c2 if c2_output else 0,
+                    )
+                    if rec:
+                        rec["id"] = f"{sn_id}:{review_axis}:{review_group_id}:2"
+                        rec["review_axis"] = review_axis
+                        rec["cycle_index"] = 2
+                        rec["review_group_id"] = review_group_id
+                        rec["resolution_role"] = "escalator"
+                        rec["resolution_method"] = "authoritative_escalation"
+                        c2_review_records.append(rec)
+
+                # Persist cycle-2 Review nodes immediately
+                if c2_review_records:
+                    await asyncio.to_thread(
+                        _persist_review_records_sync, c2_review_records
+                    )
+                batch_review_records.extend(c2_review_records)
+
+                # Resolve disputed items: escalator result is authoritative
+                c2_by_id = {it.get("id"): it for it in c2_items}
+                for nid in disputed_ids:
+                    if nid in c2_by_id:
+                        final_items.append(c2_by_id[nid])
+                        resolution_methods[nid] = "authoritative_escalation"
+                    else:
+                        # Escalator failed to score this item → mean fallback
+                        merged = _merge_review_items(
+                            c0_by_id[nid], c1_by_id[nid], review_target
+                        )
+                        final_items.append(merged)
+                        resolution_methods[nid] = "max_cycles_reached"
+
+                _update_batch_stats(
+                    state,
+                    batch_idx,
+                    final_items,
+                    c0_cost + c1_cost + c2_cost,
+                    None,
+                )
+                return final_items, batch_review_records
 
             except Exception:
                 wlog.debug(
@@ -873,7 +1071,6 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 errors += len(names)
                 unscored += len(names)
                 state.review_stats.errors += len(names)
-                # Do NOT pass through unscored entries — they lack scores
                 return [], []
 
             finally:
@@ -893,11 +1090,8 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
 
     state.review_results = scored
 
-    # Determine canonical model from review_models or fallback to review_model
-    models_list = state.review_models or (
-        [state.review_model] if state.review_model else []
-    )
-    state.canonical_review_model = models_list[0] if models_list else None
+    # Canonical model is always models[0]
+    state.canonical_review_model = models[0] if models else None
     state.review_records = review_records
 
     wlog.info(
@@ -1278,6 +1472,7 @@ async def _review_single_batch(
     target: str | None = None,
     _is_retry: bool = False,
     review_scored_examples: list[dict] | None = None,
+    prior_reviews: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Review a single batch via LLM — mirrors ``_review_batch()`` from workers.py.
 
@@ -1300,6 +1495,10 @@ async def _review_single_batch(
 
     When ``target`` is None, the legacy ``name_only`` boolean selects
     between ``"names"`` and ``"docs"`` for back-compat.
+
+    ``prior_reviews`` is used for escalator (cycle 2) calls — a list of
+    dicts with ``role``, ``model``, and ``items`` keys, injected into
+    the prompt template via the ``{% if prior_reviews %}`` block.
     """
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
@@ -1338,6 +1537,7 @@ async def _review_single_batch(
         "batch_context": batch_context,
         "nearby_existing_names": neighborhood,
         "audit_findings": audit_findings,
+        "prior_reviews": prior_reviews or [],
         **grammar_enums,
     }
 
@@ -1350,6 +1550,7 @@ async def _review_single_batch(
         "batch_context": "",
         "nearby_existing_names": [],
         "audit_findings": [],
+        "prior_reviews": prior_reviews or [],
         **grammar_enums,
     }
     system_prompt = render_prompt(prompt_name, system_context)
@@ -1483,3 +1684,190 @@ def _get_compose_context_for_review() -> dict[str, Any]:
     except Exception:
         logger.debug("build_compose_context unavailable", exc_info=True)
         return {}
+
+
+# =============================================================================
+# RD-quorum helper functions
+# =============================================================================
+
+
+def _check_per_dim_disagreement(
+    item_0: dict,
+    item_1: dict,
+    tolerance: float,
+    target: str,
+) -> bool:
+    """Return True if any dimension disagrees beyond tolerance.
+
+    Dimensions are extracted from ``reviewer_scores`` JSON. Scores are
+    normalized to 0-1 (divide by 20) before comparing against tolerance.
+    """
+    scores_0 = _parse_dim_scores(item_0, target)
+    scores_1 = _parse_dim_scores(item_1, target)
+
+    if not scores_0 or not scores_1:
+        # Can't compare — treat as disagreement if we have partial data
+        return bool(scores_0) != bool(scores_1)
+
+    for dim in scores_0:
+        if dim in scores_1:
+            # Normalize 0-20 → 0-1
+            s0 = scores_0[dim] / 20.0
+            s1 = scores_1[dim] / 20.0
+            if abs(s0 - s1) > tolerance:
+                return True
+    return False
+
+
+def _parse_dim_scores(item: dict, target: str) -> dict[str, float]:
+    """Extract per-dimension scores from an item's reviewer_scores field."""
+    raw = item.get("reviewer_scores")
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    elif isinstance(raw, dict):
+        data = raw
+    else:
+        return {}
+
+    # The scores model stores raw dimension values (0-20)
+    if target == "docs":
+        dims = [
+            "description_quality",
+            "documentation_quality",
+            "completeness",
+            "physics_accuracy",
+        ]
+    else:
+        dims = ["grammar", "semantic", "convention", "completeness"]
+
+    return {d: float(data[d]) for d in dims if d in data}
+
+
+def _merge_review_items(
+    item_0: dict,
+    item_1: dict,
+    target: str,
+) -> dict:
+    """Produce a merged item with mean scores from two review items.
+
+    Uses item_0 as the base (preserving its id, source_id, etc.) and
+    averages the per-dimension scores. Comments are merged.
+    """
+    merged = dict(item_0)
+
+    scores_0 = _parse_dim_scores(item_0, target)
+    scores_1 = _parse_dim_scores(item_1, target)
+
+    if scores_0 and scores_1:
+        mean_scores: dict[str, float] = {}
+        all_dims = set(scores_0) | set(scores_1)
+        for dim in all_dims:
+            s0 = scores_0.get(dim, scores_1.get(dim, 0.0))
+            s1 = scores_1.get(dim, scores_0.get(dim, 0.0))
+            mean_scores[dim] = (s0 + s1) / 2.0
+
+        merged["reviewer_scores"] = json.dumps(mean_scores)
+
+        # Recompute aggregate score
+        total = sum(mean_scores.values())
+        max_score = len(mean_scores) * 20.0
+        merged["reviewer_score"] = total / max_score if max_score > 0 else 0.0
+
+        # Recompute tier
+        norm = merged["reviewer_score"]
+        if norm >= 0.85:
+            merged["review_tier"] = "outstanding"
+        elif norm >= 0.65:
+            merged["review_tier"] = "good"
+        elif norm >= 0.40:
+            merged["review_tier"] = "inadequate"
+        else:
+            merged["review_tier"] = "poor"
+
+    # Merge comments
+    c0 = item_0.get("reviewer_comments") or ""
+    c1 = item_1.get("reviewer_comments") or ""
+    if c0 and c1 and c0 != c1:
+        merged["reviewer_comments"] = f"[Primary] {c0}\n[Secondary] {c1}"
+    elif c1:
+        merged["reviewer_comments"] = c1
+
+    return merged
+
+
+def _build_prior_reviews_context(
+    c0_items: list[dict],
+    c1_items: list[dict],
+    disputed_ids: set[str],
+    models: list[str],
+) -> list[dict]:
+    """Build the ``prior_reviews`` list for escalator prompt injection.
+
+    Only includes items that are in the disputed set.
+    """
+    prior = []
+    for role, items, model_idx in [
+        ("primary", c0_items, 0),
+        ("secondary", c1_items, 1),
+    ]:
+        filtered = [
+            {
+                "standard_name": it.get("id", ""),
+                "score": it.get("reviewer_score", 0.0),
+                "tier": it.get("review_tier", "unknown"),
+                "verdict": it.get("reviewer_verdict", "accept"),
+                "scores_json": it.get("reviewer_scores", "{}"),
+                "comments_per_dim_json": it.get("reviewer_comments_per_dim"),
+                "reasoning": it.get("reviewer_comments", ""),
+            }
+            for it in items
+            if it.get("id") in disputed_ids
+        ]
+        if filtered:
+            prior.append(
+                {
+                    "role": role,
+                    "model": models[model_idx]
+                    if model_idx < len(models)
+                    else "unknown",
+                    "items": filtered,
+                }
+            )
+    return prior
+
+
+def _persist_review_records_sync(records: list[dict]) -> int:
+    """Synchronously persist Review records to graph.
+
+    Used via ``asyncio.to_thread()`` to persist each cycle's records
+    immediately after the LLM call completes — ensures crash-safety.
+    """
+    from imas_codex.standard_names.graph_ops import write_reviews
+
+    return write_reviews(records)
+
+
+def _update_batch_stats(
+    state: Any,
+    batch_idx: int,
+    items: list[dict],
+    cost: float,
+    _result: Any,
+) -> None:
+    """Update review_stats after a batch completes."""
+    actually_scored = len(items)
+    state.review_stats.processed += actually_scored
+    state.review_stats.record_batch(actually_scored)
+    state.review_stats.stream_queue.add(
+        [
+            {
+                "primary_text": f"batch {batch_idx + 1}",
+                "description": f"{actually_scored} scored  ${cost:.3f}",
+            }
+        ]
+    )

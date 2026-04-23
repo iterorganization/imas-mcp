@@ -790,11 +790,18 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
     Each record must contain:
 
     - ``id`` (str) — composite key
-      ``{standard_name_id}:{model_slug}:{reviewed_at_iso}``
+      ``{standard_name_id}:{axis}:{review_group_id}:{cycle_index}``
     - ``standard_name_id`` (str) — parent StandardName
     - ``model`` (str), ``model_family`` (str), ``is_canonical`` (bool)
     - ``score`` (float 0-1), ``scores_json`` (str), ``tier`` (str)
     - ``reviewed_at`` (str ISO 8601)
+
+    RD-quorum fields (required for new-style reviews):
+    - ``review_axis`` (str) — "names" or "docs"
+    - ``cycle_index`` (int) — 0, 1, or 2
+    - ``review_group_id`` (str) — UUID
+    - ``resolution_role`` (str) — "primary", "secondary", or "escalator"
+    - ``resolution_method`` (str | None)
 
     Optional: ``comments`` (str), ``llm_cost`` (float),
     ``llm_tokens_in`` (int), ``llm_tokens_out`` (int),
@@ -826,6 +833,11 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
                 r.comments = b.comments,
                 r.comments_per_dim_json = b.comments_per_dim_json,
                 r.reviewed_at = b.reviewed_at,
+                r.review_axis = b.review_axis,
+                r.cycle_index = b.cycle_index,
+                r.review_group_id = b.review_group_id,
+                r.resolution_role = b.resolution_role,
+                r.resolution_method = b.resolution_method,
                 r.llm_model = b.llm_model,
                 r.llm_cost = b.llm_cost,
                 r.llm_tokens_in = b.llm_tokens_in,
@@ -851,6 +863,11 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
                         r.get("comments_per_dim_json")
                     ),
                     "reviewed_at": r.get("reviewed_at"),
+                    "review_axis": r.get("review_axis"),
+                    "cycle_index": r.get("cycle_index"),
+                    "review_group_id": r.get("review_group_id"),
+                    "resolution_role": r.get("resolution_role"),
+                    "resolution_method": r.get("resolution_method"),
                     "llm_model": r.get("llm_model"),
                     "llm_cost": r.get("llm_cost"),
                     "llm_tokens_in": r.get("llm_tokens_in"),
@@ -872,11 +889,14 @@ def update_review_aggregates(
 ) -> int:
     """Recompute per-StandardName aggregates from attached Review nodes.
 
-    Sets ``review_count``, ``review_mean_score``, and
-    ``review_disagreement`` based on the currently attached
-    ``(:Review)-[:REVIEWS]->(sn)`` nodes. ``review_disagreement`` is
-    ``true`` iff ``N >= 2`` and ``max(scores) - min(scores) >= threshold``;
-    it is always ``false`` for ``N <= 1``.
+    **Winning-group selection**: identifies the most recent review group
+    whose ``resolution_method`` is one of ``quorum_consensus``,
+    ``authoritative_escalation``, or ``single_review`` (excluding
+    ``retry_item`` and ``max_cycles_reached``). Mirrors that group's
+    final scores onto the SN aggregates.
+
+    Also sets ``review_count``, ``review_mean_score``, and
+    ``review_disagreement`` across all attached Review nodes.
 
     Returns the number of StandardName nodes updated.
     """

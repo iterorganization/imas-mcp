@@ -227,6 +227,51 @@ enums:
           Four dimensions scored — description_quality, documentation_quality,
           completeness, physics_accuracy.
 
+  ReviewResolutionRole:
+    description: >-
+      Role of a Review node within an RD-quorum review group.
+      ``primary`` and ``secondary`` run blind (identical input, no
+      cross-contamination); ``escalator`` sees both prior critiques
+      and is authoritative on disputed items.
+    permissible_values:
+      primary:
+        description: First reviewer in the quorum (blind, cycle 0)
+      secondary:
+        description: Second reviewer in the quorum (blind, cycle 1)
+      escalator:
+        description: Tie-breaker reviewer that sees both prior critiques (cycle 2)
+
+  ReviewResolutionMethod:
+    description: >-
+      How the final scores for a review group were determined.
+      Only groups with ``quorum_consensus``, ``authoritative_escalation``,
+      or ``single_review`` are eligible as winning groups for aggregate
+      slot mirroring. ``max_cycles_reached`` and ``retry_item`` are
+      non-winning terminal states.
+    permissible_values:
+      quorum_consensus:
+        description: >-
+          Cycles 0 and 1 agreed within tolerance on all dimensions.
+          Final scores = mean of both reviewers.
+      authoritative_escalation:
+        description: >-
+          Cycles 0 and 1 disagreed on one or more dimensions beyond
+          tolerance. Cycle 2 (escalator) ran on disputed items and its
+          result is authoritative for those items.
+      max_cycles_reached:
+        description: >-
+          Cycles 0 and 1 disagreed but no escalator model is configured
+          (len(models) < 3). Final scores = mean of both reviewers with
+          disagreement flag.
+      retry_item:
+        description: >-
+          Both cycles failed to produce a score for this item and retry
+          also failed. Item is quarantined.
+      single_review:
+        description: >-
+          Only one review cycle produced a valid score (either len(models)==1,
+          or one cycle failed while the other succeeded).
+
 # =============================================================================
 # Classes
 # =============================================================================
@@ -890,12 +935,13 @@ classes:
     description: >-
       Quality review of a StandardName produced by an LLM reviewer model.
       A StandardName may have one (canonical) or many (multi-reviewer)
-      Review nodes attached via REVIEWS. The canonical Review mirrors its
-      score/tier/comments onto the StandardName for backward compatibility.
+      Review nodes attached via REVIEWS. Each Review belongs to an
+      RD-quorum review group identified by ``review_group_id``.
 
       Example Cypher:
         MATCH (sn:StandardName {id: 'electron_temperature'})<-[:REVIEWS]-(r:Review)
-        RETURN r.llm_model, r.score, r.tier, r.is_canonical, r.reviewed_at
+        RETURN r.llm_model, r.score, r.tier, r.review_axis, r.cycle_index,
+               r.review_group_id, r.resolution_role, r.resolution_method
     class_uri: sn:Review
     mixins:
       - LLMOperation
@@ -903,9 +949,9 @@ classes:
       id:
         identifier: true
         description: >-
-          Composite id: ``{standard_name_id}:{model_slug}:{reviewed_at_iso}``.
-          Stable for the same (name, model, timestamp) triple — MERGE is
-          idempotent for rerun of the same review pass.
+          Composite id: ``{standard_name_id}:{axis}:{review_group_id}:{cycle_index}``.
+          Unique across axes and quorum cycles. MERGE is idempotent for
+          rerun of the same review pass.
         required: true
       standard_name_id:
         description: ID of the reviewed StandardName (parent of REVIEWS edge)
@@ -914,6 +960,34 @@ classes:
         required: true
         annotations:
           relationship_type: REVIEWS
+      review_axis:
+        description: >-
+          Which review rubric produced this Review — ``names`` (4-dim name
+          scoring) or ``docs`` (4-dim documentation scoring).
+        range: StandardNameReviewMode
+        required: true
+      cycle_index:
+        description: >-
+          Zero-based cycle index within the RD-quorum group.
+          0 = primary (blind), 1 = secondary (blind), 2 = escalator.
+        range: integer
+        required: true
+      review_group_id:
+        description: >-
+          UUID identifying the quorum group this Review belongs to.
+          All cycles within one batch review share the same group id.
+        required: true
+      resolution_role:
+        description: >-
+          Role of this Review within the quorum group: primary, secondary,
+          or escalator.
+        range: ReviewResolutionRole
+        required: true
+      resolution_method:
+        description: >-
+          How the final scores were resolved for this review group.
+          Set on the last cycle in the group; null on intermediate cycles.
+        range: ReviewResolutionMethod
       model:
         description: LLM model id used for this review (OpenRouter-style slug)
         required: true

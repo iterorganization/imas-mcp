@@ -174,3 +174,21 @@ Return a JSON object with a `reviews` array. Each review MUST include:
   ]
 }
 ```
+
+{% if prior_reviews %}
+## Prior Review Critiques (Escalator Context)
+
+You are acting as an **escalator reviewer**. Two prior blind reviewers scored these candidates independently and **disagreed** on one or more dimensions beyond tolerance. Your role is to break the tie — examine both sets of scores and reasoning, then render your own authoritative verdict.
+
+Weight both prior reviews fairly. Where they agree, your score should be close to theirs. Where they disagree, use your own judgement to determine the correct score with explicit reasoning about why you side with one reviewer or the other (or neither).
+
+{% for pr in prior_reviews %}
+### {{ pr.role | title }} Reviewer ({{ pr.model }})
+{% for item in pr.items %}
+- **{{ item.standard_name }}**: score={{ item.score }}, tier={{ item.tier }}, verdict={{ item.verdict }}
+  - Scores: {{ item.scores_json }}
+  - Comments: {{ item.comments_per_dim_json | default('N/A', true) }}
+  - Reasoning: {{ item.reasoning }}
+{% endfor %}
+{% endfor %}
+{% endif %}
