@@ -326,8 +326,8 @@ def fetch_low_score_sources(
         raise ValueError(f"source_type must be 'dd' or 'signals', got {source_type!r}")
 
     where_clauses = [
-        "sn.reviewer_score IS NOT NULL",
-        "sn.reviewer_score < $min_score",
+        "coalesce(sn.reviewer_score_name, sn.reviewer_score) IS NOT NULL",
+        "coalesce(sn.reviewer_score_name, sn.reviewer_score) < $min_score",
         "coalesce(sn.regen_count, 0) < 1",
     ]
     params: dict[str, Any] = {"min_score": float(min_score)}
@@ -348,12 +348,12 @@ def fetch_low_score_sources(
                sn.id AS previous_name,
                sn.description AS previous_description,
                sn.documentation AS previous_documentation,
-               sn.reviewer_score AS reviewer_score,
+               coalesce(sn.reviewer_score_name, sn.reviewer_score) AS reviewer_score,
                sn.review_tier AS review_tier,
-               sn.reviewer_comments AS reviewer_comments,
-               sn.reviewer_scores AS reviewer_scores_json,
+               coalesce(sn.reviewer_comments_name, sn.reviewer_comments) AS reviewer_comments,
+               coalesce(sn.reviewer_scores_name, sn.reviewer_scores) AS reviewer_scores_json,
                sn.validation_status AS validation_status
-        ORDER BY coalesce(sn.reviewer_score, 1.0) ASC, src.id ASC
+        ORDER BY coalesce(sn.reviewer_score_name, sn.reviewer_score, 1.0) ASC, src.id ASC
     """
     if limit is not None and limit > 0:
         query += "\n        LIMIT $limit"
@@ -451,15 +451,15 @@ def fetch_review_feedback_for_sources(
             """
             UNWIND $ids AS source_id
             MATCH (src {id: source_id})-[:HAS_STANDARD_NAME]->(sn:StandardName)
-            WHERE sn.reviewer_score IS NOT NULL
+            WHERE coalesce(sn.reviewer_score_name, sn.reviewer_score) IS NOT NULL
             RETURN source_id AS source_id,
                    sn.id AS previous_name,
                    sn.description AS previous_description,
                    sn.documentation AS previous_documentation,
-                   sn.reviewer_score AS reviewer_score,
+                   coalesce(sn.reviewer_score_name, sn.reviewer_score) AS reviewer_score,
                    sn.review_tier AS review_tier,
-                   sn.reviewer_comments AS reviewer_comments,
-                   sn.reviewer_scores AS reviewer_scores_json,
+                   coalesce(sn.reviewer_comments_name, sn.reviewer_comments) AS reviewer_comments,
+                   coalesce(sn.reviewer_scores_name, sn.reviewer_scores) AS reviewer_scores_json,
                    sn.validation_status AS validation_status
             """,
             ids=ids,
@@ -1013,14 +1013,13 @@ def write_review_results(
                 MATCH (sn:StandardName {id: b.id})
                 SET sn.reviewer_score_name = b.reviewer_score_name,
                     sn.reviewed_name_at = b.reviewed_name_at,
-                    sn.reviewer_score = coalesce(sn.reviewer_score, b.reviewer_score_name),
-                    sn.reviewer_scores = coalesce(b.reviewer_scores, sn.reviewer_scores),
-                    sn.reviewer_comments = coalesce(b.reviewer_comments, sn.reviewer_comments),
-                    sn.reviewer_comments_per_dim = coalesce(b.reviewer_comments_per_dim, sn.reviewer_comments_per_dim),
-                    sn.reviewer_verdict = coalesce(b.reviewer_verdict, sn.reviewer_verdict),
+                    sn.reviewer_scores_name = coalesce(b.reviewer_scores_name, sn.reviewer_scores_name),
+                    sn.reviewer_comments_name = coalesce(b.reviewer_comments_name, sn.reviewer_comments_name),
+                    sn.reviewer_comments_per_dim_name = coalesce(b.reviewer_comments_per_dim_name, sn.reviewer_comments_per_dim_name),
+                    sn.reviewer_verdict_name = coalesce(b.reviewer_verdict_name, sn.reviewer_verdict_name),
+                    sn.reviewer_model_name = coalesce(b.reviewer_model_name, sn.reviewer_model_name),
                     sn.review_tier = coalesce(b.review_tier, sn.review_tier),
-                    sn.review_mode = coalesce(b.review_mode, sn.review_mode),
-                    sn.reviewer_model = coalesce(b.reviewer_model, sn.reviewer_model),
+                    sn.review_mode = b.review_mode,
                     sn.reviewed_at = coalesce(b.reviewed_at, sn.reviewed_at),
                     sn.review_input_hash = b.review_input_hash
                 """,
@@ -1029,15 +1028,15 @@ def write_review_results(
                         "id": e["id"],
                         "reviewer_score_name": e.get("reviewer_score"),
                         "reviewed_name_at": e.get("reviewed_at"),
-                        "reviewer_scores": _ensure_json(e.get("reviewer_scores")),
-                        "reviewer_comments": e.get("reviewer_comments"),
-                        "reviewer_comments_per_dim": _ensure_json(
+                        "reviewer_scores_name": _ensure_json(e.get("reviewer_scores")),
+                        "reviewer_comments_name": e.get("reviewer_comments"),
+                        "reviewer_comments_per_dim_name": _ensure_json(
                             e.get("reviewer_comments_per_dim")
                         ),
-                        "reviewer_verdict": e.get("reviewer_verdict"),
+                        "reviewer_verdict_name": e.get("reviewer_verdict"),
+                        "reviewer_model_name": e.get("reviewer_model"),
                         "review_tier": e.get("review_tier"),
                         "review_mode": e.get("review_mode"),
-                        "reviewer_model": e.get("reviewer_model"),
                         "reviewed_at": e.get("reviewed_at"),
                         "review_input_hash": e.get("review_input_hash"),
                     }
@@ -1052,12 +1051,12 @@ def write_review_results(
                 MATCH (sn:StandardName {id: b.id})
                 SET sn.reviewer_score_docs = b.reviewer_score_docs,
                     sn.reviewed_docs_at = b.reviewed_docs_at,
-                    sn.reviewer_scores = coalesce(b.reviewer_scores, sn.reviewer_scores),
-                    sn.reviewer_comments = coalesce(b.reviewer_comments, sn.reviewer_comments),
-                    sn.reviewer_comments_per_dim = coalesce(b.reviewer_comments_per_dim, sn.reviewer_comments_per_dim),
-                    sn.reviewer_verdict = coalesce(b.reviewer_verdict, sn.reviewer_verdict),
-                    sn.review_mode = coalesce(b.review_mode, sn.review_mode),
-                    sn.reviewer_model = coalesce(b.reviewer_model, sn.reviewer_model),
+                    sn.reviewer_scores_docs = coalesce(b.reviewer_scores_docs, sn.reviewer_scores_docs),
+                    sn.reviewer_comments_docs = coalesce(b.reviewer_comments_docs, sn.reviewer_comments_docs),
+                    sn.reviewer_comments_per_dim_docs = coalesce(b.reviewer_comments_per_dim_docs, sn.reviewer_comments_per_dim_docs),
+                    sn.reviewer_verdict_docs = coalesce(b.reviewer_verdict_docs, sn.reviewer_verdict_docs),
+                    sn.reviewer_model_docs = coalesce(b.reviewer_model_docs, sn.reviewer_model_docs),
+                    sn.review_mode = b.review_mode,
                     sn.reviewed_at = coalesce(b.reviewed_at, sn.reviewed_at),
                     sn.review_input_hash = b.review_input_hash
                 """,
@@ -1066,14 +1065,14 @@ def write_review_results(
                         "id": e["id"],
                         "reviewer_score_docs": e.get("reviewer_score"),
                         "reviewed_docs_at": e.get("reviewed_at"),
-                        "reviewer_scores": _ensure_json(e.get("reviewer_scores")),
-                        "reviewer_comments": e.get("reviewer_comments"),
-                        "reviewer_comments_per_dim": _ensure_json(
+                        "reviewer_scores_docs": _ensure_json(e.get("reviewer_scores")),
+                        "reviewer_comments_docs": e.get("reviewer_comments"),
+                        "reviewer_comments_per_dim_docs": _ensure_json(
                             e.get("reviewer_comments_per_dim")
                         ),
-                        "reviewer_verdict": e.get("reviewer_verdict"),
+                        "reviewer_verdict_docs": e.get("reviewer_verdict"),
+                        "reviewer_model_docs": e.get("reviewer_model"),
                         "review_mode": e.get("review_mode"),
-                        "reviewer_model": e.get("reviewer_model"),
                         "reviewed_at": e.get("reviewed_at"),
                         "review_input_hash": e.get("review_input_hash"),
                     }

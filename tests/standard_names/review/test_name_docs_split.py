@@ -149,19 +149,23 @@ async def test_name_review_bootstraps_reviewer_score_when_null(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_name_review_leaves_reviewer_score_if_set(monkeypatch):
-    """Name review with existing reviewer_score should not overwrite it
-    (graph writer uses coalesce(existing, new) — see write_review_results)."""
-    # This test verifies the graph_ops.write_review_results Cypher uses
-    # coalesce(sn.reviewer_score, b.reviewer_score_name) — meaning the
-    # existing score stays. We verify the function signature accepts the
-    # mode and the Cypher text contains the coalesce pattern.
+    """Axis-split (rc22 C3): name review never writes the shared reviewer_score
+    slot. Any pre-existing shared-slot value is left untouched because the
+    name-mode Cypher SET clause does not assign it."""
     import inspect
 
     from imas_codex.standard_names.graph_ops import write_review_results
 
     source = inspect.getsource(write_review_results)
-    # The name-mode Cypher should bootstrap via coalesce(existing, new)
-    assert "coalesce(sn.reviewer_score, b.reviewer_score_name)" in source
+    # Extract the name-mode block only (between `if mode == "name"` and the
+    # next `elif mode ==`).
+    name_block_start = source.index('if mode == "name"')
+    name_block_end = source.index("elif mode ==", name_block_start)
+    name_block = source[name_block_start:name_block_end]
+    # Name-mode must not touch sn.reviewer_score (shared slot is full-only).
+    assert "sn.reviewer_score =" not in name_block
+    # Name-mode must write the axis scalar.
+    assert "sn.reviewer_score_name = b.reviewer_score_name" in name_block
 
 
 # ===========================================================================

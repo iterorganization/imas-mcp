@@ -68,17 +68,19 @@ class TestEmptyGraph:
 
     def test_compose_empty(self) -> None:
         gc = _make_gc()
-        result = load_compose_examples(gc, physics_domains=[])
+        result = load_compose_examples(gc, physics_domains=[], axis="name")
         assert result == []
 
     def test_review_empty(self) -> None:
         gc = _make_gc()
-        result = load_review_examples(gc, physics_domains=["transport"])
+        result = load_review_examples(gc, physics_domains=["transport"], axis="name")
         assert result == []
 
     def test_compose_empty_with_domains(self) -> None:
         gc = _make_gc()
-        result = load_compose_examples(gc, physics_domains=["magnetics", "transport"])
+        result = load_compose_examples(
+            gc, physics_domains=["magnetics", "transport"], axis="name"
+        )
         assert result == []
 
 
@@ -103,7 +105,7 @@ class TestSingleReviewedName:
             [],  # 0.40 fallback → empty
         ]
         gc = _make_gc(responses)
-        result = load_compose_examples(gc, physics_domains=["transport"])
+        result = load_compose_examples(gc, physics_domains=["transport"], axis="name")
         assert len(result) == 1
         assert result[0]["id"] == "electron_temperature"
         assert result[0]["reviewer_score"] == 0.82
@@ -115,7 +117,7 @@ class TestSingleReviewedName:
         row = _sn_row(score=0.82)
         responses: list[list[dict]] = [[], [], [row]]
         gc = _make_gc(responses)
-        result = load_compose_examples(gc, physics_domains=["transport"])
+        result = load_compose_examples(gc, physics_domains=["transport"], axis="name")
         assert len(result) == 1
         assert result[0]["score"] == result[0]["reviewer_score"]
 
@@ -133,6 +135,7 @@ class TestDomainScoping:
         result = load_compose_examples(
             gc,
             physics_domains=["transport"],
+            axis="name",
             target_scores=(1.0,),
         )
         assert len(result) == 1
@@ -150,6 +153,7 @@ class TestDomainScoping:
         result = load_compose_examples(
             gc,
             physics_domains=["transport"],
+            axis="name",
             target_scores=(1.0,),
         )
         assert len(result) == 1
@@ -175,12 +179,14 @@ class TestDeterministicOrdering:
         result1 = load_compose_examples(
             gc1,
             physics_domains=["transport"],
+            axis="name",
             target_scores=(1.0,),
             per_bucket=2,
         )
         result2 = load_compose_examples(
             gc2,
             physics_domains=["transport"],
+            axis="name",
             target_scores=(1.0,),
             per_bucket=2,
         )
@@ -199,7 +205,7 @@ class TestJSONParsing:
         row = _sn_row(scores=scores, comments_per_dim=comments)
         responses: list[list[dict]] = [[], [], [row]]
         gc = _make_gc(responses)
-        result = load_compose_examples(gc, physics_domains=["transport"])
+        result = load_compose_examples(gc, physics_domains=["transport"], axis="name")
         assert len(result) == 1
         assert result[0]["scores"] == scores
         assert result[0]["dimension_comments"] == comments
@@ -211,7 +217,7 @@ class TestJSONParsing:
         row["reviewer_comments_per_dim_json"] = None
         responses: list[list[dict]] = [[], [], [row]]
         gc = _make_gc(responses)
-        result = load_compose_examples(gc, physics_domains=["transport"])
+        result = load_compose_examples(gc, physics_domains=["transport"], axis="name")
         assert len(result) == 1
         assert result[0]["scores"] == {}
         assert result[0]["dimension_comments"] == {}
@@ -223,7 +229,7 @@ class TestJSONParsing:
         row["reviewer_comments_per_dim_json"] = "{broken"
         responses: list[list[dict]] = [[], [], [row]]
         gc = _make_gc(responses)
-        result = load_compose_examples(gc, physics_domains=["transport"])
+        result = load_compose_examples(gc, physics_domains=["transport"], axis="name")
         assert len(result) == 1
         assert result[0]["scores"] == {}
         assert result[0]["dimension_comments"] == {}
@@ -251,6 +257,7 @@ class TestDocsReviewerDimNames:
         result = load_review_examples(
             gc,
             physics_domains=["transport"],
+            axis="name",
             target_scores=(0.82,),
             tolerance=0.05,
         )
@@ -274,6 +281,7 @@ class TestNoDuplicates:
         result = load_compose_examples(
             gc,
             physics_domains=["transport"],
+            axis="name",
             target_scores=(0.85, 0.80),
             tolerance=0.05,
         )
@@ -296,6 +304,7 @@ class TestEmptyDomainsList:
         result = load_compose_examples(
             gc,
             physics_domains=[],
+            axis="name",
             target_scores=(1.0,),
         )
         assert len(result) == 1
@@ -312,6 +321,7 @@ class TestReviewExamplesMatchesCompose:
         result = load_review_examples(
             gc,
             physics_domains=["transport"],
+            axis="name",
             target_scores=(1.0,),
         )
         assert len(result) == 1

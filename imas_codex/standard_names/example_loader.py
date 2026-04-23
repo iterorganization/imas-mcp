@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from imas_codex.graph.client import GraphClient
@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TARGETS: tuple[float, ...] = (1.00, 0.80, 0.65, 0.40)
 _DEFAULT_TOLERANCE: float = 0.05
 _DEFAULT_PER_BUCKET: int = 1
+
+# Axis literal shared across public loaders. Callers must be explicit about
+# which axis of review their examples target so that axis-split storage
+# (see AGENTS.md "Standard Names / StandardName Lifecycle") is respected.
+Axis = Literal["name", "docs", "full"]
 
 
 def _parse_json_field(value: Any) -> dict:
@@ -45,39 +50,85 @@ def _parse_json_field(value: Any) -> dict:
     return {}
 
 
+def _axis_projection(axis: Axis) -> dict[str, str]:
+    """Cypher projection fragments for each axis.
+
+    Returns a dict with keys ``score``, ``verdict``, ``scores``,
+    ``comments_per_dim``, ``comments``. Each value is a Cypher expression
+    that reads from the axis-specific column with fallback to the shared
+    slot — this lets pre-migration rows (where only shared slots are
+    populated) still surface as examples.
+    """
+    if axis == "name":
+        return {
+            "score": "coalesce(sn.reviewer_score_name, sn.reviewer_score)",
+            "verdict": "coalesce(sn.reviewer_verdict_name, sn.reviewer_verdict)",
+            "scores": "coalesce(sn.reviewer_scores_name, sn.reviewer_scores)",
+            "comments_per_dim": (
+                "coalesce(sn.reviewer_comments_per_dim_name, "
+                "sn.reviewer_comments_per_dim)"
+            ),
+            "comments": "coalesce(sn.reviewer_comments_name, sn.reviewer_comments)",
+        }
+    if axis == "docs":
+        return {
+            "score": "sn.reviewer_score_docs",
+            "verdict": "sn.reviewer_verdict_docs",
+            "scores": "sn.reviewer_scores_docs",
+            "comments_per_dim": "sn.reviewer_comments_per_dim_docs",
+            "comments": "sn.reviewer_comments_docs",
+        }
+    # full
+    return {
+        "score": "sn.reviewer_score",
+        "verdict": "sn.reviewer_verdict",
+        "scores": "sn.reviewer_scores",
+        "comments_per_dim": "sn.reviewer_comments_per_dim",
+        "comments": "sn.reviewer_comments",
+    }
+
+
 def _query_examples_for_target(
     gc: GraphClient,
     target: float,
     tolerance: float,
     per_bucket: int,
     physics_domains: list[str],
+    axis: Axis,
 ) -> list[dict[str, Any]]:
     """Query reviewed StandardName nodes closest to a single target score.
 
     Tries domain-scoped query first; falls back to all domains when
     the scoped query returns zero rows.
     """
+    proj = _axis_projection(axis)
+    score_expr = proj["score"]
+    verdict_expr = proj["verdict"]
+    scores_expr = proj["scores"]
+    cpd_expr = proj["comments_per_dim"]
+    comments_expr = proj["comments"]
+
     # --- Domain-scoped query ---
     if physics_domains:
         rows = gc.query(
-            """
+            f"""
             MATCH (sn:StandardName)
-            WHERE sn.reviewer_score IS NOT NULL
-              AND sn.reviewer_verdict IS NOT NULL
+            WHERE {score_expr} IS NOT NULL
+              AND {verdict_expr} IS NOT NULL
               AND sn.physics_domain IN $domains
-              AND abs(sn.reviewer_score - $target) <= $tolerance
+              AND abs({score_expr} - $target) <= $tolerance
             RETURN sn.id AS id,
                    sn.description AS description,
                    sn.documentation AS documentation,
                    sn.kind AS kind,
                    sn.unit AS unit,
-                   sn.reviewer_score AS reviewer_score,
-                   sn.reviewer_verdict AS reviewer_verdict,
-                   sn.reviewer_scores AS reviewer_scores_json,
-                   sn.reviewer_comments_per_dim AS reviewer_comments_per_dim_json,
-                   sn.reviewer_comments AS reviewer_comments,
+                   {score_expr} AS reviewer_score,
+                   {verdict_expr} AS reviewer_verdict,
+                   {scores_expr} AS reviewer_scores_json,
+                   {cpd_expr} AS reviewer_comments_per_dim_json,
+                   {comments_expr} AS reviewer_comments,
                    sn.physics_domain AS physics_domain
-            ORDER BY abs(sn.reviewer_score - $target) ASC, sn.id ASC
+            ORDER BY abs({score_expr} - $target) ASC, sn.id ASC
             LIMIT $per_bucket
             """,
             domains=physics_domains,
@@ -90,23 +141,23 @@ def _query_examples_for_target(
 
     # --- Fallback: all domains ---
     rows = gc.query(
-        """
+        f"""
         MATCH (sn:StandardName)
-        WHERE sn.reviewer_score IS NOT NULL
-          AND sn.reviewer_verdict IS NOT NULL
-          AND abs(sn.reviewer_score - $target) <= $tolerance
+        WHERE {score_expr} IS NOT NULL
+          AND {verdict_expr} IS NOT NULL
+          AND abs({score_expr} - $target) <= $tolerance
         RETURN sn.id AS id,
                sn.description AS description,
                sn.documentation AS documentation,
                sn.kind AS kind,
                sn.unit AS unit,
-               sn.reviewer_score AS reviewer_score,
-               sn.reviewer_verdict AS reviewer_verdict,
-               sn.reviewer_scores AS reviewer_scores_json,
-               sn.reviewer_comments_per_dim AS reviewer_comments_per_dim_json,
-               sn.reviewer_comments AS reviewer_comments,
+               {score_expr} AS reviewer_score,
+               {verdict_expr} AS reviewer_verdict,
+               {scores_expr} AS reviewer_scores_json,
+               {cpd_expr} AS reviewer_comments_per_dim_json,
+               {comments_expr} AS reviewer_comments,
                sn.physics_domain AS physics_domain
-        ORDER BY abs(sn.reviewer_score - $target) ASC, sn.id ASC
+        ORDER BY abs({score_expr} - $target) ASC, sn.id ASC
         LIMIT $per_bucket
         """,
         target=target,
@@ -166,6 +217,7 @@ def _load_examples(
     gc: GraphClient,
     physics_domains: list[str],
     *,
+    axis: Axis,
     target_scores: tuple[float, ...] = _DEFAULT_TARGETS,
     tolerance: float = _DEFAULT_TOLERANCE,
     per_bucket: int = _DEFAULT_PER_BUCKET,
@@ -181,7 +233,7 @@ def _load_examples(
 
     for target in sorted(target_scores, reverse=True):
         rows = _query_examples_for_target(
-            gc, target, tolerance, per_bucket, physics_domains
+            gc, target, tolerance, per_bucket, physics_domains, axis
         )
         for row in rows:
             name_id = row.get("id", "")
@@ -191,8 +243,9 @@ def _load_examples(
 
     if results:
         logger.debug(
-            "Loaded %d scored examples (domains=%s, targets=%s)",
+            "Loaded %d scored examples (axis=%s, domains=%s, targets=%s)",
             len(results),
+            axis,
             physics_domains or "all",
             target_scores,
         )
@@ -204,6 +257,7 @@ def load_compose_examples(
     gc: GraphClient,
     physics_domains: list[str],
     *,
+    axis: Axis,
     target_scores: tuple[float, ...] = _DEFAULT_TARGETS,
     tolerance: float = _DEFAULT_TOLERANCE,
     per_bucket: int = _DEFAULT_PER_BUCKET,
@@ -215,6 +269,9 @@ def load_compose_examples(
     preferring names whose ``physics_domain`` is in *physics_domains*.
     Fall back to all domains when the domain-scoped query returns nothing
     for a given target.
+
+    ``axis`` is required. The compose worker regenerates name+grammar, so
+    it should pass ``axis="name"``.
 
     Ordering: deterministic by (target_score DESC, name.id ASC) so that once
     the graph stabilises, the example set becomes static and cacheable.
@@ -228,6 +285,7 @@ def load_compose_examples(
     return _load_examples(
         gc,
         physics_domains,
+        axis=axis,
         target_scores=target_scores,
         tolerance=tolerance,
         per_bucket=per_bucket,
@@ -238,6 +296,7 @@ def load_review_examples(
     gc: GraphClient,
     physics_domains: list[str],
     *,
+    axis: Axis,
     target_scores: tuple[float, ...] = _DEFAULT_TARGETS,
     tolerance: float = _DEFAULT_TOLERANCE,
     per_bucket: int = _DEFAULT_PER_BUCKET,
@@ -246,10 +305,15 @@ def load_review_examples(
 
     Same logic as :func:`load_compose_examples` — the distinction exists
     so callers can evolve projection or target defaults independently.
+
+    ``axis`` must match the reviewer mode calling this function:
+    ``axis="name"`` for name-only review, ``axis="docs"`` for docs review,
+    ``axis="full"`` for the aggregate 6-dim rubric.
     """
     return _load_examples(
         gc,
         physics_domains,
+        axis=axis,
         target_scores=target_scores,
         tolerance=tolerance,
         per_bucket=per_bucket,

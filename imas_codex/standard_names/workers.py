@@ -1273,7 +1273,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
 
     def _load_scored_examples() -> list[dict]:
         with GraphClient() as gc:
-            return load_compose_examples(gc, physics_domains=batch_domains)
+            return load_compose_examples(gc, physics_domains=batch_domains, axis="name")
 
     compose_scored_examples = await asyncio.to_thread(_load_scored_examples)
     if compose_scored_examples:

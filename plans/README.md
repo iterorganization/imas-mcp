@@ -52,7 +52,6 @@ Notable recent completions:
 - `dd-multi-pass-enrichment.md` — superseded by dd-rebuild.md (merged with classification)
 - `isn-standard-name-kind.md` — ISN StandardNameKind assessed: no changes needed (scalar/vector/metadata sufficient)
 - `26-sn-pipeline-quality-iteration.md` — superseded by #28 greenfield pipeline
-- `38-grammar-vnext.md` (Plan 38) — ISN rc21 grammar vNext + codex schema/prompt overhaul: Waves 1–4 fully shipped. Wave 5 bootstrap failures led to the rc22 pivot (Plan 39) which resolved infrastructure bugs; grammar work complete. See `plans/features/standard-names/38-grammar-vnext.md` for detail.
 
 ### Reference plans (pending/)
 

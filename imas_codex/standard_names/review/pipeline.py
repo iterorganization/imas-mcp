@@ -16,7 +16,7 @@ import json
 import logging
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 
@@ -24,6 +24,29 @@ from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 # revised_name values (e.g. multi-hundred-char stream-of-consciousness strings).
 _SN_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _SN_ID_MAX_LEN = 120
+
+
+def _axis_overwrite_blocked(
+    name: dict,
+    incoming: str,
+) -> bool:
+    """Return True if writing ``incoming`` axis would clobber existing data.
+
+    Axis-split storage rules:
+      * full-mode aggregates (``reviewer_scores``) block any axis-only write
+      * same-axis presence blocks same-axis re-write (``reviewer_scores_name``
+        blocks a new name-axis review; ``reviewer_scores_docs`` blocks a new
+        docs-axis review)
+
+    Callers bypass this guard with ``--force``.
+    """
+    if incoming != "full" and name.get("reviewer_scores") is not None:
+        return True
+    if incoming == "name" and name.get("reviewer_scores_name") is not None:
+        return True
+    if incoming == "docs" and name.get("reviewer_scores_docs") is not None:
+        return True
+    return False
 
 
 def _valid_sn_id(candidate: str | None) -> bool:
@@ -182,6 +205,9 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
                        sn.physics_domain AS physics_domain,
                        sn.pipeline_status AS pipeline_status,
                        sn.reviewer_score AS reviewer_score,
+                       sn.reviewer_scores AS reviewer_scores,
+                       sn.reviewer_scores_name AS reviewer_scores_name,
+                       sn.reviewer_scores_docs AS reviewer_scores_docs,
                        sn.review_input_hash AS review_input_hash,
                        sn.embedding AS embedding,
                        sn.review_tier AS review_tier,
@@ -286,18 +312,15 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
                 if name.get("reviewer_score") is not None:
                     continue
 
-        # Downgrade guard: don't overwrite a higher-fidelity review with a
-        # lower-fidelity one unless --force. Fidelity rank: name_only < docs < full.
+        # Downgrade guard: don't overwrite same-axis data without --force.
+        # Axis-split storage means name and docs axes are independent; only
+        # a full review has strictly higher fidelity than axis-only reviews.
         if not state.force_review:
-            _rank = {"name_only": 1, "docs": 2, "full": 3}
             target = getattr(state, "target", None) or (
                 "names" if state.name_only else "full"
             )
-            incoming_mode = "name_only" if target == "names" else target
-            existing_mode = name.get("review_mode")
-            if existing_mode and _rank.get(incoming_mode, 0) < _rank.get(
-                existing_mode, 0
-            ):
+            incoming = "name" if target == "names" else target
+            if _axis_overwrite_blocked(name, incoming):
                 continue
 
         targets.append(name)
@@ -643,9 +666,23 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
         }
         review_domains = sorted(_domains)
 
+    # Derive axis from review target: name_only/names → "name",
+    # docs → "docs", full → "full"
+    _review_target = getattr(state, "target", None) or (
+        "names" if state.name_only else "full"
+    )
+    if _review_target in ("names", "name", "name_only"):
+        _review_axis: Literal["name", "docs", "full"] = "name"
+    elif _review_target == "docs":
+        _review_axis = "docs"
+    else:
+        _review_axis = "full"
+
     def _load_review_scored() -> list[dict]:
         with GraphClient() as gc:
-            return load_review_examples(gc, physics_domains=review_domains)
+            return load_review_examples(
+                gc, physics_domains=review_domains, axis=_review_axis
+            )
 
     review_scored = await asyncio.to_thread(_load_review_scored)
     if review_scored:

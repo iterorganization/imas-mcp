@@ -753,7 +753,7 @@ Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
 
 | Phase | Worker | Key Operation |
 |-------|--------|---------------|
-| EXTRACT | `extract_worker` | Query DD paths (filtered by `SN_SOURCE_CATEGORIES`: `{quantity, geometry, coordinate}`, leaf-invariant: `data_type NOT IN STRUCTURE/STRUCT_ARRAY`), classify (quantity/skip), enrich with clusters, group into batches. Writes `StandardNameSource` nodes to graph for crash resilience |
+| EXTRACT | `extract_worker` | Query DD paths (filtered by `SN_SOURCE_CATEGORIES`: quantity + geometry), classify (quantity/skip), enrich with clusters, group into batches. Writes `StandardNameSource` nodes to graph for crash resilience |
 | COMPOSE | `compose_worker` | LLM generates names per batch; unit injected from DD (never from LLM output). Auto-attaches DD paths to existing matching standard names without regeneration. Updates `StandardNameSource` status (composed/attached/vocab_gap) |
 | VALIDATE | `validate_worker` | ISN 3-layer validation (Pydantic → semantic → description) + grammar round-trip |
 | CONSOLIDATE | `consolidate_worker` | Cross-batch dedup, conflict detection (unit/kind/source), coverage accounting |
@@ -763,7 +763,7 @@ Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
 
 | Module | Purpose |
 |--------|---------|
-| `imas_codex/standard_names/classifier.py` | SN-level scope classifier: S0 (STR_* skip), S1 (core_instant_changes dedup skip), S2 (error fields defensive skip). All other classification (fit_artifact, representation, coordinate, structural, metadata, identifier) owned by DD `node_category` and pre-filtered by `SN_SOURCE_CATEGORIES`. `coordinate` was added to `SN_SOURCE_CATEGORIES` in rc22 because normalized flux coordinates and scalar grid axes are first-class nameable quantities — the leaf invariant prevents container `STRUCTURE`/`STRUCT_ARRAY` nodes from entering the queue |
+| `imas_codex/standard_names/classifier.py` | SN-level scope classifier: S0 (STR_* skip), S1 (core_instant_changes dedup skip), S2 (error fields defensive skip). All other classification (fit_artifact, representation, coordinate, structural, metadata, identifier) owned by DD `node_category` and pre-filtered by `SN_SOURCE_CATEGORIES` |
 | `imas_codex/standard_names/enrichment.py` | Primary cluster selection (IDS > domain > global scope), grouping cluster selection (global > domain > IDS), global grouping by (cluster × unit) |
 | `imas_codex/standard_names/consolidation.py` | Cross-batch dedup, 5 conflict checks, coverage gap accounting |
 | `imas_codex/standard_names/graph_ops.py` | Neo4j read/write with unit conflict detection + StandardNameSource CRUD (merge, claim, mark, reconcile) |
@@ -793,7 +793,7 @@ The LLM never provides the unit field.
 | `sn clear` | Delete standard names from the graph (relationship-first safety model) | `--status`, `--all`, `--source`, `--ids`, `--include-accepted`, `--include-sources`, `--dry-run` |
 | `sn benchmark` | Benchmark LLM models on standard name generation quality | `--models`, `--ids`, `--reviewer-model`, `--max-candidates` |
 
-**`sn run` scope routing:** Without `--paths`, `sn run` runs the domain-rotating completion loop (reconcile→generate→enrich→link→review_names→review_docs→regen across eligible physics domains). With `--paths`, it runs a single-pass pipeline on the explicit paths. `--single-pass` overrides the default to force single-pass regardless of scope. `--only <phase>` runs a single phase in isolation (e.g. `--only link` to resolve links, `--only reconcile` to mark stale sources, `--only review_names` or `--only review_docs` for isolated review passes).
+**`sn run` scope routing:** Without `--paths`, `sn run` runs the domain-rotating completion loop (reconcile→generate→enrich→link→review→regen across eligible physics domains). With `--paths`, it runs a single-pass pipeline on the explicit paths. `--single-pass` overrides the default to force single-pass regardless of scope. `--only <phase>` runs a single phase in isolation (e.g. `--only link` to resolve links, `--only reconcile` to mark stale sources).
 
 ### Benchmark
 
@@ -944,17 +944,13 @@ names produced by a specific model after benchmarking reveals a better alternati
 rubric/scope selector.
 
 - `--target names` — Name-only compose/review. Compose prompt focuses on naming + grammar; review
-  uses the 4-dimension rubric (grammar/semantic/convention/completeness over 80). Writes
-  `reviewer_score_name` and `reviewed_name_at`. Bootstraps `reviewer_score` from
-  `reviewer_score_name` when `reviewer_score` is null. Fast and cheap for bulk naming passes where
-  documentation is deferred.
+  uses the 4-dimension rubric (grammar/semantic/convention/completeness over 80). Fast and cheap
+  for bulk naming passes where documentation is deferred.
 - `--target docs` — Docs-only generation/review. `sn run --target docs` runs the five-phase
   enrichment pipeline on existing names (does NOT change name/grammar/unit). `sn review --target
   docs` uses the 4-dimension docs rubric (description_quality / documentation_quality /
-  completeness / physics_accuracy over 80) to grade just the generated prose. **Gate:** docs review
-  skips any name where `reviewed_name_at IS NULL` — names must pass name review before docs review
-  runs. Writes `reviewer_score_docs` and `reviewed_docs_at`. Batch size comes from
-  `[tool.imas-codex.sn-generate].docs-batch-size` (default 12) when `--docs-batch-size` is
+  completeness / physics_accuracy over 80) to grade just the generated prose. Batch size comes
+  from `[tool.imas-codex.sn-generate].docs-batch-size` (default 12) when `--docs-batch-size` is
   unspecified, falling back to `[tool.imas-codex.sn-enrich].batch-size`.
 - `--target full` (default) — Full compose+enrich pass on generate; full 6-dimension rubric
   (grammar / semantic / documentation / convention / completeness / compliance over 120) on review.
@@ -963,19 +959,13 @@ rubric/scope selector.
 NOT overwrite a higher-fidelity `review_mode` on an existing name unless `--force` is passed.
 This prevents a cheap `--target names` sweep from clobbering a prior full review. The
 `review_mode` enum (persisted on `StandardName.review_mode`) has three values: `full`,
-`name_only`, `docs`. Note: `--target names` and `--target docs` write to separate score fields
-(`reviewer_score_name` / `reviewer_score_docs`); they never overwrite the canonical
-`reviewer_score` that `--target full` sets.
+`name_only`, `docs`.
 
 **Loop (default)** — Without `--paths`, `sn run` runs the DD-completion loop.
 Iterates over physics domains that still have extract-eligible paths, running a per-domain
-turn (reconcile→generate→enrich→link→review_names→review_docs→regen) with fair-share cost
-budgeting across remaining domains. Phase budget split: generate 30 %, enrich 25 %,
-review_names 15 %, review_docs 15 %, regen 15 %. Review gate invariant: the review phases
-use `status_filter=None` (all `valid` names are eligible, not only `drafted` ones); an
-`eligible_without_progress` assertion fires if eligible names exist but the phase produces
-zero output, surfacing filter regressions immediately. Stops when every domain reports zero
-eligible work, when `--cost-limit` is exhausted, or on `Ctrl-C`. Writes an `SNRun` audit node capturing cost, phase counters, domains touched,
+turn (reconcile→generate→enrich→link→review→regen) with fair-share cost budgeting across remaining
+domains. Stops when every domain reports zero eligible work, when `--cost-limit` is exhausted,
+or on `Ctrl-C`. Writes an `SNRun` audit node capturing cost, phase counters, domains touched,
 `turn_number`, `min_score`, and `stop_reason`; `sn status` surfaces the most recent run.
 `--physics-domain` narrows to a single-domain loop. `--turn-number N` stamps the current
 iteration number onto the run (user-supplied; does not auto-increment). `--min-score F`
@@ -1044,7 +1034,7 @@ StandardName and StandardNameSource nodes defined in `imas_codex/schemas/standar
 - `(FacilitySignal)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(StandardName)-[:HAS_UNIT]->(Unit)`
 - `(StandardName)-[:HAS_COCOS]->(COCOS)`
-- `(StandardNameSource)-[:FROM_DD_PATH]->(IMASNode)` — DD-sourced extraction tracking (orphan-prevention invariant: a `dd`-type source without a `dd_path` value cannot have a `FROM_DD_PATH` edge and is rejected at write time)
+- `(StandardNameSource)-[:SOURCE_DD_PATH]->(IMASNode)` — DD-sourced extraction tracking
 - `(StandardNameSource)-[:SOURCE_SIGNAL]->(FacilitySignal)` — signal-sourced extraction tracking
 - `(StandardNameSource)-[:PRODUCED_NAME]->(StandardName)` — links source to result
 
@@ -1065,6 +1055,26 @@ canonical reviewer), `reviewed_at`, `review_tier` (outstanding/good/inadequate/p
 `vocab_gap_detail` (JSON: segment/needed_token/reason),
 `validation_issues` (list of tagged strings), `validation_layer_summary` (JSON).
 
+**Axis-split review storage** (rc22 C3): name-axis and docs-axis reviews persist to
+independent column families so a docs-only pass cannot clobber a prior name-only review's
+per-dimension JSON (and vice-versa). The shared scalar+JSON slots (`reviewer_score`,
+`reviewer_scores`, `reviewer_comments`, `reviewer_comments_per_dim`, `reviewer_verdict`,
+`reviewer_model`) are **reserved for full-mode aggregates** — only `sn review --target full`
+writes them. Axis-specific reviews write to five paired slots per axis:
+
+| Axis | Scalar | Per-dim JSON | Comments | Per-dim comments | Verdict | Model |
+|------|--------|--------------|----------|-----------------|---------|-------|
+| name | `reviewer_score_name` | `reviewer_scores_name` | `reviewer_comments_name` | `reviewer_comments_per_dim_name` | `reviewer_verdict_name` | `reviewer_model_name` |
+| docs | `reviewer_score_docs` | `reviewer_scores_docs` | `reviewer_comments_docs` | `reviewer_comments_per_dim_docs` | `reviewer_verdict_docs` | `reviewer_model_docs` |
+
+Reader queries (`fetch_low_score_sources`, `fetch_review_feedback_for_sources`, themes
+extraction, example loader's `axis="name"` projection) use `coalesce(axis_col, shared_col)`
+so any pre-axis-split rows (shared-only) still surface on the name axis. Full-mode writes
+populate all three score columns (`reviewer_score`, `reviewer_score_name`,
+`reviewer_score_docs`) to keep downstream fallback readers coherent. Same-axis re-review
+requires `--force` to overwrite — guard helper is
+`imas_codex.standard_names.review.pipeline._axis_overwrite_blocked`.
+
 **Schema v2 fields** (catalog round-trip): `pipeline_status` (renamed from `review_status`),
 `status` (ISN vocabulary lifecycle: draft/published/deprecated), `origin` (pipeline/catalog_edit),
 `deprecates`, `superseded_by` (vocabulary lifecycle links), `catalog_pr_number`, `catalog_pr_url`,
@@ -1074,14 +1084,6 @@ canonical reviewer), `reviewed_at`, `review_tier` (outstanding/good/inadequate/p
 `reviewer_scores_secondary` (JSON, same schema as `reviewer_scores`), `reviewer_disagreement`
 (float, abs difference between primary and secondary scores). Only populated when
 `[sn.review].secondary-models` is configured.
-
-**Review-split fields** (rc22/B2): four new slots supporting the name-then-docs two-phase review:
-- `reviewer_score_name` (float 0-1) — score from the 4-dim name rubric (`--target names`). Bootstraps `reviewer_score` when `reviewer_score` is null.
-- `reviewed_name_at` (datetime) — timestamp of the most recent name-review pass. Acts as the gate for docs review: any name with `reviewed_name_at IS NULL` is skipped by the docs review phase.
-- `reviewer_score_docs` (float 0-1) — score from the 4-dim docs rubric (`--target docs`). Independent of `reviewer_score_name`; never overwrites `reviewer_score`.
-- `reviewed_docs_at` (datetime) — timestamp of the most recent docs-review pass.
-
-**Error-sibling fields** (rc22/B9, ISN v0.7.0rc23): error siblings (`_error_upper`, `_error_lower`, `_error_index` companions) are now minted **deterministically** — no LLM call, no review phase. The minting function (`error_siblings.mint_error_siblings`) constructs each sibling name by applying the uncertainty modifier grammar rule from the ISN `uncertainty` operator. Provenance stamp: `model='deterministic:dd_error_modifier'`. All four review-split fields (`reviewer_score_name`, `reviewed_name_at`, `reviewer_score_docs`, `reviewed_docs_at`) are pre-populated to `1.0` / `now` at mint time, marking error siblings as reviewed without any LLM spend.
 
 **VocabGap nodes** record missing grammar tokens identified during composition when a needed
 vocabulary token does not exist in the ISN grammar. Linked via `HAS_SN_VOCAB_GAP` from IMASNode

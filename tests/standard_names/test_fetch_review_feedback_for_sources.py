@@ -60,7 +60,8 @@ class TestFetchReviewFeedbackForSources:
         # Cypher assertions
         cypher = mock_gc.query.call_args[0][0]
         assert "HAS_STANDARD_NAME" in cypher
-        assert "reviewer_score IS NOT NULL" in cypher
+        assert "reviewer_score" in cypher
+        assert "IS NOT NULL" in cypher
         assert "UNWIND $ids" in cypher
         # Params: sorted dedup'd list, no empty strings
         ids_param = mock_gc.query.call_args[1]["ids"]

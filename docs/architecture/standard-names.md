@@ -26,49 +26,38 @@ Examples: `electron_temperature`, `toroidal_magnetic_field_at_magnetic_axis`,
 
 ```
  ┌───────────┐     ┌───────────┐     ┌───────────┐
- │  EXTRACT  │────▶│  COMPOSE  │────▶│  VALIDATE │
+ │  EXTRACT  │────▶│  COMPOSE  │────▶│  REVIEW   │  (optional)
  │           │     │           │     │           │
- │ DD query  │     │ LLM call  │     │ ISN 3-    │
- │ classify  │     │ per-batch │     │ layer +   │
- │ enrich    │     │ unit from │     │ grammar   │
- │ group     │     │ DD, not   │     │ round-trip│
+ │ DD query  │     │ LLM call  │     │ LLM judge │
+ │ classify  │     │ per-batch │     │ accept/   │
+ │ enrich    │     │ unit from │     │ reject/   │
+ │ group     │     │ DD, not   │     │ revise    │
  └───────────┘     │ LLM       │     └─────┬─────┘
                    └───────────┘           │
                                            ▼
  ┌───────────┐     ┌───────────┐     ┌───────────┐
- │  PERSIST  │◀────│CONSOLIDATE│◀────│ REVIEW    │  (optional, two phases)
+ │  PERSIST  │◀────│CONSOLIDATE│◀────│ VALIDATE  │
  │           │     │           │     │           │
- │ Neo4j     │     │ dedup     │     │ review_   │
- │ conflict  │     │ conflicts │     │ names ──▶ │
- │ detection │     │ coverage  │     │ review_   │
- └───────────┘     └───────────┘     │ docs      │
+ │ Neo4j     │     │ dedup     │     │ ISN 3-    │
+ │ conflict  │     │ conflicts │     │ layer +   │
+ │ detection │     │ coverage  │     │ grammar   │
+ └───────────┘     └───────────┘     │ round-trip│
                                      └───────────┘
-
- Error siblings (rc22): deterministic fast-path — no COMPOSE / REVIEW
- ┌───────────────────────────────────────────────────────────────┐
- │ mint_error_siblings()  model='deterministic:dd_error_modifier' │
- │ _error_upper / _error_lower / _error_index companions minted   │
- │ from parent name via uncertainty modifier grammar rule.        │
- │ All review fields pre-populated; skips LLM entirely.          │
- └───────────────────────────────────────────────────────────────┘
 ```
 
 **Phase summary:**
 
 | Phase | Module | What it does |
 |-------|--------|--------------|
-| EXTRACT | `workers.extract_worker` | Query graph for DD paths filtered by `SN_SOURCE_CATEGORIES` (`{quantity, geometry, coordinate}`) + leaf invariant (`data_type NOT IN STRUCTURE/STRUCT_ARRAY`), classify, enrich with clusters, group into batches |
+| EXTRACT | `workers.extract_worker` | Query graph for DD paths, classify, enrich with clusters, group into batches |
 | COMPOSE | `workers.compose_worker` | LLM generates standard names per batch; unit injected from DD |
+| REVIEW | `workers.review_worker` | Optional LLM review: accept/reject/revise each candidate |
 | VALIDATE | `workers.validate_worker` | ISN 3-layer validation + grammar round-trip via `parse_standard_name()`, fields consistency |
 | CONSOLIDATE | `workers.consolidate_worker` | Cross-batch dedup, conflict detection, coverage accounting |
 | PERSIST | `workers.persist_worker` | Conflict-detecting Neo4j writes with coalesce semantics |
-| REVIEW_NAMES | turn `review_names` | 4-dim name rubric; writes `reviewer_score_name` + `reviewed_name_at`; bootstraps `reviewer_score` |
-| REVIEW_DOCS | turn `review_docs` | 4-dim docs rubric; gated on `reviewed_name_at IS NOT NULL`; writes `reviewer_score_docs` + `reviewed_docs_at` |
 
 Orchestrator: `imas_codex/standard_names/pipeline.py` — wires workers into the generic
-`run_discovery_engine()` with a DAG dependency graph. The review phases are turn-level
-(in `turn.py`) rather than pipeline-level workers; they run after PERSIST in the per-domain
-loop with a 15 %/15 % phase budget split.
+`run_discovery_engine()` with a DAG dependency graph.
 
 ## ISN Integration
 
@@ -484,6 +473,52 @@ SET sn.source_type    = coalesce(b.source_type, sn.source_type),
 
 This is safe for re-runs: imported catalog data is never clobbered by a
 subsequent `sn generate` execution.
+
+### Axis-Split Review Storage (rc22 C3)
+
+Name-axis and docs-axis reviews persist to independent column families to
+prevent a docs-only review from clobbering a prior name-only review's
+per-dimension JSON (and vice-versa). The shared slots (`reviewer_score`,
+`reviewer_scores`, `reviewer_comments`, `reviewer_comments_per_dim`,
+`reviewer_verdict`, `reviewer_model`) are reserved for **full-mode
+aggregates** — only `sn review --target full` writes them.
+
+```cypher
+// --target names (name-axis review)
+SET sn.reviewer_score_name = b.reviewer_score_name,
+    sn.reviewer_scores_name = coalesce(b.reviewer_scores_name, sn.reviewer_scores_name),
+    sn.reviewer_comments_name = coalesce(b.reviewer_comments_name, sn.reviewer_comments_name),
+    sn.reviewer_verdict_name = b.reviewer_verdict_name,
+    sn.reviewer_model_name = b.reviewer_model_name
+    // shared reviewer_score / reviewer_scores are NOT written
+
+// --target docs (docs-axis review)
+SET sn.reviewer_score_docs = b.reviewer_score_docs,
+    sn.reviewer_scores_docs = coalesce(b.reviewer_scores_docs, sn.reviewer_scores_docs),
+    // ... same pattern for comments / verdict / model
+
+// --target full (legacy + full-6-dim review) writes ALL three columns:
+SET sn.reviewer_score = b.reviewer_score,
+    sn.reviewer_score_name = coalesce(b.reviewer_score_name, sn.reviewer_score_name),
+    sn.reviewer_score_docs = coalesce(b.reviewer_score_docs, sn.reviewer_score_docs),
+    sn.reviewer_scores = b.reviewer_scores
+    // ... etc
+```
+
+**Reader fallback.** Queries that need a "best available" reviewer score
+(`fetch_low_score_sources`, `fetch_review_feedback_for_sources`,
+themes extraction, `example_loader` on `axis="name"`) use
+`coalesce(sn.reviewer_score_name, sn.reviewer_score)` so pre-rc22 rows
+migrated from shared slots still surface correctly on the name axis.
+
+**Downgrade guard.**
+`imas_codex.standard_names.review.pipeline._axis_overwrite_blocked(name, incoming)`
+rejects axis writes when:
+  * full-mode data is already present (any axis-only write)
+  * same-axis data is already present (e.g. docs-axis write over existing
+    `reviewer_scores_docs`)
+
+`--force` bypasses the guard.
 
 ### Provenance Fields
 

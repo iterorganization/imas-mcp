@@ -1010,7 +1010,9 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
 
     def _load_enrich_scored() -> list[dict]:
         with GraphClient() as gc:
-            return load_compose_examples(gc, physics_domains=enrich_domains)
+            return load_compose_examples(
+                gc, physics_domains=enrich_domains, axis="docs"
+            )
 
     compose_scored_examples = await asyncio.to_thread(_load_enrich_scored)
     if compose_scored_examples:
