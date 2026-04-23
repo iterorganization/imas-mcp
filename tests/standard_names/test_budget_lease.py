@@ -385,6 +385,97 @@ def test_repr():
 
 
 # =====================================================================
+# charge_or_extend — soft overrun handling
+# =====================================================================
+
+
+def test_charge_or_extend_within_reservation():
+    """charge_or_extend behaves identically to charge when under reservation."""
+    mgr = BudgetManager(total_budget=1.0)
+    lease = mgr.reserve(0.5)
+    assert lease is not None
+
+    lease.charge_or_extend(0.3)
+    assert abs(lease.charged - 0.3) < 1e-9
+    assert abs(mgr.spent - 0.3) < 1e-9
+    assert mgr.check_invariant()
+
+
+def test_charge_or_extend_borrows_from_pool():
+    """charge_or_extend extends the reservation when actual cost > reserved."""
+    mgr = BudgetManager(total_budget=1.0)
+    lease = mgr.reserve(0.10)  # Reserve a small amount; pool has 0.90 remaining
+
+    # Actual cost is 0.15 — 0.05 over the 0.10 reservation
+    lease.charge_or_extend(0.15)
+
+    assert abs(lease.charged - 0.15) < 1e-9
+    assert abs(mgr.spent - 0.15) < 1e-9
+    # Pool should have decreased by the extension (0.05 borrowed)
+    assert abs(mgr.remaining - 0.85) < 1e-9
+    assert mgr.check_invariant()
+
+
+def test_charge_or_extend_raises_when_pool_exhausted():
+    """charge_or_extend raises BudgetExceeded when pool is also empty."""
+    mgr = BudgetManager(total_budget=0.5)
+    lease = mgr.reserve(0.5)  # Pool is now empty
+    assert lease is not None
+
+    with pytest.raises(BudgetExceeded):
+        lease.charge_or_extend(0.6)  # Overrun; pool is 0
+
+    # Invariant still holds; nothing was charged
+    assert abs(lease.charged - 0.0) < 1e-9
+    assert mgr.check_invariant()
+
+
+def test_charge_or_extend_multiple_overruns():
+    """Multiple charge_or_extend calls accumulate correctly."""
+    mgr = BudgetManager(total_budget=1.0)
+    lease = mgr.reserve(0.10)  # Pool: 0.90
+
+    lease.charge_or_extend(0.08)  # Within reservation
+    lease.charge_or_extend(0.09)  # 0.08+0.09=0.17 > 0.10 → borrows 0.07
+
+    assert abs(lease.charged - 0.17) < 1e-9
+    assert abs(mgr.spent - 0.17) < 1e-9
+    assert mgr.check_invariant()
+
+
+def test_charge_or_extend_invariant_maintained():
+    """Invariant holds after a mix of reserve, charge_or_extend, and release."""
+    mgr = BudgetManager(total_budget=2.0)
+
+    lease1 = mgr.reserve(0.3)
+    lease2 = mgr.reserve(0.2)
+    assert lease1 is not None
+    assert lease2 is not None
+
+    lease1.charge_or_extend(0.4)  # Overrun by 0.1, borrowed from pool
+    lease2.charge_or_extend(0.1)  # Within reservation
+
+    assert mgr.check_invariant()
+
+    lease1.release_unused()
+    lease2.release_unused()
+
+    assert mgr.check_invariant()
+    assert abs(mgr.spent - 0.5) < 1e-9
+
+
+def test_extend_reservation_returns_zero_when_pool_empty():
+    """_extend_reservation returns 0 when pool is empty."""
+    mgr = BudgetManager(total_budget=0.5)
+    lease = mgr.reserve(0.5)
+    assert lease is not None
+
+    extended = mgr._extend_reservation(lease.lease_id, 0.2)
+    assert extended == 0.0
+    assert mgr.check_invariant()
+
+
+# =====================================================================
 # Backward compat: review/budget.py re-export
 # =====================================================================
 
@@ -397,3 +488,62 @@ def test_review_budget_reexport():
     assert isinstance(mgr, BudgetManager)
     lease = mgr.reserve(0.5)
     assert lease is not None
+
+
+# =====================================================================
+# charge_soft: LLM already paid — spend MUST be recorded
+# =====================================================================
+
+
+def test_charge_soft_within_reservation_records_spend():
+    """charge_soft within reservation records spend normally, returns 0 overspend."""
+    mgr = BudgetManager(total_budget=1.0)
+    lease = mgr.reserve(0.5)
+    assert lease is not None
+
+    overspend = lease.charge_soft(0.2)
+    assert overspend == 0.0
+    assert abs(lease.charged - 0.2) < 1e-9
+    assert abs(mgr.spent - 0.2) < 1e-9
+
+
+def test_charge_soft_extends_from_pool_when_possible():
+    """charge_soft borrows from pool when reservation insufficient."""
+    mgr = BudgetManager(total_budget=1.0)
+    lease = mgr.reserve(0.3)
+    assert lease is not None
+    # Pool has 0.7 remaining; charge 0.5 overruns reservation by 0.2
+    overspend = lease.charge_soft(0.5)
+    assert overspend == 0.0  # extension covered it
+    assert abs(mgr.spent - 0.5) < 1e-9
+
+
+def test_charge_soft_records_spend_even_when_pool_exhausted():
+    """When pool cannot cover overrun, spend is STILL recorded (no raise)."""
+    mgr = BudgetManager(total_budget=0.3)
+    lease = mgr.reserve(0.3)  # pool now 0
+    assert lease is not None
+    # Actual LLM cost was 0.5 — already paid, MUST be recorded
+    overspend = lease.charge_soft(0.5)
+    assert overspend > 0.0
+    assert abs(overspend - 0.2) < 1e-9  # 0.5 charged - 0.3 reserved
+    assert abs(mgr.spent - 0.5) < 1e-9  # spend recorded as reported
+
+
+def test_charge_soft_never_raises_budget_exceeded():
+    """charge_soft is total — never raises BudgetExceeded."""
+    mgr = BudgetManager(total_budget=0.1)
+    lease = mgr.reserve(0.1)
+    assert lease is not None
+    # Massive overspend — must not raise
+    lease.charge_soft(10.0)
+    assert abs(mgr.spent - 10.0) < 1e-9
+
+
+def test_charge_soft_negative_amount_raises():
+    """Negative charge amount is a programming error."""
+    mgr = BudgetManager(total_budget=1.0)
+    lease = mgr.reserve(0.5)
+    assert lease is not None
+    with pytest.raises(ValueError):
+        lease.charge_soft(-0.1)

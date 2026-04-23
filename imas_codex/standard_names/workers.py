@@ -1306,7 +1306,11 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             lease = None
             if state.budget_manager:
                 max_retries = _retry_attempts()
-                estimated = len(batch.items) * 0.01 * (max_retries + 1) * 1.3
+                # Per-item cost calibrated to observed Opus spend (~$0.035/item
+                # average, $0.042/item worst case).  Using 0.04 with the
+                # (max_retries+1) × 1.3 headroom gives a reservation that
+                # comfortably covers the worst-case retry cost (<2× average).
+                estimated = len(batch.items) * 0.04 * (max_retries + 1) * 1.3
                 lease = state.budget_manager.reserve(estimated)
                 if lease is None:
                     wlog.info(
@@ -1438,9 +1442,21 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             )
             _total_compose_cost += cost
 
-            # Charge actual LLM cost to budget lease
+            # Charge actual LLM cost to budget lease.
+            # Use charge_soft: the LLM has already been paid for, so we
+            # MUST record the spend regardless of whether it fits the
+            # reservation.  BudgetManager is a soft tracker — overspend
+            # is logged but never aborts completed work.
             if lease:
-                lease.charge(cost)
+                overspend = lease.charge_soft(cost)
+                if overspend > 0:
+                    wlog.warning(
+                        "Compose batch %s overspent reservation by $%.4f "
+                        "(batch cost $%.4f); budget tracking will report overrun",
+                        batch.group_key,
+                        overspend,
+                        cost,
+                    )
 
             # Quick grammar round-trip check on all candidates
             _grammar_failures: list[str] = []

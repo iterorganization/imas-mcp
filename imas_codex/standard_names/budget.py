@@ -92,6 +92,70 @@ class BudgetLease:
         self._charged += amount
         self._mgr._record_spend(self._lease_id, amount)
 
+    def charge_or_extend(self, amount: float) -> None:
+        """Charge *amount*, extending the reservation from the pool if needed.
+
+        Unlike :meth:`charge`, this method never raises ``BudgetExceeded``
+        due to an estimation mismatch: when the actual cost exceeds the
+        original reservation it atomically borrows the shortfall from the
+        manager's pool before charging.  ``BudgetExceeded`` is only raised
+        if the pool itself is also exhausted (i.e. truly no budget left).
+
+        Use this in callers where the per-batch cost estimate may be
+        imprecise (e.g. LLM compose) so that a slight under-estimate does
+        not discard a completed LLM result.
+
+        Raises:
+            ValueError: if *amount* is negative.
+            BudgetExceeded: if neither reservation nor pool can cover
+                the charge.
+        """
+        if amount < 0:
+            raise ValueError("charge must be non-negative")
+        shortfall = (self._charged + amount) - self._reserved
+        if shortfall > EPSILON:
+            # Borrow shortfall from pool to extend this reservation
+            extended = self._mgr._extend_reservation(self._lease_id, shortfall)
+            self._reserved += extended
+            if self._charged + amount > self._reserved + EPSILON:
+                raise BudgetExceeded(
+                    f"Lease {self._lease_id}: charge {amount:.4f} would exceed "
+                    f"reservation+pool (reserved={self._reserved:.4f}, "
+                    f"already charged={self._charged:.4f})"
+                )
+        self._charged += amount
+        self._mgr._record_spend(self._lease_id, amount)
+
+    def charge_soft(self, amount: float) -> float:
+        """Record *amount* as spend, extending reservation+pool as needed.
+
+        Unlike :meth:`charge` and :meth:`charge_or_extend`, this method
+        NEVER raises ``BudgetExceeded``.  The LLM cost has already been
+        incurred by the caller, so spend is always recorded.
+
+        Behaviour:
+          1. If the charge fits within the current reservation, record it.
+          2. Otherwise, try to extend the reservation from the pool.
+          3. If the pool is insufficient, record the overspend anyway —
+             ``manager.spent`` will exceed ``manager.total_budget``.
+             The caller is expected to log a warning.
+
+        Returns:
+            overspend: amount charged beyond reserved+pool (0.0 if fit).
+        """
+        if amount < 0:
+            raise ValueError("charge must be non-negative")
+        shortfall = (self._charged + amount) - self._reserved
+        if shortfall > EPSILON:
+            extended = self._mgr._extend_reservation(self._lease_id, shortfall)
+            self._reserved += extended
+        # Record spend unconditionally — the LLM has already been paid.
+        self._charged += amount
+        self._mgr._record_spend(self._lease_id, amount)
+        # Report overspend (reservation may now be < charged if pool empty)
+        overspend = max(self._charged - self._reserved, 0.0)
+        return overspend
+
     def release_unused(self) -> float:
         """Return unspent portion to manager pool.  Idempotent."""
         if self._released:
@@ -178,6 +242,21 @@ class BudgetManager:
             self._spent += amount
             if lease_id in self._reserved:
                 self._reserved[lease_id] -= amount
+
+    def _extend_reservation(self, lease_id: str, amount: float) -> float:
+        """Atomically extend an active reservation by drawing from the pool.
+
+        Returns the amount actually extended, which may be less than
+        *amount* when the pool is insufficient.  The caller is responsible
+        for checking whether the extension was sufficient.
+        """
+        with self._lock:
+            extended = min(amount, self._pool)
+            if extended > 0:
+                self._pool -= extended
+                if lease_id in self._reserved:
+                    self._reserved[lease_id] += extended
+            return extended
 
     def _release(self, lease_id: str, unused: float) -> None:
         """Return unused reservation back to the pool."""
