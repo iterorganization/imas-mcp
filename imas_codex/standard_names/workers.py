@@ -1440,16 +1440,30 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
         ]
 
         # --- Delta H: bounded retry loop for failed compositions ---
+        # Accumulate full LLMResult fields across retries so the batch's
+        # per-candidate cost/token attribution is accurate.  Compose is
+        # unified with review/enrich here: every LLM call site extracts
+        # the same cost/token fields from LLMResult and writes them to
+        # the graph for single-source cost observability.
         _total_compose_cost = 0.0
+        _total_tokens_in = 0
+        _total_tokens_out = 0
+        _total_cache_read = 0
+        _total_cache_creation = 0
         _max_retries = _retry_attempts()
         for _compose_attempt in range(_max_retries + 1):
-            result, cost, tokens = await acall_llm_structured(
+            llm_out = await acall_llm_structured(
                 model=model,
                 messages=messages,
                 response_model=StandardNameComposeBatch,
                 service="standard-names",
             )
+            result, cost, tokens = llm_out
             _total_compose_cost += cost
+            _total_tokens_in += getattr(llm_out, "input_tokens", 0) or 0
+            _total_tokens_out += getattr(llm_out, "output_tokens", 0) or 0
+            _total_cache_read += getattr(llm_out, "cache_read_tokens", 0) or 0
+            _total_cache_creation += getattr(llm_out, "cache_creation_tokens", 0) or 0
 
             # Charge actual LLM cost to budget lease.
             # Use charge_soft: the LLM has already been paid for, so we
@@ -1646,6 +1660,8 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     dd_version=batch.dd_version,
                 )
                 if siblings:
+                    for s in siblings:
+                        s["_from_error_sibling"] = True
                     candidates.extend(siblings)
                     state.error_siblings_minted = getattr(
                         state, "error_siblings_minted", 0
@@ -1688,7 +1704,38 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
         # --- GRAPH-STATE-MACHINE: persist immediately per batch ---
         # This ensures completed batches survive cost-limit cancellation.
         if candidates:
+            from datetime import UTC, datetime
+
             from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+            # Pro-rata per-candidate cost/token attribution.  One LLM
+            # batch call produces N candidates; divide cost and tokens
+            # so SUM(sn.llm_cost) aggregates back to the batch total and
+            # callers can extract spend directly from the graph instead
+            # of scraping logs.  Error-sibling candidates minted
+            # deterministically below are excluded from the denominator
+            # (they carry no LLM cost).
+            _llm_candidates = [
+                c for c in candidates if not c.get("_from_error_sibling")
+            ]
+            _n = max(len(_llm_candidates), 1)
+            _pro_rata_cost = _total_compose_cost / _n
+            _pro_rata_in = _total_tokens_in // _n
+            _pro_rata_out = _total_tokens_out // _n
+            _pro_rata_cache_r = _total_cache_read // _n
+            _pro_rata_cache_w = _total_cache_creation // _n
+            _llm_at = datetime.now(UTC).isoformat()
+            for c in candidates:
+                if c.get("_from_error_sibling"):
+                    continue
+                c["llm_cost"] = _pro_rata_cost
+                c["llm_model"] = model
+                c["llm_service"] = "standard-names"
+                c["llm_at"] = _llm_at
+                c["llm_tokens_in"] = _pro_rata_in
+                c["llm_tokens_out"] = _pro_rata_out
+                c["llm_tokens_cached_read"] = _pro_rata_cache_r
+                c["llm_tokens_cached_write"] = _pro_rata_cache_w
 
             written = await asyncio.to_thread(
                 persist_composed_batch,

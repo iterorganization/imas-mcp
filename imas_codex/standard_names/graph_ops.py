@@ -795,6 +795,14 @@ def write_standard_names(
                 sn.embedded_at = coalesce(b.embedded_at, sn.embedded_at),
                 sn.grammar_parse_version = coalesce(b.grammar_parse_version, sn.grammar_parse_version),
                 sn.validation_diagnostics_json = coalesce(b.validation_diagnostics_json, sn.validation_diagnostics_json),
+                sn.llm_cost = coalesce(b.llm_cost, sn.llm_cost),
+                sn.llm_model = coalesce(b.llm_model, sn.llm_model),
+                sn.llm_service = coalesce(b.llm_service, sn.llm_service),
+                sn.llm_at = coalesce(b.llm_at, sn.llm_at),
+                sn.llm_tokens_in = coalesce(b.llm_tokens_in, sn.llm_tokens_in),
+                sn.llm_tokens_out = coalesce(b.llm_tokens_out, sn.llm_tokens_out),
+                sn.llm_tokens_cached_read = coalesce(b.llm_tokens_cached_read, sn.llm_tokens_cached_read),
+                sn.llm_tokens_cached_write = coalesce(b.llm_tokens_cached_write, sn.llm_tokens_cached_write),
                 sn.created_at = coalesce(sn.created_at, datetime())
             """,
             batch=[
@@ -830,6 +838,14 @@ def write_standard_names(
                     "review_input_hash": n.get("review_input_hash"),
                     "embedding": n.get("embedding"),
                     "embedded_at": n.get("embedded_at"),
+                    "llm_cost": n.get("llm_cost"),
+                    "llm_model": n.get("llm_model"),
+                    "llm_service": n.get("llm_service"),
+                    "llm_at": n.get("llm_at"),
+                    "llm_tokens_in": n.get("llm_tokens_in"),
+                    "llm_tokens_out": n.get("llm_tokens_out"),
+                    "llm_tokens_cached_read": n.get("llm_tokens_cached_read"),
+                    "llm_tokens_cached_write": n.get("llm_tokens_cached_write"),
                     **_parse_grammar_vnext(n["id"]),
                 }
                 for n in names
@@ -1500,6 +1516,8 @@ def persist_composed_batch(
         entry.setdefault("pipeline_status", "named")
         entry.setdefault("validation_status", "pending")
         entry.setdefault("generated_at", now)
+        # Strip private markers used only during in-batch attribution.
+        entry.pop("_from_error_sibling", None)
         # D5/P0.3: derive kind from name structure (overrides LLM default).
         name = entry.get("id") or ""
         if name:

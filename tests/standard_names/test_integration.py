@@ -730,3 +730,90 @@ class TestE2ERoundTrip:
 
         mock_write.assert_not_called()
         assert result.imported == 1
+
+
+# =============================================================================
+# Part 7: LLM Cost Persistence (compose unified with review/enrich)
+# =============================================================================
+
+
+class TestLlmCostPersistence:
+    """Verify write_standard_names persists llm_cost/tokens/model fields."""
+
+    def test_cost_fields_written_to_merge_batch(self) -> None:
+        """Cost and token fields from the compose batch must appear in the
+        MERGE batch payload so SUM(sn.llm_cost) aggregates graph-wide spend.
+        """
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        names = [
+            {
+                "id": "electron_temperature",
+                "source_types": ["dd"],
+                "source_id": "core_profiles/profiles_1d/electrons/temperature",
+                "unit": "eV",
+                "llm_cost": 0.0412,
+                "llm_model": "openrouter/anthropic/claude-sonnet-4.6",
+                "llm_service": "standard-names",
+                "llm_at": "2026-04-23T21:16:05.937268+00:00",
+                "llm_tokens_in": 28805,
+                "llm_tokens_out": 275,
+                "llm_tokens_cached_read": 28805,
+                "llm_tokens_cached_write": 0,
+            }
+        ]
+        _call_write(names, mock_gc)
+        batch = _merge_batch(mock_gc)
+        assert batch[0]["llm_cost"] == pytest.approx(0.0412)
+        assert batch[0]["llm_model"] == "openrouter/anthropic/claude-sonnet-4.6"
+        assert batch[0]["llm_tokens_in"] == 28805
+        assert batch[0]["llm_tokens_out"] == 275
+        assert batch[0]["llm_tokens_cached_read"] == 28805
+
+    def test_merge_cypher_sets_cost_fields(self) -> None:
+        """The MERGE statement must include SET clauses for every cost field
+        so the graph schema's llm_* properties are populated by compose.
+        """
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        names = [
+            {
+                "id": "plasma_current",
+                "source_types": ["dd"],
+                "source_id": "equilibrium/time_slice/global_quantities/ip",
+                "unit": "A",
+                "llm_cost": 0.05,
+            }
+        ]
+        _call_write(names, mock_gc)
+        cypher = _merge_cypher(mock_gc)
+        for field in (
+            "sn.llm_cost",
+            "sn.llm_model",
+            "sn.llm_service",
+            "sn.llm_at",
+            "sn.llm_tokens_in",
+            "sn.llm_tokens_out",
+            "sn.llm_tokens_cached_read",
+            "sn.llm_tokens_cached_write",
+        ):
+            assert field in cypher, f"MERGE missing SET clause for {field}"
+
+    def test_cost_fields_coalesced_not_overwritten(self) -> None:
+        """Cost fields must use coalesce so a None incoming value never
+        erases a previous LLM call's cost attribution.
+        """
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        names = [
+            {
+                "id": "electron_density",
+                "source_types": ["dd"],
+                "source_id": "core_profiles/profiles_1d/electrons/density",
+                "unit": "m^-3",
+                "llm_cost": None,
+            }
+        ]
+        _call_write(names, mock_gc)
+        cypher = _merge_cypher(mock_gc)
+        assert "sn.llm_cost = coalesce(b.llm_cost, sn.llm_cost)" in cypher
