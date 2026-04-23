@@ -1640,10 +1640,6 @@ def sn_gaps(
     from rich.table import Table
 
     from imas_codex.graph.client import GraphClient
-    from imas_codex.standard_names.segments import (
-        PSEUDO_SEGMENTS,
-        open_segments,
-    )
 
     yaml_sections: list[str] = []
 
@@ -1713,57 +1709,26 @@ def sn_gaps(
         return
 
     with GraphClient() as gc:
-        # Query VocabGap nodes with source counts
-        params: dict = {}
-        where_clauses: list[str] = []
-        if segment:
-            where_clauses.append("vg.segment = $segment")
-            params["segment"] = segment
-        if not include_open:
-            excluded = sorted(open_segments() | PSEUDO_SEGMENTS)
-            if excluded:
-                where_clauses.append("NOT (vg.segment IN $excluded_segments)")
-                params["excluded_segments"] = excluded
-        where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+        from imas_codex.standard_names.gap_harvest import harvest_vocab_gaps
 
-        results = list(
-            gc.query(
-                f"""
-                MATCH (vg:VocabGap)
-                {where_clause}
-                OPTIONAL MATCH (src)-[:HAS_STANDARD_NAME_VOCAB_GAP]->(vg)
-                WITH vg, count(src) AS source_count,
-                     collect(DISTINCT labels(src)[0]) AS source_types
-                RETURN vg.id AS id,
-                       vg.segment AS segment,
-                       vg.needed_token AS needed_token,
-                       vg.example_count AS example_count,
-                       source_count,
-                       source_types,
-                       vg.first_seen_at AS first_seen,
-                       vg.last_seen_at AS last_seen
-                ORDER BY vg.segment, source_count DESC
-                """,
-                **params,
-            )
+        results = harvest_vocab_gaps(
+            gc, segment_filter=segment, include_open=include_open
         )
 
     if export_format == "yaml":
-        if results:
-            import yaml
+        from imas_codex.standard_names.gap_harvest import (
+            _dd_version,
+            _isn_version,
+            format_pr_yaml,
+        )
 
-            export_data = [
-                {
-                    "segment": r["segment"],
-                    "needed_token": r["needed_token"],
-                    "example_count": r["example_count"] or r["source_count"],
-                    "sources": r["source_types"],
-                }
-                for r in results
-            ]
+        if results:
             yaml_sections.append(
-                "# Missing tokens (closed-segment vocab gaps)\n"
-                + yaml.dump(export_data, default_flow_style=False, sort_keys=False)
+                format_pr_yaml(
+                    results,
+                    isn_version=_isn_version(),
+                    dd_version=_dd_version(),
+                )
             )
         _emit_yaml_output(yaml_sections, export_format, output)
         return
@@ -1783,13 +1748,13 @@ def sn_gaps(
         table.add_column("Last Seen")
 
         for r in results:
-            first_seen = str(r["first_seen"])[:10] if r["first_seen"] else "—"
-            last_seen = str(r["last_seen"])[:10] if r["last_seen"] else "—"
+            first_seen = str(r["first_seen"])[:10] if r.get("first_seen") else "—"
+            last_seen = str(r["last_seen"])[:10] if r.get("last_seen") else "—"
             table.add_row(
                 r["segment"],
                 r["needed_token"],
-                str(r["source_count"]),
-                str(r["example_count"] or "—"),
+                str(r["occurrences"]),
+                str(r.get("example_count") or "—"),
                 first_seen,
                 last_seen,
             )
