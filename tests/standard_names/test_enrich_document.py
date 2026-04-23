@@ -33,6 +33,16 @@ from imas_codex.standard_names.models import (
 # =============================================================================
 
 
+@pytest.fixture(autouse=True)
+def _mock_valid_names():
+    """Isolate tests from live graph: treat all referenced names as valid."""
+    with patch(
+        "imas_codex.standard_names.enrich_workers._fetch_existing_sn_names",
+        return_value={"electron_temperature", "ion_temperature"},
+    ):
+        yield
+
+
 def _make_item(name: str, **overrides: Any) -> dict[str, Any]:
     """Build a mock SN item as returned by the contextualise worker."""
     base = {
