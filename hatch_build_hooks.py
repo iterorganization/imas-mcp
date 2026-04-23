@@ -178,6 +178,37 @@ class CustomBuildHook(BuildHookInterface):
         mapping_file = mappings_dir / "path_mappings.json"
         return mapping_file.exists()
 
+    def _sync_grammar_best_effort(self, package_root: Path) -> None:
+        """Sync ISN grammar into the graph if reachable.
+
+        Best-effort: silently skipped when graph is unreachable (CI, Docker
+        build, offline dev) or when `IMAS_CODEX_SKIP_GRAMMAR_SYNC=1` is set.
+        Prevents grammar-version drift between the installed ISN package and
+        the graph's `GrammarToken` nodes, which otherwise causes the compose
+        worker to fall back to stale tokens and emit noisy warnings.
+        """
+        if os.environ.get("IMAS_CODEX_SKIP_GRAMMAR_SYNC") == "1":
+            self._trace("Grammar sync skipped (IMAS_CODEX_SKIP_GRAMMAR_SYNC=1)")
+            return
+
+        original_path = sys.path[:]
+        if str(package_root) not in sys.path:
+            sys.path.insert(0, str(package_root))
+        try:
+            from imas_codex.standard_names.grammar_sync import (
+                sync_isn_grammar_to_graph,
+            )
+
+            report = sync_isn_grammar_to_graph(dry_run=False)
+            self._trace(
+                f"Grammar sync OK: ISN={report.isn_version} "
+                f"segments={report.segments} templates={report.templates}"
+            )
+        except Exception as e:  # graph unreachable, auth failure, package absent, etc.
+            self._trace(f"Grammar sync skipped (best-effort): {type(e).__name__}: {e}")
+        finally:
+            sys.path[:] = original_path
+
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         """
         Initialize the build hook and create JSON data structures.
@@ -249,6 +280,11 @@ class CustomBuildHook(BuildHookInterface):
         # (imas_codex/graph/schema_context_data.py) are generated inside
         # build_models.main() above, with their own freshness checks.
         # No need to call them again here.
+
+        # Best-effort sync of ISN grammar into the graph so compose workers
+        # see the current segments/tokens/templates. Silent when the graph
+        # is unreachable (CI, Docker build, offline dev).
+        self._sync_grammar_best_effort(package_root)
 
         # Get resource paths for this version
         path_accessor = ResourcePathAccessor(dd_version=resolved_dd_version)
