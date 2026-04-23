@@ -10,7 +10,7 @@ Bug (caught during C3 stabilization, 2026-04-23):
 Fix (pipeline.py):
     The freshness check is now target-aware — for ``target="docs"`` it
     consults ``reviewed_docs_at``, for ``target="names"`` it consults
-    ``reviewed_name_at``, and otherwise falls back to ``reviewer_score``.
+    ``reviewed_name_at``.
 """
 
 from __future__ import annotations
@@ -87,12 +87,12 @@ _NAME_WITH_NAME_REVIEW_ONLY = {
     "pipeline_status": "enriched",
     "validation_status": "valid",
     "physics_domain": "equilibrium",
-    "reviewer_score": 0.85,
     "reviewer_score_name": 0.85,
     "reviewer_score_docs": None,
+    "reviewer_scores_name": None,
+    "reviewer_scores_docs": None,
     "reviewed_name_at": "2026-04-23T05:00:00Z",
     "reviewed_docs_at": None,
-    "review_mode": "names",
     "review_input_hash": None,
 }
 
@@ -101,12 +101,12 @@ _NAME_WITH_BOTH_REVIEWS = {
     "pipeline_status": "enriched",
     "validation_status": "valid",
     "physics_domain": "equilibrium",
-    "reviewer_score": 0.85,
     "reviewer_score_name": 0.85,
     "reviewer_score_docs": 0.80,
+    "reviewer_scores_name": None,
+    "reviewer_scores_docs": None,
     "reviewed_name_at": "2026-04-23T05:00:00Z",
     "reviewed_docs_at": "2026-04-23T05:05:00Z",
-    "review_mode": "full",
     "review_input_hash": None,
 }
 
@@ -115,12 +115,12 @@ _NAME_UNREVIEWED = {
     "pipeline_status": "enriched",
     "validation_status": "valid",
     "physics_domain": "equilibrium",
-    "reviewer_score": None,
     "reviewer_score_name": None,
     "reviewer_score_docs": None,
+    "reviewer_scores_name": None,
+    "reviewer_scores_docs": None,
     "reviewed_name_at": None,
     "reviewed_docs_at": None,
-    "review_mode": None,
     "review_input_hash": None,
 }
 
@@ -182,13 +182,3 @@ async def test_name_only_target_uses_reviewed_name_at():
     assert "plasma_current" in target_ids, (
         "target=names should include unreviewed names"
     )
-
-
-@pytest.mark.asyncio
-async def test_full_target_uses_reviewer_score():
-    """target=full (default) still uses canonical reviewer_score for freshness."""
-    state = _make_state(target="full")
-    await _run_extract_with_rows(state, [_NAME_WITH_NAME_REVIEW_ONLY, _NAME_UNREVIEWED])
-    target_ids = {n["id"] for n in state.target_names}
-    assert "electron_temperature" not in target_ids
-    assert "plasma_current" in target_ids

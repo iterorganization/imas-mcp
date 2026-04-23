@@ -23,7 +23,7 @@ def _make_candidate(
 ) -> dict:
     return {
         "id": name,
-        "reviewer_score": reviewer_score,
+        "reviewer_score_name": reviewer_score,
         "reviewer_description_score": reviewer_description_score,
     }
 

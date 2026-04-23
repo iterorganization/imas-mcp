@@ -737,12 +737,12 @@ class TestResetStandardNamesFilters:
         assert params["before"] == "2026-05-01"
 
     def test_below_score_filter(self) -> None:
-        """--below-score should add a reviewer_score < clause."""
+        """--below-score should add a reviewer_score_name < clause."""
         mock_gc = MagicMock()
         self._call_reset(mock_gc, from_status="drafted", below_score=0.6)
         cypher = self._get_count_cypher(mock_gc)
         params = self._get_count_params(mock_gc)
-        assert "sn.reviewer_score < $below_score" in cypher
+        assert "sn.reviewer_score_name < $below_score" in cypher
         assert params["below_score"] == 0.6
 
     def test_tiers_filter(self) -> None:
@@ -777,7 +777,7 @@ class TestResetStandardNamesFilters:
         )
         cypher = self._get_count_cypher(mock_gc)
         assert "datetime($since)" in cypher
-        assert "sn.reviewer_score < $below_score" in cypher
+        assert "sn.reviewer_score_name < $below_score" in cypher
         assert "sn.review_tier IN $tiers" in cypher
 
     def test_no_filters_backward_compat(self) -> None:
@@ -827,7 +827,7 @@ class TestClearStandardNamesFilters:
         mock_gc = MagicMock()
         self._call_clear(mock_gc, status_filter=["drafted"], below_score=0.6)
         cypher = self._get_count_cypher(mock_gc)
-        assert "sn.reviewer_score < $below_score" in cypher
+        assert "sn.reviewer_score_name < $below_score" in cypher
 
     def test_tiers_filter(self) -> None:
         """--tier filter should appear in clear Cypher."""

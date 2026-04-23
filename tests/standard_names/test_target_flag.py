@@ -1,10 +1,9 @@
-"""Tests for ``sn generate --target {names,docs,full}`` routing.
+"""Tests for ``sn generate --target {names,docs}`` routing.
 
 Validates that the unified ``--target`` flag routes correctly:
 
 * ``--target=names``  → single-pass compose with ``name_only=True``
 * ``--target=docs``   → five-phase enrich pipeline (via ``_run_sn_docs_generation``)
-* ``--target=full``   → default compose path (rotator or single-pass)
 
 No LLM calls — external dependencies are mocked.
 """
@@ -127,20 +126,20 @@ class TestTargetDocsRouting:
             assert mock_docs.call_args.kwargs["batch_size"] == 7
 
 
-class TestTargetFullRouting:
-    """``--target=full`` (and unspecified default) routes to rotator."""
+class TestTargetNamesRouting:
+    """``--target=names`` (default) routes to rotator."""
 
-    def test_target_full_routes_to_rotator(self, runner):
+    def test_target_names_routes_to_rotator(self, runner):
         with patch(_ROTATOR) as mock_rot, patch(_DOCS_HELPER) as mock_docs:
             runner.invoke(
                 sn,
-                ["run", "--target", "full", "-c", "0.01", "-q"],
+                ["run", "--target", "names", "-c", "0.01", "-q"],
             )
             assert mock_rot.called
             assert not mock_docs.called
 
     def test_default_target_routes_to_rotator(self, runner):
-        """No --target → rotator (full default)."""
+        """No --target → rotator (names default)."""
         with patch(_ROTATOR) as mock_rot, patch(_DOCS_HELPER) as mock_docs:
             runner.invoke(sn, ["run", "-c", "0.01", "-q"])
             assert mock_rot.called

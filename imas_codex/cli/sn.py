@@ -248,7 +248,7 @@ def _run_sn_loop_cmd(
     type=float,
     default=None,
     help=(
-        "Only reset/regenerate names with reviewer_score < this value "
+        "Only reset/regenerate names with reviewer_score_name < this value "
         "(0.0-1.0 scale). Requires prior `sn review` run."
     ),
 )
@@ -308,7 +308,7 @@ def _run_sn_loop_cmd(
     default=None,
     help=(
         "Reviewer-score threshold for regen phase. Names with "
-        "``reviewer_score < min_score`` (that haven't already been "
+        "``reviewer_score_name < min_score`` (that haven't already been "
         "regenerated) are re-composed with prior reviewer critique "
         "injected into the compose prompt. When None (default), the "
         "regen phase is skipped. Typical value: 0.6."
@@ -338,8 +338,8 @@ def _run_sn_loop_cmd(
 )
 @click.option(
     "--target",
-    type=click.Choice(["names", "docs", "full"], case_sensitive=False),
-    default="full",
+    type=click.Choice(["names", "docs"], case_sensitive=False),
+    default="names",
     show_default=True,
     help=(
         "Which generation pass to run. 'names' runs the name-only compose "
@@ -347,8 +347,7 @@ def _run_sn_loop_cmd(
         "physics_domain × unit with a lean user prompt). 'docs' routes "
         "through the five-phase enrich pipeline to fill description/"
         "documentation on already-named entries (EXTRACT→CONTEXTUALISE→"
-        "DOCUMENT→VALIDATE→PERSIST). 'full' (default) runs the compose "
-        "pass that produces both name and documentation in one shot."
+        "DOCUMENT→VALIDATE→PERSIST)."
     ),
 )
 @click.option(
@@ -960,14 +959,12 @@ def sn_run(
 )
 @click.option(
     "--review-target",
-    type=click.Choice(["names", "full"]),
+    type=click.Choice(["names"]),
     default="names",
     show_default=True,
     help=(
         "Reviewer rubric. 'names' uses the 4-dim name rubric "
-        "(sn/review_names, 0-80) matching the compose-stage output. "
-        "'full' uses the 6-dim rubric (sn/review, 0-120) — only meaningful "
-        "when compose output includes documentation."
+        "(sn/review_names, 0-80) matching the compose-stage output."
     ),
 )
 def sn_benchmark(
@@ -1816,12 +1813,12 @@ def sn_gaps(
     type=float,
     default=0.65,
     show_default=True,
-    help="Minimum reviewer_score for inclusion",
+    help="Minimum reviewer_score_name for inclusion",
 )
 @click.option(
     "--include-unreviewed",
     is_flag=True,
-    help="Include names without a reviewer_score",
+    help="Include names without a reviewer_score_name",
 )
 @click.option(
     "--min-description-score",
@@ -2390,7 +2387,7 @@ def sn_clear(
 @click.option(
     "--unreviewed",
     is_flag=True,
-    help="Only names with no reviewer_score or stale review",
+    help="Only names with no reviewer_score_name or stale review",
 )
 @click.option(
     "--force",
@@ -2432,17 +2429,15 @@ def sn_clear(
 @click.option("--concurrency", type=int, default=2, help="Parallel review batches")
 @click.option(
     "--target",
-    type=click.Choice(["names", "docs", "full"], case_sensitive=False),
-    default="full",
+    type=click.Choice(["names", "docs"], case_sensitive=False),
+    default="names",
     show_default=True,
     help=(
         "Which review rubric to apply. 'names' → 4-dim name rubric "
         "(grammar/semantic/convention/completeness, /80). 'docs' → 4-dim "
         "docs rubric (description_quality/documentation_quality/"
-        "completeness/physics_accuracy, /80). 'full' → 6-dim full rubric "
-        "(/120, default). A lower-fidelity target will not overwrite a "
-        "higher-fidelity prior review unless --force. Fidelity rank: "
-        "names < docs < full."
+        "completeness/physics_accuracy, /80). A lower-fidelity target will "
+        "not overwrite a higher-fidelity prior review unless --force."
     ),
 )
 def sn_review(
@@ -2551,7 +2546,7 @@ def sn_review(
                                sn.cocos_transformation_type AS cocos_transformation_type,
                                sn.physics_domain AS physics_domain,
                                sn.pipeline_status AS pipeline_status,
-                               sn.reviewer_score AS reviewer_score,
+                               sn.reviewer_score_name AS reviewer_score,
                                sn.review_input_hash AS review_input_hash,
                                sn.embedding AS embedding,
                                sn.review_tier AS review_tier,
@@ -2620,7 +2615,7 @@ def sn_review(
                 targets = [
                     n
                     for n in targets
-                    if n.get("reviewer_score") is None
+                    if n.get("reviewer_score_name") is None
                     or n.get("review_input_hash") != compute_review_input_hash(n)
                 ]
 
@@ -2710,7 +2705,7 @@ def sn_review(
             console.print("  Lowest scorers:")
             for ls in summary.lowest_scorers[:5]:
                 console.print(
-                    f"    {ls.get('id', '?')}: {ls.get('reviewer_score', 0):.2f}"
+                    f"    {ls.get('id', '?')}: {ls.get('reviewer_score_name', 0):.2f}"
                     f" ({ls.get('review_tier', '?')})"
                 )
 

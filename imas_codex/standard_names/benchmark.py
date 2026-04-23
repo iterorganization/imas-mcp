@@ -274,20 +274,14 @@ async def score_with_reviewer(
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.standard_names.context import build_compose_context
     from imas_codex.standard_names.models import (
-        StandardNameQualityReviewBatch,
         StandardNameQualityReviewNameOnlyBatch,
     )
 
-    if target == "names":
-        prompt_name = "sn/review_names"
-        response_model: type = StandardNameQualityReviewNameOnlyBatch
-    elif target == "full":
-        prompt_name = "sn/review"
-        response_model = StandardNameQualityReviewBatch
-    else:
-        raise ValueError(
-            f"Unknown review target {target!r}; expected 'names' or 'full'."
-        )
+    if target != "names":
+        raise ValueError(f"Unknown review target {target!r}; expected 'names'.")
+
+    prompt_name = "sn/review_names"
+    response_model: type = StandardNameQualityReviewNameOnlyBatch
 
     # Get compose context (includes grammar enums + shared include variables)
     compose_ctx = build_compose_context()
@@ -381,10 +375,6 @@ async def score_with_reviewer(
                     "completeness_score": r.scores.completeness,
                     "reasoning": r.reasoning,
                 }
-                # 6-dim rubric adds two dimensions
-                if target == "full":
-                    review_dict["documentation_score"] = r.scores.documentation
-                    review_dict["compliance_score"] = r.scores.compliance
                 all_reviews.append(review_dict)
         except Exception as e:
             logger.warning("Reviewer scoring failed for batch: %s", e)

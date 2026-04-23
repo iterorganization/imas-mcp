@@ -1,8 +1,8 @@
-"""Tests for the three-rubric sn review pipeline (--target {names,docs,full}).
+"""Tests for the two-rubric sn review pipeline (--target {names,docs}).
 
 Covers:
 * ``StandardNameQualityScoreDocs`` total/score/tier arithmetic.
-* ``_match_reviews_to_entries`` stamping ``review_mode`` per target.
+* ``_match_reviews_to_entries`` matching per target.
 * ``_review_single_batch`` selecting the correct prompt + response model
   for each ``target`` value.
 * ``sn/review_docs`` prompt renders without referencing the name-scoring
@@ -95,7 +95,7 @@ def test_docs_batch_model_parses_minimal_json() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _match_reviews_to_entries — review_mode stamping per target
+# _match_reviews_to_entries — matching per target
 # ---------------------------------------------------------------------------
 
 
@@ -116,7 +116,7 @@ def _make_docs_review(source_id: str, name: str, **scores: int):
     )
 
 
-def test_match_stamps_docs_mode_for_target_docs() -> None:
+def test_match_docs_entries_for_target_docs() -> None:
     from imas_codex.standard_names.review.pipeline import _match_reviews_to_entries
 
     wlog = logging.LoggerAdapter(logging.getLogger("test"), {})
@@ -137,11 +137,10 @@ def test_match_stamps_docs_mode_for_target_docs() -> None:
     )
     assert len(scored) == 1
     assert unmatched == []
-    assert scored[0]["review_mode"] == "docs"
     assert scored[0]["reviewer_score"] == pytest.approx(75 / 80)
 
 
-def test_match_stamps_name_only_for_target_names() -> None:
+def test_match_name_entries_for_target_names() -> None:
     from imas_codex.standard_names.models import StandardNameQualityScoreNameOnly
     from imas_codex.standard_names.review.pipeline import _match_reviews_to_entries
 
@@ -160,34 +159,8 @@ def test_match_stamps_name_only_for_target_names() -> None:
     )
 
     scored, _u, _r = _match_reviews_to_entries([review], names, wlog, target="names")
-    assert scored[0]["review_mode"] == "names"
-
-
-def test_match_stamps_full_for_target_full() -> None:
-    from imas_codex.standard_names.models import StandardNameQualityScore
-    from imas_codex.standard_names.review.pipeline import _match_reviews_to_entries
-
-    wlog = logging.LoggerAdapter(logging.getLogger("test"), {})
-    names = [{"id": "x", "source_id": "x"}]
-    review = SimpleNamespace(
-        source_id="x",
-        standard_name="x",
-        scores=StandardNameQualityScore(
-            grammar=20,
-            semantic=18,
-            documentation=16,
-            convention=19,
-            completeness=18,
-            compliance=17,
-        ),
-        verdict=_accept_verdict(),
-        reasoning="ok",
-        revised_name=None,
-        revised_fields=None,
-    )
-
-    scored, _u, _r = _match_reviews_to_entries([review], names, wlog, target="full")
-    assert scored[0]["review_mode"] == "full"
+    assert len(scored) == 1
+    assert scored[0]["reviewer_score"] == pytest.approx(75 / 80)
 
 
 def _accept_verdict():
@@ -272,11 +245,6 @@ async def test_single_batch_dispatch_selects_prompt_per_target(monkeypatch) -> N
     assert c["prompt_name"] == "sn/review_docs"
     assert c["response_model"] is sn_models.StandardNameQualityReviewDocsBatch
 
-    # target=full
-    c = await run("full")
-    assert c["prompt_name"] == "sn/review"
-    assert c["response_model"] is sn_models.StandardNameQualityReviewBatch
-
 
 # ---------------------------------------------------------------------------
 # Prompt rendering
@@ -321,13 +289,12 @@ def test_docs_prompt_scores_docs_dimensions_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Downgrade guard — fidelity rank names < docs < full
+# Downgrade guard — fidelity rank names < docs
 # ---------------------------------------------------------------------------
 
 
 def test_downgrade_guard_skips_lower_fidelity_without_force() -> None:
-    """A target=names run must not overwrite a prior docs/full review mode."""
-    # Build a mock state + name with existing review_mode="docs".
+    """A target=names run must not overwrite a prior docs review."""
     from imas_codex.standard_names.review.state import StandardNameReviewState
 
     state = StandardNameReviewState(
@@ -337,16 +304,14 @@ def test_downgrade_guard_skips_lower_fidelity_without_force() -> None:
         target="names",
         name_only=True,
     )
-    existing = {"id": "x", "reviewer_score": 0.8, "review_mode": "docs"}
-    incoming = {"id": "y", "reviewer_score": 0.8, "review_mode": "names"}
 
     # Inline the guard logic (kept identical to pipeline.py) to verify
     # the fidelity rank is correct.
-    _rank = {"names": 1, "docs": 2, "full": 3}
-    target = state.target or ("names" if state.name_only else "full")
+    _rank = {"names": 1, "docs": 2}
+    target = state.target or "names"
     incoming_mode = "names" if target == "names" else target
 
     # names (rank 1) should NOT overwrite docs (rank 2)
-    assert _rank[incoming_mode] < _rank[existing["review_mode"]]
-    # but names (rank 1) MAY overwrite another name_only (rank 1)
-    assert _rank[incoming_mode] == _rank[incoming["review_mode"]]
+    assert _rank[incoming_mode] < _rank["docs"]
+    # but names (rank 1) MAY overwrite another name review (rank 1)
+    assert _rank[incoming_mode] == _rank["names"]

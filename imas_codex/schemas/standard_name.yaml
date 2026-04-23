@@ -175,10 +175,11 @@ enums:
       Names default to pending at persist time.
       validate_worker promotes to valid (passes) or quarantined (critical failures).
 
-      Reviewer feedback (``reviewer_score``, ``reviewer_comments``,
+      Reviewer feedback (``reviewer_score_name`` / ``reviewer_score_docs``,
+      ``reviewer_comments_name`` / ``reviewer_comments_docs``,
       ``review_tier``) is written onto every reviewed StandardName without
       status demotion. Sub-threshold names are selected for regeneration via
-      ``sn run --min-score`` based on ``reviewer_score``, not on
+      ``sn run --min-score`` based on ``reviewer_score_name``, not on
       ``validation_status``.
 
       Only valid names participate in publish.
@@ -389,41 +390,6 @@ classes:
           ISO 8601 timestamp when this entry was imported from the catalog.
           Set by ``sn import`` on each import.
         range: datetime
-      reviewer_model:
-        description: >-
-          LLM model that reviewed this name (full-mode aggregate slot).
-          For name and docs modes, see ``reviewer_model_name`` and
-          ``reviewer_model_docs`` respectively.
-      reviewer_score:
-        description: Normalized quality score from review (0-1)
-        range: float
-      reviewer_scores:
-        description: >-
-          JSON-encoded dimensional scores (full-mode only — 6 dims:
-          grammar, semantic, documentation, convention, completeness,
-          compliance, each 0-20). Name-mode dims are stored in
-          ``reviewer_scores_name``; docs-mode dims in
-          ``reviewer_scores_docs``.
-      reviewer_comments:
-        description: >-
-          LLM reviewer reasoning about this name's quality (full-mode
-          aggregate summary prose). Name-mode summary is in
-          ``reviewer_comments_name``; docs-mode in
-          ``reviewer_comments_docs``.
-      reviewer_comments_per_dim:
-        description: >-
-          JSON-encoded per-dimension reviewer comments (full-mode only,
-          6-dim schema). Name-mode per-dim comments live in
-          ``reviewer_comments_per_dim_name``; docs-mode in
-          ``reviewer_comments_per_dim_docs``.
-      reviewer_verdict:
-        description: >-
-          Verdict from reviewer (accept, reject, or revise) — full-mode
-          aggregate. Axis-specific verdicts in ``reviewer_verdict_name``
-          and ``reviewer_verdict_docs``.
-      reviewed_at:
-        description: When LLM review occurred
-        range: datetime
       reviewer_score_name:
         description: >-
           Name-review quality score (0-1). Set by the name review phase
@@ -460,8 +426,7 @@ classes:
         description: >-
           Docs-review quality score (0-1). Set by the docs review phase
           (``--target docs`` or the ``review_docs`` turn phase).
-          Independent of ``reviewer_score_name``. Docs review never
-          writes ``reviewer_score``.
+          Independent of ``reviewer_score_name``.
         range: float
       reviewer_scores_docs:
         description: >-
@@ -493,14 +458,6 @@ classes:
         description: >-
           Quality tier from review: outstanding, good, inadequate, poor.
           Derived from reviewer_score thresholds.
-      review_mode:
-        description: >-
-          Advisory marker of the most recent LLM review rubric run
-          against this name: ``names`` or ``docs``. No
-          read path gates on this field for axis-specific data routing —
-          readers use the explicit axis columns (``reviewer_scores_name``
-          / ``reviewer_scores_docs`` / shared ``reviewer_scores`` for full).
-        range: StandardNameReviewMode
       review_count:
         description: >-
           Number of Review nodes attached to this StandardName via
@@ -584,7 +541,7 @@ classes:
           promoted to 'valid' or 'quarantined' by validate_worker. Only
           'valid' names participate in publish. Regeneration targeting is
           driven by `sn run --min-score F`, which selects valid names
-          whose `reviewer_score` falls below the threshold.
+          whose `reviewer_score_name` falls below the threshold.
         range: StandardNameValidationStatus
       consolidated_at:
         description: >-
@@ -677,7 +634,7 @@ classes:
       regen_reason:
         description: >-
           Reviewer comments that triggered the last regeneration cycle.
-          Captured from ``reviewer_comments`` at regen time so the
+          Captured from ``reviewer_comments_name`` at regen time so the
           reason survives subsequent review overwrites.
       # --- Grammar parse provenance (vNext — imas-standard-names >= 0.7.0rc21) ---
       grammar_parse_version:

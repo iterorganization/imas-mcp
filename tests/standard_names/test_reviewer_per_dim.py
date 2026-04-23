@@ -158,7 +158,10 @@ class TestQualityReviewWithComments:
 
 
 class TestWriteStandardNamesPerDim:
-    def test_per_dim_fields_in_cypher_and_batch(self):
+    def test_shared_reviewer_slots_not_in_cypher(self):
+        """write_standard_names must NOT write any shared reviewer slots.
+        Review data is written exclusively via write_name_review_results /
+        write_docs_review_results."""
         mock_gc = MagicMock()
         mock_gc.query.return_value = []
         per_dim = {"grammar": "fine", "semantic": "needs work"}
@@ -174,12 +177,9 @@ class TestWriteStandardNamesPerDim:
         )
         cypher = _find_merge_cypher(mock_gc, "MERGE (sn:StandardName")
         assert cypher is not None, "MERGE StandardName query not found"
-        assert "sn.reviewer_comments_per_dim" in cypher
-        assert "sn.reviewer_verdict" in cypher
-        batch = _find_merge_batch(mock_gc, "MERGE (sn:StandardName")
-        assert batch is not None and len(batch) == 1
-        assert json.loads(batch[0]["reviewer_comments_per_dim"]) == per_dim
-        assert batch[0]["reviewer_verdict"] == "accept"
+        # Shared slots must not appear — review is axis-specific only
+        assert "sn.reviewer_comments_per_dim =" not in cypher
+        assert "sn.reviewer_verdict =" not in cypher
 
 
 class TestWriteReviewsPerDim:

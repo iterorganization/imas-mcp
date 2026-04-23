@@ -78,8 +78,8 @@ ORDER BY len
 
 _REVIEWER_SCORES_QUERY = """
 MATCH (sn:StandardName)
-WHERE sn.reviewer_score IS NOT NULL
-RETURN sn.reviewer_score AS score
+WHERE sn.reviewer_score_name IS NOT NULL
+RETURN sn.reviewer_score_name AS score
 """
 
 _PULSE_SCHEDULE_REF_QUERY = """

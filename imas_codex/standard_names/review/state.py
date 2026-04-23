@@ -33,10 +33,10 @@ class StandardNameReviewState(DiscoveryStateBase):
     skip_audit: bool = False
     name_only: bool = False
     # Review rubric target. One of: "names" (4-dim name rubric, /80),
-    # "docs" (4-dim docs rubric, /80), "full" (6-dim full rubric, /120).
+    # "docs" (4-dim docs rubric, /80).
     # ``name_only`` is kept as a back-compat alias and is kept in sync
     # with ``target == "names"``.
-    target: str = "full"
+    target: str = "names"
 
     # ------------------------------------------------------------------
     # Config

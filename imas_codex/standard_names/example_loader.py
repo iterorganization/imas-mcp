@@ -32,7 +32,7 @@ _DEFAULT_PER_BUCKET: int = 1
 # Axis literal shared across public loaders. Callers must be explicit about
 # which axis of review their examples target so that axis-split storage
 # (see AGENTS.md "Standard Names / StandardName Lifecycle") is respected.
-Axis = Literal["name", "docs", "full"]
+Axis = Literal["name", "docs"]
 
 
 def _parse_json_field(value: Any) -> dict:
@@ -55,36 +55,23 @@ def _axis_projection(axis: Axis) -> dict[str, str]:
 
     Returns a dict with keys ``score``, ``verdict``, ``scores``,
     ``comments_per_dim``, ``comments``. Each value is a Cypher expression
-    that reads from the axis-specific column with fallback to the shared
-    slot — this lets pre-migration rows (where only shared slots are
-    populated) still surface as examples.
+    that reads from the axis-specific column.
     """
     if axis == "name":
         return {
-            "score": "coalesce(sn.reviewer_score_name, sn.reviewer_score)",
-            "verdict": "coalesce(sn.reviewer_verdict_name, sn.reviewer_verdict)",
-            "scores": "coalesce(sn.reviewer_scores_name, sn.reviewer_scores)",
-            "comments_per_dim": (
-                "coalesce(sn.reviewer_comments_per_dim_name, "
-                "sn.reviewer_comments_per_dim)"
-            ),
-            "comments": "coalesce(sn.reviewer_comments_name, sn.reviewer_comments)",
+            "score": "sn.reviewer_score_name",
+            "verdict": "sn.reviewer_verdict_name",
+            "scores": "sn.reviewer_scores_name",
+            "comments_per_dim": "sn.reviewer_comments_per_dim_name",
+            "comments": "sn.reviewer_comments_name",
         }
-    if axis == "docs":
-        return {
-            "score": "sn.reviewer_score_docs",
-            "verdict": "sn.reviewer_verdict_docs",
-            "scores": "sn.reviewer_scores_docs",
-            "comments_per_dim": "sn.reviewer_comments_per_dim_docs",
-            "comments": "sn.reviewer_comments_docs",
-        }
-    # full
+    # docs
     return {
-        "score": "sn.reviewer_score",
-        "verdict": "sn.reviewer_verdict",
-        "scores": "sn.reviewer_scores",
-        "comments_per_dim": "sn.reviewer_comments_per_dim",
-        "comments": "sn.reviewer_comments",
+        "score": "sn.reviewer_score_docs",
+        "verdict": "sn.reviewer_verdict_docs",
+        "scores": "sn.reviewer_scores_docs",
+        "comments_per_dim": "sn.reviewer_comments_per_dim_docs",
+        "comments": "sn.reviewer_comments_docs",
     }
 
 

@@ -33,15 +33,12 @@ def _axis_overwrite_blocked(
     """Return True if writing ``incoming`` axis would clobber existing data.
 
     Axis-split storage rules:
-      * full-mode aggregates (``reviewer_scores``) block any axis-only write
       * same-axis presence blocks same-axis re-write (``reviewer_scores_name``
         blocks a new name-axis review; ``reviewer_scores_docs`` blocks a new
         docs-axis review)
 
     Callers bypass this guard with ``--force``.
     """
-    if incoming != "full" and name.get("reviewer_scores") is not None:
-        return True
     if incoming == "name" and name.get("reviewer_scores_name") is not None:
         return True
     if incoming == "docs" and name.get("reviewer_scores_docs") is not None:
@@ -204,18 +201,14 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
                        sn.cocos_transformation_type AS cocos_transformation_type,
                        sn.physics_domain AS physics_domain,
                        sn.pipeline_status AS pipeline_status,
-                       sn.reviewer_score AS reviewer_score,
-                       sn.reviewer_scores AS reviewer_scores,
                        sn.reviewer_scores_name AS reviewer_scores_name,
                        sn.reviewer_scores_docs AS reviewer_scores_docs,
                        sn.review_input_hash AS review_input_hash,
                        sn.embedding AS embedding,
                        sn.review_tier AS review_tier,
-                       sn.reviewer_comments AS reviewer_comments,
                        sn.source_types AS source_types,
                        sn.source_id AS source_id,
                        sn.generated_at AS generated_at,
-                       sn.reviewed_at AS reviewed_at,
                        sn.reviewed_name_at AS reviewed_name_at,
                        sn.reviewed_docs_at AS reviewed_docs_at,
                        sn.link_status AS link_status
@@ -261,7 +254,7 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
                 continue
 
         # --target docs gate: skip names without prior name review
-        review_target = getattr(state, "target", "full")
+        review_target = getattr(state, "target", "names")
         if review_target == "docs":
             if name.get("reviewed_name_at") is None:
                 wlog.debug("Docs gate: skipping %r — reviewed_name_at IS NULL", nid)
@@ -285,10 +278,8 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
         if state.unreviewed_only:
             if review_target == "docs":
                 has_axis_score = name.get("reviewed_docs_at") is not None
-            elif review_target == "names":
-                has_axis_score = name.get("reviewed_name_at") is not None
             else:
-                has_axis_score = name.get("reviewer_score") is not None
+                has_axis_score = name.get("reviewed_name_at") is not None
             stored_hash = name.get("review_input_hash")
             computed_hash = name.get("_computed_hash")
             is_stale = (
@@ -305,20 +296,15 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
             if review_target == "docs":
                 if name.get("reviewed_docs_at") is not None:
                     continue
-            elif review_target == "names":
-                if name.get("reviewed_name_at") is not None:
-                    continue
             else:
-                if name.get("reviewer_score") is not None:
+                if name.get("reviewed_name_at") is not None:
                     continue
 
         # Downgrade guard: don't overwrite same-axis data without --force.
         # Axis-split storage means name and docs axes are independent; only
         # a full review has strictly higher fidelity than axis-only reviews.
         if not state.force_review:
-            target = getattr(state, "target", None) or (
-                "names" if state.name_only else "full"
-            )
+            target = getattr(state, "target", None) or "names"
             incoming = "name" if target == "names" else target
             if _axis_overwrite_blocked(name, incoming):
                 continue
@@ -942,7 +928,8 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
     from imas_codex.cli.logging import WorkerLogAdapter
     from imas_codex.standard_names.graph_ops import (
         update_review_aggregates,
-        write_review_results,
+        write_docs_review_results,
+        write_name_review_results,
         write_reviews,
     )
 
@@ -972,16 +959,13 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
             entry["review_input_hash"] = _compute_hash(entry)
 
     # Determine review mode from state.target
-    review_target = getattr(state, "target", "full")
-    _target_to_mode = {"names": "name", "docs": "docs", "full": "full"}
-    write_mode = _target_to_mode.get(review_target, "full")
+    review_target = getattr(state, "target", "names")
 
-    # Write canonical scores to StandardName nodes using mode-aware writer
+    # Write canonical scores to StandardName nodes using axis-specific writers
     def _write() -> int:
-        if write_mode in ("name", "docs"):
-            return write_review_results(results, write_mode, stats=state.stats)
-        # Full mode: write via write_review_results for 3-score slot support
-        return write_review_results(results, "full", stats=state.stats)
+        if review_target == "docs":
+            return write_docs_review_results(results, stats=state.stats)
+        return write_name_review_results(results, stats=state.stats)
 
     written = await asyncio.to_thread(_write)
 
@@ -1175,21 +1159,8 @@ def _match_reviews_to_entries(
     Returns ``(scored, unmatched, revised_count)`` where *scored* contains
     entries with review scores applied and *unmatched* contains entries that
     the LLM did not return a review for.
-
-    ``target`` selects the ``review_mode`` stamped onto each scored entry:
-    ``"names"`` → ``"names"``, ``"docs"`` → ``"docs"``, ``"full"`` →
-    ``"full"``. When ``target`` is None, falls back to the legacy
-    ``name_only`` boolean for back-compat.
     """
     from imas_codex.standard_names.models import StandardNameReviewVerdict
-
-    if target is None:
-        target = "names" if name_only else "full"
-    review_mode = {
-        "names": "names",
-        "docs": "docs",
-        "full": "full",
-    }.get(target, "full")
 
     # Build lookup: source_id → entry, id → entry
     entry_map: dict[str, dict] = {}
@@ -1229,7 +1200,6 @@ def _match_reviews_to_entries(
                 review.comments.model_dump()
             )
         original["reviewer_verdict"] = review.verdict.value
-        original["review_mode"] = review_mode
 
         # Review writes score/tier/comments but does NOT demote
         # validation_status. Regeneration targeting is driven by the
@@ -1317,32 +1287,26 @@ async def _review_single_batch(
       ``StandardNameQualityReviewNameOnlyBatch`` (4 dims, /80).
     * ``"docs"`` → ``sn/review_docs`` prompt +
       ``StandardNameQualityReviewDocsBatch`` (4 docs dims, /80).
-    * ``"full"`` → ``sn/review`` prompt + ``StandardNameQualityReviewBatch``
-      (6 dims, /120).
 
     When ``target`` is None, the legacy ``name_only`` boolean selects
-    between ``"names"`` and ``"full"`` for back-compat.
+    between ``"names"`` and ``"docs"`` for back-compat.
     """
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.standard_names.models import (
-        StandardNameQualityReviewBatch,
         StandardNameQualityReviewDocsBatch,
         StandardNameQualityReviewNameOnlyBatch,
     )
 
     if target is None:
-        target = "names" if name_only else "full"
+        target = "names" if name_only else "names"
 
-    if target == "names":
-        prompt_name = "sn/review_names"
-        response_model: type = StandardNameQualityReviewNameOnlyBatch
-    elif target == "docs":
+    if target == "docs":
         prompt_name = "sn/review_docs"
-        response_model = StandardNameQualityReviewDocsBatch
+        response_model: type = StandardNameQualityReviewDocsBatch
     else:
-        prompt_name = "sn/review"
-        response_model = StandardNameQualityReviewBatch
+        prompt_name = "sn/review_names"
+        response_model = StandardNameQualityReviewNameOnlyBatch
 
     # Enrich items with validation issues for reviewer context
     items_with_issues = []

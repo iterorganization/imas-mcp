@@ -122,11 +122,11 @@ def test_match_stamps_name_only_mode() -> None:
     )
     assert len(scored) == 1
     assert unmatched == []
-    assert scored[0]["review_mode"] == "names"
     assert scored[0]["reviewer_score"] == pytest.approx(75 / 80)
 
 
-def test_match_stamps_full_mode_by_default() -> None:
+def test_match_does_not_stamp_review_mode() -> None:
+    """_match_reviews_to_entries no longer stamps a review_mode key onto entries."""
     from imas_codex.standard_names.models import StandardNameQualityScore
     from imas_codex.standard_names.review.pipeline import _match_reviews_to_entries
 
@@ -147,7 +147,7 @@ def test_match_stamps_full_mode_by_default() -> None:
     ]
 
     scored, _unmatched, _revised = _match_reviews_to_entries(reviews, names, wlog)
-    assert scored[0]["review_mode"] == "full"
+    assert "review_mode" not in scored[0]
 
 
 # ---------------------------------------------------------------------------

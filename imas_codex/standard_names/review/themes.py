@@ -149,8 +149,8 @@ def extract_reviewer_themes(
                 """
                 MATCH (sn:StandardName)
                 WHERE sn.physics_domain = $domain
-                  AND coalesce(sn.reviewer_comments_name, sn.reviewer_comments) IS NOT NULL
-                RETURN coalesce(sn.reviewer_comments_name, sn.reviewer_comments) AS comments
+                  AND sn.reviewer_comments_name IS NOT NULL
+                RETURN sn.reviewer_comments_name AS comments
                 LIMIT $limit
                 """,
                 domain=domain,

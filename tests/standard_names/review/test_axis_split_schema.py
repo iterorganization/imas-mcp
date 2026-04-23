@@ -1,8 +1,7 @@
 """Axis-split review storage tests.
 
 Validates that name-axis writes never touch docs columns (and vice-versa),
-that shared slots are reserved for full-mode aggregates, and that the
-pre-migration coalesce fallback still surfaces legacy data on the name axis.
+and that shared aggregate slots have been removed from all write paths.
 """
 
 from __future__ import annotations
@@ -11,7 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_codex.standard_names.graph_ops import write_review_results
+from imas_codex.standard_names.graph_ops import (
+    write_docs_review_results,
+    write_name_review_results,
+)
 
 
 def _review_entry(**overrides):
@@ -25,7 +27,6 @@ def _review_entry(**overrides):
         "reviewer_verdict": "accept",
         "reviewer_model": "openrouter/anthropic/claude-opus-4.6",
         "review_tier": "good",
-        "review_mode": "names",
         "review_input_hash": "abc",
     }
     base.update(overrides)
@@ -50,7 +51,7 @@ class TestAxisIsolationNameMode:
     def test_name_mode_sets_name_axis_only(self) -> None:
         mock_gc, cm = _capture_cypher_params()
         with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
-            write_review_results([_review_entry()], mode="name")
+            write_name_review_results([_review_entry()])
 
         assert mock_gc.query.called
         cypher = mock_gc.query.call_args[0][0]
@@ -76,10 +77,10 @@ class TestAxisIsolationNameMode:
             assert col not in cypher, f"docs-axis {col} must NOT be touched"
 
     def test_name_mode_does_not_write_shared_slots(self) -> None:
-        """Shared slots (reviewer_score, reviewer_scores, etc.) are full-mode-only."""
+        """Shared aggregate slots have been removed — name writer must not touch them."""
         mock_gc, cm = _capture_cypher_params()
         with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
-            write_review_results([_review_entry()], mode="name")
+            write_name_review_results([_review_entry()])
 
         cypher = mock_gc.query.call_args[0][0]
         # SET clause must not assign shared slots
@@ -107,7 +108,7 @@ class TestAxisIsolationDocsMode:
             ]
         )
         with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
-            write_review_results([_review_entry(review_mode="docs")], mode="docs")
+            write_docs_review_results([_review_entry()])
 
         # Second call is the SET statement we care about
         assert mock_gc.query.call_count >= 2
@@ -140,7 +141,7 @@ class TestAxisIsolationDocsMode:
             ]
         )
         with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
-            write_review_results([_review_entry(review_mode="docs")], mode="docs")
+            write_docs_review_results([_review_entry()])
 
         cypher = mock_gc.query.call_args_list[1][0][0]
         for bad in (
@@ -154,59 +155,6 @@ class TestAxisIsolationDocsMode:
             assert bad not in cypher, f"docs mode wrote shared slot: {bad!r}"
 
 
-class TestAxisIsolationFullMode:
-    def test_full_mode_writes_shared_and_both_axis_scalars(self) -> None:
-        mock_gc, cm = _capture_cypher_params()
-        with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
-            write_review_results([_review_entry(review_mode="full")], mode="full")
-
-        cypher = mock_gc.query.call_args[0][0]
-        # Full mode writes the shared aggregate slots
-        assert "sn.reviewer_score =" in cypher
-        assert "sn.reviewer_scores =" in cypher
-        # And keeps both axis scalars coherent for downstream fallback readers
-        assert "reviewer_score_name" in cypher
-        assert "reviewer_score_docs" in cypher
-
-
-class TestMigrationFallback:
-    """Reader queries use coalesce(axis, shared) so pre-migration rows still
-    surface on the name axis when only shared slots were ever populated."""
-
-    def test_fetch_low_score_sources_uses_coalesce(self) -> None:
-        from imas_codex.standard_names.graph_ops import fetch_low_score_sources
-
-        mock_gc = MagicMock()
-        mock_gc.query = MagicMock(return_value=[])
-        cm = MagicMock()
-        cm.__enter__ = MagicMock(return_value=mock_gc)
-        cm.__exit__ = MagicMock(return_value=False)
-        with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
-            fetch_low_score_sources(min_score=0.65)
-
-        cypher = mock_gc.query.call_args[0][0]
-        assert "coalesce" in cypher.lower()
-        assert "reviewer_score_name" in cypher
-        assert "reviewer_score" in cypher  # shared fallback
-
-    def test_fetch_review_feedback_uses_coalesce(self) -> None:
-        from imas_codex.standard_names.graph_ops import (
-            fetch_review_feedback_for_sources,
-        )
-
-        mock_gc = MagicMock()
-        mock_gc.query = MagicMock(return_value=[])
-        cm = MagicMock()
-        cm.__enter__ = MagicMock(return_value=mock_gc)
-        cm.__exit__ = MagicMock(return_value=False)
-        with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
-            fetch_review_feedback_for_sources(["dd:x"])
-
-        cypher = mock_gc.query.call_args[0][0]
-        assert "coalesce" in cypher.lower()
-        assert "reviewer_score_name" in cypher
-
-
 class TestPresenceGuard:
     """Pipeline guard blocks same-axis overwrite unless --force."""
 
@@ -216,20 +164,7 @@ class TestPresenceGuard:
         )
 
         row = {
-            "reviewer_scores": None,
             "reviewer_scores_name": {"grammar": 16},
-            "reviewer_scores_docs": None,
-        }
-        assert _axis_overwrite_blocked(row, "name") is True
-
-    def test_name_axis_blocked_by_full_mode_aggregate(self) -> None:
-        from imas_codex.standard_names.review.pipeline import (
-            _axis_overwrite_blocked,
-        )
-
-        row = {
-            "reviewer_scores": {"grammar": 16, "semantic": 18},
-            "reviewer_scores_name": None,
             "reviewer_scores_docs": None,
         }
         assert _axis_overwrite_blocked(row, "name") is True
@@ -240,7 +175,6 @@ class TestPresenceGuard:
         )
 
         row = {
-            "reviewer_scores": None,
             "reviewer_scores_name": None,
             "reviewer_scores_docs": {"description_quality": 17},
         }
@@ -253,7 +187,6 @@ class TestPresenceGuard:
         )
 
         row = {
-            "reviewer_scores": None,
             "reviewer_scores_name": {"grammar": 16},
             "reviewer_scores_docs": None,
         }
@@ -266,24 +199,10 @@ class TestPresenceGuard:
         )
 
         row = {
-            "reviewer_scores": None,
             "reviewer_scores_name": None,
             "reviewer_scores_docs": {"description_quality": 17},
         }
         assert _axis_overwrite_blocked(row, "name") is False
-
-    def test_full_mode_write_not_blocked_by_shared_slot(self) -> None:
-        """Full-mode re-review should not be blocked by own prior aggregate."""
-        from imas_codex.standard_names.review.pipeline import (
-            _axis_overwrite_blocked,
-        )
-
-        row = {
-            "reviewer_scores": {"grammar": 16},
-            "reviewer_scores_name": None,
-            "reviewer_scores_docs": None,
-        }
-        assert _axis_overwrite_blocked(row, "full") is False
 
     def test_empty_row_never_blocks(self) -> None:
         from imas_codex.standard_names.review.pipeline import (
@@ -291,10 +210,8 @@ class TestPresenceGuard:
         )
 
         row = {
-            "reviewer_scores": None,
             "reviewer_scores_name": None,
             "reviewer_scores_docs": None,
         }
         assert _axis_overwrite_blocked(row, "name") is False
         assert _axis_overwrite_blocked(row, "docs") is False
-        assert _axis_overwrite_blocked(row, "full") is False

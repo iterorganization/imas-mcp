@@ -129,7 +129,7 @@ def _fetch_candidates(
     """Fetch StandardName nodes eligible for export from the graph.
 
     Returns dicts with all catalog-relevant properties plus ``origin``,
-    ``cocos``, ``reviewer_score``, ``pipeline_status``.
+    ``cocos``, ``reviewer_score_name``, ``pipeline_status``.
     """
     from imas_codex.graph.client import GraphClient
 
@@ -290,7 +290,7 @@ def _run_gate_c(
     excluded_unreviewed = 0
 
     for cand in candidates:
-        score = cand.get("reviewer_score")
+        score = cand.get("reviewer_score_name")
 
         # Unreviewed check
         if score is None:
@@ -591,9 +591,9 @@ def run_export(
     staging_dir:
         Path to the staging directory. Created if it doesn't exist.
     min_score:
-        Minimum ``reviewer_score`` for inclusion (default 0.65).
+        Minimum ``reviewer_score_name`` for inclusion (default 0.65).
     include_unreviewed:
-        Include names without a ``reviewer_score``.
+        Include names without a ``reviewer_score_name``.
     min_description_score:
         Optional secondary threshold on description sub-score.
     domain:

@@ -143,29 +143,23 @@ async def test_name_review_bootstraps_reviewer_score_when_null(monkeypatch):
 
 
 # ===========================================================================
-# Test 2 — name review leaves reviewer_score if already set
+# Test 2 — name review never writes the shared reviewer_score slot
 # ===========================================================================
 
 
 @pytest.mark.asyncio
 async def test_name_review_leaves_reviewer_score_if_set(monkeypatch):
-    """Axis-split (rc22 C3): name review never writes the shared reviewer_score
-    slot. Any pre-existing shared-slot value is left untouched because the
-    name-mode Cypher SET clause does not assign it."""
+    """Axis-split: write_name_review_results Cypher must not write any
+    unqualified ``sn.reviewer_score =`` (only ``sn.reviewer_score_name``)."""
     import inspect
 
-    from imas_codex.standard_names.graph_ops import write_review_results
+    from imas_codex.standard_names.graph_ops import write_name_review_results
 
-    source = inspect.getsource(write_review_results)
-    # Extract the name-mode block only (between `if mode == "name"` and the
-    # next `elif mode ==`).
-    name_block_start = source.index('if mode == "name"')
-    name_block_end = source.index("elif mode ==", name_block_start)
-    name_block = source[name_block_start:name_block_end]
-    # Name-mode must not touch sn.reviewer_score (shared slot is full-only).
-    assert "sn.reviewer_score =" not in name_block
-    # Name-mode must write the axis scalar.
-    assert "sn.reviewer_score_name = b.reviewer_score_name" in name_block
+    source = inspect.getsource(write_name_review_results)
+    # Must not touch the old shared slot.
+    assert "sn.reviewer_score =" not in source
+    # Must write the axis scalar.
+    assert "sn.reviewer_score_name" in source
 
 
 # ===========================================================================
@@ -178,22 +172,15 @@ async def test_docs_review_never_writes_reviewer_score(monkeypatch):
     """Docs review mode must never SET sn.reviewer_score."""
     import inspect
 
-    from imas_codex.standard_names.graph_ops import write_review_results
+    from imas_codex.standard_names.graph_ops import write_docs_review_results
 
-    source = inspect.getsource(write_review_results)
+    source = inspect.getsource(write_docs_review_results)
 
-    # Find the docs-mode Cypher section
-    # Between 'elif mode == "docs":' and the next 'elif mode == "full":'
-    docs_start = source.index('elif mode == "docs":')
-    docs_end = source.index('elif mode == "full":', docs_start)
-    docs_section = source[docs_start:docs_end]
-
-    # Docs section must NOT contain 'sn.reviewer_score ='
-    # (it sets sn.reviewer_score_docs, not sn.reviewer_score)
-    assert "sn.reviewer_score =" not in docs_section, (
+    # Must NOT contain 'sn.reviewer_score =' (it sets sn.reviewer_score_docs only)
+    assert "sn.reviewer_score =" not in source, (
         "Docs mode must never write sn.reviewer_score"
     )
-    assert "sn.reviewer_score_docs" in docs_section
+    assert "sn.reviewer_score_docs" in source
 
 
 # ===========================================================================
@@ -378,30 +365,29 @@ def test_turn_phase_budget_sums_to_one():
 
 
 # ===========================================================================
-# Test 8 — full mode writes all three scores
+# Test 8 — each axis writer only writes its own score slot
 # ===========================================================================
 
 
-def test_full_mode_writes_all_three_scores():
-    """--target full review's Cypher must write reviewer_score,
-    reviewer_score_name, and reviewer_score_docs."""
+def test_axis_writers_are_isolated():
+    """write_name_review_results must not SET reviewer_score_docs slots and
+    write_docs_review_results must not SET reviewer_score_name slots."""
     import inspect
 
-    from imas_codex.standard_names.graph_ops import write_review_results
+    from imas_codex.standard_names.graph_ops import (
+        write_docs_review_results,
+        write_name_review_results,
+    )
 
-    source = inspect.getsource(write_review_results)
+    name_source = inspect.getsource(write_name_review_results)
+    docs_source = inspect.getsource(write_docs_review_results)
 
-    # Find the full-mode Cypher section
-    full_start = source.index('elif mode == "full":')
-    # Find the next else clause
-    full_end = source.index("else:", full_start)
-    full_section = source[full_start:full_end]
-
-    assert "sn.reviewer_score = b.reviewer_score" in full_section
-    assert "sn.reviewer_score_name" in full_section
-    assert "sn.reviewer_score_docs" in full_section
-    assert "sn.reviewed_name_at" in full_section
-    assert "sn.reviewed_docs_at" in full_section
+    # Name writer must not SET docs slots
+    assert "reviewer_score_docs" not in name_source
+    assert "sn.reviewed_docs_at" not in name_source
+    # Docs writer must not SET name slots
+    assert "reviewer_score_name" not in docs_source
+    assert "sn.reviewed_name_at =" not in docs_source
 
 
 # ===========================================================================
