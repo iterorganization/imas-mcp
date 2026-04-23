@@ -2228,28 +2228,22 @@ def sn_import(
 @sn.command("clear")
 @click.option("--dry-run", is_flag=True, help="Preview without modifying the graph")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
-@click.option(
-    "--no-reseed",
-    is_flag=True,
-    help="Skip the automatic ISN grammar re-seed after clearing.",
-)
-def sn_clear(dry_run: bool, force: bool, no_reseed: bool) -> None:
-    """Wipe the entire Standard Names subsystem from the graph.
+def sn_clear(dry_run: bool, force: bool) -> None:
+    """Wipe every Standard Name the pipeline has produced.
 
-    Deletes every node the SN pipeline owns — StandardName, Review,
-    StandardNameSource, VocabGap, SNRun, GrammarToken, GrammarSegment,
-    GrammarTemplate, ISNGrammarVersion — and then re-syncs the ISN
-    grammar spec from the installed ``imas_standard_names`` package so
-    the grammar is immediately available for the next ``sn run``.
+    Deletes the five pipeline-output labels: StandardName, Review,
+    StandardNameSource, VocabGap, SNRun. ISN grammar nodes
+    (GrammarToken, GrammarSegment, GrammarTemplate, ISNGrammarVersion)
+    are ISN-authoritative reference data and stay in the graph — use
+    ``sn sync-grammar`` to refresh them after an ISN release.
 
     For scoped deletes (by status, source, IDS, score tier, …) use
     ``sn prune`` instead.
 
     \b
     Examples:
-      imas-codex sn clear --dry-run               # Preview the wipe
-      imas-codex sn clear --force                 # Full wipe + re-seed
-      imas-codex sn clear --force --no-reseed     # Wipe without re-seed
+      imas-codex sn clear --dry-run    # Preview the wipe
+      imas-codex sn clear --force      # Full wipe (non-interactive)
     """
     from imas_codex.standard_names.graph_ops import clear_sn_subsystem
 
@@ -2257,39 +2251,30 @@ def sn_clear(dry_run: bool, force: bool, no_reseed: bool) -> None:
         preview = clear_sn_subsystem(dry_run=True)
         total = sum(preview.values())
         if total == 0:
-            console.print("No SN subsystem nodes to delete.")
-            if not no_reseed and not dry_run:
-                _run_sync_grammar(dry_run=False, verbose=False)
+            console.print("No SN pipeline nodes to delete.")
             return
 
-        console.print("[bold]Full SN subsystem wipe preview:[/bold]")
+        console.print("[bold]SN pipeline wipe preview:[/bold]")
         for label, n in preview.items():
             if n:
                 console.print(f"  {label}: {n}")
         console.print(f"[bold]Total: {total}[/bold]")
-        if not no_reseed:
-            console.print(
-                "[dim]ISN grammar will be re-seeded from installed package "
-                "after the wipe.[/dim]"
-            )
 
         if dry_run:
             return
 
         if not force:
             click.confirm(
-                f"This will delete {total} SN-related nodes. Continue?",
+                f"This will delete {total} SN pipeline nodes. Continue?",
                 abort=True,
             )
 
-        deleted = clear_sn_subsystem(dry_run=False, reseed_grammar=not no_reseed)
+        deleted = clear_sn_subsystem(dry_run=False)
         total_deleted = sum(deleted.values())
         console.print(f"[green]Deleted {total_deleted} nodes[/green]")
         for label, n in deleted.items():
             if n:
                 console.print(f"  {label}: {n}")
-        if not no_reseed:
-            console.print("[green]✓ ISN grammar re-seeded[/green]")
     except click.Abort:
         raise
     except Exception as e:

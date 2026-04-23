@@ -31,8 +31,14 @@ class TestSnClearHelp:
     def test_clear_help_has_dry_run(self):
         assert "--dry-run" in self._help()
 
-    def test_clear_help_has_no_reseed(self):
-        assert "--no-reseed" in self._help()
+    def test_clear_help_has_no_reseed_flag_removed(self):
+        # Grammar is no longer touched by clear, so --no-reseed is gone.
+        assert "--no-reseed" not in self._help()
+
+    def test_clear_help_mentions_sync_grammar(self):
+        # The help text should point users at `sn sync-grammar` for
+        # grammar refreshes (since clear no longer touches grammar).
+        assert "sync-grammar" in self._help()
 
     def test_clear_help_has_no_status_flag(self):
         # Scoped flags must have moved to `sn prune`.
@@ -94,9 +100,30 @@ class TestSnSyncGrammarHelp:
 
 
 class TestClearSnSubsystemLabels:
-    """`clear_sn_subsystem` must touch every SN-owned label."""
+    """`clear_sn_subsystem` must touch every SN-pipeline-output label.
 
-    def test_counts_all_nine_labels_in_dry_run(self):
+    Grammar labels (GrammarToken, GrammarSegment, GrammarTemplate,
+    ISNGrammarVersion) are ISN-authoritative reference data and are
+    NEVER touched by `sn clear` — they are refreshed via
+    `sn sync-grammar` when ISN is upgraded.
+    """
+
+    _EXPECTED_LABELS = {
+        "StandardName",
+        "Review",
+        "StandardNameSource",
+        "VocabGap",
+        "SNRun",
+    }
+
+    _GRAMMAR_LABELS = {
+        "GrammarToken",
+        "GrammarSegment",
+        "GrammarTemplate",
+        "ISNGrammarVersion",
+    }
+
+    def test_counts_only_pipeline_output_labels(self):
         from imas_codex.standard_names import graph_ops
 
         fake_gc = MagicMock()
@@ -107,20 +134,11 @@ class TestClearSnSubsystemLabels:
         with patch.object(graph_ops, "GraphClient", return_value=fake_gc):
             result = graph_ops.clear_sn_subsystem(dry_run=True)
 
-        expected_labels = {
-            "StandardName",
-            "Review",
-            "StandardNameSource",
-            "VocabGap",
-            "SNRun",
-            "GrammarToken",
-            "GrammarSegment",
-            "GrammarTemplate",
-            "ISNGrammarVersion",
-        }
-        assert set(result.keys()) == expected_labels
+        assert set(result.keys()) == self._EXPECTED_LABELS
+        # Must not touch grammar labels.
+        assert not (set(result.keys()) & self._GRAMMAR_LABELS)
 
-    def test_dry_run_does_not_reseed(self):
+    def test_dry_run_does_not_touch_graph(self):
         from imas_codex.standard_names import graph_ops
 
         fake_gc = MagicMock()
@@ -128,17 +146,13 @@ class TestClearSnSubsystemLabels:
         fake_gc.__exit__.return_value = None
         fake_gc.query = MagicMock(return_value=[{"n": 0}])
 
-        with (
-            patch.object(graph_ops, "GraphClient", return_value=fake_gc),
-            patch(
-                "imas_codex.standard_names.grammar_sync.sync_isn_grammar_to_graph"
-            ) as mock_sync,
-        ):
-            graph_ops.clear_sn_subsystem(dry_run=True, reseed_grammar=True)
+        with patch.object(graph_ops, "GraphClient", return_value=fake_gc):
+            graph_ops.clear_sn_subsystem(dry_run=True)
 
-        mock_sync.assert_not_called()
+        queries = [call.args[0] for call in fake_gc.query.call_args_list]
+        assert not any("DETACH DELETE" in q for q in queries)
 
-    def test_wipe_deletes_all_labels_and_reseeds(self):
+    def test_wipe_deletes_only_pipeline_labels(self):
         from imas_codex.standard_names import graph_ops
 
         fake_gc = MagicMock()
@@ -146,38 +160,29 @@ class TestClearSnSubsystemLabels:
         fake_gc.__exit__.return_value = None
         fake_gc.query = MagicMock(return_value=[{"n": 5}])
 
-        with (
-            patch.object(graph_ops, "GraphClient", return_value=fake_gc),
-            patch(
-                "imas_codex.standard_names.grammar_sync.sync_isn_grammar_to_graph"
-            ) as mock_sync,
-        ):
-            graph_ops.clear_sn_subsystem(dry_run=False, reseed_grammar=True)
+        with patch.object(graph_ops, "GraphClient", return_value=fake_gc):
+            graph_ops.clear_sn_subsystem(dry_run=False)
 
-        # Should have issued 9 count queries + 9 DETACH DELETE statements
-        # (plus any queries the mocked reseed would make — which is
-        # patched out so only clear_sn_subsystem's own queries are here).
         queries = [call.args[0] for call in fake_gc.query.call_args_list]
         detach_deletes = [q for q in queries if "DETACH DELETE" in q]
-        assert len(detach_deletes) == 9
-        # Cover every label exactly once
-        for label in (
-            "StandardName",
-            "Review",
-            "StandardNameSource",
-            "VocabGap",
-            "SNRun",
-            "GrammarToken",
-            "GrammarTemplate",
-            "GrammarSegment",
-            "ISNGrammarVersion",
-        ):
+        # One DETACH DELETE per pipeline label — NOT 9.
+        assert len(detach_deletes) == len(self._EXPECTED_LABELS)
+        for label in self._EXPECTED_LABELS:
             assert any(label in q for q in detach_deletes), (
                 f"Missing DETACH DELETE for {label}"
             )
-        mock_sync.assert_called_once()
+        # Must NOT issue DETACH DELETE on any grammar label.
+        for label in self._GRAMMAR_LABELS:
+            assert not any(label in q for q in detach_deletes), (
+                f"clear_sn_subsystem should not touch grammar label {label}"
+            )
 
-    def test_no_reseed_skips_sync(self):
+    def test_wipe_never_calls_grammar_sync(self):
+        """Post-redesign: clear does not auto-reseed grammar.
+
+        Grammar is reference data that stays in the graph. Refreshing
+        is a separate concern exposed via `sn sync-grammar`.
+        """
         from imas_codex.standard_names import graph_ops
 
         fake_gc = MagicMock()
@@ -191,7 +196,7 @@ class TestClearSnSubsystemLabels:
                 "imas_codex.standard_names.grammar_sync.sync_isn_grammar_to_graph"
             ) as mock_sync,
         ):
-            graph_ops.clear_sn_subsystem(dry_run=False, reseed_grammar=False)
+            graph_ops.clear_sn_subsystem(dry_run=False)
 
         mock_sync.assert_not_called()
 
@@ -209,11 +214,8 @@ class TestClearSnSubsystemLabels:
         fake_gc.__exit__.return_value = None
         fake_gc.query = MagicMock(return_value=[{"n": 0}])
 
-        with (
-            patch.object(graph_ops, "GraphClient", return_value=fake_gc),
-            patch("imas_codex.standard_names.grammar_sync.sync_isn_grammar_to_graph"),
-        ):
-            graph_ops.clear_sn_subsystem(dry_run=False, reseed_grammar=False)
+        with patch.object(graph_ops, "GraphClient", return_value=fake_gc):
+            graph_ops.clear_sn_subsystem(dry_run=False)
 
         queries = [call.args[0] for call in fake_gc.query.call_args_list]
         review_idx = next(
