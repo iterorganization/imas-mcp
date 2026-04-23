@@ -247,6 +247,7 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         "id": f"{source_type}:{path}",
                         "source_type": source_type,
                         "source_id": path,
+                        "dd_path": path if source_type == "dd" else None,
                         "batch_key": batch.group_key,
                         "status": "extracted",
                         "description": item.get("description")
