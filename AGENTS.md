@@ -1039,6 +1039,37 @@ Two distinct write paths with different semantics:
 - **`_write_catalog_entries()` (import path)**: Catalog fields SET directly (overwrite) — catalog is authoritative. Graph-only fields (embedding, model, generated_at, confidence) preserved via coalesce.
 - **Review write path**: Each RD-quorum cycle's `Review` nodes are persisted to graph immediately (before the next cycle starts). After all cycles complete, `update_review_aggregates` selects the winning group (most-recent group with `resolution_method` ∈ {`quorum_consensus`, `authoritative_escalation`, `single_review`}) and mirrors the final scores onto the StandardName axis slots (`reviewer_score_name` / `reviewer_score_docs`, etc.).
 
+Both `write_standard_names()` and `_write_import_entries()` call the shared
+`_write_standard_name_edges(gc, names)` tail-pass helper (defined in `graph_ops.py`)
+after all nodes in the batch exist, ensuring pipeline parity between build and import paths.
+
+### StandardName Graph Edges
+
+All structural edges for `StandardName` nodes are emitted by the shared
+`_write_standard_name_edges(gc, names)` helper (tail pass — after primary MERGE).
+Forward-reference targets are MERGEd as bare placeholder nodes.
+
+| Edge | From | To | Source field / Derivation |
+|------|------|-----|--------------------------|
+| `HAS_ARGUMENT` | derived `StandardName` | parent `StandardName` | ISN parser: outermost unary prefix/postfix or projection layer; `{operator, operator_kind, [role, separator, axis, shape]}` |
+| `HAS_ERROR` | inner `StandardName` | uncertainty sibling | ISN parser: `upper_uncertainty` / `lower_uncertainty` / `uncertainty_index` prefix; direction inverted; `{error_type ∈ upper\|lower\|index}` |
+| `HAS_PREDECESSOR` | `StandardName` | predecessor | `predecessor` field (pipeline) or `deprecates` field (catalog import) |
+| `HAS_SUCCESSOR` | `StandardName` | successor | `successor` field (pipeline) or `superseded_by` field (catalog import) |
+| `IN_CLUSTER` | `StandardName` | `IMASSemanticCluster` | `primary_cluster_id` field |
+| `HAS_PHYSICS_DOMAIN` | `StandardName` | `PhysicsDomain` | `physics_domain` field (slug) → singleton seeded at graph init |
+| `HAS_UNIT` | `StandardName` | `Unit` | `unit` field — written by both paths (existing) |
+| `HAS_COCOS` | `StandardName` | `COCOS` | `cocos` integer — written by pipeline path (existing) |
+
+`HAS_ARGUMENT` / `HAS_ERROR` derivation is driven by the ISN parser in
+`imas_codex/standard_names/derivation.py` (pure logic, no graph access).
+Each name is peeled one layer only; the inner name, when itself written to the
+graph, runs its own derivation.  Names the parser cannot parse silently produce
+no derived edges.
+
+**Derivation module:** `imas_codex/standard_names/derivation.py` — exports
+`derive_edges(name: str) -> list[DerivedEdge]`.  Tests: `tests/standard_names/test_derivation.py`
+(D1–D16) and `tests/standard_names/test_graph_edge_writers.py` (G1–G10).
+
 ### PR-driven round-trip
 
 The graph is authoritative for pipeline state; the catalog is authoritative for human-reviewed editorial fields. The round-trip flow:

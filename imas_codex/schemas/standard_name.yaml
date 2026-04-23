@@ -712,6 +712,63 @@ classes:
         inlined: false
         annotations:
           relationship_type: REFERENCES
+      # --- Derivation relationship slots ---
+      arguments:
+        description: >-
+          StandardName nodes this name is derived from. Emitted by derive_edges()
+          for every derivation layer (unary prefix, unary postfix, projection,
+          binary). Populated in the tail pass after all nodes in a batch are
+          written. Forward-referenced targets are MERGE'd as bare stubs.
+        multivalued: true
+        range: StandardName
+        inlined: false
+        annotations:
+          relationship_type: HAS_ARGUMENT
+      error_siblings:
+        description: >-
+          StandardName nodes that are uncertainty variants of this name
+          (upper/lower/index error forms). Direction: parent → sibling.
+          Emitted for names whose outermost operator is upper_uncertainty,
+          lower_uncertainty, or uncertainty_index.
+        multivalued: true
+        range: StandardName
+        inlined: false
+        annotations:
+          relationship_type: HAS_ERROR
+      predecessor:
+        description: >-
+          The standard name this entry supersedes (deprecation lineage).
+          Scalar — a name has at most one direct predecessor. Derived from
+          the deprecates scalar at write time.
+        range: StandardName
+        inlined: false
+        annotations:
+          relationship_type: HAS_PREDECESSOR
+      successor:
+        description: >-
+          The standard name that supersedes this entry (deprecation lineage).
+          Scalar — a name has at most one direct successor. Derived from the
+          superseded_by scalar at write time.
+        range: StandardName
+        inlined: false
+        annotations:
+          relationship_type: HAS_SUCCESSOR
+      primary_cluster_ref:
+        description: >-
+          Primary semantic cluster this standard name belongs to. Derived from
+          the primary_cluster_id scalar at write time via IN_CLUSTER edge.
+        range: IMASSemanticCluster
+        inlined: false
+        annotations:
+          relationship_type: IN_CLUSTER
+      physics_domain_ref:
+        description: >-
+          Physics domain singleton node for this standard name. Derived from
+          the physics_domain scalar at write time. Mirrors the HAS_COCOS pattern.
+        range: PhysicsDomain
+        inlined: false
+        annotations:
+          relationship_type: HAS_PHYSICS_DOMAIN
 
   VocabGap:
     description: >-

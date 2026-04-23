@@ -837,6 +837,32 @@ classes:
           Ip: sign(dp/dψ) = -σBp.
         range: integer
 
+  PhysicsDomain:
+    description: >-
+      A physics domain vocabulary singleton. Each value in the PhysicsDomain
+      enum (from imas_standard_names.grammar.tag_types) is seeded as a singleton
+      PhysicsDomain node, enabling graph queries like "all signals in the
+      equilibrium domain" without string-matching.
+
+      Mirrors the COCOS singleton pattern: multiple entities link to the same
+      PhysicsDomain node via HAS_PHYSICS_DOMAIN relationships:
+        - StandardName -[:HAS_PHYSICS_DOMAIN]-> PhysicsDomain
+        - FacilitySignal -[:HAS_PHYSICS_DOMAIN]-> PhysicsDomain
+
+      Seeded at graph init from imas_codex.core.physics_domain.PhysicsDomain.
+    class_uri: common:PhysicsDomain
+    attributes:
+      id:
+        identifier: true
+        description: Slug identifier (e.g., "equilibrium", "transport", "general")
+        required: true
+      label:
+        description: >-
+          Human-readable label (e.g., "Equilibrium", "Transport").
+          Title-cased form of the slug.
+      description:
+        description: Extended description of the physics domain scope
+
   SignConvention:
     description: >-
       A physics sign/orientation convention extracted from wiki documentation.

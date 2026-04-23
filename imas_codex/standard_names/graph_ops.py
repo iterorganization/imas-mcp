@@ -500,6 +500,169 @@ def fetch_review_feedback_for_sources(
     return mapping
 
 
+def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
+    """Emit all structural edges for a batch of StandardName nodes.
+
+    Called as a tail pass **after** all nodes in the batch have been
+    MERGEd.  Forward-reference targets are MERGEd as bare placeholder
+    ``StandardName`` nodes so the edge can be created immediately; their
+    full properties arrive in the same batch, a later batch, or via
+    catalog import.
+
+    Handles the following edge types:
+
+    - ``HAS_ARGUMENT``: derived from the ISN grammar parser (one layer
+      per call: unary prefix/postfix, binary, or projection).
+    - ``HAS_ERROR``: uncertainty siblings — direction inverted relative to
+      the derivation (inner → uncertainty form).
+    - ``HAS_PREDECESSOR``: from ``predecessor`` or ``deprecates`` field.
+    - ``HAS_SUCCESSOR``: from ``successor`` or ``superseded_by`` field.
+    - ``IN_CLUSTER``: from ``primary_cluster_id`` field.
+    - ``HAS_PHYSICS_DOMAIN``: from ``physics_domain`` field.
+
+    Parameters
+    ----------
+    gc:
+        Active ``GraphClient`` context (already open — do not open a new
+        one inside this function).
+    names:
+        List of name dicts, each containing at minimum ``id``.  All other
+        fields are optional; missing fields produce no edges.
+    """
+    from imas_codex.standard_names.derivation import derive_edges
+
+    ha_batch: list[dict[str, Any]] = []  # HAS_ARGUMENT
+    he_batch: list[dict[str, Any]] = []  # HAS_ERROR
+
+    for n in names:
+        name_id = n.get("id")
+        if not name_id:
+            continue
+        for edge in derive_edges(name_id):
+            if edge.edge_type == "HAS_ARGUMENT":
+                ha_batch.append(
+                    {
+                        "from_name": edge.from_name,
+                        "to_name": edge.to_name,
+                        "operator": edge.props.get("operator"),
+                        "operator_kind": edge.props.get("operator_kind"),
+                        "role": edge.props.get("role"),
+                        "separator": edge.props.get("separator"),
+                        "axis": edge.props.get("axis"),
+                        "shape": edge.props.get("shape"),
+                    }
+                )
+            elif edge.edge_type == "HAS_ERROR":
+                he_batch.append(
+                    {
+                        "from_name": edge.from_name,
+                        "to_name": edge.to_name,
+                        "error_type": edge.props.get("error_type"),
+                    }
+                )
+
+    if ha_batch:
+        gc.query(
+            """
+            UNWIND $batch AS b
+            MERGE (src:StandardName {id: b.from_name})
+            MERGE (tgt:StandardName {id: b.to_name})
+            MERGE (src)-[r:HAS_ARGUMENT]->(tgt)
+            SET r.operator      = b.operator,
+                r.operator_kind = b.operator_kind,
+                r.role          = b.role,
+                r.separator     = b.separator,
+                r.axis          = b.axis,
+                r.shape         = b.shape
+            """,
+            batch=ha_batch,
+        )
+
+    if he_batch:
+        gc.query(
+            """
+            UNWIND $batch AS b
+            MERGE (src:StandardName {id: b.from_name})
+            MERGE (tgt:StandardName {id: b.to_name})
+            MERGE (src)-[r:HAS_ERROR]->(tgt)
+            SET r.error_type = b.error_type
+            """,
+            batch=he_batch,
+        )
+
+    # --- HAS_PREDECESSOR / HAS_SUCCESSOR ---
+    # Support both 'predecessor'/'successor' (pipeline) and
+    # 'deprecates'/'superseded_by' (catalog import).
+    pred_batch: list[dict[str, str]] = []
+    succ_batch: list[dict[str, str]] = []
+    for n in names:
+        name_id = n.get("id")
+        if not name_id:
+            continue
+        predecessor = n.get("predecessor") or n.get("deprecates")
+        if predecessor:
+            pred_batch.append({"from_name": name_id, "to_name": predecessor})
+        successor = n.get("successor") or n.get("superseded_by")
+        if successor:
+            succ_batch.append({"from_name": name_id, "to_name": successor})
+
+    if pred_batch:
+        gc.query(
+            """
+            UNWIND $batch AS b
+            MERGE (src:StandardName {id: b.from_name})
+            MERGE (tgt:StandardName {id: b.to_name})
+            MERGE (src)-[:HAS_PREDECESSOR]->(tgt)
+            """,
+            batch=pred_batch,
+        )
+
+    if succ_batch:
+        gc.query(
+            """
+            UNWIND $batch AS b
+            MERGE (src:StandardName {id: b.from_name})
+            MERGE (tgt:StandardName {id: b.to_name})
+            MERGE (src)-[:HAS_SUCCESSOR]->(tgt)
+            """,
+            batch=succ_batch,
+        )
+
+    # --- IN_CLUSTER ---
+    cluster_batch = [
+        {"sn_id": n["id"], "cluster_id": n["primary_cluster_id"]}
+        for n in names
+        if n.get("id") and n.get("primary_cluster_id")
+    ]
+    if cluster_batch:
+        gc.query(
+            """
+            UNWIND $batch AS b
+            MERGE (sn:StandardName {id: b.sn_id})
+            MERGE (c:IMASSemanticCluster {id: b.cluster_id})
+            MERGE (sn)-[:IN_CLUSTER]->(c)
+            """,
+            batch=cluster_batch,
+        )
+
+    # --- HAS_PHYSICS_DOMAIN ---
+    domain_batch = [
+        {"sn_id": n["id"], "domain_id": n["physics_domain"]}
+        for n in names
+        if n.get("id") and n.get("physics_domain")
+    ]
+    if domain_batch:
+        gc.query(
+            """
+            UNWIND $batch AS b
+            MERGE (sn:StandardName {id: b.sn_id})
+            MERGE (d:PhysicsDomain {id: b.domain_id})
+            MERGE (sn)-[:HAS_PHYSICS_DOMAIN]->(d)
+            """,
+            batch=domain_batch,
+        )
+
+
 def write_standard_names(
     names: list[dict[str, Any]],
     *,
@@ -742,6 +905,11 @@ def write_standard_names(
 
         # Create HAS_SEGMENT relationships: StandardName → GrammarToken
         token_miss_gaps = _write_segment_edges(gc, [n["id"] for n in names])
+
+        # Emit structural edges: HAS_ARGUMENT, HAS_ERROR, HAS_PREDECESSOR,
+        # HAS_SUCCESSOR, IN_CLUSTER, HAS_PHYSICS_DOMAIN.
+        # Tail pass — all nodes in this batch exist before edges are written.
+        _write_standard_name_edges(gc, names)
 
     # Persist token-miss gaps as VocabGap nodes (outside gc context —
     # write_vocab_gaps opens its own GraphClient)

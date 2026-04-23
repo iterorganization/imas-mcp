@@ -434,6 +434,14 @@ def _write_import_entries(
             batch=units_batch,
         )
 
+    # Emit structural edges: HAS_ARGUMENT, HAS_ERROR, HAS_PREDECESSOR,
+    # HAS_SUCCESSOR, IN_CLUSTER, HAS_PHYSICS_DOMAIN.
+    # Tail pass — all nodes in the batch exist before edges are written.
+    # 'deprecates' → HAS_PREDECESSOR, 'superseded_by' → HAS_SUCCESSOR.
+    from imas_codex.standard_names.graph_ops import _write_standard_name_edges
+
+    _write_standard_name_edges(gc, entries)
+
     written = len(entries)
     logger.info("Imported %d catalog entries to graph", written)
     return written

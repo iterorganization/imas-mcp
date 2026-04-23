@@ -2177,6 +2177,13 @@ classes:
         range: string
         annotations:
           required_after: enriched
+      physics_domain_ref:
+        description: >-
+          Physics domain singleton node for this signal. Derived from the
+          physics_domain scalar at write time. Mirrors the HAS_COCOS pattern.
+        range: PhysicsDomain
+        annotations:
+          relationship_type: HAS_PHYSICS_DOMAIN
       name:
         description: >-
           Human-readable signal name for display.

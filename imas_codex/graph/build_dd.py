@@ -2793,6 +2793,9 @@ def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
     # Create COCOS reference nodes and link to DDVersions
     _create_cocos_nodes(client)
 
+    # Create PhysicsDomain vocabulary singleton nodes
+    _create_physics_domain_nodes(client)
+
     # Link DDVersion nodes to their COCOS nodes
     versions_with_cocos = [v for v in version_data if v["cocos"] is not None]
     if versions_with_cocos:
@@ -2873,6 +2876,41 @@ def _create_cocos_nodes(client: GraphClient) -> None:
     )
 
     logger.debug("Created %d COCOS reference nodes", len(cocos_data))
+
+
+def _create_physics_domain_nodes(client: GraphClient) -> None:
+    """Create all PhysicsDomain vocabulary singleton nodes.
+
+    PhysicsDomain nodes are shared reference data (like COCOS and Unit nodes).
+    Each enum value from ``imas_codex.core.physics_domain.PhysicsDomain`` is
+    seeded as a singleton node with:
+      - id: the slug value (e.g., "equilibrium")
+      - label: title-cased human-readable label (e.g., "Equilibrium")
+
+    Multiple entities link to PhysicsDomain via HAS_PHYSICS_DOMAIN:
+      - StandardName -[:HAS_PHYSICS_DOMAIN]-> PhysicsDomain
+      - FacilitySignal -[:HAS_PHYSICS_DOMAIN]-> PhysicsDomain
+    """
+    from imas_codex.core.physics_domain import PhysicsDomain
+
+    domain_data = [
+        {
+            "id": domain.value,
+            "label": domain.name.replace("_", " ").title(),
+        }
+        for domain in PhysicsDomain
+    ]
+
+    client.query(
+        """
+        UNWIND $domains AS d
+        MERGE (pd:PhysicsDomain {id: d.id})
+        SET pd.label = d.label
+    """,
+        domains=domain_data,
+    )
+
+    logger.debug("Created %d PhysicsDomain reference nodes", len(domain_data))
 
 
 def _ensure_indexes(client: GraphClient) -> None:
