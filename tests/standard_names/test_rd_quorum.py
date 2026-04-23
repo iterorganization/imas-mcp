@@ -931,3 +931,66 @@ class TestParseDimScores:
 
         item = {"reviewer_scores": None}
         assert _parse_dim_scores(item, "names") == {}
+
+
+# ---------------------------------------------------------------------------
+# update_review_aggregates — graph_ops coverage
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateReviewAggregates:
+    """update_review_aggregates with a mocked GraphClient.
+
+    Verifies that the function fires the MERGE query and returns the
+    number of rows returned by the graph client.  The winning-group
+    selection logic described in the docstring is tested in-memory by
+    TestWinningGroupSelection above.
+    """
+
+    def test_empty_ids_returns_zero(self):
+        """Empty id list short-circuits without hitting the graph."""
+        from imas_codex.standard_names.graph_ops import update_review_aggregates
+
+        assert update_review_aggregates([]) == 0
+
+    def test_returns_row_count_from_graph(self):
+        """Returns the number of rows the GC query returns."""
+        from unittest.mock import MagicMock, patch
+
+        from imas_codex.standard_names.graph_ops import update_review_aggregates
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(
+            return_value=[{"id": "electron_temperature"}, {"id": "plasma_current"}]
+        )
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=mock_gc)
+        cm.__exit__ = MagicMock(return_value=False)
+
+        with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
+            count = update_review_aggregates(["electron_temperature", "plasma_current"])
+
+        assert count == 2
+        assert mock_gc.query.called
+        # The Cypher must reference review_count and review_mean_score
+        cypher = mock_gc.query.call_args[0][0]
+        assert "review_count" in cypher
+        assert "review_mean_score" in cypher
+
+    def test_query_passes_threshold_kwarg(self):
+        """Custom threshold is forwarded to the Cypher query."""
+        from unittest.mock import MagicMock, patch
+
+        from imas_codex.standard_names.graph_ops import update_review_aggregates
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"id": "electron_temperature"}])
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=mock_gc)
+        cm.__exit__ = MagicMock(return_value=False)
+
+        with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
+            update_review_aggregates(["electron_temperature"], threshold=0.3)
+
+        kwargs = mock_gc.query.call_args[1]
+        assert kwargs.get("threshold") == pytest.approx(0.3)

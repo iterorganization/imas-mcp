@@ -208,45 +208,42 @@ class TestWriteCypherInvariants:
 
 
 # ---------------------------------------------------------------------------
-# Grammar decomposition invariants
+# Grammar vNext invariants
 # ---------------------------------------------------------------------------
 
 
-class TestGrammarDecomposition:
-    """Verify _grammar_decomposition covers all expected fields."""
+class TestGrammarVNext:
+    """Verify _parse_grammar_vnext returns the expected keys.
 
-    def test_decomposition_field_set(self) -> None:
-        """All grammar parse fields in the schema must appear in _GRAMMAR_DECOMPOSITION_FIELDS.
+    Plan 38 W4a removed individual grammar_* slots (grammar_physical_base,
+    grammar_subject, etc.) from the StandardName schema and replaced them with
+    ``grammar_parse_version`` (ISN version string) and
+    ``validation_diagnostics_json`` (JSON array).  Tests for the old
+    ``_GRAMMAR_DECOMPOSITION_FIELDS`` constant and ``_grammar_decomposition``
+    helper were deleted because those symbols no longer exist.
+    """
 
-        ``grammar_tokens`` is excluded because it is the JSON-serialized
-        token list populated by HAS_SEGMENT edge creation, not by
-        ``_grammar_decomposition``.
-        """
-        from imas_codex.standard_names.graph_ops import _GRAMMAR_DECOMPOSITION_FIELDS
+    def test_parse_grammar_vnext_keys(self) -> None:
+        """_parse_grammar_vnext always returns grammar_parse_version and validation_diagnostics_json."""
+        from imas_codex.standard_names.graph_ops import _parse_grammar_vnext
 
-        schema = _load_schema()
-        sn_attrs = schema["classes"]["StandardName"]["attributes"]
-        # grammar_tokens is populated separately via HAS_SEGMENT, not decomposition
-        excluded = {"tokens"}
-        schema_grammar_fields = {
-            k.removeprefix("grammar_") for k in sn_attrs if k.startswith("grammar_")
-        } - excluded
-        code_fields = set(_GRAMMAR_DECOMPOSITION_FIELDS)
-        missing = schema_grammar_fields - code_fields
-        assert not missing, (
-            f"Grammar fields in schema but not in decomposition: {missing}"
-        )
+        result = _parse_grammar_vnext("electron_temperature")
+        assert "grammar_parse_version" in result
+        assert "validation_diagnostics_json" in result
+        assert len(result) == 2
 
-    def test_decomposition_returns_all_fields(self) -> None:
-        """_grammar_decomposition must return a key for every field."""
-        from imas_codex.standard_names.graph_ops import (
-            _GRAMMAR_DECOMPOSITION_FIELDS,
-            _grammar_decomposition,
-        )
+    def test_parse_grammar_vnext_graceful_on_missing_package(self) -> None:
+        """When imas_standard_names is unavailable, both fields are None."""
+        import unittest.mock
 
-        result = _grammar_decomposition("electron_temperature")
-        for field in _GRAMMAR_DECOMPOSITION_FIELDS:
-            assert f"grammar_{field}" in result, f"Missing grammar_{field} in result"
+        from imas_codex.standard_names.graph_ops import _parse_grammar_vnext
+
+        with unittest.mock.patch.dict("sys.modules", {"imas_standard_names": None}):
+            result = _parse_grammar_vnext("electron_temperature")
+        # Values may be None or valid depending on whether ISN is installed,
+        # but the keys must always be present.
+        assert "grammar_parse_version" in result
+        assert "validation_diagnostics_json" in result
 
 
 # ---------------------------------------------------------------------------

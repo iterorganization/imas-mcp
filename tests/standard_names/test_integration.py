@@ -208,6 +208,9 @@ class TestCoalesceSafety:
     an earlier catalog import.
     """
 
+    # Plan 38 W4a removed individual grammar_* slots (grammar_physical_base,
+    # grammar_subject, grammar_component, etc.) from the StandardName schema.
+    # grammar_parse_version is the only grammar field written via coalesce now.
     _COALESCE_FIELDS = [
         ("pipeline_status", "b.pipeline_status, sn.pipeline_status"),
         ("documentation", "b.documentation, sn.documentation"),
@@ -218,12 +221,7 @@ class TestCoalesceSafety:
         ("validity_domain", "b.validity_domain, sn.validity_domain"),
         ("constraints", "b.constraints, sn.constraints"),
         ("confidence", "b.confidence, sn.confidence"),
-        ("grammar_physical_base", "b.grammar_physical_base, sn.grammar_physical_base"),
-        ("grammar_subject", "b.grammar_subject, sn.grammar_subject"),
-        ("grammar_component", "b.grammar_component, sn.grammar_component"),
-        ("grammar_coordinate", "b.grammar_coordinate, sn.grammar_coordinate"),
-        ("grammar_position", "b.grammar_position, sn.grammar_position"),
-        ("grammar_process", "b.grammar_process, sn.grammar_process"),
+        ("grammar_parse_version", "b.grammar_parse_version, sn.grammar_parse_version"),
     ]
 
     def test_build_does_not_erase_imported_data(self) -> None:
@@ -282,7 +280,12 @@ class TestCoalesceSafety:
         assert len(batch) == 1
         item = batch[0]
 
-        # All optional fields must appear in the batch (value may be None)
+        # All optional fields must appear in the batch (value may be None).
+        # Plan 38 W4a dropped individual grammar_* slots (grammar_physical_base,
+        # grammar_subject, etc.) from the schema; they are no longer written.
+        # The grammar_* fields now written are grammar_parse_version (version
+        # string) and validation_diagnostics_json, both computed by
+        # _parse_grammar_vnext.
         required_keys = {
             "id",
             "source_types",
@@ -312,19 +315,8 @@ class TestCoalesceSafety:
             "review_input_hash",
             "embedding",
             "embedded_at",
-            "grammar_component",
-            "grammar_coordinate",
-            "grammar_subject",
-            "grammar_physical_base",
-            "grammar_geometric_base",
-            "grammar_process",
-            "grammar_transformation",
-            "grammar_object",
-            "grammar_geometry",
-            "grammar_position",
-            "grammar_device",
-            "grammar_secondary_base",
-            "grammar_binary_operator",
+            "grammar_parse_version",
+            "validation_diagnostics_json",
         }
         missing = required_keys - set(item.keys())
         assert not missing, (
@@ -333,13 +325,14 @@ class TestCoalesceSafety:
         )
 
         # Fields absent from source must be None (not some unexpected value).
-        # Grammar fields are auto-computed from the name via _grammar_decomposition,
-        # and link_status is derived from the links field, so exclude them.
+        # grammar_parse_version and validation_diagnostics_json are auto-computed
+        # by _parse_grammar_vnext; link_status is derived from the links field.
         auto_computed = {
             "id",
             "source_types",
             "link_status",
-            *(k for k in required_keys if k.startswith("grammar_")),
+            "grammar_parse_version",
+            "validation_diagnostics_json",
         }
         for key in required_keys - auto_computed:
             assert item[key] is None, (
