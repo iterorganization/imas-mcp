@@ -331,19 +331,23 @@ max-cycles = 3
 #   3 models → full RD-quorum: models[0] primary (blind), models[1] secondary (blind),
 #              models[2] escalator (sees both, authoritative)
 #   4+       → rejected at config load time (ValueError)
+#
+# 2-model blind-pair chain (no escalator). Gemini 3.1 Pro chosen over
+# GPT-5.4 to maximise family diversity against the Anthropic primary:
+# Google RLHF tradition disagrees differently from OpenAI-style. April
+# 2026 leaderboards show GPQA Opus 91.3 / Gemini 3.1 Pro 91.9 / GPT-5.4
+# 92.8 — all within 1.5%, so we optimise for independence not ceiling.
 models = [
-  "openrouter/anthropic/claude-opus-4.6",    # cycle 0 primary (blind)
-  "openrouter/openai/gpt-5.4",              # cycle 1 secondary (blind)
-  "openrouter/anthropic/claude-sonnet-4.6", # cycle 2 escalator (sees both)
+  "openrouter/anthropic/claude-opus-4.6",           # cycle 0 primary (blind)
+  "openrouter/google/gemini-3.1-pro-preview",       # cycle 1 secondary (blind)
 ]
 
 [tool.imas-codex.sn.review.docs]
 # Reviewer model chain for the documentation-quality axis.
-# Same length semantics as [sn.review.names].
+# Same length semantics as [sn.review.names]. Same primary+secondary pair.
 models = [
   "openrouter/anthropic/claude-opus-4.6",
-  "openrouter/anthropic/claude-sonnet-4.6",
-  "openrouter/openai/gpt-5.4",
+  "openrouter/google/gemini-3.1-pro-preview",
 ]
 
 [tool.imas-codex.sn.benchmark]
