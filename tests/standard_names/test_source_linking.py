@@ -175,3 +175,66 @@ class TestGraphOpsHelpers:
         _assert_match_before_set(cypher)
         _assert_writes_produced_sn_id(cypher)
         _assert_merges_produced_edge(cypher)
+
+
+# =====================================================================
+# Error-sibling skip: deterministic siblings have no StandardNameSource
+# =====================================================================
+
+
+def test_update_sources_skips_error_siblings():
+    """Candidates with model='deterministic:dd_error_modifier' must NOT
+    be passed to the linking Cypher — their source IMASNodes are never
+    extracted as StandardNameSource, so the MATCH would always miss and
+    produce false-positive 'linking gap' warnings.
+    """
+    wlog = logging.LoggerAdapter(logging.getLogger("test"), {})
+    candidates = [
+        # Regular candidate — should be linked
+        {
+            "id": "elongation",
+            "source_id": "equilibrium/time_slice/profiles_1d/elongation",
+            "model": "openrouter/anthropic/claude-sonnet-4.6",
+        },
+        # Error sibling — must be skipped
+        {
+            "id": "upper_uncertainty_of_elongation",
+            "source_id": "equilibrium/time_slice/profiles_1d/elongation_error_upper",
+            "model": "deterministic:dd_error_modifier",
+        },
+        {
+            "id": "lower_uncertainty_of_elongation",
+            "source_id": "equilibrium/time_slice/profiles_1d/elongation_error_lower",
+            "model": "deterministic:dd_error_modifier",
+        },
+    ]
+    with patch("imas_codex.graph.client.GraphClient") as mock_gc:
+        mock_gc.return_value.__enter__.return_value.query.return_value = [{"linked": 1}]
+        _update_sources_after_compose(candidates, "dd", wlog)
+
+    call = mock_gc.return_value.__enter__.return_value.query.call_args
+    batch = call.kwargs.get("batch") or (call.args[1] if len(call.args) > 1 else None)
+    assert batch is not None, "batch param not passed to query"
+    assert len(batch) == 1, (
+        f"Expected 1 linking candidate (error siblings skipped), got {len(batch)}: "
+        f"{batch}"
+    )
+    assert batch[0]["sn_id"] == "elongation"
+
+
+def test_update_sources_all_error_siblings_no_query():
+    """When every candidate is an error sibling, no query should be issued."""
+    wlog = logging.LoggerAdapter(logging.getLogger("test"), {})
+    candidates = [
+        {
+            "id": f"upper_uncertainty_of_{base}",
+            "source_id": f"equilibrium/time_slice/profiles_1d/{base}_error_upper",
+            "model": "deterministic:dd_error_modifier",
+        }
+        for base in ("elongation", "triangularity")
+    ]
+    with patch("imas_codex.graph.client.GraphClient") as mock_gc:
+        _update_sources_after_compose(candidates, "dd", wlog)
+    assert not mock_gc.return_value.__enter__.return_value.query.called, (
+        "No source linking query should run when batch is empty after filtering"
+    )

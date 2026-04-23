@@ -876,12 +876,21 @@ def _process_attachments(
 def _update_sources_after_compose(
     candidates: list[dict], source: str, wlog: logging.LoggerAdapter
 ) -> None:
-    """Update StandardNameSource nodes to 'composed' after successful batch composition."""
+    """Update StandardNameSource nodes to 'composed' after successful batch composition.
+
+    Error-sibling candidates (minted deterministically, model=
+    ``deterministic:dd_error_modifier``) are excluded — their source
+    IMASNodes are not extracted as StandardNameSource, so linking them
+    here would produce false-positive "linking gap" warnings.  Their
+    provenance is carried on ``StandardName.source_paths``.
+    """
     from imas_codex.graph.client import GraphClient
 
     source_type = "dd" if source == "dd" else "signals"
     batch = []
     for c in candidates:
+        if c.get("model") == "deterministic:dd_error_modifier":
+            continue  # error siblings have no StandardNameSource
         source_id = c.get("source_id")
         sn_id = c.get("id")
         if source_id and sn_id:

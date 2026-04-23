@@ -1397,13 +1397,17 @@ def sn_status() -> None:
                         """
                         MATCH (sn:StandardName)
                         WITH count(sn) AS total_sn,
-                             count(CASE WHEN NOT (sn)<-[:PRODUCED_NAME]-() THEN 1 END) AS orphan_sn
+                             count(CASE WHEN NOT (sn)<-[:PRODUCED_NAME]-()
+                                         AND sn.model <> 'deterministic:dd_error_modifier'
+                                   THEN 1 END) AS orphan_sn,
+                             count(CASE WHEN sn.model = 'deterministic:dd_error_modifier'
+                                   THEN 1 END) AS error_siblings
                         MATCH (s:StandardNameSource)
-                        WITH total_sn, orphan_sn,
+                        WITH total_sn, orphan_sn, error_siblings,
                              count(CASE WHEN s.status IN ['composed','attached']
                                          AND NOT (s)-[:PRODUCED_NAME]->()
                                    THEN 1 END) AS orphan_src
-                        RETURN total_sn, orphan_sn, orphan_src
+                        RETURN total_sn, orphan_sn, orphan_src, error_siblings
                         """
                     )
                 ),
@@ -1420,8 +1424,12 @@ def sn_status() -> None:
         li_table.add_column("Metric")
         li_table.add_column("Count", justify="right")
         li_table.add_row(
-            "Orphan StandardName (no PRODUCED_NAME edge)",
+            "Orphan StandardName (no PRODUCED_NAME edge, excl. error siblings)",
             str(integrity.get("orphan_sn", 0)),
+        )
+        li_table.add_row(
+            "Error-sibling StandardNames (deterministic, no source link expected)",
+            str(integrity.get("error_siblings", 0)),
         )
         li_table.add_row(
             "Orphan composed/attached source (no PRODUCED_NAME edge)",
