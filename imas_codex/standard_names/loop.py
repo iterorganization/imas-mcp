@@ -1,9 +1,10 @@
-"""SN loop — drives ``sn run`` across physics domains.
+"""SN loop — drives ``sn run`` with one-domain-per-turn rotation.
 
-Picks extract-eligible physics domains (ordered by backlog), allocates a
-fair-share budget, runs one :func:`run_turn` for each, persists an
-:class:`~imas_codex.graph.models.SNRun` node, and stops when the total
-cost budget is exhausted or the user interrupts.
+Picks the stalest extract-eligible physics domain via stale-first
+rotation (oldest ``SNRun.ended_at`` wins, with eligible-source count as
+tiebreak), runs one :func:`run_turn` on it with the full remaining
+budget, and repeats until the budget drops below the turn-entry floor or
+no domain has eligible work.
 
 Entry point: :func:`run_sn_loop`.
 """
@@ -19,6 +20,11 @@ from typing import Any
 from imas_codex.core.node_categories import SN_SOURCE_CATEGORIES
 
 logger = logging.getLogger(__name__)
+
+# Minimum remaining budget required to start a new turn.  Below this
+# threshold the loop stops cleanly — a viable turn needs enough budget
+# to fund at least one compose batch plus a review pass (~$0.75).
+MIN_VIABLE_TURN: float = 0.75
 
 
 @dataclass
@@ -70,6 +76,125 @@ def _count_eligible_domains(
     return filtered
 
 
+def _existing_domain_targets(
+    only_domain: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return domains that have un-enriched / un-reviewed names.
+
+    Fallback when no extract-eligible paths remain, or when
+    ``--skip-generate`` is set. Returns domains with at least one
+    StandardName in an incomplete state.
+    """
+    from imas_codex.graph.client import GraphClient
+
+    cypher = """
+        MATCH (sn:StandardName)
+        WHERE sn.physics_domain IS NOT NULL
+          AND (
+               sn.pipeline_status IN ['named', 'drafted']
+            OR sn.reviewer_score_name IS NULL
+          )
+        RETURN sn.physics_domain AS domain, count(*) AS remaining
+        ORDER BY remaining DESC
+    """
+    with GraphClient() as gc:
+        rows = list(gc.query(cypher))
+    filtered = [r for r in rows if r["domain"]]
+    if only_domain:
+        filtered = [r for r in filtered if r["domain"] == only_domain]
+    return filtered
+
+
+def _pick_stalest_domain(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """From eligible domains, pick the one whose last SNRun is oldest.
+
+    Queries the graph for the most recent ``SNRun.ended_at`` per candidate
+    domain (via ``domains_touched``).  Returns the candidate with the
+    oldest last run.  Tiebreak: domain with more remaining work wins.
+    Domains never previously run (no matching SNRun) sort first.
+    """
+    if len(candidates) == 1:
+        return candidates[0]
+
+    from imas_codex.graph.client import GraphClient
+
+    domain_names = [c["domain"] for c in candidates]
+
+    cypher = """
+        UNWIND $domains AS dom
+        OPTIONAL MATCH (rr:SNRun)
+          WHERE dom IN rr.domains_touched
+            AND rr.ended_at IS NOT NULL
+        WITH dom, max(rr.ended_at) AS last_run
+        RETURN dom AS domain, last_run
+    """
+    with GraphClient() as gc:
+        rows = list(gc.query(cypher, domains=domain_names))
+
+    if not rows:
+        return candidates[0]
+
+    last_run_map = {r["domain"]: r["last_run"] for r in rows}
+
+    # Sort: null last_run (never run) first, then oldest, then most remaining.
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+
+    def sort_key(entry: dict[str, Any]) -> tuple[int, datetime, int]:
+        lr = last_run_map.get(entry["domain"])
+        return (
+            0 if lr is None else 1,
+            lr if lr is not None else epoch,
+            -entry["remaining"],
+        )
+
+    candidates_sorted = sorted(candidates, key=sort_key)
+    winner = candidates_sorted[0]
+    logger.debug(
+        "Stale-first rotation: picked %s (last_run=%s, remaining=%d)",
+        winner["domain"],
+        last_run_map.get(winner["domain"]),
+        winner["remaining"],
+    )
+    return winner
+
+
+def select_next_domain(
+    *,
+    skip_generate: bool = False,
+    only_domain: str | None = None,
+) -> dict[str, Any] | None:
+    """Select the next domain for a turn via stale-first rotation.
+
+    Returns ``{"domain": str, "remaining": int}`` for the winning
+    domain, or ``None`` if no domain has eligible work.
+
+    When *only_domain* is set, rotation is bypassed — the explicit
+    user choice always wins (provided it has work).
+    """
+    if only_domain:
+        # Explicit user choice bypasses rotation
+        if skip_generate:
+            candidates = _existing_domain_targets(only_domain=only_domain)
+        else:
+            candidates = _count_eligible_domains(only_domain=only_domain)
+            if not candidates:
+                candidates = _existing_domain_targets(only_domain=only_domain)
+        return candidates[0] if candidates else None
+
+    # Find all eligible domains
+    if skip_generate:
+        candidates = _existing_domain_targets()
+    else:
+        candidates = _count_eligible_domains()
+        if not candidates:
+            candidates = _existing_domain_targets()
+
+    if not candidates:
+        return None
+
+    return _pick_stalest_domain(candidates)
+
+
 def _write_sn_run(summary: RunSummary) -> None:
     """Persist an SNRun node using the generated Pydantic model."""
     from imas_codex.graph.client import GraphClient
@@ -115,12 +240,17 @@ async def run_sn_loop(
     override_edits: list[str] | None = None,
     only: str | None = None,
 ) -> RunSummary:
-    """Drive the ``sn run`` loop across physics domains.
+    """Drive the ``sn run`` loop with one-domain-per-turn rotation.
 
-    Single-pass loop (no plateau detection): iterates extract-eligible
-    domains once in descending backlog order, runs one turn per domain,
-    stops when the total cost budget is exhausted. The caller drives
-    multi-turn iteration by re-invoking with ``turn_number+1``.
+    Each iteration picks ONE domain via stale-first rotation (oldest
+    ``SNRun.ended_at`` wins, eligible-source count as tiebreak) and
+    runs a full turn on it with the entire remaining budget.  The loop
+    stops when the remaining budget drops below :data:`MIN_VIABLE_TURN`
+    or no domain has eligible work.
+
+    When *only_domain* is set the rotation is bypassed — the explicit
+    user choice is used every iteration until budget runs out or the
+    domain has no remaining work.
     """
     from imas_codex.standard_names.turn import TurnConfig, run_turn
 
@@ -148,44 +278,43 @@ async def run_sn_loop(
         summary.stop_reason = "dry_run"
         return summary
 
+    remaining_budget = cost_limit
+
     try:
-        if skip_generate:
-            domains = _existing_domain_targets(only_domain=only_domain)
-        else:
-            domains = _count_eligible_domains(only_domain=only_domain)
-            if not domains:
-                domains = _existing_domain_targets(only_domain=only_domain)
+        while True:
+            # ── Turn-entry floor ──────────────────────────────────
+            if remaining_budget < MIN_VIABLE_TURN:
+                summary.stop_reason = "budget_exhausted"
+                logger.info(
+                    "Budget exhausted: $%.2f remaining < floor $%.2f",
+                    remaining_budget,
+                    MIN_VIABLE_TURN,
+                )
+                break
 
-        if not domains:
-            summary.stop_reason = "completed"
-            logger.info("No eligible domains; nothing to do.")
-            return summary
+            # ── Domain selection (stale-first rotation) ───────────
+            entry = select_next_domain(
+                skip_generate=skip_generate,
+                only_domain=only_domain,
+            )
+            if entry is None:
+                summary.stop_reason = "completed"
+                logger.info("No eligible domains; nothing to do.")
+                break
 
-        n_domains = len(domains)
-        per_domain_budget = max(0.01, cost_limit / max(n_domains, 1))
-
-        logger.info(
-            "Turn %d: %d eligible domain(s), budget $%.2f, per-domain $%.2f",
-            turn_number,
-            n_domains,
-            cost_limit,
-            per_domain_budget,
-        )
-
-        for entry in domains:
             dom = entry["domain"]
-            if summary.cost_spent >= cost_limit:
-                summary.stop_reason = "budget_exhausted"
-                break
+            logger.info(
+                "Turn %d → domain %s (remaining=%d, budget=$%.2f)",
+                turn_number,
+                dom,
+                entry["remaining"],
+                remaining_budget,
+            )
 
-            dom_budget = min(per_domain_budget, cost_limit - summary.cost_spent)
-            if dom_budget <= 0.01:
-                summary.stop_reason = "budget_exhausted"
-                break
-
+            # ── Run turn with full remaining budget ───────────────
             cfg = TurnConfig(
                 domain=dom,
-                cost_limit=dom_budget,
+                cost_limit=remaining_budget,
                 limit=per_domain_limit,
                 concurrency=concurrency,
                 dry_run=False,
@@ -202,8 +331,10 @@ async def run_sn_loop(
             )
             results = await run_turn(cfg)
 
+            # ── Accumulate counters ───────────────────────────────
+            turn_cost = 0.0
             for phase in results:
-                summary.cost_spent += phase.cost
+                turn_cost += phase.cost
                 if phase.name == "generate":
                     summary.names_composed += phase.count
                 elif phase.name == "enrich":
@@ -216,13 +347,16 @@ async def run_sn_loop(
                     summary.sources_reconciled += phase.count
                 elif phase.name == "link":
                     summary.links_resolved += phase.count
+
+            summary.cost_spent += turn_cost
+            remaining_budget -= turn_cost
             summary.domains_touched.add(dom)
 
             summary.pass_records.append(
                 {
                     "domain": dom,
                     "remaining_before": entry["remaining"],
-                    "budget": dom_budget,
+                    "budget": remaining_budget + turn_cost,
                     "phases": [
                         {
                             "name": r.name,
@@ -236,8 +370,14 @@ async def run_sn_loop(
                 }
             )
 
-        if summary.cost_spent >= cost_limit:
-            summary.stop_reason = "budget_exhausted"
+            # If zero cost was incurred, the domain had no actionable
+            # work — avoid an infinite loop by stopping.
+            if turn_cost <= 0.0:
+                logger.info(
+                    "Turn on %s produced zero cost; stopping to avoid loop.", dom
+                )
+                summary.stop_reason = "completed"
+                break
 
     except KeyboardInterrupt:
         summary.stop_reason = "interrupted"
@@ -247,35 +387,6 @@ async def run_sn_loop(
         _write_sn_run(summary)
 
     return summary
-
-
-def _existing_domain_targets(
-    only_domain: str | None = None,
-) -> list[dict[str, Any]]:
-    """Return domains that have un-enriched / un-reviewed names.
-
-    Fallback when no extract-eligible paths remain, or when
-    ``--skip-generate`` is set. Returns domains with at least one
-    StandardName in an incomplete state.
-    """
-    from imas_codex.graph.client import GraphClient
-
-    cypher = """
-        MATCH (sn:StandardName)
-        WHERE sn.physics_domain IS NOT NULL
-          AND (
-               sn.pipeline_status IN ['named', 'drafted']
-            OR sn.reviewer_score IS NULL
-          )
-        RETURN sn.physics_domain AS domain, count(*) AS remaining
-        ORDER BY remaining DESC
-    """
-    with GraphClient() as gc:
-        rows = list(gc.query(cypher))
-    filtered = [r for r in rows if r["domain"]]
-    if only_domain:
-        filtered = [r for r in filtered if r["domain"] == only_domain]
-    return filtered
 
 
 def summary_table(summary: RunSummary) -> dict[str, Any]:

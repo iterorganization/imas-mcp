@@ -173,12 +173,9 @@ class TestRunDdCompletion:
         """Once cost_spent >= cost_limit, the loop exits with budget_exhausted."""
         from imas_codex.standard_names.turn import PhaseResult
 
-        # First call: two domains eligible. run_turn burns the full
-        # budget on domain #1, so domain #2 must be skipped.
-        eligible = [
-            {"domain": "equilibrium", "remaining": 10},
-            {"domain": "magnetics", "remaining": 5},
-        ]
+        # run_turn burns the full budget on the selected domain.
+        # With one-domain-per-turn rotation, remaining drops below
+        # MIN_VIABLE_TURN and the loop stops.
 
         def make_results(*_args, **_kwargs):
             return [
@@ -189,7 +186,7 @@ class TestRunDdCompletion:
                     name="enrich", count=3, cost=0.0, skipped=False, error=None
                 ),
                 PhaseResult(
-                    name="review", count=3, cost=0.0, skipped=False, error=None
+                    name="review_names", count=3, cost=0.0, skipped=False, error=None
                 ),
                 PhaseResult(name="regen", count=0, cost=0.0, skipped=True, error=None),
             ]
@@ -197,8 +194,8 @@ class TestRunDdCompletion:
         mock_run = AsyncMock(side_effect=lambda cfg: make_results())
         with (
             patch(
-                "imas_codex.standard_names.loop._count_eligible_domains",
-                return_value=eligible,
+                "imas_codex.standard_names.loop.select_next_domain",
+                return_value={"domain": "equilibrium", "remaining": 10},
             ),
             patch(
                 "imas_codex.standard_names.turn.run_turn",
