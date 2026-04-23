@@ -280,6 +280,14 @@ async def run_sn_loop(
 
     remaining_budget = cost_limit
 
+    # Per-domain stall detection: track (last_remaining, stall_count).
+    # If a domain is selected with the same `remaining` count as its previous
+    # turn AND the turn made no forward progress (compose/review/regen), we
+    # count it as a stall.  Two consecutive stalls → stop to avoid infinite
+    # turn loops that burn $0.05/turn in extract/enrich overhead.
+    MAX_STALLS = 2
+    domain_stalls: dict[str, tuple[int, int]] = {}
+
     try:
         while True:
             # ── Turn-entry floor ──────────────────────────────────
@@ -309,6 +317,14 @@ async def run_sn_loop(
                 dom,
                 entry["remaining"],
                 remaining_budget,
+            )
+
+            # Snapshot forward-progress counters before the turn so we can
+            # detect whether the turn actually advanced anything.
+            prev_progress = (
+                summary.names_composed
+                + summary.names_reviewed
+                + summary.names_regenerated
             )
 
             # ── Run turn with full remaining budget ───────────────
@@ -378,6 +394,43 @@ async def run_sn_loop(
                 )
                 summary.stop_reason = "completed"
                 break
+
+            # ── Per-domain stall detection ────────────────────────
+            # Forward-progress check: if compose/review/regen didn't advance
+            # AND `remaining` is unchanged vs this domain's previous turn,
+            # record a stall.  Two consecutive stalls → stop to prevent
+            # budget drain on unrecoverable items (vocab gaps, invariant
+            # violations).
+            cur_progress = (
+                summary.names_composed
+                + summary.names_reviewed
+                + summary.names_regenerated
+            )
+            made_progress = cur_progress > prev_progress
+            prev_remaining, prev_stalls = domain_stalls.get(dom, (-1, 0))
+            if not made_progress and entry["remaining"] == prev_remaining:
+                prev_stalls += 1
+                domain_stalls[dom] = (entry["remaining"], prev_stalls)
+                logger.warning(
+                    "Domain %s stalled (remaining=%d unchanged, no progress) "
+                    "— stall %d/%d",
+                    dom,
+                    entry["remaining"],
+                    prev_stalls,
+                    MAX_STALLS,
+                )
+                if prev_stalls >= MAX_STALLS:
+                    logger.info(
+                        "Domain %s hit %d consecutive stalls — "
+                        "stopping to preserve budget ($%.2f remaining).",
+                        dom,
+                        MAX_STALLS,
+                        remaining_budget,
+                    )
+                    summary.stop_reason = "stalled"
+                    break
+            else:
+                domain_stalls[dom] = (entry["remaining"], 0)
 
     except KeyboardInterrupt:
         summary.stop_reason = "interrupted"

@@ -247,3 +247,171 @@ class TestRunDdCompletion:
             summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
 
         assert seen_ids == [summary.run_id]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Per-domain stall detection (B1 fix — infinite-turn-loop guard)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestStallDetection:
+    """A domain that re-selects with unchanged `remaining` AND makes zero
+    forward progress (no compose/review/regen) for 2 consecutive turns
+    must stop the loop with stop_reason="stalled".
+
+    This prevents the pre-fix failure mode where a domain with
+    unrecoverable items (vocab gaps, invariant violations) caused the
+    DD loop to spin forever at ~$0.05/turn in extract/enrich overhead.
+    """
+
+    @pytest.mark.asyncio
+    async def test_two_consecutive_stalls_stops_loop(self):
+        """Same domain, same remaining, zero progress → stop after 2 turns."""
+        from imas_codex.standard_names.turn import PhaseResult
+
+        # Each turn burns a small non-zero cost (extract/enrich overhead)
+        # but composes/reviews/regenerates nothing — exactly the stuck pattern.
+        def make_stuck_results(*_a, **_kw):
+            return [
+                PhaseResult(
+                    name="generate", count=0, cost=0.04, skipped=False, error=None
+                ),
+                PhaseResult(
+                    name="enrich", count=0, cost=0.01, skipped=False, error=None
+                ),
+                PhaseResult(
+                    name="review_names",
+                    count=0,
+                    cost=0.0,
+                    skipped=True,
+                    error=None,
+                ),
+            ]
+
+        mock_run = AsyncMock(side_effect=lambda cfg: make_stuck_results())
+        with (
+            patch(
+                "imas_codex.standard_names.loop.select_next_domain",
+                return_value={"domain": "equilibrium", "remaining": 5},
+            ),
+            patch(
+                "imas_codex.standard_names.turn.run_turn",
+                mock_run,
+            ),
+            patch("imas_codex.standard_names.loop._write_sn_run"),
+        ):
+            summary = await run_sn_loop(cost_limit=50.0, dry_run=False)
+
+        assert summary.stop_reason == "stalled"
+        # Turn 1 establishes baseline (prev_remaining=-1), turn 2 is stall 1/2,
+        # turn 3 is stall 2/2 → abort.
+        assert mock_run.await_count == 3
+        # Budget was preserved: well under the $50 cap.
+        assert summary.cost_spent < 1.0
+        assert summary.names_composed == 0
+
+    @pytest.mark.asyncio
+    async def test_progress_resets_stall_counter(self):
+        """A productive turn between two stalls resets the counter so the
+        loop does not stop prematurely when a domain recovers."""
+        from imas_codex.standard_names.turn import PhaseResult
+
+        # Sequence:
+        #   turn 1: stuck (cost>0, no compose)  → stall=1
+        #   turn 2: productive (3 composed)     → stall reset to 0
+        #   turn 3: stuck again                 → stall=1
+        #   turn 4: productive (exhausts budget via cost)
+        sequence = iter(
+            [
+                # turn 1 — stuck
+                [
+                    PhaseResult(
+                        name="generate", count=0, cost=0.05, skipped=False, error=None
+                    ),
+                ],
+                # turn 2 — productive
+                [
+                    PhaseResult(
+                        name="generate", count=3, cost=0.20, skipped=False, error=None
+                    ),
+                ],
+                # turn 3 — stuck
+                [
+                    PhaseResult(
+                        name="generate", count=0, cost=0.05, skipped=False, error=None
+                    ),
+                ],
+                # turn 4 — exhaust remaining budget
+                [
+                    PhaseResult(
+                        name="generate", count=2, cost=10.0, skipped=False, error=None
+                    ),
+                ],
+            ]
+        )
+
+        def make_results(*_a, **_kw):
+            return next(sequence)
+
+        mock_run = AsyncMock(side_effect=lambda cfg: make_results())
+        with (
+            patch(
+                "imas_codex.standard_names.loop.select_next_domain",
+                return_value={"domain": "equilibrium", "remaining": 5},
+            ),
+            patch(
+                "imas_codex.standard_names.turn.run_turn",
+                mock_run,
+            ),
+            patch("imas_codex.standard_names.loop._write_sn_run"),
+        ):
+            summary = await run_sn_loop(cost_limit=10.5, dry_run=False)
+
+        # All 4 turns ran; stop is budget_exhausted, not stalled.
+        assert mock_run.await_count == 4
+        assert summary.stop_reason == "budget_exhausted"
+        assert summary.names_composed == 5
+
+    @pytest.mark.asyncio
+    async def test_remaining_changed_does_not_stall(self):
+        """If `remaining` decreases (real work happened in a prior turn
+        that flushed some items), no stall is recorded even when the
+        current turn itself has zero progress counters."""
+        from imas_codex.standard_names.turn import PhaseResult
+
+        # Select returns decreasing remaining each call (10→8→6→...).
+        remaining_seq = iter([10, 8, 6, 4, 2, 0])
+
+        def fake_select(**_kw):
+            try:
+                r = next(remaining_seq)
+            except StopIteration:
+                return None
+            return {"domain": "equilibrium", "remaining": r}
+
+        def make_results(*_a, **_kw):
+            # Non-zero cost, zero compose/review counters — but remaining
+            # shrinks between turns so no stall is recorded.
+            return [
+                PhaseResult(
+                    name="generate", count=0, cost=0.05, skipped=False, error=None
+                ),
+            ]
+
+        mock_run = AsyncMock(side_effect=lambda cfg: make_results())
+        with (
+            patch(
+                "imas_codex.standard_names.loop.select_next_domain",
+                side_effect=lambda **kw: fake_select(**kw),
+            ),
+            patch(
+                "imas_codex.standard_names.turn.run_turn",
+                mock_run,
+            ),
+            patch("imas_codex.standard_names.loop._write_sn_run"),
+        ):
+            summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
+
+        # Loop ran all 6 iterations then selector returned None → completed.
+        assert summary.stop_reason == "completed"
+        assert mock_run.await_count == 6
