@@ -352,10 +352,20 @@ class TestEnumValues:
                     continue
 
                 valid_values = set(enums[slot_type])
-                result = graph_client.query(
-                    f"MATCH (n:{label}) WHERE n.{slot_name} IS NOT NULL "
-                    f"RETURN DISTINCT n.{slot_name} AS val"
-                )
+                is_multivalued = slot_info.get("multivalued", False)
+                if is_multivalued:
+                    # Multi-valued enum fields are stored as Neo4j arrays.
+                    # UNWIND to get individual elements for validation.
+                    result = graph_client.query(
+                        f"MATCH (n:{label}) WHERE n.{slot_name} IS NOT NULL "
+                        f"UNWIND n.{slot_name} AS val "
+                        f"RETURN DISTINCT val"
+                    )
+                else:
+                    result = graph_client.query(
+                        f"MATCH (n:{label}) WHERE n.{slot_name} IS NOT NULL "
+                        f"RETURN DISTINCT n.{slot_name} AS val"
+                    )
                 actual_values = {r["val"] for r in result}
                 invalid = actual_values - valid_values
                 if invalid:

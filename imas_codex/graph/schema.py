@@ -107,36 +107,58 @@ class GraphSchema:
 
     @cached_property
     def relationships(self) -> list[Relationship]:
-        """Get all relationships derived from slots with class ranges."""
+        """Get all relationships derived from slots with class ranges.
+
+        Also handles cross-schema foreign keys declared via the ``target_label``
+        annotation — slots whose ``range:`` cannot be resolved within this
+        schema's class list but that carry an explicit ``relationship_type`` and
+        ``target_label`` annotation (e.g. StandardNameSource.dd_path →
+        IMASNode in a different schema file).
+        """
         rels = []
         for class_name in self.node_labels:
             for slot in self._view.class_induced_slots(class_name):
                 slot_range = slot.range
-                # Check if range is a class (relationship) vs primitive type
+                # annotations can be dict, JsonObj, or None
+                anns = getattr(slot, "annotations", None) or {}
+
+                # Fetch annotation value regardless of storage type
+                if isinstance(anns, dict):
+                    rel_type_ann = anns.get("relationship_type")
+                    target_label_ann = anns.get("target_label")
+                else:
+                    rel_type_ann = getattr(anns, "relationship_type", None)
+                    target_label_ann = getattr(anns, "target_label", None)
+
+                # Determine target class:
+                #   1. slot.range resolves to a class in this schema (canonical)
+                #   2. target_label annotation names a cross-schema class
                 if slot_range and slot_range in self._view.all_classes():
-                    # Check for explicit relationship_type annotation
-                    # annotations can be dict, JsonObj, or None
-                    annotations = getattr(slot, "annotations", None) or {}
-                    # Handle both dict and JsonObj-style access
-                    rel_type_ann = (
-                        annotations.get("relationship_type")
-                        if isinstance(annotations, dict)
-                        else getattr(annotations, "relationship_type", None)
+                    target_class = slot_range
+                elif target_label_ann and rel_type_ann:
+                    # Cross-schema reference: use the explicit target_label
+                    target_class = (
+                        target_label_ann.value
+                        if hasattr(target_label_ann, "value")
+                        else str(target_label_ann)
                     )
-                    cypher_type = (
-                        rel_type_ann.value
-                        if rel_type_ann and hasattr(rel_type_ann, "value")
-                        else None
+                else:
+                    continue
+
+                cypher_type = (
+                    rel_type_ann.value
+                    if rel_type_ann and hasattr(rel_type_ann, "value")
+                    else None
+                )
+                rels.append(
+                    Relationship(
+                        from_class=class_name,
+                        slot_name=slot.name,
+                        to_class=target_class,
+                        multivalued=bool(slot.multivalued),
+                        _cypher_type=cypher_type,
                     )
-                    rels.append(
-                        Relationship(
-                            from_class=class_name,
-                            slot_name=slot.name,
-                            to_class=slot_range,
-                            multivalued=bool(slot.multivalued),
-                            _cypher_type=cypher_type,
-                        )
-                    )
+                )
         return rels
 
     @cached_property
