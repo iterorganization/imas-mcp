@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 
 _FORBIDDEN_YAML_KEYS = frozenset({"source_paths", "dd_paths"})
 
+#: Computed fields — re-derived from graph edges on export; silently
+#: ignored on import (never written to node properties, never trigger
+#: ``_protected_fields_differ``).  See plan 40 §1.
+COMPUTED_FIELDS: frozenset[str] = frozenset({"arguments", "error_variants"})
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -102,20 +107,25 @@ def _is_git_repo(path: Path) -> bool:
 # Domain-from-path derivation
 # ---------------------------------------------------------------------------
 
-#: Pattern: standard_names/<domain>/.../<name>.yml  (domain = first component)
-_DOMAIN_PATH_RE = re.compile(r"standard_names/([^/]+)/.+\.ya?ml$")
+#: Pattern: standard_names/<domain>.yml or standard_names/<domain>.yaml
+#: (domain = file basename without extension; per-domain layout from plan 40)
+_DOMAIN_PATH_RE = re.compile(r"standard_names/([^/]+)\.ya?ml$")
 
 
 def _derive_domain_from_path(yaml_path: Path) -> str | None:
     """Derive physics_domain from the file path convention.
 
-    Expects ``<root>/standard_names/<domain>/<name>.yml``.
+    Expects ``<root>/standard_names/<domain>.yml`` (per-domain layout).
     Returns the domain string or None if the path doesn't match.
+    Rejects names containing ``/``.
     """
     path_str = str(yaml_path).replace("\\", "/")
     m = _DOMAIN_PATH_RE.search(path_str)
     if m:
-        return m.group(1)
+        domain = m.group(1)
+        if "/" in domain:
+            return None
+        return domain
     return None
 
 
@@ -527,47 +537,78 @@ def run_import(
             with open(yaml_path) as f:
                 data = yaml.safe_load(f)
 
-            if not isinstance(data, dict):
-                report.errors.append(f"{relative}: not a YAML mapping")
-                continue
-
-            # 4d: Reject forbidden keys (source_paths, dd_paths)
-            forbidden_found = _FORBIDDEN_YAML_KEYS & set(data.keys())
-            if forbidden_found:
+            if isinstance(data, dict):
+                # Legacy per-file layout — reject with migration error
                 report.errors.append(
-                    f"{relative}: contains forbidden key(s) "
-                    f"{sorted(forbidden_found)}. Provenance is graph-only; "
-                    f"use 'sn run' for provenance management."
+                    f"{relative}: top-level YAML dict detected. "
+                    f"Per-file layout is no longer supported; migrate to "
+                    f"per-domain list layout (one YAML sequence per "
+                    f"physics domain). See plan 40."
                 )
                 continue
 
-            # Validate against ISN model (no stripping needed — rc19 model
-            # includes cocos_transformation_type natively)
-            entry = ta.validate_python(data)
+            if not isinstance(data, list):
+                report.errors.append(f"{relative}: expected a YAML list of entries")
+                continue
+
+            # Derive domain from file path (per-domain layout)
+            path_domain = _derive_domain_from_path(yaml_path)
+            if path_domain is None:
+                report.errors.append(
+                    f"{relative}: cannot derive physics_domain from file path. "
+                    f"Expected standard_names/<domain>.yml layout."
+                )
+                continue
+
+            for entry_data in data:
+                if not isinstance(entry_data, dict):
+                    report.errors.append(
+                        f"{relative}: entry is not a mapping: {entry_data!r}"
+                    )
+                    continue
+
+                # Silently ignore computed fields (plan 40 §1)
+                for cf in COMPUTED_FIELDS:
+                    if cf in entry_data:
+                        logger.info(
+                            "Ignoring computed field=%s name=%s",
+                            cf,
+                            entry_data.get("name", "?"),
+                        )
+                        entry_data = {
+                            k: v
+                            for k, v in entry_data.items()
+                            if k not in COMPUTED_FIELDS
+                        }
+                        break
+
+                # Reject forbidden keys (source_paths, dd_paths)
+                forbidden_found = _FORBIDDEN_YAML_KEYS & set(entry_data.keys())
+                if forbidden_found:
+                    report.errors.append(
+                        f"{relative}/{entry_data.get('name', '?')}: "
+                        f"contains forbidden key(s) "
+                        f"{sorted(forbidden_found)}. Provenance is graph-only; "
+                        f"use 'sn run' for provenance management."
+                    )
+                    continue
+
+                # Validate against ISN model
+                entry = ta.validate_python(entry_data)
+
+                # Grammar decomposition — hard fail on parse error
+                grammar = _grammar_decomposition(entry.name)
+
+                # Convert to graph dict
+                graph_dict = _entry_to_graph_dict(entry, physics_domain=path_domain)
+                graph_dict.update(grammar)
+                prepared.append(graph_dict)
+                report.entries.append(graph_dict)
 
         except Exception as exc:
             report.errors.append(f"{relative}: {exc}")
             logger.debug("Failed to parse %s: %s", yaml_path, exc)
             continue
-
-        # 4b: Derive physics_domain from path
-        path_domain = _derive_domain_from_path(yaml_path)
-        if path_domain is None:
-            # File not in standard_names/<domain>/ structure — use status field
-            report.errors.append(
-                f"{relative}: cannot derive physics_domain from file path. "
-                f"Expected standard_names/<domain>/<name>.yml layout."
-            )
-            continue
-
-        # 4c: Grammar decomposition — hard fail on parse error
-        grammar = _grammar_decomposition(entry.name)
-
-        # Convert to graph dict
-        graph_dict = _entry_to_graph_dict(entry, physics_domain=path_domain)
-        graph_dict.update(grammar)
-        prepared.append(graph_dict)
-        report.entries.append(graph_dict)
 
     if report.errors:
         logger.warning("Encountered %d error(s) during parsing", len(report.errors))
@@ -725,28 +766,61 @@ def check_catalog(
     )
 
     catalog_entries: dict[str, dict[str, Any]] = {}
+    warnings: list[str] = []
     for yaml_path in yaml_files:
         try:
             with open(yaml_path) as f:
                 data = yaml.safe_load(f)
-            if not isinstance(data, dict):
+
+            if isinstance(data, dict):
+                # Legacy per-file layout — skip with warning
                 continue
-            # Strip graph-only fields before ISN model validation
-            model_data = {k: v for k, v in data.items() if k not in _GRAPH_ONLY_FIELDS}
-            entry = ta.validate_python(model_data)
+
+            if not isinstance(data, list):
+                continue
+
+            path_domain = _derive_domain_from_path(yaml_path) or "unscoped"
+
+            for entry_data in data:
+                if not isinstance(entry_data, dict):
+                    continue
+
+                # Warn about computed-field edits (§1 curator warning)
+                for cf in COMPUTED_FIELDS:
+                    if cf in entry_data:
+                        warnings.append(
+                            f"{cf} is computed from HAS_ARGUMENT / HAS_ERROR "
+                            f"graph edges and will be overwritten on next "
+                            f"export — edit has no effect.  See plan 40 / "
+                            f"COMPUTED_FIELDS."
+                        )
+                        logger.warning(
+                            "%s is computed from HAS_ARGUMENT / HAS_ERROR "
+                            "graph edges and will be overwritten on next "
+                            "export — edit has no effect.  See plan 40 / "
+                            "COMPUTED_FIELDS.",
+                            cf,
+                        )
+
+                # Strip computed + graph-only fields before ISN model validation
+                model_data = {
+                    k: v
+                    for k, v in entry_data.items()
+                    if k not in _GRAPH_ONLY_FIELDS and k not in COMPUTED_FIELDS
+                }
+                entry = ta.validate_python(model_data)
+
+                # Apply tag filter
+                if tag_filter:
+                    entry_tags = {str(t) for t in entry.tags} if entry.tags else set()
+                    if not entry_tags.intersection(tag_filter):
+                        continue
+
+                graph_dict = _entry_to_graph_dict(entry, physics_domain=path_domain)
+                catalog_entries[graph_dict["id"]] = graph_dict
+
         except Exception:
             continue
-
-        # Apply tag filter
-        if tag_filter:
-            entry_tags = {str(t) for t in entry.tags} if entry.tags else set()
-            if not entry_tags.intersection(tag_filter):
-                continue
-
-        graph_dict = _entry_to_graph_dict(
-            entry, physics_domain=_derive_domain_from_path(yaml_path) or "unscoped"
-        )
-        catalog_entries[graph_dict["id"]] = graph_dict
 
     if not catalog_entries:
         return result

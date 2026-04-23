@@ -5,7 +5,8 @@ applying deterministic normalisation rules to entry dictionaries.
 Used by both ``export.py`` (pre-write) and ``catalog_import.py``
 (pre-diff).
 
-See plan 35 §PR-driven round-trip canonical-dict rules.
+See plan 35 §PR-driven round-trip canonical-dict rules and plan 40
+§2 for CANONICAL_KEY_ORDER.
 """
 
 from __future__ import annotations
@@ -34,6 +35,67 @@ LIST_FIELDS: frozenset[str] = frozenset({"tags", "links", "constraints"})
 
 #: Multiline string fields that get whitespace-normalised.
 MULTILINE_FIELDS: frozenset[str] = frozenset({"description", "documentation"})
+
+#: Exhaustive canonical key order for exported YAML entries.
+#: Every allowed top-level key must appear here; unknown keys trigger
+#: ``UnknownCatalogKeyError``.  Emission uses this order with
+#: ``yaml.safe_dump(sort_keys=False)`` to guarantee byte-stable round-trip.
+CANONICAL_KEY_ORDER: tuple[str, ...] = (
+    "id",
+    "name",
+    "kind",
+    "status",
+    "description",
+    "documentation",
+    "unit",
+    "cocos_transformation_type",
+    "cocos",
+    "physics_domain",
+    "tags",
+    "links",
+    "validity_domain",
+    "constraints",
+    "arguments",
+    "error_variants",
+    "deprecates",
+    "superseded_by",
+    "provenance",
+)
+
+_CANONICAL_KEY_SET: frozenset[str] = frozenset(CANONICAL_KEY_ORDER)
+
+
+class UnknownCatalogKeyError(ValueError):
+    """Raised when an entry contains a key not in CANONICAL_KEY_ORDER."""
+
+
+def reorder_entry_dict(entry: dict[str, Any]) -> dict[str, Any]:
+    """Re-order an entry dict to match CANONICAL_KEY_ORDER.
+
+    Keys present in *entry* are emitted in canonical order.  Keys absent
+    from *entry* are omitted (no padding).  Any key not in
+    ``CANONICAL_KEY_ORDER`` raises :class:`UnknownCatalogKeyError`.
+
+    Parameters
+    ----------
+    entry:
+        Entry dictionary to reorder.
+
+    Returns
+    -------
+    New dict with keys in canonical order.
+
+    Raises
+    ------
+    UnknownCatalogKeyError
+        If *entry* contains a key not present in ``CANONICAL_KEY_ORDER``.
+    """
+    unknown = set(entry.keys()) - _CANONICAL_KEY_SET
+    if unknown:
+        raise UnknownCatalogKeyError(
+            f"Unknown catalog key(s) {sorted(unknown)} not in CANONICAL_KEY_ORDER"
+        )
+    return {k: entry[k] for k in CANONICAL_KEY_ORDER if k in entry}
 
 
 def _normalise_string(value: str) -> str:

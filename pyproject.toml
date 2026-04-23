@@ -67,6 +67,7 @@ dependencies = [
     "rich>=13.7.0,<14.0.0",
     "httpx>=0.27.0",
     "requests>=2.25.0",
+    "filelock>=3.0.0",
     # Security: CVE fix requires lxml>=6.1.0 (indirect via python-pptx/python-docx)
     "lxml>=6.1.0",
 ]

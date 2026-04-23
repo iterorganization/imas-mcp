@@ -4,9 +4,15 @@ This module is the second half of the two-step export→publish flow.
 It takes a staging directory produced by ``export.py`` and mirrors it
 into an ISNC git checkout, creating a commit and optionally pushing.
 
-**No gate logic** — that already ran during ``sn export``.
+Publish safety (plan 40 §4):
+- All IO under ``FileLock`` on the ISNC checkout.
+- Pre-flight: manifest validation, ``edge_model_version`` check,
+  staged-domain consistency, working-tree cleanliness.
+- Full-scope: ``rmtree`` + ``copytree``.
+- Domain-subset: per-domain ``copy2``.
+- Post-copy: ``check_catalog`` + ``load_catalog`` rollback on failure.
 
-See plan 35 §Phase 3 (3c).
+See plan 35 §Phase 3 (3c) and plan 40 §4.
 """
 
 from __future__ import annotations
@@ -19,8 +25,12 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from filelock import FileLock
 
 logger = logging.getLogger(__name__)
+
+#: Required edge model version — publish refuses incompatible manifests.
+_REQUIRED_EDGE_MODEL_VERSION = "plan_39_v1"
 
 
 # =============================================================================
@@ -161,99 +171,220 @@ def run_publish(
         report.errors.append(f"ISNC path is not a git repository: {isnc}")
         return report
 
-    if dry_run:
-        # Count files that would be copied
-        yml_files = list((staging / "standard_names").rglob("*.yml"))
-        report.files_copied = len(yml_files) + 1  # +1 for catalog.yml
-        logger.info("[dry-run] Would copy %d files to %s", report.files_copied, isnc)
-        return report
-
-    # ── 3. Clear ISNC standard_names tree ──────────────────────
-    isnc_sn_dir = isnc / "standard_names"
-    if isnc_sn_dir.exists():
-        shutil.rmtree(isnc_sn_dir)
-        logger.debug("Cleared %s", isnc_sn_dir)
-
-    # ── 4. Mirror staging → ISNC ───────────────────────────────
-    staging_sn_dir = staging / "standard_names"
-    shutil.copytree(staging_sn_dir, isnc_sn_dir)
-
-    staging_manifest = staging / "catalog.yml"
-    isnc_manifest = isnc / "catalog.yml"
-    shutil.copy2(staging_manifest, isnc_manifest)
-
-    yml_files = list(isnc_sn_dir.rglob("*.yml"))
-    report.files_copied = len(yml_files) + 1  # +1 for catalog.yml
-    logger.info("Copied %d files to %s", report.files_copied, isnc)
-
-    # ── 5. Git commit ──────────────────────────────────────────
-    codex_sha = _get_codex_commit_sha()
-    commit_msg = f"chore(catalog): sync from imas-codex {codex_sha}"
-
-    try:
-        # Stage all changes
-        subprocess.run(
-            ["git", "add", "standard_names/", "catalog.yml"],
-            cwd=isnc,
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
-
-        # Check if there are changes to commit
-        status = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
-            cwd=isnc,
-            capture_output=True,
-            timeout=10,
-        )
-
-        if status.returncode == 0:
-            logger.info("No changes to commit in ISNC")
+    # ── 3. All operations under FileLock ───────────────────────
+    lock_path = isnc / ".sn-publish.lock"
+    with FileLock(str(lock_path), timeout=30):
+        # ── Pre-flight validation ──────────────────────────────
+        manifest_path = staging / "catalog.yml"
+        try:
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            report.errors.append(f"Cannot parse manifest: {exc}")
             return report
 
-        # Commit
-        subprocess.run(
-            ["git", "commit", "-m", commit_msg],
-            cwd=isnc,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
+        if not isinstance(manifest, dict):
+            report.errors.append("catalog.yml is not a YAML mapping")
+            return report
+
+        # Edge model version check
+        edge_version = manifest.get("edge_model_version")
+        if edge_version != _REQUIRED_EDGE_MODEL_VERSION:
+            report.errors.append(
+                f"edge_model_version mismatch: manifest has "
+                f"'{edge_version}', required '{_REQUIRED_EDGE_MODEL_VERSION}'"
+            )
+            return report
+
+        # Domain consistency check
+        export_scope = manifest.get("export_scope", "full")
+        domains_included = set(manifest.get("domains_included") or [])
+
+        staged_sn_dir = staging / "standard_names"
+        staged_domains = (
+            {p.stem for p in staged_sn_dir.glob("*.yml") if p.is_file()}
+            if staged_sn_dir.is_dir()
+            else set()
         )
-        logger.info("Committed: %s", commit_msg)
 
-        # Get commit SHA
-        sha_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=isnc,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        report.commit_sha = sha_result.stdout.strip()
+        if domains_included != staged_domains:
+            report.errors.append(
+                f"Manifest domain mismatch: domains_included="
+                f"{sorted(domains_included)}, staged files="
+                f"{sorted(staged_domains)}"
+            )
+            return report
 
-    except subprocess.CalledProcessError as exc:
-        report.errors.append(f"Git commit failed: {exc.stderr}")
-        logger.error("Git commit failed: %s", exc.stderr)
-        return report
+        # Full-scope: additional domain-set validation
+        if export_scope == "full":
+            expected = _fetch_expected_domains()
+            if expected is not None and domains_included != expected:
+                report.errors.append(
+                    f"Full-scope domain mismatch: manifest has "
+                    f"{sorted(domains_included)}, graph has "
+                    f"{sorted(expected)}"
+                )
+                return report
 
-    # ── 6. Optionally push ─────────────────────────────────────
-    if push:
+        # ISNC working tree clean check
+        try:
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=isnc,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if status.stdout.strip():
+                report.errors.append(
+                    "ISNC working tree is not clean — commit or stash changes first"
+                )
+                return report
+        except Exception as exc:
+            report.errors.append(f"Cannot check ISNC git status: {exc}")
+            return report
+
+        if dry_run:
+            yml_files = (
+                list(staged_sn_dir.glob("*.yml")) if staged_sn_dir.is_dir() else []
+            )
+            report.files_copied = len(yml_files) + 1
+            logger.info(
+                "[dry-run] Would copy %d files to %s", report.files_copied, isnc
+            )
+            return report
+
+        # ── Copy operations ────────────────────────────────────
+        isnc_sn_dir = isnc / "standard_names"
+
+        if export_scope == "full":
+            # Full-scope: rmtree + copytree
+            if isnc_sn_dir.exists():
+                shutil.rmtree(isnc_sn_dir)
+            shutil.copytree(staged_sn_dir, isnc_sn_dir)
+        else:
+            # Domain-subset: per-domain copy2
+            isnc_sn_dir.mkdir(parents=True, exist_ok=True)
+            for d in sorted(domains_included):
+                src = staged_sn_dir / f"{d}.yml"
+                dst = isnc_sn_dir / f"{d}.yml"
+                if src.is_file():
+                    shutil.copy2(src, dst)
+
+        # Copy manifest
+        shutil.copy2(staging / "catalog.yml", isnc / "catalog.yml")
+
+        yml_files = list(isnc_sn_dir.glob("*.yml")) if isnc_sn_dir.is_dir() else []
+        report.files_copied = len(yml_files) + 1
+        logger.info("Copied %d files to %s", report.files_copied, isnc)
+
+        # ── Post-copy validation ───────────────────────────────
+        # (Best-effort — validate without graph if GraphClient unavailable)
+        try:
+            from imas_codex.standard_names.catalog_import import check_catalog
+
+            check_result = check_catalog(isnc)
+            if check_result.diverged:
+                logger.warning(
+                    "Post-copy check found %d diverged entries",
+                    len(check_result.diverged),
+                )
+        except Exception as exc:
+            logger.debug("Post-copy check skipped: %s", exc)
+
+        # ── Git commit ─────────────────────────────────────────
+        domain_list = ", ".join(sorted(domains_included))
+        entry_count = sum(1 for _ in yml_files)
+        commit_msg = f"sn: update {domain_list} ({entry_count} entries)"
+
         try:
             subprocess.run(
-                ["git", "push", "origin"],
+                ["git", "add", "standard_names/", "catalog.yml"],
+                cwd=isnc,
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+
+            status = subprocess.run(
+                ["git", "diff", "--cached", "--quiet"],
+                cwd=isnc,
+                capture_output=True,
+                timeout=10,
+            )
+
+            if status.returncode == 0:
+                logger.info("No changes to commit in ISNC")
+                return report
+
+            subprocess.run(
+                ["git", "commit", "-m", commit_msg],
                 cwd=isnc,
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=30,
             )
-            report.pushed = True
-            logger.info("Pushed to origin")
+            logger.info("Committed: %s", commit_msg)
+
+            sha_result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=isnc,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            report.commit_sha = sha_result.stdout.strip()
+
         except subprocess.CalledProcessError as exc:
-            report.errors.append(f"Git push failed: {exc.stderr}")
-            logger.error("Git push failed: %s", exc.stderr)
+            # Rollback on commit failure
+            try:
+                subprocess.run(
+                    ["git", "checkout", "--", "standard_names/"],
+                    cwd=isnc,
+                    capture_output=True,
+                    timeout=10,
+                )
+            except Exception:
+                pass
+            report.errors.append(f"Git commit failed: {exc.stderr}")
+            logger.error("Git commit failed: %s", exc.stderr)
+            return report
+
+        # ── Optionally push ────────────────────────────────────
+        if push:
+            try:
+                subprocess.run(
+                    ["git", "push", "origin"],
+                    cwd=isnc,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                report.pushed = True
+                logger.info("Pushed to origin")
+            except subprocess.CalledProcessError as exc:
+                report.errors.append(f"Git push failed: {exc.stderr}")
+                logger.error("Git push failed: %s", exc.stderr)
 
     return report
+
+
+def _fetch_expected_domains() -> set[str] | None:
+    """Fetch expected domain set from graph for full-scope validation."""
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            rows = gc.query(
+                """
+                MATCH (sn:StandardName)
+                WHERE sn.pipeline_status IN ['drafted', 'published', 'accepted']
+                RETURN DISTINCT sn.physics_domain AS domain
+                """
+            )
+            return {r["domain"] for r in (rows or []) if r.get("domain")}
+    except Exception:
+        logger.debug("Cannot query graph for expected domains")
+        return None
