@@ -732,8 +732,11 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 return [], []
 
             # --- Budget reservation (worst-case: all cycles) -----------------
-            estimated_cost = len(names) * 0.002
-            worst_case = estimated_cost * len(models) * 1.3
+            # Per-name cost calibrated to observed Opus 4.6 review spend
+            # ($0.008-0.015/name with cache hits).  Use $0.015/name base with
+            # 1.5× headroom so a full quorum of models comfortably fits.
+            estimated_cost = len(names) * 0.015
+            worst_case = estimated_cost * len(models) * 1.5
             lease = None
 
             if state.budget_manager:
