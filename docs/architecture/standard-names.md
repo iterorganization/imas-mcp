@@ -26,23 +26,36 @@ Examples: `electron_temperature`, `toroidal_magnetic_field_at_magnetic_axis`,
 
 ```
  ┌───────────┐     ┌───────────┐     ┌───────────┐
- │  EXTRACT  │────▶│  COMPOSE  │────▶│  REVIEW   │  (optional)
+ │  EXTRACT  │────▶│  COMPOSE  │────▶│  VALIDATE │
  │           │     │           │     │           │
- │ DD query  │     │ LLM call  │     │ LLM judge │
- │ classify  │     │ per-batch │     │ accept/   │
- │ enrich    │     │ unit from │     │ reject/   │
- │ group     │     │ DD, not   │     │ revise    │
+ │ DD query  │     │ LLM call  │     │ ISN 3-    │
+ │ classify  │     │ per-batch │     │ layer +   │
+ │ enrich    │     │ unit from │     │ grammar   │
+ │ group     │     │ DD, not   │     │ round-trip│
  └───────────┘     │ LLM       │     └─────┬─────┘
                    └───────────┘           │
                                            ▼
- ┌───────────┐     ┌───────────┐     ┌───────────┐
- │  PERSIST  │◀────│CONSOLIDATE│◀────│ VALIDATE  │
- │           │     │           │     │           │
- │ Neo4j     │     │ dedup     │     │ ISN 3-    │
- │ conflict  │     │ conflicts │     │ layer +   │
- │ detection │     │ coverage  │     │ grammar   │
- └───────────┘     └───────────┘     │ round-trip│
-                                     └───────────┘
+                                    ┌───────────┐     ┌───────────┐
+                                    │CONSOLIDATE│────▶│  PERSIST  │
+                                    │           │     │           │
+                                    │ dedup     │     │ Neo4j     │
+                                    │ conflicts │     │ conflict  │
+                                    │ coverage  │     │ detection │
+                                    └───────────┘     └───────────┘
+```
+
+**RD-quorum review** runs as a standalone `sn review` command (not part of
+`sn generate`). Each axis has an independent review pipeline:
+
+```
+compose → validate → review_names (RD-quorum) → review_docs (RD-quorum)
+
+  review_names:
+    cycle 0: primary   (BLIND)  ──┐
+    cycle 1: secondary (BLIND)  ──┼─ disagree on any dim? → cycle 2
+    cycle 2: escalator (SEES 0+1) ┘  (only if len(models)==3)
+
+  review_docs:  same structure, independent rubric
 ```
 
 **Phase summary:**
@@ -51,7 +64,6 @@ Examples: `electron_temperature`, `toroidal_magnetic_field_at_magnetic_axis`,
 |-------|--------|--------------|
 | EXTRACT | `workers.extract_worker` | Query graph for DD paths, classify, enrich with clusters, group into batches |
 | COMPOSE | `workers.compose_worker` | LLM generates standard names per batch; unit injected from DD |
-| REVIEW | `workers.review_worker` | Optional LLM review: accept/reject/revise each candidate |
 | VALIDATE | `workers.validate_worker` | ISN 3-layer validation + grammar round-trip via `parse_standard_name()`, fields consistency |
 | CONSOLIDATE | `workers.consolidate_worker` | Cross-batch dedup, conflict detection, coverage accounting |
 | PERSIST | `workers.persist_worker` | Conflict-detecting Neo4j writes with coalesce semantics |
@@ -105,56 +117,88 @@ zero dimension), revise (otherwise).
 ## Review Pipeline
 
 `sn review` runs as a **standalone CLI command** (not part of `sn generate`).
-It scores all `valid` (not quarantined) drafted names via a batched LLM reviewer.
+It scores all `valid` (not quarantined) drafted names using an **RD-quorum** flow.
+The two review axes (`names` and `docs`) are independent; each has its own rubric,
+model chain, and per-axis score columns on the `StandardName` node.
 
-### Architecture
+### RD-Quorum Architecture
 
 ```
- ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
- │  FETCH      │────▶│  SCORE      │────▶│  PERSIST    │
- │             │     │             │     │             │
- │ Query graph │     │ Batch LLM   │     │ Write score │
- │ valid names │     │ calls with  │     │ tier verdict│
- │ (no score)  │     │ 1:1 scoring │     │ to Neo4j    │
- └─────────────┘     │ invariant   │     └─────────────┘
-                     └──────┬──────┘
-                            │ unmatched names
-                            ▼
-                     ┌─────────────┐
-                     │  RETRY      │
-                     │             │
-                     │ Single-item │
-                     │ retry for   │
-                     │ unmatched   │
-                     └─────────────┘
+ ┌─────────────┐     ┌─────────────────────────────────────────┐
+ │  FETCH      │────▶│  QUORUM                                  │
+ │             │     │                                          │
+ │ Query graph │     │  cycle 0: primary (BLIND)                │
+ │ valid names │     │  cycle 1: secondary (BLIND)              │
+ │ (no score)  │     │  disagree on any dim? ──► cycle 2        │
+ └─────────────┘     │  cycle 2: escalator (sees 0+1 critiques) │
+                     └──────────────────┬──────────────────────┘
+                                        │
+                                        ▼
+                     ┌─────────────┐     ┌─────────────┐
+                     │  AGGREGATE  │────▶│  PERSIST    │
+                     │             │     │             │
+                     │ winning-    │     │ Review nodes│
+                     │ group select│     │ + axis slots│
+                     └─────────────┘     └─────────────┘
 ```
+
+**Cycle semantics:**
+
+| Cycle | Role | Sees prior reviews? | When runs |
+|-------|------|---------------------|-----------|
+| 0 | primary | No (BLIND) | Always |
+| 1 | secondary | No (BLIND) | When `len(models) ≥ 2` |
+| 2 | escalator | Yes — both cycle 0+1 critiques | Only if disputed items exist AND `len(models) == 3` |
+
+**Disputed items:** an item is disputed if any dimension score differs by >
+`disagreement-threshold` (default 0.15, normalised 0–1) between cycles 0 and 1.
+Cycle 2 receives only the disputed items as a per-item mini-batch.
+
+**Immediate persistence:** each cycle's `Review` nodes are written to the graph
+before the next cycle starts (crash-safety).
+
+**`resolution_method` enum:**
+
+| Value | Meaning |
+|-------|---------|
+| `quorum_consensus` | Cycles 0+1 agreed within tolerance; final = mean |
+| `authoritative_escalation` | Cycle 2 ran; its result is authoritative for disputed items |
+| `max_cycles_reached` | Cycles 0+1 disagreed; no escalator configured; final = mean with disagreement flag |
+| `retry_item` | Both cycles failed; item quarantined |
+| `single_review` | Only one cycle produced a score |
+
+**Winning-group selection:** `update_review_aggregates` picks the most-recent
+Review group with `resolution_method` ∈ {`quorum_consensus`,
+`authoritative_escalation`, `single_review`} and mirrors scores onto the
+StandardName axis slots.
+
+**Partial-failure ladder:** both missing → retry; second failure → `retry_item`;
+one missing → `single_review`.
 
 ### 1:1 Scoring Invariant
 
-Each submitted name must receive exactly one score in the LLM response. The
-pipeline enforces this invariant:
+Each submitted name must receive exactly one score per cycle. The pipeline enforces
+this invariant within each cycle:
 
 1. Names are sent to the reviewer in batches (typically 10–20 per call)
 2. After each batch, the response is matched back to submitted names by ID
-3. Any names not returned by the LLM (dropped or hallucinated) are collected
-   as **unmatched**
+3. Any names not returned by the LLM are collected as **unmatched**
 4. Unmatched names are automatically retried individually (single-item batches)
-   to guarantee coverage
 
-This ensures no name is silently skipped due to LLM truncation or output
-format errors.
+This ensures no name is silently skipped due to LLM truncation or output format errors.
 
 ### Cost Reference
 
-Approximate cost using `anthropic/claude-opus-4.6` as reviewer:
+Approximate cost using `anthropic/claude-opus-4.6` as primary reviewer (2-model chain,
+no escalator):
 
 | Scope | Names | Cost |
 |-------|-------|------|
-| 4 IDSs (equilibrium, core_profiles, edge_profiles, summary) | ~300 | ~$30 |
-| Full DD (~3,000 paths → ~1,200 names) | ~1,200 | ~$396 (projected) |
+| 4 IDSs (equilibrium, core_profiles, edge_profiles, summary) | ~300 | ~$60 (2× with secondary) |
+| Full DD (~3,000 paths → ~1,200 names) | ~1,200 | ~$792 projected |
 
-Costs vary with batch size and model. Use `-c/--cost-limit` to cap spending
-per run.
+With a 3-model quorum and typical ~15% dispute rate, the escalator adds ~15% to the
+two-cycle cost. Use `-c/--cost-limit` to cap spending per run.
 
 ## A/B Comparison (Plan 21 Outcomes)
 
@@ -398,13 +442,25 @@ dynamically selected exemplar StandardName nodes at target score thresholds
 by the example loader. Context keys: `compose_scored_examples`,
 `review_scored_examples`.
 
-### Per-Dim Reviewer Output
+### Axis Reviewer Output
 
-The review worker now persists per-dimension data alongside aggregate scores:
+The review worker persists per-dimension data per axis. Each axis has five paired
+slots on `StandardName`:
 
-- `reviewer_scores` — JSON dict: `{grammar: N, semantic: N, documentation: N, convention: N, completeness: N, compliance: N}` (each 0–20)
-- `reviewer_comments_per_dim` — JSON dict: per-dimension reviewer commentary
-- `reviewer_verdict` — `accept` / `reject` / `revise` (from the canonical reviewer)
+| Axis | Scalar | Per-dim JSON | Comments | Verdict | Model |
+|------|--------|--------------|----------|---------|-------|
+| names | `reviewer_score_name` | `reviewer_scores_name` | `reviewer_comments_name` | `reviewer_verdict_name` | `reviewer_model_name` |
+| docs | `reviewer_score_docs` | `reviewer_scores_docs` | `reviewer_comments_docs` | `reviewer_verdict_docs` | `reviewer_model_docs` |
+
+Scores are written by the winning Review group's `update_review_aggregates` call (after
+all quorum cycles complete).
+
+**Review node fields (RD-quorum, p39-4):**
+- `review_axis` — `names` or `docs`
+- `cycle_index` — 0 (primary), 1 (secondary), 2 (escalator)
+- `review_group_id` — UUID per quorum session (links cycles within a review run)
+- `resolution_role` — `primary`, `secondary`, or `escalator`
+- `resolution_method` — outcome enum (see table in Review Pipeline section)
 
 ### Response Model
 
@@ -474,14 +530,14 @@ SET sn.source_type    = coalesce(b.source_type, sn.source_type),
 This is safe for re-runs: imported catalog data is never clobbered by a
 subsequent `sn generate` execution.
 
-### Axis-Split Review Storage (rc22 C3)
+### Axis-Split Review Storage (rc22 C3 + p39-2)
 
 Name-axis and docs-axis reviews persist to independent column families to
 prevent a docs-only review from clobbering a prior name-only review's
-per-dimension JSON (and vice-versa). The shared slots (`reviewer_score`,
-`reviewer_scores`, `reviewer_comments`, `reviewer_comments_per_dim`,
-`reviewer_verdict`, `reviewer_model`) are reserved for **full-mode
-aggregates** — only `sn review --target full` writes them.
+per-dimension JSON (and vice-versa). The shared scalar+JSON slots that existed
+prior to p39-2 (`reviewer_score`, `reviewer_scores`, `reviewer_comments`,
+`reviewer_comments_per_dim`, `reviewer_verdict`, `reviewer_model`, `reviewed_at`,
+`review_mode`) have been **removed from the schema**. Only axis-specific columns remain:
 
 ```cypher
 // --target names (name-axis review)
@@ -490,35 +546,17 @@ SET sn.reviewer_score_name = b.reviewer_score_name,
     sn.reviewer_comments_name = coalesce(b.reviewer_comments_name, sn.reviewer_comments_name),
     sn.reviewer_verdict_name = b.reviewer_verdict_name,
     sn.reviewer_model_name = b.reviewer_model_name
-    // shared reviewer_score / reviewer_scores are NOT written
 
-// --target docs (docs-axis review)
-SET sn.reviewer_score_docs = b.reviewer_score_docs,
-    sn.reviewer_scores_docs = coalesce(b.reviewer_scores_docs, sn.reviewer_scores_docs),
-    // ... same pattern for comments / verdict / model
-
-// --target full (legacy + full-6-dim review) writes ALL three columns:
-SET sn.reviewer_score = b.reviewer_score,
-    sn.reviewer_score_name = coalesce(b.reviewer_score_name, sn.reviewer_score_name),
-    sn.reviewer_score_docs = coalesce(b.reviewer_score_docs, sn.reviewer_score_docs),
-    sn.reviewer_scores = b.reviewer_scores
-    // ... etc
+// --target docs (docs-axis review) — same pattern with _docs suffix
 ```
 
-**Reader fallback.** Queries that need a "best available" reviewer score
-(`fetch_low_score_sources`, `fetch_review_feedback_for_sources`,
-themes extraction, `example_loader` on `axis="name"`) use
-`coalesce(sn.reviewer_score_name, sn.reviewer_score)` so pre-rc22 rows
-migrated from shared slots still surface correctly on the name axis.
+**Reader fallback.** Queries use `coalesce(sn.reviewer_score_name, sn.reviewer_score)`
+so pre-p39-2 nodes with old shared slots still surface correctly on the name axis until
+backfilled.
 
 **Downgrade guard.**
 `imas_codex.standard_names.review.pipeline._axis_overwrite_blocked(name, incoming)`
-rejects axis writes when:
-  * full-mode data is already present (any axis-only write)
-  * same-axis data is already present (e.g. docs-axis write over existing
-    `reviewer_scores_docs`)
-
-`--force` bypasses the guard.
+rejects axis writes when same-axis data is already present. `--force` bypasses the guard.
 
 ### Provenance Fields
 
@@ -529,14 +567,22 @@ Each StandardName node carries a full audit trail:
 | `model` | Compose worker | LLM model used for generation |
 | `confidence` | LLM output | 0–1 confidence score |
 | `generated_at` | Compose worker | Timestamp of LLM generation |
-| `reviewer_model` | Review worker | Model used for review |
-| `reviewer_score` | Review worker | 0–1 quality score (normalized from 6×0-20) |
-| `reviewer_scores` | Review worker | JSON: grammar, semantic, docs, convention, completeness, compliance (each 0-20) |
-| `reviewer_comments` | Review worker | Reasoning text |
-| `reviewer_comments_per_dim` | Review worker | JSON: per-dimension reviewer commentary keyed by dimension name |
-| `reviewer_verdict` | Review worker | accept/reject/revise — canonical reviewer verdict |
-| `reviewed_at` | Review worker | Review timestamp |
-| `review_tier` | Review worker | outstanding/good/inadequate/poor |
+| `reviewer_score_name` | Review worker | 0–1 name-axis quality score |
+| `reviewer_scores_name` | Review worker | JSON: grammar, semantic, convention, completeness (each 0–20) |
+| `reviewer_comments_name` | Review worker | Name-axis reasoning text |
+| `reviewer_verdict_name` | Review worker | accept/reject/revise — name-axis verdict |
+| `reviewer_model_name` | Review worker | Winning-cycle model (name axis) |
+| `reviewed_name_at` | Review worker | Timestamp of most recent name-axis review |
+| `reviewer_score_docs` | Review worker | 0–1 docs-axis quality score |
+| `reviewer_scores_docs` | Review worker | JSON: description_quality, documentation_quality, completeness, physics_accuracy (each 0–20) |
+| `reviewer_comments_docs` | Review worker | Docs-axis reasoning text |
+| `reviewer_verdict_docs` | Review worker | accept/reject/revise — docs-axis verdict |
+| `reviewer_model_docs` | Review worker | Winning-cycle model (docs axis) |
+| `reviewed_docs_at` | Review worker | Timestamp of most recent docs-axis review |
+| `review_tier` | Review worker | outstanding/good/inadequate/poor (from `reviewer_score_name`) |
+| `review_count` | Review worker | Number of Review nodes attached via REVIEWS |
+| `review_mean_score` | Review worker | Arithmetic mean of Review.score across all cycles |
+| `review_disagreement` | Review worker | True iff quorum cycles disagreed beyond threshold |
 | `vocab_gap_detail` | Compose worker | JSON: segment, needed_token, reason |
 | `catalog_commit_sha` | Import | Git SHA of catalog source |
 
@@ -613,7 +659,8 @@ Only `valid` names participate in `sn review`, consolidation, and `sn publish`.
 | `imas_codex/standard_names/benchmark.py` | LLM model quality benchmarking |
 | `imas_codex/llm/prompts/sn/compose_system.md` | Static system prompt |
 | `imas_codex/llm/prompts/sn/compose_dd.md` | Dynamic user prompt template |
-| `imas_codex/llm/prompts/sn/review.md` | Review prompt with 6-dimension scoring rubric |
+| `imas_codex/llm/prompts/sn/review_names.md` | Names-axis review prompt (4-dim: grammar/semantic/convention/completeness) |
+| `imas_codex/llm/prompts/sn/review_docs.md` | Docs-axis review prompt (4-dim: description_quality/documentation_quality/completeness/physics_accuracy) |
 | `imas_codex/llm/prompts/shared/sn/_grammar_reference.md` | Shared grammar fragment (included by compose_system.md) |
 | `imas_codex/llm/prompts/shared/sn/_scoring_rubric.md` | Shared scoring rubric reference |
 | `imas_codex/llm/config/sn_review_criteria.yaml` | Review scoring config (dimensions, tiers, verdict rules) |
@@ -622,17 +669,22 @@ Only `valid` names participate in `sn review`, consolidation, and `sn publish`.
 | `imas_codex/graph/dd_search.py` | Pure functions: `hybrid_dd_search`, `find_related_dd_paths` |
 | `imas_codex/standard_names/example_loader.py` | Graph-backed scored example selection for prompts |
 
-## Migration from Pre-Wave-2 Catalogs
+## Migration from Pre-p39-2 Graphs
 
-Wave 2 added `reviewer_scores`, `reviewer_comments_per_dim`, and
-`reviewer_verdict` to the `StandardName` schema. These are additive — no graph
-migration is required.
+p39-2 removed the shared reviewer slots (`reviewer_score`, `reviewer_scores`,
+`reviewer_comments`, `reviewer_comments_per_dim`, `reviewer_verdict`, `reviewer_model`,
+`reviewed_at`, `review_mode`) from the `StandardName` schema. These fields are no longer
+written but **will not cause runtime errors** if present on existing nodes — they become
+stale orphan properties until the node is re-reviewed.
 
-Existing nodes carry `NULL` for these fields until re-reviewed via
-`sn review --force`. The example loader filters
-`WHERE sn.reviewer_verdict IS NOT NULL`, excluding un-backfilled nodes from
-scored-example injection. Export gates are unaffected (they check
-`reviewer_score`, not the per-dim fields).
+Reader queries use `coalesce(sn.reviewer_score_name, sn.reviewer_score)` for backward
+compatibility so pre-migration nodes surface correctly on the name axis.
+
+**Backfill procedure:** Run `sn review --force` to re-review all valid names and populate
+the axis-specific columns.
+
+The `review_mode` enum has two values: `names` and `docs`. The removed `full` variant
+no longer exists — use `--target names` + `--target docs` in sequence for full coverage.
 
 The tier rename (`adequate` → `inadequate`) applies to new reviews; stale
 `review_tier = 'adequate'` values persist harmlessly until re-reviewed.

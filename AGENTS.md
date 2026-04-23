@@ -51,7 +51,9 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | `[reasoning]` | Complex structured output (IMAS mapping, multi-step reasoning) | `get_model("reasoning")` |
 | `[discovery]` | Discovery threshold for high-value processing | `get_discovery_threshold()` |
 | `[data-dictionary]` | DD version, include-ggd, include-error-fields | `get_dd_version()` |
-| `[sn.review]` | Cross-family reviewer diversity (primary, secondary models, threshold) | `get_sn_review_primary_model()`, `get_sn_review_secondary_models()`, `get_sn_review_disagreement_threshold()` |
+| `[sn.review]` | Shared RD-quorum settings (disagreement threshold, max cycles) | `get_sn_review_disagreement_threshold()`, `get_sn_review_max_cycles()` |
+| `[sn.review.names]` | Reviewer model chain for the names axis (1–3 models) | `get_sn_review_names_models()` |
+| `[sn.review.docs]` | Reviewer model chain for the docs axis (1–3 models) | `get_sn_review_docs_models()` |
 | `[sn.benchmark]` | SN benchmark compose-models list and reviewer-model | `get_sn_benchmark_compose_models()`, `get_sn_benchmark_reviewer_model()` |
 
 **Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"reasoning"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.
@@ -782,9 +784,9 @@ The LLM never provides the unit field.
 
 | Command | Purpose | Key Options |
 |---------|---------|-------------|
-| `sn run` | Generate standard names via 6-phase DAG (reconcile→generate→enrich→link→review→regen). Domain-iterating loop by default; `--paths` forces single-pass. `--only <phase>` runs a single phase in isolation; `--override-edits <name>` lets pipeline overwrite catalog-edited fields for specific names. | `--source {dd,signals}`, `--physics-domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--target {names,docs,full}`, `--docs-status`, `--docs-batch-size`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--single-pass`, `--turn-number`, `--min-score`, `--skip-enrich`, `--skip-review`, `--skip-regen`, `--only`, `--override-edits` |
-| `sn review` | Score and tier existing valid standard names via batched reviewer LLM (1:1 scoring invariant, retry-unmatched) | `--physics-domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--target {names,docs,full}` |
-| `sn export` | Export validated StandardName nodes to YAML staging dir (`standard_names/<domain>/<name>.yml`). Applies quality gates (reviewer_score ≥ 0.65 + description sub-score). | `--staging` (required), `--min-score`, `--include-unreviewed`, `--min-description-score`, `--gate-only`, `--gate-scope {all,a,b,c,d}`, `--domain`, `--force`, `--skip-gate`, `--override-edits` |
+| `sn run` | Generate standard names via 6-phase DAG (reconcile→generate→enrich→link→review→regen). Domain-iterating loop by default; `--paths` forces single-pass. `--only <phase>` runs a single phase in isolation; `--override-edits <name>` lets pipeline overwrite catalog-edited fields for specific names. | `--source {dd,signals}`, `--physics-domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--target {names,docs}`, `--docs-status`, `--docs-batch-size`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--single-pass`, `--turn-number`, `--min-score`, `--skip-enrich`, `--skip-review`, `--skip-regen`, `--only`, `--override-edits` |
+| `sn review` | Score and tier existing valid standard names via RD-quorum reviewer pipeline (1:1 scoring invariant, retry-unmatched) | `--physics-domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--target {names,docs}` |
+| `sn export` | Export validated StandardName nodes to YAML staging dir (`standard_names/<domain>/<name>.yml`). Applies quality gates (reviewer_score_name ≥ 0.65 + description sub-score). | `--staging` (required), `--min-score`, `--include-unreviewed`, `--min-description-score`, `--gate-only`, `--gate-scope {all,a,b,c,d}`, `--domain`, `--force`, `--skip-gate`, `--override-edits` |
 | `sn preview` | Launch ISN `catalog-site serve` against a staging dir for local preview | `--staging` (required), `--port` |
 | `sn publish` | Transport staging dir to ISNC repo (copy files + commit + optional push). No quality gates re-run — they ran at export time. | `--staging` (required), `--isnc` (required), `--push/--no-push`, `--dry-run` |
 | `sn import` | Import reviewed YAML from ISNC back into graph. Diff-based origin tracking flips edited names to `origin=catalog_edit`, preserving catalog edits on subsequent pipeline runs. | `--isnc` (required), `--accept-unit-override`, `--accept-cocos-override`, `--dry-run` |
@@ -818,30 +820,72 @@ Scoring criteria are defined in `imas_codex/llm/config/sn_review_criteria.yaml`.
 (handled automatically in `llm.py`) and cannot use `temperature=0.0` (handled in benchmark).
 Quality is adequate (68.9 avg) but not top-tier for standard name generation.
 
-### Cross-Family Review
+### RD-Quorum Review
 
-The `sn review` pipeline supports optional **cross-family reviewer diversity** to detect
-measurement bias from a single model family. When enabled, each reviewed batch receives a
-secondary LLM review from a rotating model (cycling through `secondary-models` by batch index).
+The `sn review` pipeline uses a **Rational-Disagreement (RD) quorum** to produce
+high-confidence axis scores while controlling cost.
+
+**Flow (per batch):**
+
+1. **Cycle 0 — primary (BLIND):** Scores the batch with no prior context. Uses
+   `models[0]` from the axis chain. Review nodes written to graph before cycle 1
+   starts (crash-safety).
+2. **Cycle 1 — secondary (BLIND):** Scores the same batch independently using
+   `models[1]`. Blindness is enforced — the prompt's `{% if prior_reviews %}`
+   block is omitted. Written immediately.
+3. **Per-dimension disagreement check:** For each item, if any dimension differs
+   by > `disagreement-threshold` (default 0.15, normalised 0–1), the item is
+   "disputed".
+4. **Cycle 2 — escalator (CONTEXT-AWARE):** Runs only if disputed items exist AND
+   `len(models) == 3`. Takes a per-item mini-batch of disputed items; receives
+   both prior critiques via `prior_reviews`. Its result is authoritative for
+   those items.
+
+**Partial-failure ladder:** both cycles missing → retry; second failure →
+`retry_item` (quarantine); one cycle missing → `single_review`.
+
+**`resolution_method` values on Review nodes:**
+
+| Value | Meaning |
+|-------|---------|
+| `quorum_consensus` | Cycles 0+1 agreed within tolerance; final = mean |
+| `authoritative_escalation` | Cycle 2 ran and is authoritative for disputed items |
+| `max_cycles_reached` | Cycles 0+1 disagreed; no escalator configured (len(models) < 3); final = mean with disagreement flag |
+| `retry_item` | Both cycles failed; item quarantined |
+| `single_review` | Only one cycle produced a score |
+
+**Winning-group selection:** `update_review_aggregates` picks the most-recent
+Review group whose `resolution_method` ∈ {`quorum_consensus`,
+`authoritative_escalation`, `single_review`} and mirrors the final scores onto
+the StandardName axis slots (`reviewer_score_name` / `reviewer_score_docs`, etc.).
 
 **Configuration** (`pyproject.toml`):
 ```toml
 [tool.imas-codex.sn.review]
-primary-model = "openrouter/anthropic/claude-opus-4.6"
-secondary-models = ["openrouter/openai/gpt-5.4"]  # empty = feature off
-disagreement-threshold = 0.2
+disagreement-threshold = 0.15   # per-dimension tolerance (normalised 0-1)
+max-cycles = 3                  # 1=primary only, 2=blind pair, 3=full quorum
+
+[tool.imas-codex.sn.review.names]
+models = [
+  "openrouter/anthropic/claude-opus-4.6",    # cycle 0 primary (blind)
+  "openrouter/openai/gpt-5.4",               # cycle 1 secondary (blind)
+  "openrouter/anthropic/claude-sonnet-4.6",  # cycle 2 escalator (sees both)
+]
+
+[tool.imas-codex.sn.review.docs]
+models = [
+  "openrouter/anthropic/claude-opus-4.6",
+  "openrouter/anthropic/claude-sonnet-4.6",
+  "openrouter/openai/gpt-5.4",
+]
 ```
 
-**Settings accessors:** `get_sn_review_primary_model()`, `get_sn_review_secondary_models()`,
-`get_sn_review_disagreement_threshold()`.
+**Settings accessors:** `get_sn_review_names_models()`, `get_sn_review_docs_models()`,
+`get_sn_review_max_cycles()`, `get_sn_review_disagreement_threshold()`.
 
-**Disagreement semantics:** When `|primary_score − secondary_score| > threshold`:
-- `reviewer_disagreement` is set to the absolute difference
-- `reviewer_score` is consolidated to `min(primary, secondary)` (conservative)
-- The name is flagged via low `reviewer_score` so it becomes eligible for the next `sn run --min-score <threshold>` regen turn
-
-**Persisted fields:** `reviewer_model_secondary`, `reviewer_score_secondary`,
-`reviewer_scores_secondary` (JSON), `reviewer_disagreement` (float).
+**Budget:** `review_pipeline` reserves `batch_cost × num_models × 1.3` upfront via
+`BudgetLease.reserve()`, then charges per cycle. This prevents secondary-cost leaks
+even when mid-cycle crashes occur.
 
 ### StandardName Lifecycle
 
@@ -888,7 +932,7 @@ pending → valid | quarantined
 
 **Non-critical issues (→ valid):** semantic warnings, description quality hints — persisted as `validation_issues` but do not gate the name.
 
-**Review does not demote.** The `sn review` pipeline writes `reviewer_score`, `reviewer_tier`, and `reviewer_comments` only — it never mutates `validation_status`. Low-scoring names remain `valid` and are selected for targeted regeneration via `sn run --min-score <threshold>`, which injects the prior reviewer feedback (always-on) into the compose prompt. Reviewer feedback injection is unconditional; there is no toggle.
+**Review does not demote.** The `sn review` pipeline writes axis-specific scores (`reviewer_score_name` / `reviewer_score_docs`, etc.) only — it never mutates `validation_status`. Low-scoring names remain `valid` and are selected for targeted regeneration via `sn run --min-score <threshold>`, which injects the prior reviewer feedback (always-on) into the compose prompt. Reviewer feedback injection is unconditional; there is no toggle.
 
 Only `valid` names participate in `sn export`.
 
@@ -940,8 +984,7 @@ specific IDS without touching the rest of the graph.
 `model` field contains the given substring (e.g. `--from-model gemini`). Useful for re-generating
 names produced by a specific model after benchmarking reveals a better alternative.
 
-**`sn run --target {names,docs,full}` / `sn review --target {names,docs,full}`** — Unified
-rubric/scope selector.
+**`sn run --target {names,docs}` / `sn review --target {names,docs}`** — Axis selector.
 
 - `--target names` — Name-only compose/review. Compose prompt focuses on naming + grammar; review
   uses the 4-dimension rubric (grammar/semantic/convention/completeness over 80). Fast and cheap
@@ -952,24 +995,22 @@ rubric/scope selector.
   completeness / physics_accuracy over 80) to grade just the generated prose. Batch size comes
   from `[tool.imas-codex.sn-generate].docs-batch-size` (default 12) when `--docs-batch-size` is
   unspecified, falling back to `[tool.imas-codex.sn-enrich].batch-size`.
-- `--target full` (default) — Full compose+enrich pass on generate; full 6-dimension rubric
-  (grammar / semantic / documentation / convention / completeness / compliance over 120) on review.
 
-**`sn review` fidelity rank:** `name_only` < `docs` < `full`. A lower-fidelity review run will
-NOT overwrite a higher-fidelity `review_mode` on an existing name unless `--force` is passed.
-This prevents a cheap `--target names` sweep from clobbering a prior full review. The
-`review_mode` enum (persisted on `StandardName.review_mode`) has three values: `full`,
-`name_only`, `docs`.
+**`sn review` fidelity rank:** `names` < `docs`. A lower-fidelity review run will
+NOT overwrite a higher-fidelity review on an existing name unless `--force` is passed.
+This prevents a cheap `--target names` sweep from clobbering a prior docs review.
 
 **Loop (default)** — Without `--paths`, `sn run` runs the DD-completion loop.
-Iterates over physics domains that still have extract-eligible paths, running a per-domain
-turn (reconcile→generate→enrich→link→review→regen) with fair-share cost budgeting across remaining
-domains. Stops when every domain reports zero eligible work, when `--cost-limit` is exhausted,
-or on `Ctrl-C`. Writes an `SNRun` audit node capturing cost, phase counters, domains touched,
+Rotates **one physics domain per turn** using stale-first selection from `SNRun.domains_touched`:
+the domain least recently processed is always picked first. Stops when every domain reports
+zero eligible work, when `--cost-limit` is exhausted, or when the remaining budget drops below
+`MIN_VIABLE_TURN` ($0.75) — too little to start a productive turn.
+On `Ctrl-C`. Writes an `SNRun` audit node capturing cost, phase counters, domains touched,
 `turn_number`, `min_score`, and `stop_reason`; `sn status` surfaces the most recent run.
-`--physics-domain` narrows to a single-domain loop. `--turn-number N` stamps the current
+`--physics-domain` bypasses rotation and pins to a single domain.
+`--turn-number N` stamps the current
 iteration number onto the run (user-supplied; does not auto-increment). `--min-score F`
-enables the regen phase: names with `reviewer_score < F` are re-composed with the prior
+enables the regen phase: names with `reviewer_score_name < F` are re-composed with the prior
 reviewer feedback injected into the prompt. Reviewer feedback injection is unconditional.
 Use `--single-pass` to opt out and force the single-pass extract→compose pipeline.
 `--skip-enrich`, `--skip-review`, `--skip-regen` narrow the per-turn phase set.
@@ -980,6 +1021,7 @@ Two distinct write paths with different semantics:
 
 - **`write_standard_names()` (build path)**: Uses `coalesce(b.field, sn.field)` for ALL fields — passing None preserves existing graph data. Safe to re-run without erasing imported data. Also persists `validation_issues` (list of tagged strings from ISN 3-layer validation) and `validation_layer_summary` (JSON with per-layer pass/fail counts).
 - **`_write_catalog_entries()` (import path)**: Catalog fields SET directly (overwrite) — catalog is authoritative. Graph-only fields (embedding, model, generated_at, confidence) preserved via coalesce.
+- **Review write path**: Each RD-quorum cycle's `Review` nodes are persisted to graph immediately (before the next cycle starts). After all cycles complete, `update_review_aggregates` selects the winning group (most-recent group with `resolution_method` ∈ {`quorum_consensus`, `authoritative_escalation`, `single_review`}) and mirrors the final scores onto the StandardName axis slots (`reviewer_score_name` / `reviewer_score_docs`, etc.).
 
 ### PR-driven round-trip
 
@@ -989,7 +1031,7 @@ The graph is authoritative for pipeline state; the catalog is authoritative for 
 sn export → sn preview → sn publish → GitHub PR review → PR merged → sn import
 ```
 
-1. **`sn export --staging ./staging`** — Reads validated StandardName nodes from graph, applies quality gates (reviewer_score ≥ 0.65 + description sub-score), writes YAML to `<staging>/standard_names/<domain>/<name>.yml`.
+1. **`sn export --staging ./staging`** — Reads validated StandardName nodes from graph, applies quality gates (reviewer_score_name ≥ 0.65 + description sub-score), writes YAML to `<staging>/standard_names/<domain>/<name>.yml`.
 2. **`sn preview --staging ./staging`** — Launches ISN `catalog-site serve` for local preview before publishing.
 3. **`sn publish --staging ./staging --isnc ../isnc`** — Copies staging YAML into ISNC git checkout, creates a commit, optionally pushes (`--push`).
 4. **User reviews the PR on GitHub** — edits description, documentation, tags, kind, links, status, etc.
@@ -1047,43 +1089,32 @@ by the model.
 
 **`physics_domain`:** Taken directly from the DD `IMASNode.physics_domain` field — DD-authoritative only. The LLM never fills this field. For ISN validation purposes, falls back to `"general"` when a name's `physics_domain` is absent or unrecognised.
 
-**Provenance fields** (v0.5.0): `reviewer_model`, `reviewer_score` (float 0-1, normalized from
-6×0-20), `reviewer_scores` (JSON: grammar/semantic/documentation/convention/completeness/compliance,
-each 0-20), `reviewer_comments`, `reviewer_comments_per_dim` (JSON: per-dimension reviewer
-commentary keyed by dimension name), `reviewer_verdict` (accept/reject/revise — from the
-canonical reviewer), `reviewed_at`, `review_tier` (outstanding/good/inadequate/poor),
-`vocab_gap_detail` (JSON: segment/needed_token/reason),
+**Provenance fields** (v0.5.0+): `vocab_gap_detail` (JSON: segment/needed_token/reason),
 `validation_issues` (list of tagged strings), `validation_layer_summary` (JSON).
 
 **Axis-split review storage** (rc22 C3): name-axis and docs-axis reviews persist to
 independent column families so a docs-only pass cannot clobber a prior name-only review's
-per-dimension JSON (and vice-versa). The shared scalar+JSON slots (`reviewer_score`,
-`reviewer_scores`, `reviewer_comments`, `reviewer_comments_per_dim`, `reviewer_verdict`,
-`reviewer_model`) are **reserved for full-mode aggregates** — only `sn review --target full`
-writes them. Axis-specific reviews write to five paired slots per axis:
+per-dimension JSON (and vice-versa). Axis-specific reviews write to five paired slots per axis:
 
 | Axis | Scalar | Per-dim JSON | Comments | Per-dim comments | Verdict | Model |
 |------|--------|--------------|----------|-----------------|---------|-------|
 | name | `reviewer_score_name` | `reviewer_scores_name` | `reviewer_comments_name` | `reviewer_comments_per_dim_name` | `reviewer_verdict_name` | `reviewer_model_name` |
 | docs | `reviewer_score_docs` | `reviewer_scores_docs` | `reviewer_comments_docs` | `reviewer_comments_per_dim_docs` | `reviewer_verdict_docs` | `reviewer_model_docs` |
 
-Reader queries (`fetch_low_score_sources`, `fetch_review_feedback_for_sources`, themes
-extraction, example loader's `axis="name"` projection) use `coalesce(axis_col, shared_col)`
-so any pre-axis-split rows (shared-only) still surface on the name axis. Full-mode writes
-populate all three score columns (`reviewer_score`, `reviewer_score_name`,
-`reviewer_score_docs`) to keep downstream fallback readers coherent. Same-axis re-review
-requires `--force` to overwrite — guard helper is
+Reader queries use `coalesce(axis_col, shared_col)` so any pre-axis-split rows still surface
+on the name axis. Same-axis re-review requires `--force` to overwrite — guard helper is
 `imas_codex.standard_names.review.pipeline._axis_overwrite_blocked`.
+
+**RD-quorum fields (p39-4)** on `Review` nodes: `review_axis` (names/docs),
+`cycle_index` (0=primary, 1=secondary, 2=escalator), `review_group_id` (UUID per quorum session),
+`resolution_role` (primary/secondary/escalator), `resolution_method` (quorum_consensus /
+authoritative_escalation / max_cycles_reached / retry_item / single_review).
+Review `id` format: `{sn_id}:{axis}:{review_group_id}:{cycle_index}`.
 
 **Schema v2 fields** (catalog round-trip): `pipeline_status` (renamed from `review_status`),
 `status` (ISN vocabulary lifecycle: draft/published/deprecated), `origin` (pipeline/catalog_edit),
 `deprecates`, `superseded_by` (vocabulary lifecycle links), `catalog_pr_number`, `catalog_pr_url`,
 `catalog_commit_sha` (PR provenance), `exported_at`, `imported_at` (round-trip timestamps).
-
-**Cross-family fields** (v0.6.1): `reviewer_model_secondary`, `reviewer_score_secondary` (float 0-1),
-`reviewer_scores_secondary` (JSON, same schema as `reviewer_scores`), `reviewer_disagreement`
-(float, abs difference between primary and secondary scores). Only populated when
-`[sn.review].secondary-models` is configured.
 
 **VocabGap nodes** record missing grammar tokens identified during composition when a needed
 vocabulary token does not exist in the ISN grammar. Linked via `HAS_SN_VOCAB_GAP` from IMASNode
@@ -1127,22 +1158,26 @@ Compose and review prompts use shared fragments via `{% include %}`:
 - `llm/config/sn_review_criteria.yaml` — scoring dimensions, tiers, verdict rules (loaded via `load_prompt_config()`)
 - ISN context keys (`quick_start`, `common_patterns`, `critical_distinctions`) rendered in compose prompt
 
+**Axis review prompts:** `review_names.md` (4-dim rubric: grammar/semantic/convention/completeness)
+and `review_docs.md` (4-dim rubric: description_quality/documentation_quality/completeness/physics_accuracy).
+Both share a `{% if prior_reviews %}...{% endif %}` block that is only rendered for the cycle-2
+escalator (context-aware). Cycles 0 and 1 never receive this block (blindness enforced).
+
 ### Migration from Pre-Wave-2 Catalogs
 
-Wave 2 added three new properties to `StandardName` nodes: `reviewer_scores`
-(per-dimension JSON), `reviewer_comments_per_dim` (per-dimension commentary),
-and `reviewer_verdict` (accept/reject/revise). These properties are **additive** —
-no schema migration is required.
+Wave 2 added per-dimension review properties to `StandardName` nodes. Pre-p39-2 graphs may
+still have the now-removed **shared** slots (`reviewer_score`, `reviewer_scores`,
+`reviewer_comments`, `reviewer_comments_per_dim`, `reviewer_verdict`, `reviewer_model`,
+`reviewed_at`, `review_mode`) on existing nodes. These fields are no longer written by any
+pipeline code path but **will not cause errors** — they simply become stale orphan properties
+until the node is re-reviewed or manually cleaned up.
 
-**Existing nodes** will have `reviewer_scores = NULL`, `reviewer_comments_per_dim = NULL`,
-and `reviewer_verdict = NULL` until re-reviewed. Downstream code handles NULL gracefully:
-- The example loader (`example_loader.py`) filters `WHERE sn.reviewer_verdict IS NOT NULL`, so pre-wave-2 nodes are automatically excluded from scored-example injection until backfilled.
-- Export gates check `reviewer_score` (which already exists on reviewed nodes), not the new per-dim fields.
+Reader queries use `coalesce(sn.reviewer_score_name, sn.reviewer_score)` for backward
+compatibility; pre-migration nodes surface correctly on the name axis until backfilled.
 
-**Backfill procedure:** Run `sn review --force` to re-review all valid names. This
-populates the per-dim fields on existing reviewed nodes without changing their
-`pipeline_status` or `validation_status`. The `--force` flag bypasses the
-"already reviewed" skip logic.
+**Backfill procedure:** Run `sn review --force` to re-review all valid names. This populates
+the axis-specific slots on existing nodes without changing `pipeline_status` or
+`validation_status`. The `--force` flag bypasses the "already reviewed" skip logic.
 
 The tier rename (`adequate` → `inadequate`) was applied at the schema level;
 existing `review_tier = 'adequate'` values in the graph will persist until
