@@ -160,7 +160,7 @@ def test_match_stamps_name_only_for_target_names() -> None:
     )
 
     scored, _u, _r = _match_reviews_to_entries([review], names, wlog, target="names")
-    assert scored[0]["review_mode"] == "name_only"
+    assert scored[0]["review_mode"] == "names"
 
 
 def test_match_stamps_full_for_target_full() -> None:
@@ -264,7 +264,7 @@ async def test_single_batch_dispatch_selects_prompt_per_target(monkeypatch) -> N
 
     # target=names
     c = await run("names")
-    assert c["prompt_name"] == "sn/review_name_only"
+    assert c["prompt_name"] == "sn/review_names"
     assert c["response_model"] is sn_models.StandardNameQualityReviewNameOnlyBatch
 
     # target=docs
@@ -338,13 +338,13 @@ def test_downgrade_guard_skips_lower_fidelity_without_force() -> None:
         name_only=True,
     )
     existing = {"id": "x", "reviewer_score": 0.8, "review_mode": "docs"}
-    incoming = {"id": "y", "reviewer_score": 0.8, "review_mode": "name_only"}
+    incoming = {"id": "y", "reviewer_score": 0.8, "review_mode": "names"}
 
     # Inline the guard logic (kept identical to pipeline.py) to verify
     # the fidelity rank is correct.
-    _rank = {"name_only": 1, "docs": 2, "full": 3}
+    _rank = {"names": 1, "docs": 2, "full": 3}
     target = state.target or ("names" if state.name_only else "full")
-    incoming_mode = "name_only" if target == "names" else target
+    incoming_mode = "names" if target == "names" else target
 
     # names (rank 1) should NOT overwrite docs (rank 2)
     assert _rank[incoming_mode] < _rank[existing["review_mode"]]

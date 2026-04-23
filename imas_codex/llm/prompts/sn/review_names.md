@@ -1,6 +1,6 @@
 ---
-name: sn/review_name_only
-description: Four-dimension quality review for name-only standard name candidates
+name: sn/review_names
+description: Four-dimension quality review for names-mode standard name candidates
 used_by: imas_codex.standard_names.review.pipeline._review_single_batch
 task: review
 dynamic: true

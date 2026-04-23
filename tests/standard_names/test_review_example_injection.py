@@ -4,7 +4,7 @@ Validates that the ``_review_scored_examples.md`` Jinja template:
 - Renders all entries when review_scored_examples has content.
 - Renders as zero-length when the list is empty (no whitespace artifacts).
 - Per-dimension breakdown is the hero content.
-- Works for all three review prompts (review, review_name_only, review_docs).
+- Works for all three review prompts (review, review_names, review_docs).
 """
 
 from __future__ import annotations

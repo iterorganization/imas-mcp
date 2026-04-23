@@ -16,7 +16,7 @@ class ExtractionBatch:
     Attributes:
         mode: Grouping strategy. ``"default"`` uses the rich
             (cluster × unit) grouping with per-item sibling / COCOS /
-            cross-IDS context. ``"name_only"`` uses coarse
+            cross-IDS context. ``"names"`` uses coarse
             (physics_domain × unit) grouping in larger bins and pairs
             with a leaner user prompt that defers deep enrichment to
             a follow-up review pass.
@@ -32,7 +32,7 @@ class ExtractionBatch:
     dd_version: str | None = None  # DD version whose conventions apply
     cocos_version: int | None = None  # COCOS convention from that DD version
     cocos_params: dict | None = None  # Full COCOS node properties
-    mode: str = "default"  # "default" or "name_only"
+    mode: str = "default"  # "default" or "names"
 
 
 class ExtractionSource(Protocol):

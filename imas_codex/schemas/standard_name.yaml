@@ -207,9 +207,7 @@ enums:
   StandardNameReviewMode:
     description: >-
       Which LLM review rubric produced the most recent ``reviewer_score``.
-      ``full`` uses all six dimensions (grammar, semantic, documentation,
-      convention, completeness, compliance) normalised over 120 points.
-      ``name_only`` uses four dimensions (grammar, semantic, convention,
+      ``names`` uses four dimensions (grammar, semantic, convention,
       completeness) normalised over 80 points and is used for names
       generated without rich descriptions, typically during
       ``sn run --target names`` turns.
@@ -217,13 +215,11 @@ enums:
       completeness, physics_accuracy) normalised over 80 points and evaluates
       a docs-generation cycle (``sn run --target docs``) without
       re-scoring the name itself.
-      Fidelity rank: ``name_only`` < ``docs`` < ``full``. A lower-fidelity
+      Fidelity rank: ``names`` < ``docs``. A lower-fidelity
       run must not overwrite a prior higher-fidelity review unless
       ``--force`` is given.
     permissible_values:
-      full:
-        description: All six dimensions scored (default).
-      name_only:
+      names:
         description: Four dimensions scored — grammar, semantic, convention, completeness.
       docs:
         description: >-
@@ -500,7 +496,7 @@ classes:
       review_mode:
         description: >-
           Advisory marker of the most recent LLM review rubric run
-          against this name: ``full``, ``name_only``, or ``docs``. No
+          against this name: ``names`` or ``docs``. No
           read path gates on this field for axis-specific data routing —
           readers use the explicit axis columns (``reviewer_scores_name``
           / ``reviewer_scores_docs`` / shared ``reviewer_scores`` for full).
@@ -980,7 +976,7 @@ classes:
       scores_json:
         description: >-
           JSON-encoded per-dimension sub-scores. Schema depends on review
-          mode (full 6-dim, name_only 4-dim, docs 4-dim independent).
+          mode (names 4-dim, docs 4-dim independent).
       comments_per_dim_json:
         description: >-
           JSON-encoded per-dimension reviewer comments matching scores_json

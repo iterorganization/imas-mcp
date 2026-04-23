@@ -29,7 +29,7 @@ dimensions:
 # the mode's maximum score.
 #
 # Prompt files:
-#   name  → imas_codex/llm/prompts/sn/review_name_only.md
+#   name  → imas_codex/llm/prompts/sn/review_names.md
 #   docs  → imas_codex/llm/prompts/sn/review_docs.md
 #   full  → imas_codex/llm/prompts/sn/review.md
 modes:
@@ -40,7 +40,7 @@ modes:
       Does NOT penalise missing description/documentation.
     dimensions: [grammar, semantic, convention, completeness]
     max_raw_score: 80
-    prompt: "sn/review_name_only.md"
+    prompt: "sn/review_names.md"
     tiers:
       outstanding: {raw_min: 68}   # 85 %
       good:        {raw_min: 48}   # 60 %

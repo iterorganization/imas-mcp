@@ -485,7 +485,7 @@ def group_for_name_only(
             binary-splits any batch exceeding this estimated token count.
 
     Returns:
-        List of :class:`ExtractionBatch` objects with ``mode="name_only"``.
+        List of :class:`ExtractionBatch` objects with ``mode="names"``.
     """
     if existing_names is None:
         existing_names = set()
@@ -519,7 +519,7 @@ def group_for_name_only(
                     items=chunk,
                     context=context,
                     existing_names=existing_names,
-                    mode="name_only",
+                    mode="names",
                 )
             )
 

@@ -122,7 +122,7 @@ def test_match_stamps_name_only_mode() -> None:
     )
     assert len(scored) == 1
     assert unmatched == []
-    assert scored[0]["review_mode"] == "name_only"
+    assert scored[0]["review_mode"] == "names"
     assert scored[0]["reviewer_score"] == pytest.approx(75 / 80)
 
 
@@ -159,7 +159,7 @@ def test_name_only_prompt_omits_documentation_and_compliance() -> None:
     from imas_codex.llm.prompt_loader import render_prompt
 
     rendered = render_prompt(
-        "sn/review_name_only",
+        "sn/review_names",
         {
             "items": [
                 {

@@ -1394,9 +1394,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             # System prompt and per-candidate L6/L7 logic are unchanged so
             # prompt caching and grammar safety stay intact.
             prompt_template = (
-                "sn/compose_dd_name_only"
-                if batch.mode == "name_only"
-                else "sn/compose_dd"
+                "sn/compose_dd_names" if batch.mode == "names" else "sn/compose_dd"
             )
             user_prompt = render_prompt(prompt_template, {**context, **user_context})
 
@@ -1765,7 +1763,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
         sizes = [len(b.items) for b in state.extracted]
         total_items_in_batches = sum(sizes)
         name_only_batches = sum(
-            1 for b in state.extracted if getattr(b, "mode", "default") == "name_only"
+            1 for b in state.extracted if getattr(b, "mode", "default") == "names"
         )
         singleton_count = sum(1 for s in sizes if s == 1)
         wlog.info(

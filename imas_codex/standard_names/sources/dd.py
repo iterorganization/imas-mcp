@@ -417,7 +417,7 @@ def extract_dd_candidates(
         name_only: When True, use the Workstream 2a coarser grouping
             (``physics_domain × unit``) via :func:`group_for_name_only`
             instead of :func:`group_by_concept_and_unit`. Batches are
-            tagged ``mode="name_only"`` so the compose worker picks the
+            tagged ``mode="names"`` so the compose worker picks the
             lean user prompt.
         name_only_batch_size: Maximum items per batch when ``name_only``
             is True.

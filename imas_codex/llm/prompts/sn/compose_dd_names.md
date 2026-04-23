@@ -1,6 +1,6 @@
 ---
-name: sn/compose_dd_name_only
-description: Lean user prompt for SN composition in name-only batching mode (Workstream 2a)
+name: sn/compose_dd_names
+description: Lean user prompt for SN composition in names batching mode (Workstream 2a)
 used_by: imas_codex.standard_names.workers.compose_worker
 task: composition
 dynamic: true

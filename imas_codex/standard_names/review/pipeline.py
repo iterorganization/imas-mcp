@@ -285,7 +285,7 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
         if state.unreviewed_only:
             if review_target == "docs":
                 has_axis_score = name.get("reviewed_docs_at") is not None
-            elif review_target == "name_only":
+            elif review_target == "names":
                 has_axis_score = name.get("reviewed_name_at") is not None
             else:
                 has_axis_score = name.get("reviewer_score") is not None
@@ -305,7 +305,7 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
             if review_target == "docs":
                 if name.get("reviewed_docs_at") is not None:
                     continue
-            elif review_target == "name_only":
+            elif review_target == "names":
                 if name.get("reviewed_name_at") is not None:
                     continue
             else:
@@ -671,7 +671,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
     _review_target = getattr(state, "target", None) or (
         "names" if state.name_only else "full"
     )
-    if _review_target in ("names", "name", "name_only"):
+    if _review_target in ("names", "name"):
         _review_axis: Literal["name", "docs", "full"] = "name"
     elif _review_target == "docs":
         _review_axis = "docs"
@@ -1177,7 +1177,7 @@ def _match_reviews_to_entries(
     the LLM did not return a review for.
 
     ``target`` selects the ``review_mode`` stamped onto each scored entry:
-    ``"names"`` → ``"name_only"``, ``"docs"`` → ``"docs"``, ``"full"`` →
+    ``"names"`` → ``"names"``, ``"docs"`` → ``"docs"``, ``"full"`` →
     ``"full"``. When ``target`` is None, falls back to the legacy
     ``name_only`` boolean for back-compat.
     """
@@ -1186,7 +1186,7 @@ def _match_reviews_to_entries(
     if target is None:
         target = "names" if name_only else "full"
     review_mode = {
-        "names": "name_only",
+        "names": "names",
         "docs": "docs",
         "full": "full",
     }.get(target, "full")
@@ -1313,7 +1313,7 @@ async def _review_single_batch(
 
     ``target`` selects the rubric:
 
-    * ``"names"`` → ``sn/review_name_only`` prompt +
+    * ``"names"`` → ``sn/review_names`` prompt +
       ``StandardNameQualityReviewNameOnlyBatch`` (4 dims, /80).
     * ``"docs"`` → ``sn/review_docs`` prompt +
       ``StandardNameQualityReviewDocsBatch`` (4 docs dims, /80).
@@ -1335,7 +1335,7 @@ async def _review_single_batch(
         target = "names" if name_only else "full"
 
     if target == "names":
-        prompt_name = "sn/review_name_only"
+        prompt_name = "sn/review_names"
         response_model: type = StandardNameQualityReviewNameOnlyBatch
     elif target == "docs":
         prompt_name = "sn/review_docs"

@@ -964,8 +964,8 @@ def sn_run(
     default="names",
     show_default=True,
     help=(
-        "Reviewer rubric. 'names' uses the 4-dim name-only rubric "
-        "(sn/review_name_only, 0-80) matching the compose-stage output. "
+        "Reviewer rubric. 'names' uses the 4-dim name rubric "
+        "(sn/review_names, 0-80) matching the compose-stage output. "
         "'full' uses the 6-dim rubric (sn/review, 0-120) — only meaningful "
         "when compose output includes documentation."
     ),

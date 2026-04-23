@@ -54,8 +54,8 @@ class BenchmarkConfig:
     reviewer_model: str | None = None  # frontier model for quality scoring
     force: bool = False  # re-run over already-processed paths
     # Rubric target for reviewer scoring. "names" → 4-dimensional
-    # sn/review_name_only (grammar, semantic, convention, completeness) —
-    # matches name-only compose output. "full" → 6-dimensional sn/review
+    # sn/review_names (grammar, semantic, convention, completeness) —
+    # matches names compose output. "full" → 6-dimensional sn/review
     # with documentation and compliance dimensions (only meaningful when
     # compose output includes rich documentation, which the current
     # StandardNameCandidate schema does not).
@@ -256,7 +256,7 @@ async def score_with_reviewer(
 ) -> list[dict]:
     """Score candidates using the rubric matching the compose output fidelity.
 
-    target="names" (default) — uses the 4-dimensional ``sn/review_name_only``
+    target="names" (default) — uses the 4-dimensional ``sn/review_names``
         rubric (grammar, semantic, convention, completeness; 0-80 total,
         normalised to 0-1). Appropriate for name-only compose output, which is
         what :class:`StandardNameCandidate` produces today.
@@ -279,7 +279,7 @@ async def score_with_reviewer(
     )
 
     if target == "names":
-        prompt_name = "sn/review_name_only"
+        prompt_name = "sn/review_names"
         response_model: type = StandardNameQualityReviewNameOnlyBatch
     elif target == "full":
         prompt_name = "sn/review"

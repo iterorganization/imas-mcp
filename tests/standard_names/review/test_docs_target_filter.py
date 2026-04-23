@@ -9,7 +9,7 @@ Bug (caught during C3 stabilization, 2026-04-23):
 
 Fix (pipeline.py):
     The freshness check is now target-aware — for ``target="docs"`` it
-    consults ``reviewed_docs_at``, for ``target="name_only"`` it consults
+    consults ``reviewed_docs_at``, for ``target="names"`` it consults
     ``reviewed_name_at``, and otherwise falls back to ``reviewer_score``.
 """
 
@@ -92,7 +92,7 @@ _NAME_WITH_NAME_REVIEW_ONLY = {
     "reviewer_score_docs": None,
     "reviewed_name_at": "2026-04-23T05:00:00Z",
     "reviewed_docs_at": None,
-    "review_mode": "name_only",
+    "review_mode": "names",
     "review_input_hash": None,
 }
 
@@ -172,15 +172,15 @@ async def test_docs_target_skips_name_without_name_review():
 
 @pytest.mark.asyncio
 async def test_name_only_target_uses_reviewed_name_at():
-    """target=name_only must freshness-check against reviewed_name_at."""
-    state = _make_state(target="name_only")
+    """target=names must freshness-check against reviewed_name_at."""
+    state = _make_state(target="names")
     await _run_extract_with_rows(state, [_NAME_WITH_NAME_REVIEW_ONLY, _NAME_UNREVIEWED])
     target_ids = {n["id"] for n in state.target_names}
     assert "electron_temperature" not in target_ids, (
-        "target=name_only should skip names already name-reviewed"
+        "target=names should skip names already name-reviewed"
     )
     assert "plasma_current" in target_ids, (
-        "target=name_only should include unreviewed names"
+        "target=names should include unreviewed names"
     )
 
 

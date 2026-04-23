@@ -6,7 +6,7 @@ score targets and returns them as dicts ready for Jinja template rendering.
 Two public functions share the same underlying Cypher logic:
 
 - ``load_compose_examples`` — injected into compose system prompts.
-- ``load_review_examples`` — injected into review/review_name_only/review_docs prompts.
+- ``load_review_examples`` — injected into review/review_names/review_docs prompts.
 
 Zero-opp at cold start: returns ``[]`` when no reviewed names exist.
 Naturally rich as the graph fills with reviewed entries.

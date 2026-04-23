@@ -483,7 +483,7 @@ class TestGroupForNameOnly:
         batches = group_for_name_only(items)
         assert len(batches) == 1
         batch = batches[0]
-        assert batch.mode == "name_only"
+        assert batch.mode == "names"
         assert batch.group_key == "name_only/kinetics/eV"
         assert len(batch.items) == 5
 
@@ -512,7 +512,7 @@ class TestGroupForNameOnly:
         ]
         batches = group_for_name_only(items)
         assert len(batches) == 2
-        assert all(b.mode == "name_only" for b in batches)
+        assert all(b.mode == "names" for b in batches)
 
     def test_cross_ids_same_domain_unit_merged(self):
         items = [
@@ -544,7 +544,7 @@ class TestGroupForNameOnly:
         assert sizes == [20, 50, 50]
         # Chunk suffix appears on multi-chunk groups.
         assert any("#" in b.group_key for b in batches)
-        assert all(b.mode == "name_only" for b in batches)
+        assert all(b.mode == "names" for b in batches)
 
     def test_missing_domain_or_unit_defaults(self):
         items = [

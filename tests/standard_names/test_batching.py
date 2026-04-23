@@ -267,13 +267,13 @@ class TestPreFlightTokenCheck:
         batch = _make_batch(n_items=4)
         batch.dd_version = "3.39.0"
         batch.cocos_version = 11
-        batch.mode = "name_only"
+        batch.mode = "names"
         tokens = estimate_batch_tokens(batch)
         result = pre_flight_token_check([batch], max_tokens=tokens // 3)
         for b in result:
             assert b.dd_version == "3.39.0"
             assert b.cocos_version == 11
-            assert b.mode == "name_only"
+            assert b.mode == "names"
             assert b.source == "dd"
 
     def test_split_group_keys_have_suffix(self):
@@ -430,7 +430,7 @@ class TestGroupByDomainAndUnit:
         ]
         batches = group_for_name_only(items, batch_size=50)
         assert len(batches) == 1
-        assert batches[0].mode == "name_only"
+        assert batches[0].mode == "names"
 
     def test_different_domains_different_batches(self):
         items = [
@@ -475,7 +475,7 @@ class TestGroupByDomainAndUnit:
         items = [_make_item(physics_domain="eq", unit="m")]
         batches = group_for_name_only(items, batch_size=50)
         for b in batches:
-            assert b.mode == "name_only"
+            assert b.mode == "names"
 
     def test_empty_returns_empty(self):
         assert group_for_name_only([]) == []

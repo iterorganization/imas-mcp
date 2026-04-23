@@ -25,7 +25,7 @@ def _review_entry(**overrides):
         "reviewer_verdict": "accept",
         "reviewer_model": "openrouter/anthropic/claude-opus-4.6",
         "review_tier": "good",
-        "review_mode": "name_only",
+        "review_mode": "names",
         "review_input_hash": "abc",
     }
     base.update(overrides)
