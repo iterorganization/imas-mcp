@@ -251,8 +251,18 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
                 continue
 
         # --unreviewed: no score OR stale hash
+        # Target-aware freshness check: for target=docs, the canonical
+        # reviewer_score is bootstrapped from name-only review, so checking
+        # has_score would filter out every doc-target candidate. Use the
+        # target-specific axis (reviewed_docs_at) instead so the docs phase
+        # can see names that have passed name-review but not docs-review yet.
         if state.unreviewed_only:
-            has_score = name.get("reviewer_score") is not None
+            if review_target == "docs":
+                has_axis_score = name.get("reviewed_docs_at") is not None
+            elif review_target == "name_only":
+                has_axis_score = name.get("reviewed_name_at") is not None
+            else:
+                has_axis_score = name.get("reviewer_score") is not None
             stored_hash = name.get("review_input_hash")
             computed_hash = name.get("_computed_hash")
             is_stale = (
@@ -260,14 +270,21 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
                 and stored_hash is not None
                 and computed_hash != stored_hash
             )
-            if has_score and not is_stale:
+            if has_axis_score and not is_stale:
                 continue
 
         # --force: no filtering (include already-reviewed)
-        # (default: skip already-reviewed unless --force)
+        # (default: skip already-reviewed unless --force) — also target-aware
         if not state.force_review and not state.unreviewed_only:
-            if name.get("reviewer_score") is not None:
-                continue
+            if review_target == "docs":
+                if name.get("reviewed_docs_at") is not None:
+                    continue
+            elif review_target == "name_only":
+                if name.get("reviewed_name_at") is not None:
+                    continue
+            else:
+                if name.get("reviewer_score") is not None:
+                    continue
 
         # Downgrade guard: don't overwrite a higher-fidelity review with a
         # lower-fidelity one unless --force. Fidelity rank: name_only < docs < full.
