@@ -58,7 +58,7 @@ class TestServeCLI:
         mock_server_cls.return_value = mock_server
         runner.invoke(main, ["serve"], catch_exceptions=False)
         mock_server_cls.assert_called_once_with(
-            read_only=False, dd_only=None, no_embed=False
+            read_only=False, dd_only=None, no_embed=False, include_standard_names=False
         )
         mock_server.run.assert_called_once()
 
@@ -68,7 +68,7 @@ class TestServeCLI:
         mock_server_cls.return_value = mock_server
         runner.invoke(main, ["serve", "--read-only"], catch_exceptions=False)
         mock_server_cls.assert_called_once_with(
-            read_only=True, dd_only=None, no_embed=False
+            read_only=True, dd_only=None, no_embed=False, include_standard_names=False
         )
 
     @patch("imas_codex.llm.server.AgentsServer")

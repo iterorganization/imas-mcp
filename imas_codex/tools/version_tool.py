@@ -119,7 +119,7 @@ class VersionTool:
             if not change_type_filter:
                 # Rename-chain-only mode requires an ids_filter for scope;
                 # otherwise error out so callers must supply context.
-                if follow_rename_chains and ids_filter:
+                if follow_rename_chains:
                     return await self._rename_chain_query(ids_filter=ids_filter)
                 return {
                     "error": (

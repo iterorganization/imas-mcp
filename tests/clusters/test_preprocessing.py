@@ -38,9 +38,13 @@ class TestPathFilter:
             "test_ids": {
                 "paths": {
                     "test_ids/good_path": {
-                        "documentation": "This is good documentation"
+                        "documentation": "This is good documentation",
+                        "data_type": "FLT_0D",
                     },
-                    "test_ids/short_path": {"documentation": "Hi"},
+                    "test_ids/short_path": {
+                        "documentation": "Hi",
+                        "data_type": "FLT_1D",
+                    },
                 }
             }
         }
@@ -55,10 +59,14 @@ class TestPathFilter:
             "test_ids": {
                 "paths": {
                     "test_ids/good_path": {
-                        "documentation": "Electron temperature in Kelvin"
+                        "documentation": "Electron temperature in Kelvin",
+                        "data_type": "FLT_0D",
                     },
-                    "test_ids/empty_path": {"documentation": ""},
-                    "test_ids/whitespace_path": {"documentation": "   "},
+                    "test_ids/empty_path": {"documentation": "", "data_type": "FLT_0D"},
+                    "test_ids/whitespace_path": {
+                        "documentation": "   ",
+                        "data_type": "FLT_0D",
+                    },
                 }
             }
         }
@@ -72,7 +80,10 @@ class TestPathFilter:
         ids_data = {
             "test_ids": {
                 "paths": {
-                    "test_ids/good_path": {"documentation": "Valid path documentation"},
+                    "test_ids/good_path": {
+                        "documentation": "Valid path documentation",
+                        "data_type": "FLT_0D",
+                    },
                     "test_ids/ids_properties/version": {
                         "documentation": "Version info"
                     },
@@ -91,7 +102,8 @@ class TestPathFilter:
             "core_profiles": {
                 "paths": {
                     "core_profiles/temperature": {
-                        "documentation": "Electron temperature profile in keV"
+                        "documentation": "Electron temperature profile in keV",
+                        "data_type": "FLT_1D",
                     }
                 }
             }

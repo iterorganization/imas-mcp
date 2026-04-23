@@ -174,7 +174,7 @@ class TestTextSearchImasPathsDDServer:
         # Verify the fulltext query was called with node_category filter
         calls = mock_gc.query.call_args_list
         ft_call = next(c for c in calls if "db.index.fulltext.queryNodes" in c[0][0])
-        assert "node_category = 'data'" in ft_call[0][0]
+        assert "node_category IN $categories" in ft_call[0][0]
 
     def test_contains_fallback_when_fulltext_fails(self, mock_gc):
         """When fulltext index raises, falls back to CONTAINS matching."""
@@ -543,7 +543,7 @@ class TestGraphSearchToolHybrid:
         # Verify the vector query includes node_category filter
         calls = mock_gc.query.call_args_list
         vector_call = next(c for c in calls if "imas_node_embedding" in c[0][0])
-        assert "node_category = 'data'" in vector_call[0][0]
+        assert "node_category IN $categories" in vector_call[0][0]
 
     @pytest.mark.asyncio
     async def test_empty_query_returns_error(self, mock_gc):

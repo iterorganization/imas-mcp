@@ -25,12 +25,14 @@ class TestGraphCLIPackageRegistration:
                 "prune",
                 "pull",
                 "push",
+                "repair",
                 "secure",
                 "shell",
                 "start",
                 "status",
                 "stop",
                 "switch",
+                "sync-isn-grammar",
                 "tags",
             ]
         )

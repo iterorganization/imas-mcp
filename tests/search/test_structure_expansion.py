@@ -13,7 +13,6 @@ def _make_graph_search_tool(gc_mock):
 
     tool = GraphSearchTool.__new__(GraphSearchTool)
     tool._gc = gc_mock
-    tool._embed_query = MagicMock(return_value=[0.1] * 128)
     return tool
 
 
@@ -118,14 +117,14 @@ async def test_structure_hits_get_children():
     gc = _make_gc_mock(enriched_rows, child_rows)
 
     # Patch _text_search_dd_paths to return a text score hit
-    with patch(
-        "imas_codex.tools.graph_search._text_search_dd_paths",
-        return_value=[{"id": struct_path, "score": 0.9}],
+    with (
+        patch(
+            "imas_codex.tools.graph_search._text_search_dd_paths",
+            return_value=[{"id": struct_path, "score": 0.9}],
+        ),
+        patch("imas_codex.graph.dd_search._embed", return_value=None),
     ):
         tool = _make_graph_search_tool(gc)
-        # Disable vector search by returning empty embedding
-        tool._embed_query = MagicMock(return_value=None)
-
         result = await tool.search_dd_paths("coil current")
 
     assert len(result.hits) == 1
@@ -151,13 +150,14 @@ async def test_non_structure_hits_have_no_children():
 
     gc = _make_gc_mock(enriched_rows, child_rows)
 
-    with patch(
-        "imas_codex.tools.graph_search._text_search_dd_paths",
-        return_value=[{"id": leaf_path, "score": 0.9}],
+    with (
+        patch(
+            "imas_codex.tools.graph_search._text_search_dd_paths",
+            return_value=[{"id": leaf_path, "score": 0.9}],
+        ),
+        patch("imas_codex.graph.dd_search._embed", return_value=None),
     ):
         tool = _make_graph_search_tool(gc)
-        tool._embed_query = MagicMock(return_value=None)
-
         result = await tool.search_dd_paths("psi profile")
 
     assert len(result.hits) == 1
@@ -177,15 +177,16 @@ async def test_structure_expansion_capped_at_five_parents():
     # Child expansion query returns nothing (we only check the call)
     gc = _make_gc_mock(enriched_rows, child_rows=[])
 
-    with patch(
-        "imas_codex.tools.graph_search._text_search_dd_paths",
-        return_value=[
-            {"id": p, "score": 0.9 - i * 0.01} for i, p in enumerate(struct_paths)
-        ],
+    with (
+        patch(
+            "imas_codex.tools.graph_search._text_search_dd_paths",
+            return_value=[
+                {"id": p, "score": 0.9 - i * 0.01} for i, p in enumerate(struct_paths)
+            ],
+        ),
+        patch("imas_codex.graph.dd_search._embed", return_value=None),
     ):
         tool = _make_graph_search_tool(gc)
-        tool._embed_query = MagicMock(return_value=None)
-
         result = await tool.search_dd_paths("coil current")
 
     # Confirm all 7 hits came back
@@ -213,13 +214,14 @@ async def test_structure_with_no_children_in_db():
 
     gc = _make_gc_mock(enriched_rows, child_rows)
 
-    with patch(
-        "imas_codex.tools.graph_search._text_search_dd_paths",
-        return_value=[{"id": struct_path, "score": 0.9}],
+    with (
+        patch(
+            "imas_codex.tools.graph_search._text_search_dd_paths",
+            return_value=[{"id": struct_path, "score": 0.9}],
+        ),
+        patch("imas_codex.graph.dd_search._embed", return_value=None),
     ):
         tool = _make_graph_search_tool(gc)
-        tool._embed_query = MagicMock(return_value=None)
-
         result = await tool.search_dd_paths("coil current")
 
     assert len(result.hits) == 1
@@ -250,16 +252,17 @@ async def test_mixed_structure_and_leaf_hits():
 
     gc = _make_gc_mock(enriched_rows, child_rows)
 
-    with patch(
-        "imas_codex.tools.graph_search._text_search_dd_paths",
-        return_value=[
-            {"id": struct_path, "score": 0.9},
-            {"id": leaf_path, "score": 0.8},
-        ],
+    with (
+        patch(
+            "imas_codex.tools.graph_search._text_search_dd_paths",
+            return_value=[
+                {"id": struct_path, "score": 0.9},
+                {"id": leaf_path, "score": 0.8},
+            ],
+        ),
+        patch("imas_codex.graph.dd_search._embed", return_value=None),
     ):
         tool = _make_graph_search_tool(gc)
-        tool._embed_query = MagicMock(return_value=None)
-
         result = await tool.search_dd_paths("coil current psi")
 
     assert len(result.hits) == 2

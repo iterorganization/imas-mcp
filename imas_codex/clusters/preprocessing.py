@@ -43,7 +43,10 @@ class PathFilter:
             for path, path_data in paths.items():
                 # Skip error and metadata nodes
                 name = path.split("/")[-1] if "/" in path else path
-                if _classify_node(path, name) not in CLUSTERABLE_CATEGORIES:
+                if (
+                    _classify_node(path, name, data_type=path_data.get("data_type"))
+                    not in CLUSTERABLE_CATEGORIES
+                ):
                     continue
 
                 # Only skip paths with no documentation at all

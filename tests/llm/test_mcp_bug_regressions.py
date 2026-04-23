@@ -68,16 +68,16 @@ class TestShortPhysicsTermsPreserved:
             )
 
     def test_search_dd_paths_path_segment_boost_preserves_short_terms(self):
-        """query_words in search_dd_paths must exempt _PHYSICS_SHORT_TERMS."""
-        from imas_codex.tools.graph_search import GraphSearchTool
+        """query_words in hybrid_dd_search must exempt _PHYSICS_SHORT_TERMS."""
+        from imas_codex.graph.dd_search import hybrid_dd_search
 
-        source = inspect.getsource(GraphSearchTool.search_dd_paths)
+        source = inspect.getsource(hybrid_dd_search)
 
         # The bug was: [w.lower() for w in ... if len(w) > 2]
         # The fix adds: or w.lower() in _PHYSICS_SHORT_TERMS
         # Verify the exemption is present wherever query_words is built
         assert "_PHYSICS_SHORT_TERMS" in source, (
-            "search_dd_paths must reference _PHYSICS_SHORT_TERMS to "
+            "hybrid_dd_search must reference _PHYSICS_SHORT_TERMS to "
             "exempt short physics abbreviations from length filtering"
         )
 
@@ -140,9 +140,9 @@ class TestCoordinateChannelTargetsIMASCoordinateSpec:
 
     def test_coordinate_query_uses_coordinate_spec_label(self):
         """The HAS_COORDINATE Cypher must traverse (coord:IMASCoordinateSpec)."""
-        from imas_codex.tools.graph_search import GraphPathContextTool
+        from imas_codex.graph.dd_search import related_dd_search
 
-        source = inspect.getsource(GraphPathContextTool.find_related_dd_paths)
+        source = inspect.getsource(related_dd_search)
 
         # Find the coordinate partners query
         coord_section = source[source.index("Coordinate partners") :]
@@ -253,37 +253,25 @@ class TestMigrationRemovalsWhereClause:
     """Bug 7: ids_clause must precede OPTIONAL MATCH in _get_removals."""
 
     def test_where_before_optional_match_in_source(self):
-        """In _get_removals Cypher, WHERE/ids_clause must come before OPTIONAL MATCH."""
+        """In _get_removals, ids_clause must filter path p, not an optional pattern.
+
+        The original bug placed WHERE {ids_clause} after OPTIONAL MATCH, causing it
+        to filter the replacement node instead of the removed path. The fix replaced
+        OPTIONAL MATCH with NOT EXISTS subqueries, which eliminates the risk of
+        WHERE clause misplacement entirely.
+        """
         from imas_codex.tools.migration_guide import _get_removals
 
         source = inspect.getsource(_get_removals)
 
-        # Extract the Cypher template from the source
-        # Find the f-string or string containing the query
-        assert "OPTIONAL MATCH" in source, "_get_removals must use OPTIONAL MATCH"
-
-        # The ids_clause must appear BEFORE the OPTIONAL MATCH line.
-        # In Cypher, a WHERE after OPTIONAL MATCH applies to the OPTIONAL
-        # pattern, not the preceding MATCH — that's the bug.
-        #
-        # Correct order:
-        #   MATCH (c)-[:FOR_IMAS_PATH]->(p:IMASNode)
-        #   WHERE true {ids_clause}
-        #   OPTIONAL MATCH (p)-[:RENAMED_TO]->(replacement)
-        #
-        # Buggy order:
-        #   MATCH (c)-[:FOR_IMAS_PATH]->(p:IMASNode)
-        #   OPTIONAL MATCH (p)-[:RENAMED_TO]->(replacement)
-        #   WHERE true {ids_clause}
-
-        # Find positions in source
-        optional_pos = source.index("OPTIONAL MATCH")
-        ids_clause_pos = source.index("ids_clause")
-
-        # The ids_clause interpolation must appear before OPTIONAL MATCH
-        assert ids_clause_pos < optional_pos, (
-            "ids_clause is placed AFTER OPTIONAL MATCH — the WHERE filter "
-            "will apply to the optional pattern instead of the required MATCH"
+        # Implementation must use NOT EXISTS (safer than OPTIONAL MATCH)
+        assert "NOT EXISTS" in source, (
+            "_get_removals must use NOT EXISTS to filter renames — "
+            "this avoids the WHERE-after-OPTIONAL-MATCH misplacement bug"
+        )
+        # ids_clause must still be defined to support ids_filter scoping
+        assert "ids_clause" in source, (
+            "ids_clause must be present to support ids_filter"
         )
 
     def test_get_removals_ids_filter_restricts_path_not_replacement(self):
@@ -298,20 +286,12 @@ class TestMigrationRemovalsWhereClause:
         assert gc.query.called
         cypher = gc.query.call_args.args[0]
 
-        # The WHERE clause with ids_filter must be between the second MATCH
-        # and the OPTIONAL MATCH
-        match2_pos = cypher.index("FOR_IMAS_PATH")
-        optional_pos = cypher.index("OPTIONAL MATCH")
-
-        # Find 'ids_filter' reference in the cypher
-        ids_ref_pos = cypher.index("$ids_filter")
-
-        assert match2_pos < ids_ref_pos < optional_pos, (
-            "ids_filter reference must appear between the MATCH for p "
-            "and the OPTIONAL MATCH for replacement. "
-            f"Positions: FOR_IMAS_PATH={match2_pos}, "
-            f"ids_filter={ids_ref_pos}, OPTIONAL={optional_pos}"
-        )
+        # The implementation uses NOT EXISTS instead of OPTIONAL MATCH —
+        # this inherently prevents the WHERE-after-OPTIONAL-MATCH bug.
+        assert "NOT EXISTS" in cypher, "Should use NOT EXISTS for rename filtering"
+        assert "$ids_filter" in cypher, "ids_filter must be referenced in Cypher"
+        # The ids_filter must filter path p (not a replacement node)
+        assert "p.ids" in cypher, "ids_filter should filter on p.ids"
 
 
 # ---------------------------------------------------------------------------
