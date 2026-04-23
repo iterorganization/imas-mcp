@@ -703,13 +703,19 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
             if not names:
                 return [], []
 
-            # Estimate cost and reserve budget
+            # Estimate cost and reserve budget (worst-case accounts
+            # for ALL review models, not just the primary one)
+            models = state.review_models or (
+                [state.review_model] if state.review_model else []
+            )
+            num_models = max(len(models), 1)
             estimated_cost = len(names) * 0.002  # ~$0.002 per name heuristic
-            reserved = estimated_cost * 1.3
-            actual_cost = 0.0
+            worst_case = estimated_cost * num_models * 1.3
+            lease = None
 
             if state.budget_manager:
-                if not state.budget_manager.reserve(estimated_cost):
+                lease = state.budget_manager.reserve(worst_case)
+                if lease is None:
                     wlog.info(
                         "Budget exhausted at batch %d — stopping review",
                         batch_idx,
@@ -739,11 +745,14 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 batch_items = batch_scored.pop("_items", [])
                 batch_unscored = batch_scored.pop("_unscored", 0)
 
-                actual_cost = batch_cost
                 total_cost += batch_cost
                 total_tokens += batch_tokens
                 revised += batch_revised
                 unscored += batch_unscored
+
+                # Charge primary review cost to budget lease
+                if lease:
+                    lease.charge(batch_cost)
 
                 # Only count actually scored items as processed
                 actually_scored = len(batch_items)
@@ -765,9 +774,6 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 )
                 # --- Build Review records for each configured model -----------
                 batch_review_records: list[dict] = []
-                models = state.review_models or (
-                    [state.review_model] if state.review_model else []
-                )
                 if models and batch_items:
                     # Canonical model (models[0]) — items already scored above.
                     # Amortize batch-level cost/tokens across items so each
@@ -819,6 +825,10 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                             total_cost += sec_cost
                             state.review_stats.cost += sec_cost
 
+                            # Charge secondary review cost to budget lease
+                            if lease:
+                                lease.charge(sec_cost)
+
                             sec_ts = datetime.now(UTC).isoformat()
                             sec_by_id = {s["id"]: s for s in sec_items if "id" in s}
                             n_sec = max(len(sec_items), 1)
@@ -867,8 +877,8 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 return [], []
 
             finally:
-                if state.budget_manager:
-                    state.budget_manager.reconcile(reserved, actual_cost)
+                if lease:
+                    lease.release_unused()
 
     tasks = [_process_batch(i, batch) for i, batch in enumerate(batches)]
     results = await asyncio.gather(*tasks, return_exceptions=True)

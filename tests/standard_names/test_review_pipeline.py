@@ -321,49 +321,49 @@ def test_review_neighborhood_enrichment():
 
 
 def test_review_budget_manager():
-    """ReviewBudgetManager tracks reservations, reconciliations, and exhaustion."""
-    from imas_codex.standard_names.review.budget import ReviewBudgetManager
+    """BudgetManager (formerly ReviewBudgetManager) tracks leases and exhaustion."""
+    from imas_codex.standard_names.budget import BudgetManager
 
-    mgr = ReviewBudgetManager(total_budget=1.0)
+    mgr = BudgetManager(total_budget=1.0)
 
     assert mgr.remaining == 1.0
     assert not mgr.exhausted()
 
-    # Reserve with internal 1.3× headroom
-    assert mgr.reserve(0.5)  # Internally reserves 0.65
+    # Reserve 0.5 from the pool
+    lease = mgr.reserve(0.5)
+    assert lease is not None
     assert mgr.remaining < 1.0
 
-    # Reconcile — return unused portion
-    mgr.reconcile(reserved=0.65, actual=0.3)
-    # Unused = 0.35 returned to the pool
+    # Charge actual cost, then release unused
+    lease.charge(0.3)
+    lease.release_unused()
+    # Unused = 0.2 returned to the pool
 
     # A reservation larger than the remaining budget must fail
     remaining_before = mgr.remaining
-    assert not mgr.reserve(remaining_before * 2)
+    assert mgr.reserve(remaining_before * 2) is None
 
     summary = mgr.summary
     assert summary["total_budget"] == 1.0
     assert summary["batch_count"] == 1  # Only the one successful reservation
-    assert summary["total_actual"] == 0.3
+    assert summary["total_spent"] == 0.3
 
 
 def test_review_budget_manager_reconcile_in_finally():
-    """Budget reconciliation in a finally block fully restores the pool."""
-    from imas_codex.standard_names.review.budget import ReviewBudgetManager
+    """Budget lease auto-releases in a context manager on failure."""
+    from imas_codex.standard_names.budget import BudgetManager
 
-    mgr = ReviewBudgetManager(total_budget=1.0)
+    mgr = BudgetManager(total_budget=1.0)
 
-    reserved = 0.0
     try:
-        assert mgr.reserve(0.3)
-        reserved = 0.3 * 1.3
-        raise ValueError("Simulated failure")
+        lease = mgr.reserve(0.3)
+        assert lease is not None
+        with lease:
+            raise ValueError("Simulated failure")
     except ValueError:
         pass
-    finally:
-        mgr.reconcile(reserved, actual=0.0)
 
-    # Full reconciliation → budget fully restored
+    # Lease released unused portion → budget fully restored
     assert abs(mgr.remaining - 1.0) < 1e-9
 
 

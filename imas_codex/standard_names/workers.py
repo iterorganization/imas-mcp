@@ -29,6 +29,7 @@ from imas_codex.standard_names.source_paths import (
 )
 
 if TYPE_CHECKING:
+    from imas_codex.standard_names.budget import BudgetLease
     from imas_codex.standard_names.sources.base import ExtractionBatch
     from imas_codex.standard_names.state import StandardNameBuildState
 
@@ -1301,383 +1302,405 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             if state.should_stop():
                 return []
 
-            # Search for nearby existing names to help avoid duplicates
-            nearby = _search_nearby_names(batch.context or batch.group_key)
-
-            # IDS-level context — collect for each IDS present in batch
-            ids_names = sorted(
-                {
-                    item["path"].split("/")[0]
-                    for item in batch.items
-                    if item.get("path") and "/" in item["path"]
-                }
-            )
-            ids_contexts = []
-            for iname in ids_names:
-                info = ids_context_cache.get(iname)
-                if info:
-                    ids_contexts.append({"ids_name": iname, **info})
-
-            # Pre-render COCOS guidance for items
-            if batch.cocos_params:
-                from imas_codex.standard_names.context import render_cocos_guidance
-
-                for item in batch.items:
-                    cocos_label = item.get("cocos_label")
-                    if cocos_label:
-                        item["cocos_guidance"] = render_cocos_guidance(
-                            cocos_label, batch.cocos_params
-                        )
-
-            # --- Rate-quantity detection ---
-            # When DD documentation indicates a rate/time-derivative, inject a
-            # hard constraint so the LLM uses tendency_of_/change_in_ prefix
-            # and writes a consistent description (prevents instant_change_*
-            # names and name/description verb drift).
-            import re as _re
-
-            _RATE_DOC_PATTERNS = _re.compile(
-                r"\b(instantaneous change|signed change|rate of change"
-                r"|time derivative|per unit time|instant change|d/dt"
-                r"|tendency of|time-rate)\b",
-                _re.IGNORECASE,
-            )
-            for item in batch.items:
-                haystack = " ".join(
-                    str(item.get(k, "") or "") for k in ("description", "documentation")
-                )
-                if _RATE_DOC_PATTERNS.search(haystack):
-                    item["rate_hint"] = True
-
-            # --- L2: Reference SN few-shot retrieval ---
-            # Synthesize query from first 3 path descriptions
-            reference_exemplars: list[dict] = []
-            try:
-                from imas_codex.standard_names.search import (
-                    search_similar_sns_with_full_docs,
-                )
-
-                desc_snippets = [
-                    item.get("description", "")
-                    for item in batch.items[:3]
-                    if item.get("description")
-                ]
-                if desc_snippets:
-                    synth_query = "; ".join(desc_snippets)
-                    # Exclude names already in this batch's candidate IDs
-                    batch_ids = [
-                        item.get("path", "").replace("/", "_") for item in batch.items
-                    ]
-                    reference_exemplars = await asyncio.to_thread(
-                        search_similar_sns_with_full_docs,
-                        synth_query,
-                        k=5,
-                        exclude_ids=batch_ids,
+            # Budget gate — reserve before doing any LLM work
+            lease = None
+            if state.budget_manager:
+                max_retries = _retry_attempts()
+                estimated = len(batch.items) * 0.01 * (max_retries + 1) * 1.3
+                lease = state.budget_manager.reserve(estimated)
+                if lease is None:
+                    wlog.info(
+                        "Budget exhausted — skipping compose batch %s",
+                        batch.group_key,
                     )
-            except Exception:
-                wlog.debug("L2: Reference exemplar search failed", exc_info=True)
+                    return []
 
-            user_context = {
-                "items": batch.items,
-                "ids_name": batch.group_key,
-                "ids_contexts": ids_contexts,
-                "existing_names": sorted(batch.existing_names)[:200],
-                "cluster_context": batch.context,
-                "nearby_existing_names": nearby,
-                "reference_exemplars": reference_exemplars,
-                "cocos_version": batch.cocos_version,
-                "dd_version": batch.dd_version,
+            try:
+                return await _compose_batch_body(batch, lease)
+            finally:
+                if lease:
+                    lease.release_unused()
+
+    async def _compose_batch_body(
+        batch: ExtractionBatch, lease: BudgetLease | None
+    ) -> list[dict]:
+        # Search for nearby existing names to help avoid duplicates
+        nearby = _search_nearby_names(batch.context or batch.group_key)
+
+        # IDS-level context — collect for each IDS present in batch
+        ids_names = sorted(
+            {
+                item["path"].split("/")[0]
+                for item in batch.items
+                if item.get("path") and "/" in item["path"]
             }
-            # Name-only batches (Workstream 2a) render a leaner user prompt
-            # that trades per-item cluster siblings / COCOS blocks / sibling
-            # fields for a "identify natural sub-groups, then name" directive.
-            # System prompt and per-candidate L6/L7 logic are unchanged so
-            # prompt caching and grammar safety stay intact.
-            prompt_template = (
-                "sn/compose_dd_names" if batch.mode == "names" else "sn/compose_dd"
-            )
-            user_prompt = render_prompt(prompt_template, {**context, **user_context})
+        )
+        ids_contexts = []
+        for iname in ids_names:
+            info = ids_context_cache.get(iname)
+            if info:
+                ids_contexts.append({"ids_name": iname, **info})
 
+        # Pre-render COCOS guidance for items
+        if batch.cocos_params:
+            from imas_codex.standard_names.context import render_cocos_guidance
+
+            for item in batch.items:
+                cocos_label = item.get("cocos_label")
+                if cocos_label:
+                    item["cocos_guidance"] = render_cocos_guidance(
+                        cocos_label, batch.cocos_params
+                    )
+
+        # --- Rate-quantity detection ---
+        # When DD documentation indicates a rate/time-derivative, inject a
+        # hard constraint so the LLM uses tendency_of_/change_in_ prefix
+        # and writes a consistent description (prevents instant_change_*
+        # names and name/description verb drift).
+        import re as _re
+
+        _RATE_DOC_PATTERNS = _re.compile(
+            r"\b(instantaneous change|signed change|rate of change"
+            r"|time derivative|per unit time|instant change|d/dt"
+            r"|tendency of|time-rate)\b",
+            _re.IGNORECASE,
+        )
+        for item in batch.items:
+            haystack = " ".join(
+                str(item.get(k, "") or "") for k in ("description", "documentation")
+            )
+            if _RATE_DOC_PATTERNS.search(haystack):
+                item["rate_hint"] = True
+
+        # --- L2: Reference SN few-shot retrieval ---
+        # Synthesize query from first 3 path descriptions
+        reference_exemplars: list[dict] = []
+        try:
+            from imas_codex.standard_names.search import (
+                search_similar_sns_with_full_docs,
+            )
+
+            desc_snippets = [
+                item.get("description", "")
+                for item in batch.items[:3]
+                if item.get("description")
+            ]
+            if desc_snippets:
+                synth_query = "; ".join(desc_snippets)
+                # Exclude names already in this batch's candidate IDs
+                batch_ids = [
+                    item.get("path", "").replace("/", "_") for item in batch.items
+                ]
+                reference_exemplars = await asyncio.to_thread(
+                    search_similar_sns_with_full_docs,
+                    synth_query,
+                    k=5,
+                    exclude_ids=batch_ids,
+                )
+        except Exception:
+            wlog.debug("L2: Reference exemplar search failed", exc_info=True)
+
+        user_context = {
+            "items": batch.items,
+            "ids_name": batch.group_key,
+            "ids_contexts": ids_contexts,
+            "existing_names": sorted(batch.existing_names)[:200],
+            "cluster_context": batch.context,
+            "nearby_existing_names": nearby,
+            "reference_exemplars": reference_exemplars,
+            "cocos_version": batch.cocos_version,
+            "dd_version": batch.dd_version,
+        }
+        # Name-only batches (Workstream 2a) render a leaner user prompt
+        # that trades per-item cluster siblings / COCOS blocks / sibling
+        # fields for a "identify natural sub-groups, then name" directive.
+        # System prompt and per-candidate L6/L7 logic are unchanged so
+        # prompt caching and grammar safety stay intact.
+        prompt_template = (
+            "sn/compose_dd_names" if batch.mode == "names" else "sn/compose_dd"
+        )
+        user_prompt = render_prompt(prompt_template, {**context, **user_context})
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        # --- Delta H: bounded retry loop for failed compositions ---
+        _total_compose_cost = 0.0
+        _max_retries = _retry_attempts()
+        for _compose_attempt in range(_max_retries + 1):
+            result, cost, tokens = await acall_llm_structured(
+                model=model,
+                messages=messages,
+                response_model=StandardNameComposeBatch,
+                service="standard-names",
+            )
+            _total_compose_cost += cost
+
+            # Charge actual LLM cost to budget lease
+            if lease:
+                lease.charge(cost)
+
+            # Quick grammar round-trip check on all candidates
+            _grammar_failures: list[str] = []
+            try:
+                from imas_standard_names.grammar import parse_standard_name
+
+                for c in result.candidates:
+                    try:
+                        parse_standard_name(c.standard_name)
+                    except Exception:
+                        _grammar_failures.append(c.standard_name)
+            except ImportError:
+                pass  # ISN not installed — skip check
+
+            if not _grammar_failures or _compose_attempt >= _max_retries:
+                break
+
+            # Re-enrich items with expanded hybrid search for retry
+            wlog.info(
+                "Composition retry %d/%d: %d grammar failures (%s) "
+                "— re-composing with expanded DD context",
+                _compose_attempt + 1,
+                _max_retries,
+                len(_grammar_failures),
+                ", ".join(_grammar_failures[:3]),
+            )
+
+            def _re_enrich_expanded():
+                from imas_codex.graph.client import GraphClient
+
+                with GraphClient() as gc:
+                    for item in batch.items:
+                        path = item.get("path")
+                        if not path:
+                            continue
+                        hybrid = _hybrid_search_neighbours(
+                            gc,
+                            path,
+                            description=item.get("description"),
+                            physics_domain=item.get("physics_domain"),
+                            search_k=_retry_k_expansion(),
+                        )
+                        if hybrid:
+                            item["hybrid_neighbours"] = hybrid
+
+            await asyncio.to_thread(_re_enrich_expanded)
+
+            _retry_reason = (
+                f"Previous attempt failed: grammar round-trip failed for "
+                f"{', '.join(_grammar_failures[:3])}. Consider expanded "
+                f"neighbour context and produce a different name."
+            )
+            retry_render_ctx = {
+                **context,
+                **user_context,
+                "retry_reason": _retry_reason,
+            }
+            user_prompt = render_prompt(prompt_template, retry_render_ctx)
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
 
-            # --- Delta H: bounded retry loop for failed compositions ---
-            _total_compose_cost = 0.0
-            _max_retries = _retry_attempts()
-            for _compose_attempt in range(_max_retries + 1):
-                result, cost, tokens = await acall_llm_structured(
-                    model=model,
-                    messages=messages,
-                    response_model=StandardNameComposeBatch,
-                    service="standard-names",
+        state.compose_stats.cost += _total_compose_cost
+        state.compose_stats.processed += len(batch.items)
+        state.compose_stats.record_batch(len(batch.items))
+
+        candidates = []
+        for c in result.candidates:
+            # Find the matching source item to get authoritative fields
+            source_item = next(
+                (item for item in batch.items if item.get("path") == c.source_id),
+                None,
+            )
+            # Inject unit from DD (authoritative, not LLM output)
+            raw_unit = source_item.get("unit") if source_item else None
+            # Normalize: '-', 'mixed', and None/empty are invalid in ISN
+            if raw_unit in ("-", "mixed", None, ""):
+                unit = "1"
+            else:
+                unit = raw_unit
+
+            # Inject physics_domain from DD (authoritative, like unit)
+            # Normalize empty string to None so coalesce works correctly
+            raw_domain = source_item.get("physics_domain") if source_item else None
+            physics_domain = raw_domain if raw_domain else None
+
+            # Inject COCOS metadata from DD (authoritative, like unit)
+            cocos_type = source_item.get("cocos_label") if source_item else None
+
+            # Normalize name via grammar round-trip BEFORE persist
+            # to avoid duplicate nodes if validate would rename
+            name_id = c.standard_name
+            grammar_failed = False
+            try:
+                from imas_standard_names.grammar import (
+                    compose_standard_name,
+                    parse_standard_name,
                 )
-                _total_compose_cost += cost
 
-                # Quick grammar round-trip check on all candidates
-                _grammar_failures: list[str] = []
-                try:
-                    from imas_standard_names.grammar import parse_standard_name
-
-                    for c in result.candidates:
-                        try:
-                            parse_standard_name(c.standard_name)
-                        except Exception:
-                            _grammar_failures.append(c.standard_name)
-                except ImportError:
-                    pass  # ISN not installed — skip check
-
-                if not _grammar_failures or _compose_attempt >= _max_retries:
-                    break
-
-                # Re-enrich items with expanded hybrid search for retry
-                wlog.info(
-                    "Composition retry %d/%d: %d grammar failures (%s) "
-                    "— re-composing with expanded DD context",
-                    _compose_attempt + 1,
-                    _max_retries,
-                    len(_grammar_failures),
-                    ", ".join(_grammar_failures[:3]),
-                )
-
-                def _re_enrich_expanded():
-                    from imas_codex.graph.client import GraphClient
-
-                    with GraphClient() as gc:
-                        for item in batch.items:
-                            path = item.get("path")
-                            if not path:
-                                continue
-                            hybrid = _hybrid_search_neighbours(
-                                gc,
-                                path,
-                                description=item.get("description"),
-                                physics_domain=item.get("physics_domain"),
-                                search_k=_retry_k_expansion(),
-                            )
-                            if hybrid:
-                                item["hybrid_neighbours"] = hybrid
-
-                await asyncio.to_thread(_re_enrich_expanded)
-
-                _retry_reason = (
-                    f"Previous attempt failed: grammar round-trip failed for "
-                    f"{', '.join(_grammar_failures[:3])}. Consider expanded "
-                    f"neighbour context and produce a different name."
-                )
-                retry_render_ctx = {
-                    **context,
-                    **user_context,
-                    "retry_reason": _retry_reason,
-                }
-                user_prompt = render_prompt(prompt_template, retry_render_ctx)
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ]
-
-            state.compose_stats.cost += _total_compose_cost
-            state.compose_stats.processed += len(batch.items)
-            state.compose_stats.record_batch(len(batch.items))
-
-            candidates = []
-            for c in result.candidates:
-                # Find the matching source item to get authoritative fields
-                source_item = next(
-                    (item for item in batch.items if item.get("path") == c.source_id),
-                    None,
-                )
-                # Inject unit from DD (authoritative, not LLM output)
-                raw_unit = source_item.get("unit") if source_item else None
-                # Normalize: '-', 'mixed', and None/empty are invalid in ISN
-                if raw_unit in ("-", "mixed", None, ""):
-                    unit = "1"
-                else:
-                    unit = raw_unit
-
-                # Inject physics_domain from DD (authoritative, like unit)
-                # Normalize empty string to None so coalesce works correctly
-                raw_domain = source_item.get("physics_domain") if source_item else None
-                physics_domain = raw_domain if raw_domain else None
-
-                # Inject COCOS metadata from DD (authoritative, like unit)
-                cocos_type = source_item.get("cocos_label") if source_item else None
-
-                # Normalize name via grammar round-trip BEFORE persist
-                # to avoid duplicate nodes if validate would rename
-                name_id = c.standard_name
-                grammar_failed = False
-                try:
-                    from imas_standard_names.grammar import (
-                        compose_standard_name,
-                        parse_standard_name,
-                    )
-
-                    parsed = parse_standard_name(name_id)
-                    normalized = compose_standard_name(parsed)
-                    if normalized != name_id:
-                        wlog.debug(
-                            "Pre-persist normalization: %r → %r", name_id, normalized
-                        )
-                        name_id = normalized
-                except Exception as gram_exc:
-                    grammar_failed = True
+                parsed = parse_standard_name(name_id)
+                normalized = compose_standard_name(parsed)
+                if normalized != name_id:
                     wlog.debug(
-                        "Grammar parse failed for %r — attempting L6 retry", name_id
+                        "Pre-persist normalization: %r → %r", name_id, normalized
                     )
+                    name_id = normalized
+            except Exception as gram_exc:
+                grammar_failed = True
+                wlog.debug("Grammar parse failed for %r — attempting L6 retry", name_id)
 
-                    # --- L6: Grammar-failure re-prompt (single retry) ---
-                    state.grammar_retries += 1
-                    try:
-                        retry_name = await _grammar_retry(
-                            name_id, str(gram_exc), model, acall_llm_structured
-                        )
-                        if retry_name and retry_name != name_id:
-                            # Verify the retry result actually parses
-                            parsed = parse_standard_name(retry_name)
-                            normalized = compose_standard_name(parsed)
-                            name_id = normalized
-                            grammar_failed = False
-                            state.grammar_retries_succeeded += 1
-                            wlog.info(
-                                "L6: Grammar retry succeeded: %r → %r",
-                                c.standard_name,
-                                name_id,
-                            )
-                    except Exception:
-                        wlog.debug("L6: Grammar retry also failed for %r", name_id)
-
-                candidates.append(
-                    {
-                        "id": name_id,
-                        "source_types": ["dd"] if state.source == "dd" else ["signals"],
-                        "source_id": c.source_id,
-                        "kind": c.kind,
-                        "source_paths": [
-                            encode_source_path(
-                                "dd" if state.source == "dd" else "signals", p
-                            )
-                            for p in (c.dd_paths or [])
-                        ],
-                        "fields": c.grammar_fields,
-                        "confidence": c.confidence,
-                        "reason": c.reason,
-                        "unit": unit,
-                        "physics_domain": physics_domain,
-                        "cocos_transformation_type": cocos_type,
-                        "cocos": batch.cocos_version,
-                        "dd_version": batch.dd_version,
-                        # L6: track grammar retry exhaustion
-                        **(
-                            {"_grammar_retry_exhausted": True} if grammar_failed else {}
-                        ),
-                    }
-                )
-
-                # --- B9: Mint error siblings deterministically ---
-                # If the parent has HAS_ERROR edges, mint uncertainty
-                # modifier siblings without LLM calls.
-                if (
-                    not grammar_failed
-                    and source_item
-                    and source_item.get("has_errors")
-                    and source_item.get("error_node_ids")
-                ):
-                    from imas_codex.standard_names.error_siblings import (
-                        mint_error_siblings,
+                # --- L6: Grammar-failure re-prompt (single retry) ---
+                state.grammar_retries += 1
+                try:
+                    retry_name = await _grammar_retry(
+                        name_id, str(gram_exc), model, acall_llm_structured
                     )
-
-                    siblings = mint_error_siblings(
-                        name_id,
-                        error_node_ids=source_item["error_node_ids"],
-                        unit=unit,
-                        physics_domain=physics_domain,
-                        cocos_type=cocos_type,
-                        cocos_version=batch.cocos_version,
-                        dd_version=batch.dd_version,
-                    )
-                    if siblings:
-                        candidates.extend(siblings)
-                        state.error_siblings_minted = getattr(
-                            state, "error_siblings_minted", 0
-                        ) + len(siblings)
-                        wlog.debug(
-                            "B9: Minted %d error siblings for parent %r",
-                            len(siblings),
+                    if retry_name and retry_name != name_id:
+                        # Verify the retry result actually parses
+                        parsed = parse_standard_name(retry_name)
+                        normalized = compose_standard_name(parsed)
+                        name_id = normalized
+                        grammar_failed = False
+                        state.grammar_retries_succeeded += 1
+                        wlog.info(
+                            "L6: Grammar retry succeeded: %r → %r",
+                            c.standard_name,
                             name_id,
                         )
+                except Exception:
+                    wlog.debug("L6: Grammar retry also failed for %r", name_id)
 
-            # Collect vocab gaps and persist immediately
-            if result.vocab_gaps:
-                gap_dicts = []
-                for vg in result.vocab_gaps:
-                    gap_dict = {
-                        "source_id": vg.source_id,
-                        "segment": vg.segment,
-                        "needed_token": vg.needed_token,
-                        "reason": vg.reason,
-                    }
-                    state.stats.setdefault("vocab_gaps", []).append(gap_dict)
-                    gap_dicts.append(gap_dict)
+            candidates.append(
+                {
+                    "id": name_id,
+                    "source_types": ["dd"] if state.source == "dd" else ["signals"],
+                    "source_id": c.source_id,
+                    "kind": c.kind,
+                    "source_paths": [
+                        encode_source_path(
+                            "dd" if state.source == "dd" else "signals", p
+                        )
+                        for p in (c.dd_paths or [])
+                    ],
+                    "fields": c.grammar_fields,
+                    "confidence": c.confidence,
+                    "reason": c.reason,
+                    "unit": unit,
+                    "physics_domain": physics_domain,
+                    "cocos_transformation_type": cocos_type,
+                    "cocos": batch.cocos_version,
+                    "dd_version": batch.dd_version,
+                    # L6: track grammar retry exhaustion
+                    **({"_grammar_retry_exhausted": True} if grammar_failed else {}),
+                }
+            )
 
-                # Persist to graph immediately so gaps survive cost-limit interruption
-                from imas_codex.standard_names.graph_ops import write_vocab_gaps
-
-                source_type = "dd" if state.source == "dd" else "signals"
-                await asyncio.to_thread(write_vocab_gaps, gap_dicts, source_type)
-                wlog.debug("Persisted %d vocab gaps to graph", len(gap_dicts))
-
-                if not state.dry_run:
-                    _update_sources_after_vocab_gap(gap_dicts, state.source, wlog)
-
-            # Process attachments — paths that map to existing names
-            if result.attachments:
-                _process_attachments(result.attachments, state, wlog)
-                if not state.dry_run:
-                    _update_sources_after_attach(result.attachments, state.source, wlog)
-
-            # --- GRAPH-STATE-MACHINE: persist immediately per batch ---
-            # This ensures completed batches survive cost-limit cancellation.
-            if candidates:
-                from imas_codex.standard_names.graph_ops import persist_composed_batch
-
-                written = await asyncio.to_thread(
-                    persist_composed_batch,
-                    candidates,
-                    compose_model=model,
-                    dd_version=batch.dd_version,
-                    cocos_version=batch.cocos_version,
+            # --- B9: Mint error siblings deterministically ---
+            # If the parent has HAS_ERROR edges, mint uncertainty
+            # modifier siblings without LLM calls.
+            if (
+                not grammar_failed
+                and source_item
+                and source_item.get("has_errors")
+                and source_item.get("error_node_ids")
+            ):
+                from imas_codex.standard_names.error_siblings import (
+                    mint_error_siblings,
                 )
-                wlog.debug("Persisted %d names from batch %s", written, batch.group_key)
 
-            # Update StandardNameSource nodes to composed status
-            if candidates and not state.dry_run:
-                _update_sources_after_compose(candidates, state.source, wlog)
+                siblings = mint_error_siblings(
+                    name_id,
+                    error_node_ids=source_item["error_node_ids"],
+                    unit=unit,
+                    physics_domain=physics_domain,
+                    cocos_type=cocos_type,
+                    cocos_version=batch.cocos_version,
+                    dd_version=batch.dd_version,
+                )
+                if siblings:
+                    candidates.extend(siblings)
+                    state.error_siblings_minted = getattr(
+                        state, "error_siblings_minted", 0
+                    ) + len(siblings)
+                    wlog.debug(
+                        "B9: Minted %d error siblings for parent %r",
+                        len(siblings),
+                        name_id,
+                    )
 
-            wlog.info(
-                "Batch %s: %d composed, %d attached, %d skipped (cost=$%.4f)",
-                batch.group_key,
-                len(result.candidates),
-                len(result.attachments),
-                len(result.skipped),
-                cost,
+        # Collect vocab gaps and persist immediately
+        if result.vocab_gaps:
+            gap_dicts = []
+            for vg in result.vocab_gaps:
+                gap_dict = {
+                    "source_id": vg.source_id,
+                    "segment": vg.segment,
+                    "needed_token": vg.needed_token,
+                    "reason": vg.reason,
+                }
+                state.stats.setdefault("vocab_gaps", []).append(gap_dict)
+                gap_dicts.append(gap_dict)
+
+            # Persist to graph immediately so gaps survive cost-limit interruption
+            from imas_codex.standard_names.graph_ops import write_vocab_gaps
+
+            source_type = "dd" if state.source == "dd" else "signals"
+            await asyncio.to_thread(write_vocab_gaps, gap_dicts, source_type)
+            wlog.debug("Persisted %d vocab gaps to graph", len(gap_dicts))
+
+            if not state.dry_run:
+                _update_sources_after_vocab_gap(gap_dicts, state.source, wlog)
+
+        # Process attachments — paths that map to existing names
+        if result.attachments:
+            _process_attachments(result.attachments, state, wlog)
+            if not state.dry_run:
+                _update_sources_after_attach(result.attachments, state.source, wlog)
+
+        # --- GRAPH-STATE-MACHINE: persist immediately per batch ---
+        # This ensures completed batches survive cost-limit cancellation.
+        if candidates:
+            from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+            written = await asyncio.to_thread(
+                persist_composed_batch,
+                candidates,
+                compose_model=model,
+                dd_version=batch.dd_version,
+                cocos_version=batch.cocos_version,
             )
-            # Stream batch completion to progress display
-            attach_label = (
-                f"+{len(result.attachments)} attached  " if result.attachments else ""
-            )
-            state.compose_stats.stream_queue.add(
-                [
-                    {
-                        "primary_text": batch.group_key,
-                        "description": (
-                            f"{len(result.candidates)} names  {attach_label}${cost:.3f}"
-                        ),
-                    }
-                ]
-            )
-            return candidates
+            wlog.debug("Persisted %d names from batch %s", written, batch.group_key)
+
+        # Update StandardNameSource nodes to composed status
+        if candidates and not state.dry_run:
+            _update_sources_after_compose(candidates, state.source, wlog)
+
+        wlog.info(
+            "Batch %s: %d composed, %d attached, %d skipped (cost=$%.4f)",
+            batch.group_key,
+            len(result.candidates),
+            len(result.attachments),
+            len(result.skipped),
+            cost,
+        )
+        # Stream batch completion to progress display
+        attach_label = (
+            f"+{len(result.attachments)} attached  " if result.attachments else ""
+        )
+        state.compose_stats.stream_queue.add(
+            [
+                {
+                    "primary_text": batch.group_key,
+                    "description": (
+                        f"{len(result.candidates)} names  {attach_label}${cost:.3f}"
+                    ),
+                }
+            ]
+        )
+        return candidates
 
     tasks = [_compose_batch(batch) for batch in state.extracted]
     results = await asyncio.gather(*tasks, return_exceptions=True)

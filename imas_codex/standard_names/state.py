@@ -62,6 +62,9 @@ class StandardNameBuildState(DiscoveryStateBase):
     name_only: bool = False
     name_only_batch_size: int = 50
 
+    # Budget manager (lease-style)
+    budget_manager: Any = None  # BudgetManager from .budget
+
     # Model overrides (None = use defaults from pyproject.toml)
     compose_model: str | None = None  # Override for compose step (default: reasoning)
 
@@ -123,6 +126,8 @@ class StandardNameBuildState(DiscoveryStateBase):
         if super().should_stop():
             return True
         if self.budget_exhausted:
+            return True
+        if self.budget_manager and self.budget_manager.exhausted():
             return True
         return False
 

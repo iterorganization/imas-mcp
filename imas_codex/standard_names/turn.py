@@ -180,6 +180,7 @@ async def _run_generate_phase(
             count=0,
         )
 
+    from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.pipeline import run_sn_pipeline
     from imas_codex.standard_names.state import StandardNameBuildState
 
@@ -195,6 +196,7 @@ async def _run_generate_phase(
         turn_number=cfg.turn_number,
         run_id=cfg.run_id,
         limit=cfg.limit,
+        budget_manager=BudgetManager(budget),
     )
 
     t0 = time.monotonic()
@@ -364,7 +366,7 @@ async def _run_review_names_phase(cfg: TurnConfig) -> PhaseResult:
     if cfg.dry_run:
         return PhaseResult(name="review_names", skipped=False, cost=0.0, count=0)
 
-    from imas_codex.standard_names.review.budget import ReviewBudgetManager
+    from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.review.consolidation import run_consolidation
     from imas_codex.standard_names.review.pipeline import run_sn_review_engine
     from imas_codex.standard_names.review.state import StandardNameReviewState
@@ -379,7 +381,7 @@ async def _run_review_names_phase(cfg: TurnConfig) -> PhaseResult:
         concurrency=cfg.concurrency,
         dry_run=False,
         target="names",
-        budget_manager=ReviewBudgetManager(budget),
+        budget_manager=BudgetManager(budget),
     )
 
     t0 = time.monotonic()
@@ -442,7 +444,7 @@ async def _run_review_docs_phase(cfg: TurnConfig) -> PhaseResult:
     if cfg.dry_run:
         return PhaseResult(name="review_docs", skipped=False, cost=0.0, count=0)
 
-    from imas_codex.standard_names.review.budget import ReviewBudgetManager
+    from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.review.consolidation import run_consolidation
     from imas_codex.standard_names.review.pipeline import run_sn_review_engine
     from imas_codex.standard_names.review.state import StandardNameReviewState
@@ -457,7 +459,7 @@ async def _run_review_docs_phase(cfg: TurnConfig) -> PhaseResult:
         concurrency=cfg.concurrency,
         dry_run=False,
         target="docs",
-        budget_manager=ReviewBudgetManager(budget),
+        budget_manager=BudgetManager(budget),
     )
 
     t0 = time.monotonic()
