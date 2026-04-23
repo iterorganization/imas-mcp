@@ -80,6 +80,22 @@ def gc():
         client.get_stats()
     except Exception as e:  # pragma: no cover - covered by collection hook
         pytest.skip(f"Neo4j not available: {e}")
+    # Skip when the SN subsystem has been cleared — these are integration
+    # tests against a populated StandardName corpus.
+    try:
+        rows = client.query(
+            "MATCH (sn:StandardName) WHERE sn.embedding IS NOT NULL "
+            "RETURN count(sn) AS n"
+        )
+        n = next(iter(rows), {}).get("n", 0)
+    except Exception:
+        n = 0
+    if n < 50:
+        client.close()
+        pytest.skip(
+            f"Only {n} embedded StandardName nodes in graph — "
+            "integration tests need a populated corpus (SN subsystem was cleared)"
+        )
     yield client
     client.close()
 

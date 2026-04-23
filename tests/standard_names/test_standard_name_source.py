@@ -132,6 +132,7 @@ class TestMergeStandardNameSources:
                         "id": "dd:eq/ts/p1d/psi",
                         "source_type": "dd",
                         "source_id": "eq/ts/p1d/psi",
+                        "dd_path": "eq/ts/p1d/psi",
                         "batch_key": "test",
                         "status": "extracted",
                     }
@@ -188,6 +189,7 @@ class TestMergeStandardNameSources:
                         "id": f"dd:path/{i}",
                         "source_type": "dd",
                         "source_id": f"path/{i}",
+                        "dd_path": f"path/{i}",
                         "batch_key": "test",
                         "status": "extracted",
                     }

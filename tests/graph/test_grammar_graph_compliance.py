@@ -60,7 +60,7 @@ class TestSegmentOrderCompliance:
         missing = isn_segments - graph_segment_names
         assert not missing, (
             f"ISN segments missing from graph: {sorted(missing)}. "
-            f"Run `imas-codex graph sync-isn-grammar` to populate."
+            f"Run `imas-codex sn sync-grammar` to populate."
         )
 
     def test_graph_segments_subset_of_isn(

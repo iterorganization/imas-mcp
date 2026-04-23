@@ -48,8 +48,12 @@ class TestCategoryConstants:
     def test_enrichable_superset_of_quantity(self):
         assert QUANTITY_CATEGORIES < ENRICHABLE_CATEGORIES
 
-    def test_sn_source_equals_quantity(self):
-        assert SN_SOURCE_CATEGORIES == QUANTITY_CATEGORIES
+    def test_sn_source_includes_coordinate(self):
+        """Coordinate leaves deserve standard names (user directive 2026-04-23)."""
+        assert "coordinate" in SN_SOURCE_CATEGORIES
+
+    def test_sn_source_superset_of_quantity(self):
+        assert QUANTITY_CATEGORIES <= SN_SOURCE_CATEGORIES
 
     def test_all_frozensets(self):
         for s in [

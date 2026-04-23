@@ -1096,7 +1096,7 @@ def _resolve_grammar_token_version(gc: GraphClient, isn_version: str) -> str | N
 
     Prefers exact match with the ISN runtime version.  When no tokens
     exist for that version (e.g. ISN was upgraded but
-    ``imas-codex graph sync-isn-grammar`` was not re-run), falls back
+    ``imas-codex sn sync-grammar`` was not re-run), falls back
     to the latest available version so that token-miss detection does
     not produce false-positive VocabGap nodes.
 
@@ -1125,7 +1125,7 @@ def _resolve_grammar_token_version(gc: GraphClient, isn_version: str) -> str | N
         fallback = rows[0]["v"]
         logger.warning(
             "No GrammarToken nodes for ISN %s — falling back to %s. "
-            "Run `imas-codex graph sync-isn-grammar` to update.",
+            "Run `imas-codex sn sync-grammar` to update.",
             isn_version,
             fallback,
         )
@@ -2278,8 +2278,31 @@ def clear_standard_names(
         if dry_run or count == 0:
             return count
 
+        # Step A: delete Review nodes attached to in-scope StandardName nodes
+        # (HAS_REVIEW edge goes StandardName -> Review). DETACH DELETE on the
+        # StandardName alone orphans the Review node; we must delete it explicitly.
         if ids_filter:
-            # Step 1: remove HAS_STANDARD_NAME relationships for matching scope
+            gc.query(
+                f"""
+                MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)-[:HAS_REVIEW]->(r:Review)
+                WHERE {sn_where}
+                AND src.id STARTS WITH $ids_prefix
+                DETACH DELETE r
+                """,
+                **params,
+            )
+        else:
+            gc.query(
+                f"""
+                MATCH (sn:StandardName)-[:HAS_REVIEW]->(r:Review)
+                WHERE {sn_where}
+                DETACH DELETE r
+                """,
+                **params,
+            )
+
+        # Step B: delete StandardName nodes and their remaining edges
+        if ids_filter:
             gc.query(
                 f"""
                 MATCH (src:IMASNode)-[r:HAS_STANDARD_NAME]->(sn:StandardName)
@@ -2289,7 +2312,6 @@ def clear_standard_names(
                 """,
                 **params,
             )
-            # Step 2: delete nodes that are now orphans (no remaining edges)
             gc.query(
                 f"""
                 MATCH (sn:StandardName)
@@ -2300,7 +2322,6 @@ def clear_standard_names(
                 **params,
             )
         else:
-            # No scoping — detach-delete all matching nodes (removes all rels)
             gc.query(
                 f"""
                 MATCH (sn:StandardName)
@@ -2310,8 +2331,126 @@ def clear_standard_names(
                 **params,
             )
 
+        # Step C: sweep up any fully-orphaned Review nodes left by prior clears
+        # (pre-p39 runs detached StandardName without deleting Review).
+        orphan_result = gc.query(
+            """
+            MATCH (r:Review)
+            WHERE NOT EXISTS { MATCH (:StandardName)-[:HAS_REVIEW]->(r) }
+            WITH r LIMIT 10000
+            DETACH DELETE r
+            RETURN count(r) AS n
+            """
+        )
+        orphan_count = orphan_result[0]["n"] if orphan_result else 0
+        if orphan_count:
+            logger.info("Swept %d orphaned Review nodes", orphan_count)
+
     logger.info("Deleted %d StandardName nodes", count)
     return count
+
+
+def clear_sn_subsystem(
+    *,
+    dry_run: bool = False,
+    reseed_grammar: bool = True,
+) -> dict[str, int]:
+    """Wipe the entire Standard Names subsystem from the graph.
+
+    Deletes every node label owned by the SN pipeline:
+
+    * ``StandardName`` — the generated names
+    * ``Review`` — RD-quorum review records
+    * ``StandardNameSource`` — per-path extraction tracking
+    * ``VocabGap`` — grammar vocabulary gap reports
+    * ``SNRun`` — run audit / rotation memory
+    * ``GrammarToken`` — ISN vocabulary tokens
+    * ``GrammarSegment`` — parent segments (subject, position, …)
+    * ``GrammarTemplate`` — template specifications
+    * ``ISNGrammarVersion`` — ISN release metadata
+
+    After clearing, the ISN grammar is automatically re-synced from the
+    installed ``imas_standard_names`` package so the vocabulary is
+    immediately available for the next ``sn run``. Disable the re-seed
+    with ``reseed_grammar=False`` (mostly useful for tests).
+
+    Parameters
+    ----------
+    dry_run:
+        Count matching nodes without modifying the graph. No re-seed
+        runs in dry-run mode.
+    reseed_grammar:
+        When True (default), re-run the ISN grammar sync after clearing
+        so the grammar tree is immediately repopulated.
+
+    Returns
+    -------
+    Dict mapping node label to deleted count. In dry-run mode,
+    values are the current counts that would be deleted.
+    """
+    counts: dict[str, int] = {}
+    labels = (
+        "StandardName",
+        "Review",
+        "StandardNameSource",
+        "VocabGap",
+        "SNRun",
+        "GrammarToken",
+        "GrammarSegment",
+        "GrammarTemplate",
+        "ISNGrammarVersion",
+    )
+
+    with GraphClient() as gc:
+
+        def _count(label: str) -> int:
+            r = gc.query(f"MATCH (n:{label}) RETURN count(n) AS n")
+            return r[0]["n"] if r else 0
+
+        for label in labels:
+            counts[label] = _count(label)
+
+        if dry_run:
+            return counts
+
+        # Delete order is significant for DETACH safety:
+        # Review BEFORE StandardName so orphan Review nodes can't linger
+        # (pre-p39 bug). GrammarToken BEFORE GrammarSegment BEFORE
+        # ISNGrammarVersion matches the parent→child tree. DETACH DELETE
+        # handles remaining edges on each pass.
+        gc.query("MATCH (r:Review) DETACH DELETE r")
+        gc.query("MATCH (sn:StandardName) DETACH DELETE sn")
+        gc.query("MATCH (s:StandardNameSource) DETACH DELETE s")
+        gc.query("MATCH (v:VocabGap) DETACH DELETE v")
+        gc.query("MATCH (rr:SNRun) DETACH DELETE rr")
+        gc.query("MATCH (t:GrammarToken) DETACH DELETE t")
+        gc.query("MATCH (tpl:GrammarTemplate) DETACH DELETE tpl")
+        gc.query("MATCH (gs:GrammarSegment) DETACH DELETE gs")
+        gc.query("MATCH (gv:ISNGrammarVersion) DETACH DELETE gv")
+
+    total = sum(counts.values())
+    logger.info("clear_sn_subsystem: deleted %d nodes (%s)", total, counts)
+
+    if reseed_grammar and not dry_run:
+        # Import here to avoid import cycle (grammar_sync imports GraphClient
+        # which is fine, but keeping the surface narrow).
+        from imas_codex.standard_names.grammar_sync import sync_isn_grammar_to_graph
+
+        try:
+            report = sync_isn_grammar_to_graph(dry_run=False)
+            logger.info(
+                "Re-seeded ISN grammar: isn=%s segments=%d templates=%d",
+                report.isn_version,
+                report.segments,
+                report.templates,
+            )
+        except RuntimeError:
+            logger.warning(
+                "clear_sn_subsystem: re-seed failed — run `sn sync-grammar` manually",
+                exc_info=True,
+            )
+
+    return counts
 
 
 def update_review_status(names: list[str], status: str = "published") -> int:

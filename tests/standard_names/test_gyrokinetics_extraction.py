@@ -153,9 +153,22 @@ class TestConstantNodeTypeExtraction:
             ]
         )
 
-        with patch(
-            "imas_codex.graph.client.GraphClient",
-            return_value=mock_gc,
+        with (
+            patch(
+                "imas_codex.graph.client.GraphClient",
+                return_value=mock_gc,
+            ),
+            patch(
+                "imas_codex.standard_names.sources.dd.report_extract_breakdown",
+                return_value={
+                    "total": 0,
+                    "by_node_type": {},
+                    "by_category": {},
+                    "by_data_type": {},
+                    "has_errors_count": 0,
+                    "samples": {},
+                },
+            ),
         ):
             from imas_codex.standard_names.sources.dd import extract_dd_candidates
 

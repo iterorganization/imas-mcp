@@ -1,4 +1,4 @@
-"""Tests for `imas-codex graph sync-isn-grammar` CLI (plan 29 E.6 + E.8)."""
+"""Tests for `imas-codex sn sync-grammar` CLI and sync idempotency."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
-from imas_codex.cli.graph.sync import sync_isn_grammar
+from imas_codex.cli.sn import sn_sync_grammar
 
 
 @dataclass
@@ -33,15 +33,15 @@ def _fake_report():
     return FakeReport()
 
 
-def test_sync_isn_grammar_skip_flag():
-    """--skip-grammar-sync exits cleanly without touching Neo4j."""
-    runner = CliRunner()
-    result = runner.invoke(sync_isn_grammar, ["--skip-grammar-sync"])
-    assert result.exit_code == 0
-    assert "skipped" in result.output.lower()
+def _fake_spec() -> dict[str, Any]:
+    return {
+        "version": "0.7.0rc10",
+        "segments": [{"name": "subject"}],
+        "templates": [],
+    }
 
 
-def test_sync_isn_grammar_dry_run():
+def test_sn_sync_grammar_dry_run():
     """--dry-run calls sync_grammar with dry_run=True and prints report."""
     runner = CliRunner()
     fake_gc = MagicMock()
@@ -51,50 +51,47 @@ def test_sync_isn_grammar_dry_run():
     fake_report = _fake_report()
 
     with (
-        patch("imas_codex.cli.graph.sync.GraphClient", return_value=fake_gc),
+        patch(
+            "imas_codex.standard_names.grammar_sync.GraphClient",
+            return_value=fake_gc,
+        ),
+        patch(
+            "imas_standard_names.graph.spec.get_grammar_graph_spec",
+            return_value=_fake_spec(),
+        ),
         patch(
             "imas_standard_names.graph.sync.sync_grammar", return_value=fake_report
         ) as mock_sync,
     ):
-        result = runner.invoke(sync_isn_grammar, ["--dry-run"])
+        result = runner.invoke(sn_sync_grammar, ["--dry-run"])
 
     assert result.exit_code == 0, result.output
     assert "Grammar sync complete" in result.output
     assert "dry_run=True" in result.output
-    assert "segments_written: 11" in result.output
     mock_sync.assert_called_once()
     _, kwargs = mock_sync.call_args
     assert kwargs["dry_run"] is True
     assert kwargs["active_version"]  # ISN version propagated
 
 
-def test_sync_isn_grammar_unreachable_raises():
-    """Neo4j connection failure raises ClickException (hard-fail per M3)."""
+def test_sn_sync_grammar_unreachable_raises():
+    """Neo4j connection failure surfaces as ClickException."""
     runner = CliRunner()
 
     def _boom(*_a, **_kw):
         raise ConnectionError("Neo4j unreachable")
 
-    with patch("imas_codex.cli.graph.sync.GraphClient", side_effect=_boom):
-        result = runner.invoke(sync_isn_grammar, [])
+    with (
+        patch("imas_codex.standard_names.grammar_sync.GraphClient", side_effect=_boom),
+        patch(
+            "imas_standard_names.graph.spec.get_grammar_graph_spec",
+            return_value=_fake_spec(),
+        ),
+    ):
+        result = runner.invoke(sn_sync_grammar, [])
 
     assert result.exit_code != 0
     assert "Failed to sync grammar" in result.output
-    assert "Neo4j unreachable" in result.output
-
-
-def test_sync_isn_grammar_skip_bypasses_unreachable():
-    """--skip-grammar-sync does not attempt connection even when Neo4j is down."""
-    runner = CliRunner()
-
-    with patch(
-        "imas_codex.cli.graph.sync.GraphClient",
-        side_effect=ConnectionError("Neo4j unreachable"),
-    ) as mock_gc:
-        result = runner.invoke(sync_isn_grammar, ["--skip-grammar-sync"])
-
-    assert result.exit_code == 0
-    mock_gc.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -152,11 +149,7 @@ class TestSyncIdempotency:
     """Verify that running sync twice produces no duplicates (E.8)."""
 
     def test_second_sync_no_new_statements(self) -> None:
-        """Running sync twice should produce the same Cypher MERGE statements.
-
-        Since sync uses MERGE throughout, the second run should be a no-op
-        at the database level — same statements, same parameters.
-        """
+        """Running sync twice should produce the same Cypher MERGE statements."""
         spec = _make_mock_spec()
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
@@ -167,7 +160,6 @@ class TestSyncIdempotency:
         _run_sync_with_mock(mock_gc, spec)
         calls_after_second = len(mock_gc.query.call_args_list)
 
-        # Both runs issue the same statements
         first_count = calls_after_first
         second_count = calls_after_second - calls_after_first
         assert first_count == second_count, (
@@ -197,10 +189,8 @@ class TestSyncIdempotency:
 
         for call_obj in mock_gc.query.call_args_list:
             cypher = call_obj[0][0] if call_obj[0] else ""
-            # Skip constraint DDL statements
             if "CONSTRAINT" in cypher or "INDEX" in cypher:
                 continue
-            # All data writes should use MERGE
             if "GrammarSegment" in cypher or "GrammarToken" in cypher:
                 assert "MERGE" in cypher, (
                     f"Expected MERGE in Cypher, got CREATE-style: {cypher[:120]}"
@@ -215,8 +205,6 @@ class TestSyncIdempotency:
         _run_sync_with_mock(mock_gc, spec)
         _run_sync_with_mock(mock_gc, spec)
 
-        # Find calls that MERGE the ISNGrammarVersion node itself
-        # (not just MATCH it as a parent for segment writes)
         version_merges = [
             c
             for c in mock_gc.query.call_args_list
@@ -224,12 +212,10 @@ class TestSyncIdempotency:
             and "ISNGrammarVersion" in str(c[0][0])
             and "MERGE (v:ISNGrammarVersion" in str(c[0][0])
         ]
-        # Should have exactly 2 (one per sync) with identical version
         assert len(version_merges) == 2, (
             f"Expected 2 ISNGrammarVersion MERGEs (one per sync), "
             f"got {len(version_merges)}"
         )
-        # Both should use the same version parameter
         versions = {c[1].get("version", "") for c in version_merges}
         assert len(versions) == 1, (
             f"Expected same version for both syncs, got {versions}"

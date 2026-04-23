@@ -22,7 +22,7 @@ Depends on:
     - ``imas_standard_names.graph.spec.segment_edge_specs`` for edge layout
     - ``imas_codex.standard_names.graph_ops._write_segment_edges`` for writes
     - Active ``ISNGrammarVersion`` with populated GrammarToken vocabulary
-      (run ``imas-codex graph sync-isn-grammar`` first).
+      (run ``imas-codex sn sync-grammar`` first).
 
 Plan reference: 29-architectural-pivot.md Phase E (E.7 back-fill).
 """
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         if not active:
             print(
                 "ERROR: no ISNGrammarVersion{active:true} — "
-                "run `imas-codex graph sync-isn-grammar` first.",
+                "run `imas-codex sn sync-grammar` first.",
                 file=sys.stderr,
             )
             return 2

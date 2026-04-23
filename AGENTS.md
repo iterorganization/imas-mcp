@@ -792,7 +792,9 @@ The LLM never provides the unit field.
 | `sn import` | Import reviewed YAML from ISNC back into graph. Diff-based origin tracking flips edited names to `origin=catalog_edit`, preserving catalog edits on subsequent pipeline runs. | `--isnc` (required), `--accept-unit-override`, `--accept-cocos-override`, `--dry-run` |
 | `sn status` | Show standard name and StandardNameSource pipeline statistics | — |
 | `sn gaps` | List grammar vocabulary gaps from composition | `--segment`, `--export {table,yaml}` |
-| `sn clear` | Delete standard names from the graph (relationship-first safety model) | `--status`, `--all`, `--source`, `--ids`, `--include-accepted`, `--include-sources`, `--dry-run` |
+| `sn clear` | Unconditional full-subsystem wipe (all SN nodes + grammar tree) with auto grammar re-seed from installed ISN package | `--dry-run`, `--force`, `--no-reseed` |
+| `sn prune` | Scoped delete of StandardName nodes (diagnostic tool, relationship-first safety) | `--status`, `--all`, `--source`, `--ids`, `--include-accepted`, `--include-sources`, `--dry-run` |
+| `sn sync-grammar` | Seed/refresh ISN grammar vocabulary (ISNGrammarVersion + GrammarSegment + GrammarToken + GrammarTemplate) in the graph | `--dry-run` |
 | `sn benchmark` | Benchmark LLM models on standard name generation quality | `--models`, `--ids`, `--reviewer-model`, `--max-candidates` |
 
 **`sn run` scope routing:** Without `--paths`, `sn run` runs the domain-rotating completion loop (reconcile→generate→enrich→link→review→regen across eligible physics domains). With `--paths`, it runs a single-pass pipeline on the explicit paths. `--single-pass` overrides the default to force single-pass regardless of scope. `--only <phase>` runs a single phase in isolation (e.g. `--only link` to resolve links, `--only reconcile` to mark stale sources).
@@ -967,14 +969,28 @@ additional filter flags: `--since`, `--before`, `--below-score`, `--tier`,
 **`sn run --reset-only`** — Performs the `--reset-to` cleanup then exits without running
 the generation pipeline. Requires `--reset-to`. Useful for housekeeping without recomposing.
 
-**`sn clear`** — Deletes StandardName nodes. Uses a relationship-first safety model: HAS_STANDARD_NAME
-edges are removed before deleting nodes, and scoped deletes only remove orphaned nodes. Requires
-either `--status <value>` or `--all`. Pass `--include-sources` to also delete associated
-`StandardNameSource` nodes.
+**`sn clear`** — Unconditional full-subsystem wipe. Deletes all StandardName, Review,
+StandardNameSource, VocabGap, SNRun, GrammarToken, GrammarTemplate, GrammarSegment, and
+ISNGrammarVersion nodes in one pass. By default re-seeds the ISN grammar vocabulary from
+the installed `imas-standard-names` package so the grammar is always available after a
+clear. Flags: `--dry-run` (preview), `--force` (skip confirmation), `--no-reseed` (skip
+grammar re-sync — tests/debugging only). There is intentionally no scoping — use `sn prune`
+for targeted deletes.
 
-**Safety guard:** Both `sn run --reset-to` and `sn clear` require `--include-accepted` to touch
+**`sn prune`** — Scoped delete tool for StandardName nodes. Uses a relationship-first
+safety model: HAS_STANDARD_NAME edges are removed before deleting nodes, and scoped
+deletes only remove orphaned nodes. Requires either `--status <value>` or `--all`. Pass
+`--include-sources` to also delete associated `StandardNameSource` nodes.
+
+**`sn sync-grammar`** — Seeds/refreshes the ISN grammar vocabulary (`ISNGrammarVersion`
++ `GrammarSegment` + `GrammarToken` + `GrammarTemplate`) into the graph from the
+installed `imas-standard-names` package. Idempotent — uses MERGE throughout. Normally
+run automatically by `sn clear`; use this command to refresh after an ISN version bump
+without wiping standard names.
+
+**Safety guard:** `sn run --reset-to` and `sn prune` require `--include-accepted` to touch
 names with `pipeline_status=accepted`. Accepted names are catalog-authoritative and should rarely be
-deleted from the graph.
+deleted from the graph. (`sn clear` has no such guard — it is a total wipe by design.)
 
 **`sn run --reset-to`** — Runs a reset before minting, scoped to the same `--source`
 filter. Accepts `extracted` or `drafted` as the target status. Useful for a clean re-run on a

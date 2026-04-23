@@ -2226,6 +2226,78 @@ def sn_import(
 
 
 @sn.command("clear")
+@click.option("--dry-run", is_flag=True, help="Preview without modifying the graph")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
+@click.option(
+    "--no-reseed",
+    is_flag=True,
+    help="Skip the automatic ISN grammar re-seed after clearing.",
+)
+def sn_clear(dry_run: bool, force: bool, no_reseed: bool) -> None:
+    """Wipe the entire Standard Names subsystem from the graph.
+
+    Deletes every node the SN pipeline owns — StandardName, Review,
+    StandardNameSource, VocabGap, SNRun, GrammarToken, GrammarSegment,
+    GrammarTemplate, ISNGrammarVersion — and then re-syncs the ISN
+    grammar spec from the installed ``imas_standard_names`` package so
+    the grammar is immediately available for the next ``sn run``.
+
+    For scoped deletes (by status, source, IDS, score tier, …) use
+    ``sn prune`` instead.
+
+    \b
+    Examples:
+      imas-codex sn clear --dry-run               # Preview the wipe
+      imas-codex sn clear --force                 # Full wipe + re-seed
+      imas-codex sn clear --force --no-reseed     # Wipe without re-seed
+    """
+    from imas_codex.standard_names.graph_ops import clear_sn_subsystem
+
+    try:
+        preview = clear_sn_subsystem(dry_run=True)
+        total = sum(preview.values())
+        if total == 0:
+            console.print("No SN subsystem nodes to delete.")
+            if not no_reseed and not dry_run:
+                _run_sync_grammar(dry_run=False, verbose=False)
+            return
+
+        console.print("[bold]Full SN subsystem wipe preview:[/bold]")
+        for label, n in preview.items():
+            if n:
+                console.print(f"  {label}: {n}")
+        console.print(f"[bold]Total: {total}[/bold]")
+        if not no_reseed:
+            console.print(
+                "[dim]ISN grammar will be re-seeded from installed package "
+                "after the wipe.[/dim]"
+            )
+
+        if dry_run:
+            return
+
+        if not force:
+            click.confirm(
+                f"This will delete {total} SN-related nodes. Continue?",
+                abort=True,
+            )
+
+        deleted = clear_sn_subsystem(dry_run=False, reseed_grammar=not no_reseed)
+        total_deleted = sum(deleted.values())
+        console.print(f"[green]Deleted {total_deleted} nodes[/green]")
+        for label, n in deleted.items():
+            if n:
+                console.print(f"  {label}: {n}")
+        if not no_reseed:
+            console.print("[green]✓ ISN grammar re-seeded[/green]")
+    except click.Abort:
+        raise
+    except Exception as e:
+        console.print(f"[red]Clear error:[/red] {e}")
+        raise SystemExit(1) from e
+
+
+@sn.command("prune")
 @click.option(
     "--status",
     default=None,
@@ -2233,7 +2305,7 @@ def sn_import(
 )
 @click.option(
     "--all",
-    "clear_all",
+    "prune_all",
     is_flag=True,
     help="Delete all standard names (still respects --include-accepted)",
 )
@@ -2255,11 +2327,11 @@ def sn_import(
     "--include-sources",
     is_flag=True,
     default=False,
-    help="Also delete StandardNameSource nodes",
+    help="Also delete StandardNameSource nodes matching the same scope",
 )
-def sn_clear(
+def sn_prune(
     status: str | None,
-    clear_all: bool,
+    prune_all: bool,
     source: str | None,
     ids_filter: str | None,
     include_accepted: bool,
@@ -2267,25 +2339,27 @@ def sn_clear(
     force: bool,
     include_sources: bool,
 ) -> None:
-    """Delete standard names from the graph.
+    """Delete a subset of StandardName nodes (scoped by filters).
 
     Relationship-first safety model: HAS_STANDARD_NAME edges are removed
     before deleting nodes; scoped deletes only remove orphaned nodes.
+    Review nodes attached to pruned StandardNames are deleted alongside
+    them; a final sweep removes any orphan Review nodes left by prior
+    runs.
 
-    Shows a preview count and requires confirmation before deleting.
-    Use --force to skip the confirmation prompt.
+    Use this for targeted cleanup while iterating on generation. For a
+    full subsystem wipe (all nodes + grammar re-seed), use ``sn clear``.
 
     \b
     Examples:
-      imas-codex sn clear --status drafted              # Clear drafted names
-      imas-codex sn clear --all --source dd --ids equilibrium
-      imas-codex sn clear --all --include-accepted --dry-run
-      imas-codex sn clear --all --force                 # Skip confirmation
+      imas-codex sn prune --status drafted
+      imas-codex sn prune --all --source dd --ids equilibrium
+      imas-codex sn prune --all --include-accepted --dry-run
     """
-    if not status and not clear_all:
+    if not status and not prune_all:
         raise click.UsageError("Provide --status <value> or --all to select names.")
 
-    status_filter = None if clear_all else ([status] if status else None)
+    status_filter = None if prune_all else ([status] if status else None)
 
     from imas_codex.standard_names.graph_ops import clear_standard_names
 
@@ -2338,7 +2412,6 @@ def sn_clear(
             from imas_codex.graph.client import GraphClient
 
             with GraphClient() as gc:
-                # Build filter for StandardNameSource nodes matching the same scope
                 sns_where_clauses = []
                 sns_params: dict = {}
                 if source:
@@ -2367,8 +2440,55 @@ def sn_clear(
     except click.Abort:
         raise
     except Exception as e:
-        console.print(f"[red]Clear error:[/red] {e}")
+        console.print(f"[red]Prune error:[/red] {e}")
         raise SystemExit(1) from e
+
+
+def _run_sync_grammar(*, dry_run: bool, verbose: bool) -> None:
+    """Shared implementation for ``sn sync-grammar`` and ``sn clear``'s re-seed."""
+    from imas_codex.standard_names.grammar_sync import sync_isn_grammar_to_graph
+
+    try:
+        report = sync_isn_grammar_to_graph(dry_run=dry_run)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    console.print(
+        f"ISN version: {report.isn_version}  spec: {report.spec_version}  "
+        f"segments: {report.segments}  templates: {report.templates}"
+    )
+    console.print(f"[green]✓ Grammar sync complete (dry_run={dry_run})[/green]")
+
+    if verbose:
+        planned = report.raw_report.pop("planned_statements", None)
+        for key, val in report.raw_report.items():
+            console.print(f"  {key}: {val}")
+        if planned:
+            console.print(f"  planned_statements: {len(planned)}")
+            for cypher, params in planned:
+                console.print(f"    {cypher}  params={params}")
+
+    console.print(
+        f"[green]✓ Active grammar version → {report.finalise_report.get('target_version')}"
+        f" (applied={report.finalise_report.get('applied')})[/green]"
+    )
+
+
+@sn.command("sync-grammar")
+@click.option("--dry-run", is_flag=True, help="Log Cypher without executing.")
+@click.option("-v", "--verbose", is_flag=True, help="Show planned Cypher statements.")
+def sn_sync_grammar(dry_run: bool, verbose: bool) -> None:
+    """Sync the ISN grammar spec into Neo4j.
+
+    Writes ``ISNGrammarVersion``, ``GrammarSegment``, ``GrammarToken``,
+    and ``GrammarTemplate`` nodes plus ``NEXT`` / ``DEFINES`` /
+    ``HAS_TOKEN`` edges from the installed ``imas_standard_names``
+    package. Idempotent — safe to re-run.
+
+    Run this after ``sn clear --no-reseed``, after upgrading the ISN
+    package, or manually during release preparation.
+    """
+    _run_sync_grammar(dry_run=dry_run, verbose=verbose)
 
 
 @sn.command("review")

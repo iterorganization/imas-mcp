@@ -32,7 +32,6 @@ class TestGraphCLIPackageRegistration:
                 "status",
                 "stop",
                 "switch",
-                "sync-isn-grammar",
                 "tags",
             ]
         )
