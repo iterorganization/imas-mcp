@@ -1498,6 +1498,78 @@ class TestUnitValidityCheckStrengthened:
 # =========================================================================
 
 
+class TestAdjacentDuplicateTokenCheck:
+    """Tests for adjacent_duplicate_token_check audit (CRITICAL)."""
+
+    def test_fail_magnetic_magnetic(self):
+        """Adjacent duplicate 'magnetic_magnetic' is flagged as critical."""
+        from imas_codex.standard_names.audits import (
+            adjacent_duplicate_token_check,
+            has_critical_audit_failure,
+        )
+
+        issues = adjacent_duplicate_token_check(
+            {"id": "bandwidth_3db_of_toroidal_magnetic_magnetic_field_probe"}
+        )
+        assert len(issues) == 1
+        assert "adjacent_duplicate_token_check" in issues[0]
+        assert "'magnetic_magnetic'" in issues[0]
+        assert has_critical_audit_failure(issues)
+
+    def test_fail_poloidal_magnetic_magnetic_probe(self):
+        from imas_codex.standard_names.audits import adjacent_duplicate_token_check
+
+        issues = adjacent_duplicate_token_check(
+            {"id": "poloidal_magnetic_magnetic_field_probe_constraint_weight"}
+        )
+        assert len(issues) == 1
+
+    def test_pass_deuterium_deuterium(self):
+        """Compound-subject 'deuterium_deuterium' does not fire."""
+        from imas_codex.standard_names.audits import adjacent_duplicate_token_check
+
+        assert (
+            adjacent_duplicate_token_check({"id": "deuterium_deuterium_reaction_rate"})
+            == []
+        )
+
+    def test_pass_beam_beam(self):
+        """beam-beam fusion reaction is a legitimate compound."""
+        from imas_codex.standard_names.audits import adjacent_duplicate_token_check
+
+        assert (
+            adjacent_duplicate_token_check(
+                {"id": "deuterium_deuterium_beam_beam_neutron_emission_rate"}
+            )
+            == []
+        )
+
+    def test_pass_non_adjacent_magnetic(self):
+        """magnetic_field_at_magnetic_axis has non-adjacent repetition — legit."""
+        from imas_codex.standard_names.audits import adjacent_duplicate_token_check
+
+        assert (
+            adjacent_duplicate_token_check({"id": "magnetic_field_at_magnetic_axis"})
+            == []
+        )
+
+    def test_pass_non_adjacent_upper(self):
+        """upper_uncertainty_of_upper_triangularity — non-adjacent."""
+        from imas_codex.standard_names.audits import adjacent_duplicate_token_check
+
+        assert (
+            adjacent_duplicate_token_check(
+                {"id": "upper_uncertainty_of_upper_triangularity_of_plasma_boundary"}
+            )
+            == []
+        )
+
+    def test_pass_empty(self):
+        from imas_codex.standard_names.audits import adjacent_duplicate_token_check
+
+        assert adjacent_duplicate_token_check({"id": ""}) == []
+
+
 class TestRepeatedTokenCheck:
     """Tests for repeated_token_check audit."""
 

@@ -76,6 +76,7 @@ CRITICAL_CHECKS = frozenset(
         "cumulative_prefix_check",
         "pulse_schedule_reference_check",
         "ratio_binary_operator_check",
+        "adjacent_duplicate_token_check",
     }
 )
 
@@ -2035,6 +2036,8 @@ _COMPOUND_SUBJECT_PAIRS = frozenset(
         "deuterium_deuterium",
         "deuterium_tritium",
         "tritium_tritium",
+        # Legitimate adjacent-duplicate compounds in fusion plasma physics
+        "beam_beam",  # beam-beam reactions (NBI × NBI fusion)
     }
 )
 
@@ -2043,6 +2046,45 @@ _COMPOUND_SUBJECT_PAIRS = frozenset(
 _GRAMMAR_CONNECTIVES = frozenset(
     {"of", "at", "per", "due", "to", "in", "by", "for", "along", "from"}
 )
+
+
+def adjacent_duplicate_token_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag names where a token appears immediately adjacent to itself.
+
+    Catches LLM composition bugs like ``toroidal_magnetic_magnetic_field_probe``
+    or ``poloidal_magnetic_magnetic_field_probe_constraint_weight`` where the
+    composer concatenates a subject and physical_base that share the same
+    terminal/leading token, producing a tautological doubled word.
+
+    This is narrower than :func:`repeated_token_check` — it only flags
+    immediately-adjacent duplicates (``magnetic_magnetic``), never
+    non-adjacent repetitions (``magnetic_field_at_magnetic_axis``).
+
+    Legitimate adjacent compounds (``deuterium_deuterium``, ``beam_beam``)
+    are collapsed via :data:`_COMPOUND_SUBJECT_PAIRS` before the scan.
+
+    Severity: critical — quarantines the candidate.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if not name:
+        return []
+
+    working = name
+    for pair in _COMPOUND_SUBJECT_PAIRS:
+        working = working.replace(pair, f"_compound_{pair.replace('_', '')}_")
+
+    tokens = working.split("_")
+    for i in range(1, len(tokens)):
+        a, b = tokens[i - 1], tokens[i]
+        if not a or not b:
+            continue
+        if a == b and a not in _GRAMMAR_CONNECTIVES and not a.startswith("compound"):
+            return [
+                f"audit:adjacent_duplicate_token_check: name '{name}' contains "
+                f"adjacent duplicate token '{a}_{b}' — likely LLM concatenation "
+                f"bug (e.g. subject ending in '{a}' + base starting with '{a}')"
+            ]
+    return []
 
 
 def repeated_token_check(candidate: dict[str, Any]) -> list[str]:
@@ -2260,6 +2302,7 @@ def run_audits(
     all_issues.extend(instrument_owned_observable_check(candidate))
     all_issues.extend(profile_suffix_check(candidate))
     all_issues.extend(repeated_token_check(candidate))
+    all_issues.extend(adjacent_duplicate_token_check(candidate))
     all_issues.extend(length_soft_cap_check(candidate))
     all_issues.extend(instrument_stokes_bind_check(candidate))
     all_issues.extend(position_redundancy_check(candidate))
