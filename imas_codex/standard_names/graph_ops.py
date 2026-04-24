@@ -2465,12 +2465,12 @@ def clear_standard_names(
             return count
 
         # Step A: delete Review nodes attached to in-scope StandardName nodes
-        # (HAS_REVIEW edge goes StandardName -> Review). DETACH DELETE on the
+        # (REVIEWS edge goes Review -> StandardName). DETACH DELETE on the
         # StandardName alone orphans the Review node; we must delete it explicitly.
         if ids_filter:
             gc.query(
                 f"""
-                MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)-[:HAS_REVIEW]->(r:Review)
+                MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)<-[:REVIEWS]-(r:Review)
                 WHERE {sn_where}
                 AND src.id STARTS WITH $ids_prefix
                 DETACH DELETE r
@@ -2480,7 +2480,7 @@ def clear_standard_names(
         else:
             gc.query(
                 f"""
-                MATCH (sn:StandardName)-[:HAS_REVIEW]->(r:Review)
+                MATCH (sn:StandardName)<-[:REVIEWS]-(r:Review)
                 WHERE {sn_where}
                 DETACH DELETE r
                 """,
@@ -2522,7 +2522,7 @@ def clear_standard_names(
         orphan_result = gc.query(
             """
             MATCH (r:Review)
-            WHERE NOT EXISTS { MATCH (:StandardName)-[:HAS_REVIEW]->(r) }
+            WHERE NOT EXISTS { MATCH (r)-[:REVIEWS]->(:StandardName) }
             WITH r LIMIT 10000
             DETACH DELETE r
             RETURN count(r) AS n
