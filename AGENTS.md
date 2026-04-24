@@ -6,7 +6,7 @@ Use terminal for direct operations (`rg`, `fd`, `git`), MCP `repl()` for chained
 1. **Session start:** `git pull origin main` before any work.
 2. **Before push:** `git pull origin main && git push origin main` — never push without pulling first. Push to `origin` (fork), **never directly to `upstream`**.
 3. **Always work on `main`** — the release CLI requires `main` branch. Never create or switch to feature branches without explicit user approval.
-4. **Dirty worktree:** Commit or stash your own files before pulling. Never stash everything (`git stash`) — only your files: `git stash push -- file1 file2`.
+4. **Dirty worktree:** Commit your own files before pulling. **`git stash` in ANY form is BANNED in agent sessions** — see "Parallel Agents" section. If your work is not ready to commit, stop and file a blocker.
 5. **Conflict resolution:** If merge conflicts, resolve and commit. Never force-push without user approval.
 6. **Repo-local config:** Each clone must run the setup commands below to override any global/system rebase defaults.
 
@@ -690,7 +690,7 @@ The release CLI is state-machine driven. State is derived from the latest git ta
 
 **Remote defaults:** RC releases target `origin` (fork), final releases target `upstream` (iterorganization). Override with `--remote`.
 
-**Dirty worktree policy:** RC releases allow dirty worktrees (warning only) since parallel agents often modify files concurrently. Final releases (`--final`) require a clean worktree — commit or stash first.
+**Dirty worktree policy:** RC releases allow dirty worktrees (warning only) since parallel agents often modify files concurrently. Final releases (`--final`) require a clean worktree — commit first (never stash — see "Parallel Agents" section).
 
 ```bash
 # Check current state and permitted commands
@@ -1316,27 +1316,114 @@ git push origin main```
 
 ### Parallel Agents
 
-Multiple agents may be working on this repository simultaneously. Assume another agent could be editing files or committing right now.
+Multiple agents may be working on this repository simultaneously on the same `main` branch. Assume another agent could be editing files or committing right now.
 
-**CRITICAL — Verify before modifying:**
+#### Verify Before Modifying
 
-- **Re-read files before editing** — your in-memory view of a file may be hours or days old. Another agent may have renamed functions, added features, or restructured code since you last read it. Always `view` or `cat` the current file from disk before making changes. If the file looks different from what you expect, **stop and re-read** — do not "fix" it back to what you remember.
-- **Check recent git history** before modifying shared files: `git log --oneline -5 -- <file>`. If there are commits you don't recognize, read the file fresh and understand the current state before editing.
-- **If you see unfamiliar method names, imports, or patterns** in a file, assume they are correct and intentional. Another agent renamed them. Do not revert unfamiliar changes.
+- **Re-read files before editing** — your in-memory view of a file may be hours or days old. Another agent may have renamed functions, added features, or restructured code since you last read it. Always `view` or `cat` the current file from disk before making changes.
+- **Check recent git history** before modifying shared files: `git log --oneline -5 -- <file>`. If there are commits you don't recognize, read the file fresh before editing.
+- **If you see unfamiliar method names, imports, or patterns**, assume they are correct and intentional. Another agent renamed them. Do not revert unfamiliar changes.
 
-**CRITICAL — Do not touch files you didn't modify:**
+#### Banned Destructive Commands
 
-- **Only stage files you modified** — never `git add -A` or `git add .`
-- **NEVER run `git checkout`, `git restore`, or `git reset` on files you didn't change** — this silently destroys another agent's in-progress work with no way to recover it. Even if a file appears "dirty" or has unexpected changes, leave it alone — another agent put those changes there deliberately.
-- **NEVER run `git checkout -- .` or `git restore .`** — these wipe ALL unstaged changes across the entire repo, including other agents' work
-- **Never rebase** — rebase rewrites history and clobbers parallel agents' work. Always merge: `git pull --no-rebase upstream main`
-- **Pull before push** if push is rejected: `git pull --no-rebase upstream main && git push upstream main`
-- **Avoid broad formatting runs** (`ruff format .`) unless you are the only agent active — prefer formatting only your changed files
-- **If `git stash` is needed**, only stash your own files: `git stash push -- file1 file2`, never `git stash` (which stashes everything)
-- **NEVER run `git stash pop` or `git stash apply`** without first checking the stash age and contents. Stale stashes from prior work sessions can silently overwrite the working tree with old code, reverting committed renames and improvements. Always verify: `git stash show stash@{N} --stat` and `git log -1 --format='%ci' stash@{N}` before applying. If the stash is more than a day old, drop it — the code has moved on.
-- **Auto-generated files cause dirty worktrees** — `uv sync` regenerates model files that are gitignored. These should never be staged, but their presence will block `git pull --rebase`. This is another reason merge is the correct policy.
+**`git stash` in ANY form is BANNED in all agent sessions.** This is a hard rule, not a guideline. Forensic audit (2026-04-24) found 10 stashes accumulated during concurrent fleet work, several labelled `prior-agent-uncommitted` / `other-agent-WIP`. Stashes are opaque to the orchestrator, can't be reviewed via `git log`, rot against HEAD within hours, and silently wipe peer agents' edits when applied. **If you need a clean worktree, commit your own files immediately:**
 
-**Session hygiene:**
+```bash
+git add <your-specific-files>   # never git add -A or git add .
+git commit -m "type: ..."
+git pull --no-rebase origin main
+git push origin main
+```
+
+If your work is not ready to commit, **stop and file a blocker todo** — do not park it in a stash.
+
+The following commands are **BANNED** against any file the current agent did not author in this session:
+
+| Command | Effect | Ban scope |
+|---------|--------|-----------|
+| `git restore <path>` | Wipes unstaged + staged changes | Files the agent didn't author in-session |
+| `git checkout -- <path>` | Same (legacy syntax) | Same |
+| `git checkout <ref> -- <path>` | Overwrites with version from another ref | Same |
+| `git checkout -- .` / `git restore .` | Wipes ALL unstaged changes | **Always banned** |
+| `git clean -f` / `git clean -fd` | Deletes untracked files | **Always banned** |
+| `git reset --hard` | Resets index + worktree | **Always banned** without user approval |
+| `git stash` (any form) | Hides work, rots against HEAD, silently wipes peer edits | **Always banned** — commit instead |
+| `git stash push -- <path>` | Same hazards as bare `git stash` | **Always banned** — commit instead |
+| `git stash pop` / `git stash apply` | Can conflict with peer edits not yet pushed | **Always banned** — surface stash to user, don't recover autonomously |
+| `git revert <sha>` | Reverts another agent's commit | **Never** revert without explicit user authorisation |
+| `git cherry-pick` | Rewrites topology, confuses parallel histories | **Banned** unless user-approved |
+| `git add -A` / `git add .` | Stages files the agent didn't modify | **Always banned** |
+
+**Note on auto-generated files:** `uv sync` regenerates model files (models.py, dd_models.py, schema_context_data.py) that are gitignored. Their presence makes the worktree look dirty — never stage them, and never `git restore` them. This is another reason merge (not rebase) is the correct pull policy.
+
+#### Pre-Edit Protocol for High-Risk Files
+
+For files commonly touched by multiple agents (AGENTS.md, pyproject.toml, shared schemas, core modules), always:
+
+```bash
+git fetch origin main && git log --since="1 hour ago" -- <path>
+git pull --no-rebase origin main
+# ... edit ...
+git add <path> && git commit -m "..." && git push origin main  # IMMEDIATELY
+```
+
+The window between edit and push is the only window where a parallel agent's `git restore` can destroy the work. **Close that window on every coherent change.** Never accumulate multiple cross-cutting edits uncommitted across turns.
+
+#### Fleet Dispatch File-Scoping Rule
+
+When dispatching multiple agents in parallel, the **orchestrating agent MUST**:
+- Allocate non-overlapping file sets per sub-agent
+- Refuse to dispatch two agents that would edit the same file
+
+Overlapping scopes produce lost work regardless of how careful each individual agent is.
+
+#### Anomaly Protocol
+
+If a file looks wrong (content missing, prior edit is gone, unexpected content):
+
+1. **Stop** — do not try to restore to a known-good state.
+2. Run `git status`, `git log --since="2 hours ago"`, `git reflog | head -20`.
+3. Run `git log --since="2 hours ago" -- <suspect-file>` to see recent commits on that file.
+4. **Surface the anomaly to the user** before any destructive action.
+5. Only proceed after user authorisation, with an explicit revert target SHA.
+
+#### Mandatory Sub-Agent Dispatch Preamble
+
+Every `task` dispatch prompt issued by an orchestrating agent **MUST** embed the following block verbatim at the top, before any task-specific instructions. This is non-negotiable and applies to every sub-agent regardless of model or task type:
+
+```
+PARALLEL-SAFETY RULES (binding — violating any is a hard failure):
+
+1. You are working on branch `main` alongside other concurrent agents.
+   Stay on `main`. Never checkout, create, or switch to another branch.
+2. `git stash` in ANY form is BANNED. No `git stash`, no `git stash push`,
+   no `git stash push -- <files>`, no `git stash pop`, no `git stash apply`.
+   If you need a clean worktree, COMMIT YOUR OWN FILES IMMEDIATELY:
+     git add <your-specific-files>   # never `git add -A` or `git add .`
+     git commit -m "type: ..."
+     git pull --no-rebase origin main
+     git push origin main
+   If your work is not ready to commit, STOP and report a blocker.
+3. `git restore`, `git checkout -- <path>`, `git checkout <ref> -- <path>`,
+   `git clean -f`, `git reset --hard` are BANNED against any file you did
+   not author or modify in THIS session. If a file looks wrong, run
+   `git log --since="2 hours ago" -- <path>` and surface the anomaly to
+   the orchestrator — do not attempt recovery.
+4. `git add -A` / `git add .` / `git add *` are BANNED. Always stage only
+   the specific files you modified for your task.
+5. If another agent has uncommitted edits in the worktree when you arrive,
+   leave those files alone. Your file set and theirs must be disjoint.
+6. Close the edit→push window on every coherent change. Do not accumulate
+   multiple cross-cutting edits uncommitted across turns.
+7. Never revert another agent's commits. If you encounter out-of-scope
+   changes, flag them to the orchestrator — do not revert, amend, or undo them.
+8. If in doubt, stop and ask the orchestrator. Never invent a "clever
+   workaround" that bypasses these rules.
+```
+
+The orchestrator must refuse to dispatch any task without this preamble in place, and must audit sub-agent results for compliance before accepting.
+
+#### Session Hygiene
 
 - **Close sessions when done** — `ctrl+d`, `/exit`, or `/quit`. Idle `copilot` processes with stale context are the #1 cause of regressions.
 - **Audit periodically:** `ps aux | grep copilot` — kill any process older than your current session.
