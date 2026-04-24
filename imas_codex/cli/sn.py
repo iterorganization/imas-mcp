@@ -2432,6 +2432,121 @@ def _run_sync_grammar(*, dry_run: bool, verbose: bool) -> None:
     )
 
 
+@sn.command("themes")
+@click.option(
+    "--physics-domain",
+    "domain",
+    type=_PHYSICS_DOMAIN_CHOICE,
+    default=None,
+    help="Filter by physics domain.",
+)
+@click.option(
+    "--source",
+    type=click.Choice(["graph", "reviews"], case_sensitive=False),
+    default="graph",
+    show_default=True,
+    help=(
+        "Theme source. 'graph' queries StandardName reviewer comments, "
+        "'reviews' queries Review nodes directly."
+    ),
+)
+@click.option("--limit", type=int, default=50, help="Max comments to sample.")
+@click.option(
+    "--since",
+    default=None,
+    help="Only reviews after this ISO date (e.g. 2025-01-01).",
+)
+def sn_themes(
+    domain: str | None,
+    source: str,
+    limit: int,
+    since: str | None,
+) -> None:
+    """Extract and display recurring reviewer themes.
+
+    Runs n-gram frequency analysis over reviewer comments to surface
+    the most common criticisms.  Useful for understanding what the
+    reviewer fleet consistently flags so compose prompts can be tuned.
+
+    \b
+    Examples:
+      imas-codex sn themes --physics-domain equilibrium
+      imas-codex sn themes --source reviews --limit 100
+      imas-codex sn themes --since 2025-06-01
+    """
+    from rich.table import Table
+
+    if source == "reviews" or since:
+        # Query Review nodes directly for richer filtering
+        try:
+            from imas_codex.graph.client import GraphClient
+
+            where_clauses: list[str] = ["r.comments IS NOT NULL"]
+            params: dict[str, Any] = {"limit": limit}
+            if domain:
+                where_clauses.append("sn.physics_domain = $domain")
+                params["domain"] = domain
+            if since:
+                where_clauses.append("r.reviewed_at >= $since")
+                params["since"] = since
+
+            where = " AND ".join(where_clauses)
+            cypher = f"""
+                MATCH (sn:StandardName)<-[:REVIEWS]-(r:Review)
+                WHERE {where}
+                RETURN r.comments AS comments
+                ORDER BY r.reviewed_at DESC
+                LIMIT $limit
+            """
+            with GraphClient() as gc:
+                rows = gc.query(cypher, **params)
+
+            if not rows:
+                console.print("[yellow]No review comments found.[/yellow]")
+                return
+
+            comments = [r["comments"] for r in rows if r.get("comments")]
+            if not comments:
+                console.print("[yellow]No non-empty comments found.[/yellow]")
+                return
+
+            from imas_codex.standard_names.review.themes import (
+                _extract_themes_from_texts,
+            )
+
+            themes = _extract_themes_from_texts(comments)
+        except Exception as exc:
+            console.print(f"[red]Error querying graph: {exc}[/red]")
+            return
+    else:
+        # Use the existing domain-scoped helper
+        from imas_codex.standard_names.review.themes import extract_reviewer_themes
+
+        if not domain:
+            console.print(
+                "[yellow]--physics-domain is required for 'graph' source. "
+                "Use --source reviews to query all domains.[/yellow]"
+            )
+            return
+        themes = extract_reviewer_themes(domain=domain, limit=limit)
+
+    if not themes:
+        console.print("[yellow]No recurring themes found.[/yellow]")
+        return
+
+    table = Table(title="Recurring Reviewer Themes", show_lines=True)
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Theme", style="bold")
+    table.add_column("Source", style="dim")
+
+    source_label = f"domain={domain}" if domain else "all domains"
+    for i, theme in enumerate(themes, 1):
+        table.add_row(str(i), theme, source_label)
+
+    console.print(table)
+    console.print(f"\n[dim]{len(themes)} themes extracted from ≤{limit} comments[/dim]")
+
+
 @sn.command("sync-grammar")
 @click.option("--dry-run", is_flag=True, help="Log Cypher without executing.")
 @click.option("-v", "--verbose", is_flag=True, help="Show planned Cypher statements.")
