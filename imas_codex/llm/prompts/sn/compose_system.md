@@ -19,6 +19,54 @@ Your output is a **canonical vNext name string** plus a description. The ISN par
 
 {% include "sn/_compose_scored_examples.md" %}
 
+### HARD PRE-EMIT CHECKS — validate EVERY candidate name before output
+
+Run these ten checks IN ORDER against each candidate name string before
+emitting it. If any check fails, revise or skip — never emit a violating name.
+
+1. **No adjacent duplicate tokens.** Reject any name containing two identical
+   consecutive tokens separated by `_` (e.g. ❌ `magnetic_magnetic_field`,
+   ❌ `beam_beam_power`, ❌ `ion_ion_collision_frequency`).
+2. **Entity-locus preposition is `_of_`, never `_at_`.** When the tail names
+   a geometric entity — `separatrix`, `magnetic_axis`, `plasma_boundary`,
+   `x_point`, `pedestal`, `limiter`, `last_closed_flux_surface`, `o_point`,
+   `strike_point` — the connector MUST be `_of_`, not `_at_`. ✓
+   `electron_temperature_of_magnetic_axis`; ✗ `electron_temperature_at_magnetic_axis`.
+3. **Hardware tokens are position qualifiers, never bases or prefixes.**
+   Tokens naming diagnostic hardware — `probe`, `sensor`, `antenna`,
+   `channel`, `injector`, `aperture`, `coil`, `mirror`, `launcher` — may
+   appear only AFTER `_of_` (as the entity being described); they are never
+   valid as the quantity base or as a leading prefix. ✓
+   `rotation_angle_of_electron_cyclotron_launcher_mirror`; ✗
+   `probe_voltage`, ✗ `sensor_electron_density`.
+4. **No provenance prefixes.** The following state-of-knowledge prefixes are
+   forbidden: `initial_`, `launched_`, `post_crash_`, `prefill_`,
+   `reconstructed_` (already in REJECT), `measured_` (already in REJECT).
+   Standard names describe what is measured, not when or how.
+5. **No invented physical bases.** The `physical_base` vocabulary is closed
+   (~250 tokens). If no registered base fits, emit `vocab_gap` — never
+   fabricate a novel base token.
+6. **No abbreviations, acronyms, or alphanumerics.** Names must be
+   spelled-out English words joined by `_`. Reject any candidate containing
+   digits (`3db`, `20_80`), acronyms (`mse`, `sol`, `nbi`), or truncated
+   tokens (`norm_`, `perp_`, `ec_`).
+7. **Exactly one subject token.** Each name describes ONE species or particle
+   population. Compound subjects like `hydrogen_ion` (use `hydrogen` or
+   `ion`), `deuterium_tritium_ion` (use compound-pair token
+   `deuterium_tritium`) are forbidden. Exception: validated compound-pair
+   tokens (`deuterium_tritium`, `deuterium_deuterium`, `tritium_tritium`)
+   are single entries — see NC-27.
+8. **US spelling only.** No British variants: ✗ `analyse`, `fibre`,
+   `ionisation`, `normalised`, `centre`, `behaviour`. See NC-17 for the
+   full canonical-pair table.
+9. **Length and nesting limits.** Maximum 70 characters. Maximum two `_of_`
+   segments (one nesting level). ✗ `gradient_of_pressure_of_plasma_boundary`
+   (three `_of_` — restructure or skip).
+10. **No structural leakage.** Tokens describing data-model relationships
+    are forbidden in names: `obtained_from`, `stored_in`, `derived_from`,
+    `referenced_by`, `defined_in`, `used_for`. Standard names describe
+    physics, not data provenance or storage.
+
 ### REJECT — Forbidden Name Tokens
 
 REJECT any candidate name that contains any of the following tokens or substrings,
@@ -45,6 +93,14 @@ Forbidden tokens:
   - ec_ (use electron_cyclotron_)
   - exb_ (use e_cross_b_ or decomposition(drift_type))
   - norm_ (use normalized_)
+
+Forbidden names (Report 7 anti-patterns — skip or rename):
+  - bandwidth_3db (alphanumeric; skip or use cutoff_frequency)
+  - turn_count (hardware winding property, not a physics observable — skip)
+  - vertical_coordinate (bare — always needs `_of_<entity>`, e.g. `vertical_coordinate_of_x_point`)
+  - nuclear_charge_number (use atomic_number)
+  - azimuth_angle (use toroidal_angle)
+  - distance_between_*_and_* (combinatorial pattern — creates corpus bloat; skip these paths)
 
 When a DD path would produce one of these, SKIP and record as vocab_gap rather
 than composing.
@@ -555,6 +611,24 @@ instrument-property nouns (`responsivity`, `throughput`, `sensitivity`,
     qualified by line-of-sight attribution).
 Applies identically to spectrometers, bolometers, interferometers,
 reflectometers, Langmuir probes, Mirnov coils, and any other diagnostic node.
+
+**NC-32 Diagnostic-IDS channel paths — name the OBSERVABLE, not the device.**
+When the source path matches `*/channel/*` or `*/channels/*/*` (common in
+polarimeter, interferometer, thomson_scattering, reflectometer, refractometer,
+bolometer, spectrometer IDSs), the standard name MUST describe the physical
+observable measured through that channel — NOT the channel identity or the
+instrument type. The channel is an indexing container; the name captures what
+is being measured.
+  - ✓ `faraday_rotation_angle` (from `polarimeter_refractometer/channel/*/faraday_angle`).
+  - ✓ `line_integrated_electron_density` (from `interferometer/channel/*/n_e_line`).
+  - ✓ `electron_temperature` (from `thomson_scattering/channel/*/t_e`).
+  - ✓ `phase_shift` (from `refractometer/channel/*/phase`).
+  - ✗ `polarimeter_channel_angle` — the channel is infrastructure, not the observable.
+  - ✗ `interferometer_channel_density` — the interferometer doesn't have a density.
+  - ✗ `thomson_scattering_channel_temperature` — temperature belongs to the electrons.
+The channel index is handled by the DD path attachment, not by the standard name.
+If multiple channels measure different observables, each gets its own standard name
+based on the observable, and the channel paths are attached to the appropriate name.
 
 **NC-31 Drop the `_profile` suffix — it is implicit for all spatial fields —
 HARD PROHIBITION.** Every standard name denotes the scalar value at one
