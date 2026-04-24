@@ -139,3 +139,76 @@ class TestRuleAlignment:
             "over_halo_region" in rendered_compose_system
             or "over_<region>" in rendered_compose_system
         )
+
+
+class TestAntiPatternHardening:
+    """w1-prompt-antipatterns — Banned prefixes, instrument-as-locus, gallery."""
+
+    def test_banned_prefixes_section_present(
+        self, rendered_compose_system: str
+    ) -> None:
+        """BANNED PREFIXES section must appear in the rendered system prompt."""
+        assert "BANNED PREFIXES" in rendered_compose_system
+
+    def test_state_prefixes_enumerated(self, rendered_compose_system: str) -> None:
+        """Key banned state/provenance prefixes must be explicitly listed."""
+        for prefix in (
+            "initial_",
+            "final_",
+            "raw_",
+            "calibrated_",
+            "smoothed_",
+            "filtered_",
+        ):
+            assert prefix in rendered_compose_system, (
+                f"Banned prefix '{prefix}' not found"
+            )
+
+    def test_instrument_handling_section_present(
+        self, rendered_compose_system: str
+    ) -> None:
+        """INSTRUMENT HANDLING section must appear."""
+        assert "INSTRUMENT HANDLING" in rendered_compose_system
+
+    def test_instrument_as_locus_rule_stated(
+        self, rendered_compose_system: str
+    ) -> None:
+        """The postfix-locus rule for instrument names must be present."""
+        assert "postfix locus" in rendered_compose_system
+        assert "vacuum_wavelength_of_polarimeter_beam" in rendered_compose_system
+
+    def test_anti_pattern_gallery_present(self, rendered_compose_system: str) -> None:
+        """ANTI-PATTERN GALLERY section must appear with at least 5 entries."""
+        assert "ANTI-PATTERN GALLERY" in rendered_compose_system
+        # Each entry is marked 'Entry N'
+        for entry_n in range(1, 6):
+            assert f"Entry {entry_n}" in rendered_compose_system
+
+    def test_gallery_real_failing_names(self, rendered_compose_system: str) -> None:
+        """Gallery must contain verbatim real failing names from the EMW pilot."""
+        assert "polarimeter_laser_wavelength" in rendered_compose_system
+        assert (
+            "initial_ellipticity_of_polarimeter_channel_beam" in rendered_compose_system
+        )
+        assert (
+            "initial_polarization_of_polarimeter_channel_beam"
+            in rendered_compose_system
+        )
+
+    def test_new_sections_before_dynamic_blocks(
+        self, rendered_compose_system: str
+    ) -> None:
+        """Anti-pattern sections must appear before any dynamic-context content.
+
+        The field_guidance block is the first dynamic section; the banned-prefix
+        rule must precede it so the static cacheable prefix is maximised.
+        """
+        banned_idx = rendered_compose_system.find("BANNED PREFIXES")
+        # 'Naming Guidance' is injected by the first {% if field_guidance %} block
+        naming_guidance_idx = rendered_compose_system.find("Naming Guidance")
+        assert banned_idx != -1, "BANNED PREFIXES not found"
+        # If field_guidance block rendered at all, verify ordering
+        if naming_guidance_idx != -1:
+            assert banned_idx < naming_guidance_idx, (
+                "BANNED PREFIXES must appear before dynamic Naming Guidance block"
+            )

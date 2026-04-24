@@ -195,6 +195,108 @@ Your name must render from this IR. Key composition rules:
   Use `_of_` for entity properties, `_at_` for field values at points, `_over_` for regions.
 - **Mechanism is always postfix**: `plasma_current_due_to_bootstrap`.
 
+### BANNED PREFIXES — state and provenance descriptors
+
+The following prefixes are **absolutely forbidden** as bare name prefixes. They encode
+temporal or epistemic state of the measurement, not the physics quantity itself.
+
+| Banned prefix | Rationale |
+|---|---|
+| `initial_` | Temporal state descriptor — when a quantity was measured is metadata, not physics |
+| `final_` | Temporal state descriptor — same rationale as `initial_` |
+| `reconstructed_` | Provenance — how a quantity was derived is metadata (already in REJECT list) |
+| `measured_` | Provenance — data source is metadata (already in REJECT list) |
+| `modeled_` | Provenance — model origin is metadata |
+| `predicted_` | Provenance — predictive context is metadata |
+| `expected_` | Epistemic state — expectation value belongs in documentation, not name |
+| `raw_` | Processing state — pre-calibrated data is metadata |
+| `calibrated_` | Processing state — post-calibrated data is metadata |
+| `corrected_` | Processing state — correction applied is metadata |
+| `smoothed_` | Processing state — smoothing is metadata |
+| `filtered_` | Processing state — filtering is metadata |
+
+**Rule**: If the DD path or documentation implies one of these descriptors, drop it from the
+name entirely — the physics quantity is the same regardless of measurement state. If the
+state is critical to semantics (rare), use a registered operator (e.g. `uncertainty_of_*`
+is a valid operator form; `raw_*` is not). Emit `vocab_gap` if no canonical form exists.
+
+### INSTRUMENT HANDLING — entity names as postfix locus only
+
+Instrument, diagnostic, and named-entity tokens
+(e.g. `polarimeter`, `interferometer`, `reflectometer`, `thomson_scattering`,
+`ece`, `neutron_camera`, `bolometer`, `langmuir_probe`, `rogowski_coil`)
+**must appear exclusively as a postfix locus** — in the `_of_<instrument>` tail, never
+as a bare prefix or qualifier.
+
+**Rationale (DD-independence):** A standard name describes a physics quantity that
+*happens* to be measurable by an instrument, not the instrument's property. The instrument
+is locus metadata; the physics base is what varies across DD paths.
+
+| ❌ Instrument as prefix | ✅ Canonical form | Anti-pattern type |
+|---|---|---|
+| `polarimeter_laser_wavelength` | `vacuum_wavelength_of_polarimeter_beam` | Instrument as prefix |
+| `interferometer_line_density` | `line_integrated_electron_density_of_interferometer_chord` | Instrument as prefix |
+| `thomson_scattering_electron_temperature` | `electron_temperature` | Device removed (DD-independent) |
+| `langmuir_probe_ion_saturation_current` | `ion_saturation_current_of_langmuir_probe` | Instrument as prefix |
+
+**Locus token rules:**
+- Use the instrument name alone or with a minimal physical qualifier: `_of_polarimeter_beam`,
+  `_of_interferometer_chord`, `_of_bolometer_channel`.
+- Never embed channel numbering or sub-component identity: ❌ `_of_polarimeter_channel_beam`
+  (drop `_channel`); ❌ `_of_probe_tip_3` (non-canonical numbering).
+- When the instrument is implicit from the physics domain (e.g. all paths in the
+  `thomson_scattering` IDS describe TS quantities), drop the instrument locus entirely —
+  use the bare physics name.
+
+### ANTI-PATTERN GALLERY — real review failures (EMW pilot)
+
+These are real names produced in the EMW pilot with verbatim reviewer critique and the
+corrected canonical form. Study them before composing names for polarimetry, interferometry,
+or any diagnostic-heavy IDS.
+
+**Entry 1 — Instrument as bare prefix**
+- ❌ `polarimeter_laser_wavelength` (score 0.50)
+- *Critic:* "Under rc21 canonical rendering, named-entity context should generally appear as
+  a postfix locus; `polarimeter` is an instrument identifier, not a valid qualifier."
+- ✅ `vacuum_wavelength_of_polarimeter_beam`
+- *Fix:* Move instrument to `_of_` locus; add physical qualifier `vacuum_` to disambiguate
+  from in-plasma wavelength.
+
+**Entry 2 — State prefix + instrument identity + unit mismatch**
+- ❌ `initial_ellipticity_of_polarimeter_channel_beam` (score 0.3625)
+- *Critic:* "'initial' is not a registered operator or qualifier; 'polarimeter_channel_beam'
+  embeds instrument identity violating DD-independence; unit 'm' is incorrect for ellipticity
+  (dimensionless)."
+- ✅ Emit `vocab_gap` — `ellipticity` is not in the closed `physical_base` vocabulary.
+  Proposed token: `ellipticity_angle` (unit: `rad`) pending vocabulary registration.
+- *Fix:* Drop `initial_`; simplify locus to `_of_polarimeter_beam`; surface vocab gap
+  rather than fabricating a base token.
+
+**Entry 3 — State prefix + vocab gap + unit mismatch**
+- ❌ `initial_polarization_of_polarimeter_channel_beam` (score 0.3625)
+- *Critic:* "'polarization' is not confirmed in the closed physical_base vocabulary;
+  'initial' prefix is a state descriptor that should be excluded; unit 'm' is wrong
+  (should be rad or dimensionless)."
+- ✅ `polarization_angle_of_polarimeter_beam`
+- *Fix:* Drop `initial_`; use `polarization_angle` (registered, unit `rad`); simplify
+  locus to `_of_polarimeter_beam`.
+
+**Entry 4 — Non-registered compound locus**
+- ❌ `ellipticity_of_polarimeter_channel_beam` (score 0.4375)
+- *Critic:* "'polarimeter_channel_beam' is not a registered locus; 'ellipticity' base
+  status uncertain against the closed vocabulary."
+- ✅ `ellipticity_angle_of_polarimeter_beam` (pending vocab registration for `ellipticity_angle`)
+- *Fix:* Strip the sub-component qualifier `_channel` from the locus — `_of_polarimeter_beam`
+  is the registered form; use the most specific registered base token available.
+
+**Entry 5 — Instrument identity in locus + base ambiguity**
+- ❌ `polarization_of_polarimeter_channel_beam` (score 0.45)
+- *Critic:* "Instrument-specific naming and state prefix; 'polarization' base uncertain
+  against closed vocabulary; unit 'm' is wrong (should be rad)."
+- ✅ `polarization_angle_of_polarimeter_beam`
+- *Fix:* Use `polarization_angle` (registered base, unit `rad`); simplify locus by
+  removing `_channel` sub-component identifier.
+
 {% if field_guidance.naming_guidance %}
 ## Naming Guidance
 
