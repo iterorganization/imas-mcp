@@ -849,7 +849,12 @@ def _build_kwargs(
         else:
             kwargs["response_format"] = response_format
     if temperature is not None:
-        kwargs["temperature"] = temperature
+        # GPT-5.x models reject temperature=0.0 with a 400 error; clamp to None
+        # (provider default) so callers that pin temperature=0.0 don't break.
+        if temperature == 0.0 and re.search(r"gpt-5", model):
+            logger.debug("Clamping temperature=0.0 → None for GPT-5.x model %s", model)
+        else:
+            kwargs["temperature"] = temperature
 
     # Per-service X-Title for OpenRouter dashboard visibility.
     # Client extra_headers shallow-replaces proxy config extra_headers,

@@ -328,7 +328,7 @@ retry-k-expansion = 12
 [tool.imas-codex.sn.review]
 # Shared review settings (apply to both axes).
 # Disagreement detection: true iff N>=2 AND max(score) - min(score) >= threshold.
-disagreement-threshold = 0.15
+disagreement-threshold = 0.20
 # Maximum RD-quorum cycles (1 = primary only, 2 = blind pair, 3 = full quorum).
 max-cycles = 3
 
@@ -341,23 +341,29 @@ max-cycles = 3
 #              models[2] escalator (sees both, authoritative)
 #   4+       → rejected at config load time (ValueError)
 #
-# 2-model blind-pair chain (no escalator). Gemini 3.1 Pro chosen over
-# GPT-5.4 to maximise family diversity against the Anthropic primary:
-# Google RLHF tradition disagrees differently from OpenAI-style. April
-# 2026 leaderboards show GPQA Opus 91.3 / Gemini 3.1 Pro 91.9 / GPT-5.4
-# 92.8 — all within 1.5%, so we optimise for independence not ceiling.
+# 3-model RD-quorum chain (full escalator).
+# Opus primary, GPT-5.4 secondary (cross-vendor independence), Sonnet escalator.
+# Gemini 3.1-pro-preview removed: Phase 7 probe showed it returns prose despite
+# response_format=json_object — structurally unreliable as a reviewer despite
+# _sanitize_content prose-extraction.  GPT-5.4 provides cross-vendor bias signal
+# while staying inside a validated structured-output family.
+# Temperature: GPT-5.4 rejects temperature=0.0; llm.py auto-clamps to None.
 models = [
-  "openrouter/anthropic/claude-opus-4.6",           # cycle 0 primary (blind)
-  "openrouter/google/gemini-3.1-pro-preview",       # cycle 1 secondary (blind)
+  "openrouter/anthropic/claude-opus-4.6",     # cycle 0 primary (blind)
+  "openrouter/openai/gpt-5.4",               # cycle 1 secondary (blind, cross-vendor)
+  "openrouter/anthropic/claude-sonnet-4.6",  # cycle 2 escalator (sees both, cheaper than Opus)
 ]
+disagreement-threshold = 0.20
 
 [tool.imas-codex.sn.review.docs]
 # Reviewer model chain for the documentation-quality axis.
-# Same length semantics as [sn.review.names]. Same primary+secondary pair.
+# Same length semantics as [sn.review.names]. Same 3-model RD-quorum chain.
 models = [
   "openrouter/anthropic/claude-opus-4.6",
-  "openrouter/google/gemini-3.1-pro-preview",
+  "openrouter/openai/gpt-5.4",
+  "openrouter/anthropic/claude-sonnet-4.6",
 ]
+disagreement-threshold = 0.20
 
 [tool.imas-codex.sn.benchmark]
 # Models to evaluate for standard name composition.
