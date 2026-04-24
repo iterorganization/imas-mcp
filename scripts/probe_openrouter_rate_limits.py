@@ -1,8 +1,9 @@
 """Probe OpenRouter concurrent-request ceilings per model family.
 
 Sends N simultaneous requests for each model and records the highest N that
-produces zero 429 responses.  Sweeps N = [4, 8, 12, 16, 24, 32] and stops
-each model at the first N that returns ≥1 429.
+produces zero 429 responses.  Sweeps N = [32, 48, 64, 96, 128] (extended from
+Phase 7 which only swept to 32) and stops each model at the first N that
+returns ≥1 429, ≥1 connection-reset, or ≥1 structural parse failure.
 
 Usage::
 
@@ -21,6 +22,7 @@ per project policy.
 from __future__ import annotations
 
 import asyncio
+import statistics
 import sys
 import time
 from dataclasses import dataclass, field
@@ -37,11 +39,14 @@ MODELS: list[str] = [
     "openrouter/anthropic/claude-haiku-4.5",
     "openrouter/anthropic/claude-sonnet-4.6",
     "openrouter/anthropic/claude-opus-4.6",
-    "openrouter/google/gemini-3.1-pro-preview",
     "openrouter/openai/gpt-5.4",
+    "openrouter/google/gemini-3.1-pro-preview",
 ]
 
-N_SWEEP: list[int] = [4, 8, 12, 16, 24, 32]
+N_SWEEP: list[int] = [32, 48, 64, 96, 128]
+
+# Cooldown between N-levels (seconds) to let OpenRouter rate-limit bucket refill
+COOLDOWN_S: float = 10.0
 
 # Hard budget stop in USD — script aborts if exceeded
 BUDGET_HARD_STOP: float = 1.50
@@ -150,6 +155,7 @@ class LevelResult:
     wall_time: float
     rpm: float
     cost: float
+    ttfb_median: float = 0.0  # median latency in seconds across all calls
 
 
 @dataclass
@@ -173,6 +179,7 @@ async def probe_model(
 
     result = ModelResult(model=model, ceiling=0)
     last_clean_n = 0
+    first_level = True
 
     for n in N_SWEEP:
         # Budget guard
@@ -183,6 +190,13 @@ async def probe_model(
             )
             result.aborted_budget = True
             break
+
+        # Inter-level cooldown so OpenRouter token bucket partially refills
+        if not first_level:
+            print(f"  [cooldown {COOLDOWN_S:.0f}s] … ", end="", flush=True)
+            await asyncio.sleep(COOLDOWN_S)
+            print("done", flush=True)
+        first_level = False
 
         print(f"  N={n:2d} concurrent … ", end="", flush=True)
 
@@ -197,6 +211,10 @@ async def probe_model(
         level_cost = sum(o.cost for o in outcomes)
         rpm = (n / wall) * 60 if wall > 0 else 0.0
 
+        # TTFB proxy: median latency across all calls (non-streaming; latency = TTFB)
+        all_latencies = [o.latency for o in outcomes]
+        ttfb_med = statistics.median(all_latencies) if all_latencies else 0.0
+
         budget_tracker[0] += level_cost
         result.total_cost += level_cost
 
@@ -208,18 +226,48 @@ async def probe_model(
             wall_time=wall,
             rpm=rpm,
             cost=level_cost,
+            ttfb_median=ttfb_med,
         )
         result.levels.append(lvl)
 
+        # Check for connection-reset errors (stop condition)
+        conn_resets = sum(
+            1
+            for o in outcomes
+            if not o.success
+            and not o.is_429
+            and any(
+                k in o.error.lower()
+                for k in ("connection reset", "connectionreset", "econnreset")
+            )
+        )
+
         status = (
             f"ok={successes}/{n}  429s={rate_429s}  errs={other_errors}"
-            f"  wall={wall:.1f}s  rpm={rpm:.0f}  cost=${level_cost:.4f}"
+            f"  ttfb_med={ttfb_med:.1f}s  wall={wall:.1f}s  rpm={rpm:.0f}  cost=${level_cost:.4f}"
         )
         print(status, flush=True)
 
         if rate_429s >= 1:
             # Hit rate limit — stop sweep for this model
             print(f"  → 429 at N={n}; ceiling = {last_clean_n}", flush=True)
+            result.ceiling = last_clean_n
+            break
+
+        if conn_resets >= 1:
+            # Connection reset — treat as rate limit proxy
+            print(
+                f"  → connection-reset at N={n}; ceiling = {last_clean_n}", flush=True
+            )
+            result.ceiling = last_clean_n
+            break
+
+        if other_errors == n:
+            # Total failure at this N — structural parse failure or incompatibility
+            print(
+                f"  → 100% errors at N={n}; treating as incompatible, stopping",
+                flush=True,
+            )
             result.ceiling = last_clean_n
             break
 
@@ -252,15 +300,29 @@ def _build_table_rows(results: list[ModelResult]) -> list[tuple[str, str, str, s
             if r.ceiling == N_SWEEP[-1] and not r.aborted_budget
             else str(r.ceiling)
         )
-        notes = (
-            "budget abort"
-            if r.aborted_budget
-            else (
-                "no 429 in sweep"
-                if r.ceiling == N_SWEEP[-1]
-                else f"429 at N={_next_n(r)}"
-            )
-        )
+        if r.aborted_budget:
+            notes = "budget abort"
+        elif r.ceiling == N_SWEEP[-1]:
+            notes = "no 429 in sweep"
+        else:
+            fail_n = _next_n(r)
+            if fail_n == -1:
+                # Stopped on non-429 errors (parse failures / compat)
+                first_fail = next(
+                    (
+                        lvl
+                        for lvl in r.levels
+                        if lvl.rate_429s == 0 and lvl.other_errors == lvl.n
+                    ),
+                    None,
+                )
+                notes = (
+                    f"100% parse/compat errors at N={first_fail.n}"
+                    if first_fail
+                    else "incompatible (no JSON)"
+                )
+            else:
+                notes = f"429 at N={fail_n}"
         rows.append(
             (
                 _short_model(r.model),
@@ -346,12 +408,12 @@ def _build_markdown(results: list[ModelResult], total_cost: float, ts: str) -> s
     for r in results:
         lines.append(f"#### {_short_model(r.model)}")
         lines.append("")
-        lines.append("| N | ok | 429s | errs | wall(s) | rpm | cost($) |")
-        lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+        lines.append("| N | ok | 429s | errs | ttfb_med(s) | wall(s) | rpm | cost($) |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
         for lvl in r.levels:
             lines.append(
                 f"| {lvl.n} | {lvl.successes} | {lvl.rate_429s} | {lvl.other_errors}"
-                f" | {lvl.wall_time:.1f} | {lvl.rpm:.0f} | {lvl.cost:.4f} |"
+                f" | {lvl.ttfb_median:.1f} | {lvl.wall_time:.1f} | {lvl.rpm:.0f} | {lvl.cost:.4f} |"
             )
         lines.append("")
 

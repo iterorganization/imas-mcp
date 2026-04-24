@@ -1,5 +1,101 @@
 # OpenRouter Rate-Limit Ceilings
 
+## 2026-04-24 16:01 UTC
+
+N sweep: [32, 48, 64, 96, 128]
+Total spend: $1.3712
+
+| Model                         | Ceiling | Cost ($) | Notes           |
+| ----------------------------- | ------- | -------- | --------------- |
+| anthropic/claude-haiku-4.5    | ≥128    | 0.1240   | no 429 in sweep |
+| anthropic/claude-sonnet-4.6   | ≥128    | 0.3952   | no 429 in sweep |
+| anthropic/claude-opus-4.6     | ≥128    | 0.6127   | no 429 in sweep |
+| openai/gpt-5.4                | ≥128    | 0.2393   | no 429 in sweep |
+| google/gemini-3.1-pro-preview | 0       | 0.0000   | 429 at N=-1     |
+
+### Interpretation (Wave 3 Extended Probe)
+
+- **GPT-5.4 (NEW):** Temperature fix (`_build_kwargs` GPT-5 guard, commit `ce3849e6`) confirmed
+  working — all 128 concurrent requests succeeded at every N level. No 429s.
+  Peak RPM at N=128: **1521**.
+
+- **Anthropic (Haiku 4.5 / Sonnet 4.6 / Opus 4.6):** All three cleared N=128 with zero
+  429s and zero errors. The true OpenRouter concurrency ceiling is **≥128** for this
+  account tier.  Peak observed RPM: Haiku=1314, Sonnet=1152, Opus=938.
+
+- **Gemini 3.1 pro preview:** Persistent 100% parse-error failure — model returns prose
+  ("Here is…") even with `response_format=json_object`. The `_sanitize_content` prose
+  extractor cannot help because no JSON object is present in the response body.
+  Gemini requires a different prompt or a raw-text-to-JSON post-parse pipeline.
+  **Status: incompatible with current probe schema; rate ceiling unmeasured.**
+  Gemini is NOT a compose candidate until structured-output compatibility is resolved.
+
+### Sizing Decision (Case A — single semaphore)
+
+All four working models produced **zero 429s at N=128** (sweep ceiling).  Variance
+across models is <2× (all ≥128).  **Case A** applies:
+
+| Decision | Value |
+|---|---|
+| Lowest clean ceiling | ≥128 |
+| 75% headroom applied | floor(0.75 × 128) = **96** |
+| `sn-compose.max-concurrency` updated | 24 → **96** |
+| Per-model semaphore (`phase7-per-model-sem`) | **Skipped** — variance <2× |
+
+**Pilot coordination:** No `~/.local/share/imas-codex/logs/sn.log` found at probe
+start — pilot agent was not active; probe results reflect uncontested rate limits.
+
+### Per-model level detail
+
+#### anthropic/claude-haiku-4.5
+
+| N | ok | 429s | errs | ttfb_med(s) | wall(s) | rpm | cost($) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 32 | 32 | 0 | 0 | 1.7 | 10.0 | 193 | 0.0108 |
+| 48 | 48 | 0 | 0 | 1.6 | 4.7 | 615 | 0.0162 |
+| 64 | 64 | 0 | 0 | 1.7 | 3.3 | 1180 | 0.0216 |
+| 96 | 96 | 0 | 0 | 2.4 | 10.0 | 578 | 0.0324 |
+| 128 | 128 | 0 | 0 | 2.9 | 5.8 | 1314 | 0.0431 |
+
+#### anthropic/claude-sonnet-4.6
+
+| N | ok | 429s | errs | ttfb_med(s) | wall(s) | rpm | cost($) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 32 | 32 | 0 | 0 | 1.7 | 3.3 | 585 | 0.0344 |
+| 48 | 48 | 0 | 0 | 1.7 | 5.7 | 503 | 0.0516 |
+| 64 | 64 | 0 | 0 | 2.0 | 8.4 | 456 | 0.0687 |
+| 96 | 96 | 0 | 0 | 3.0 | 8.0 | 723 | 0.1031 |
+| 128 | 128 | 0 | 0 | 3.3 | 6.7 | 1152 | 0.1375 |
+
+#### anthropic/claude-opus-4.6
+
+| N | ok | 429s | errs | ttfb_med(s) | wall(s) | rpm | cost($) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 32 | 32 | 0 | 0 | 2.2 | 4.0 | 478 | 0.0533 |
+| 48 | 48 | 0 | 0 | 2.2 | 3.1 | 940 | 0.0799 |
+| 64 | 64 | 0 | 0 | 2.4 | 13.3 | 289 | 0.1066 |
+| 96 | 96 | 0 | 0 | 3.0 | 6.7 | 855 | 0.1598 |
+| 128 | 128 | 0 | 0 | 4.4 | 8.2 | 938 | 0.2131 |
+
+#### openai/gpt-5.4
+
+| N | ok | 429s | errs | ttfb_med(s) | wall(s) | rpm | cost($) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 32 | 32 | 0 | 0 | 2.2 | 4.1 | 472 | 0.0209 |
+| 48 | 48 | 0 | 0 | 1.3 | 3.4 | 851 | 0.0312 |
+| 64 | 64 | 0 | 0 | 1.4 | 3.8 | 1003 | 0.0416 |
+| 96 | 96 | 0 | 0 | 1.8 | 4.9 | 1176 | 0.0624 |
+| 128 | 128 | 0 | 0 | 2.5 | 5.0 | 1521 | 0.0831 |
+
+#### google/gemini-3.1-pro-preview
+
+| N | ok | 429s | errs | ttfb_med(s) | wall(s) | rpm | cost($) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 32 | 0 | 0 | 32 | 5.8 | 13.5 | 142 | 0.0000 |
+
+
+---
+
 ## 2026-04-24 09:09 UTC
 
 N sweep: [4, 8, 12, 16, 24, 32]

@@ -276,11 +276,13 @@ model = "anthropic/claude-sonnet-4.6"
 
 [tool.imas-codex.sn-compose]
 # Maximum concurrent LLM requests issued by the compose worker.
-# Derived from the 2026-04-24 OpenRouter rate-limit probe:
-#   Anthropic Opus/Sonnet/Haiku all handled N=32 with zero 429s.
-#   True ceiling unknown (>32). 75 % headroom: floor(0.75 * 32) = 24.
+# Derived from the 2026-04-24 extended OpenRouter rate-limit probe (Wave 3):
+#   All four working models (Haiku 4.5, Sonnet 4.6, Opus 4.6, GPT-5.4)
+#   cleared N=128 with zero 429s.  True ceiling is ≥128 per account tier.
+#   75% of lowest measured clean level (128): floor(0.75 * 128) = 96.
+#   Case A applied: single global semaphore sufficient (variance <2× across models).
 # See docs/ops/openrouter-rate-ceilings.md for probe details.
-max-concurrency = 24
+max-concurrency = 96
 
 [tool.imas-codex.sn-run]
 model = "anthropic/claude-sonnet-4.6"
