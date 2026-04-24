@@ -1346,12 +1346,13 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             # Budget gate — reserve before doing any LLM work
             lease = None
             if state.budget_manager:
-                max_retries = _retry_attempts()
-                # Per-item cost calibrated to observed Opus spend (~$0.035/item
-                # average, $0.042/item worst case).  Using 0.04 with the
-                # (max_retries+1) × 1.3 headroom gives a reservation that
-                # comfortably covers the worst-case retry cost (<2× average).
-                estimated = len(batch.items) * 0.04 * (max_retries + 1) * 1.3
+                # Per-item cost calibrated to observed Sonnet spend (~$0.003/item
+                # average, $0.04/item worst case for Opus).  Reserve for one
+                # attempt with 30% headroom; any retry overspend is handled
+                # gracefully by charge_soft() — no need to pre-reserve for
+                # retries, which would inflate the reservation 2-3× and cause
+                # the budget pool to appear exhausted before any LLM call is made.
+                estimated = len(batch.items) * 0.04 * 1.3
                 lease = state.budget_manager.reserve(estimated)
                 if lease is None:
                     wlog.info(
