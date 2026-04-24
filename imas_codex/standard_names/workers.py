@@ -1304,7 +1304,9 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     )
     state.compose_stats.total = total_items
 
-    sem = asyncio.Semaphore(5)
+    from imas_codex.settings import get_compose_concurrency
+
+    sem = asyncio.Semaphore(get_compose_concurrency())
 
     async def _compose_batch(batch: ExtractionBatch) -> list[dict]:
         async with sem:

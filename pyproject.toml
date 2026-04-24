@@ -274,6 +274,14 @@ model = "google/gemini-3.1-flash-lite-preview"
 [tool.imas-codex.reasoning]
 model = "anthropic/claude-sonnet-4.6"
 
+[tool.imas-codex.sn-compose]
+# Maximum concurrent LLM requests issued by the compose worker.
+# Derived from the 2026-04-24 OpenRouter rate-limit probe:
+#   Anthropic Opus/Sonnet/Haiku all handled N=32 with zero 429s.
+#   True ceiling unknown (>32). 75 % headroom: floor(0.75 * 32) = 24.
+# See docs/ops/openrouter-rate-ceilings.md for probe details.
+max-concurrency = 24
+
 [tool.imas-codex.sn-run]
 model = "anthropic/claude-sonnet-4.6"
 batch-size = 25

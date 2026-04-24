@@ -722,6 +722,22 @@ def get_sn_retry_k_expansion() -> int:
     return int(section.get("retry-k-expansion", _SN_DEFAULTS["retry-k-expansion"]))
 
 
+def get_compose_concurrency() -> int:
+    """Maximum concurrent LLM requests for the SN compose worker.
+
+    Sized from the 2026-04-24 OpenRouter rate-limit probe: Anthropic
+    Opus/Sonnet/Haiku all handled N=32 concurrent requests with zero 429s.
+    The default of 24 applies 75 % headroom against the measured floor
+    (0.75 × 32 = 24).  See ``docs/ops/openrouter-rate-ceilings.md``.
+
+    Priority: IMAS_CODEX_SN_COMPOSE_MAX_CONCURRENCY env
+              → [sn-compose].max-concurrency → ``24``.
+    """
+    if env := os.getenv("IMAS_CODEX_SN_COMPOSE_MAX_CONCURRENCY"):
+        return int(env)
+    return int(_get_section("sn-compose").get("max-concurrency", 24))
+
+
 # ─── SN review settings ────────────────────────────────────────────────────
 
 _SN_REVIEW_DEFAULTS: dict[str, Any] = {

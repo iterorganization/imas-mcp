@@ -72,6 +72,7 @@ LLM_SERVICE = Literal[
     "data-dictionary",
     "imas-mapping",
     "embedding",
+    "rate-probe",
     "untagged",
 ]
 
