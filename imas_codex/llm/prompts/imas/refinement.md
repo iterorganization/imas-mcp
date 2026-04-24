@@ -26,7 +26,11 @@ For each path in the batch, provide:
 
 2. **keywords**: Up to 8 searchable terms — preserve valuable keywords from Pass 1 and add any missing terms revealed by peer context.
 
-3. **physics_domain**: Primary physics domain ONLY if clearly different from the IDS-level domain. Use null to inherit.
+3. **physics_domain**: Primary physics domain if clearly different from
+   the IDS-level domain. Use null to inherit — **except** for cross-cutting
+   IDSs (`summary`, `amns_data`, `temporary`, `dataset_description`) where
+   the IDS-level domain is `general`. For those, you MUST always emit a
+   specific domain (see "Cross-cutting IDSs" below).
 
 ### Refinement Principles
 
@@ -42,6 +46,30 @@ For each path in the batch, provide:
 - **NO** artificial disambiguation — do not add phrases like "in the equilibrium IDS" just because peers exist in other IDSs. The IDS is already known from the path.
 
 {% include "schema/physics-domains.md" %}
+
+### Cross-cutting IDSs
+
+When the IDS-level `physics_domain` is `general` (cross-cutting IDSs such as `summary`, `amns_data`, `temporary`, `dataset_description`), you **MUST** emit a specific `physics_domain` for every leaf quantity. Returning null is **not acceptable** for these IDSs — it causes downstream miscategorisation because the inherited value `general` is meaningless.
+
+Classify each leaf by the physics it represents:
+
+| Path pattern | Domain |
+|---|---|
+| `summary/boundary/*`, `summary/boundary_separatrix/*` | `equilibrium` (geometry) or `edge_plasma_physics` (SOL/sheath) |
+| `summary/global_quantities/ip`, `li_*`, `beta_*`, `energy_*`, `v_loop`, `r0` | `equilibrium` or `magnetics` |
+| `summary/heating_current_drive/nbi/*` | `auxiliary_heating` |
+| `summary/heating_current_drive/ec/*` | `auxiliary_heating` |
+| `summary/heating_current_drive/ic/*`, `lh/*` | `auxiliary_heating` |
+| `summary/volume_average/*`, `line_average/*` | `core_plasma_physics` |
+| `summary/scrape_off_layer/*` | `edge_plasma_physics` |
+| `summary/disruption/*` | `magnetohydrodynamics` |
+| `summary/elms/*` | `edge_plasma_physics` |
+| `summary/pellets/*`, `summary/gas_injection/*` | `fueling_wall_pumping` |
+| `summary/neutron/*`, `fusion/*` | `neutronics` |
+| `summary/rmps/*`, `mhd/*` | `magnetohydrodynamics` |
+| `summary/runaways/*` | `runaway_electrons` |
+| `amns_data/*` | classify by atomic/molecular reaction type |
+| `temporary/*` | classify by the physics quantity stored |
 
 ## Output Format
 

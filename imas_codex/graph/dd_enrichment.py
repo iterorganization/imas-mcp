@@ -64,7 +64,9 @@ class IMASPathEnrichmentResult(BaseModel):
         description=(
             "Primary physics domain for this path. Use ONLY if the path clearly "
             "belongs to a domain different from the IDS-level physics_domain. "
-            "Leave null to inherit from IDS."
+            "Leave null to inherit from IDS — EXCEPT for cross-cutting IDSs "
+            "(summary, amns_data, temporary, dataset_description) where the "
+            "IDS-level domain is 'general'. For those, ALWAYS emit a specific domain."
         ),
     )
 
