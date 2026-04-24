@@ -1092,16 +1092,32 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 if lease:
                     lease.release_unused()
 
-    tasks = [_process_batch(i, batch) for i, batch in enumerate(batches)]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # --- Polling-based work distribution (42-polling-workers) ---
+    # N independent workers poll an asyncio.Queue for batches. Each worker
+    # acquires the concurrency semaphore inside _process_batch (unchanged),
+    # which handles budget reservation internally.
+    review_queue: asyncio.Queue = asyncio.Queue()
+    for _q_idx, _q_batch in enumerate(batches):
+        review_queue.put_nowait((_q_idx, _q_batch))
 
-    for r in results:
-        if isinstance(r, tuple):
-            items, recs = r
-            scored.extend(items)
-            review_records.extend(recs)
-        elif isinstance(r, Exception):
-            wlog.warning("Batch task failed: %s", r)
+    async def _review_polling_worker(worker_id: int) -> None:
+        while not state.should_stop():
+            try:
+                idx, batch = review_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+            try:
+                result = await _process_batch(idx, batch)
+                if isinstance(result, tuple):
+                    items, recs = result
+                    scored.extend(items)
+                    review_records.extend(recs)
+            except Exception as exc:
+                wlog.warning("Worker %d: batch %d failed: %s", worker_id, idx, exc)
+
+    n_review_workers = state.concurrency
+    await asyncio.gather(*[_review_polling_worker(i) for i in range(n_review_workers)])
 
     state.review_results = scored
 

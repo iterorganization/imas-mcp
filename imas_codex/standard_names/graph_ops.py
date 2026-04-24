@@ -3622,6 +3622,180 @@ def release_standard_name_source_claims(token: str) -> int:
         return result[0]["affected"] if result else 0
 
 
+# =============================================================================
+# Polling-based work claiming — compose and review
+# =============================================================================
+
+_CLAIM_TIMEOUT_SECONDS = 300  # 5 minutes — matches DEFAULT_CLAIM_TIMEOUT_SECONDS
+
+
+@retry_on_deadlock()
+def claim_compose_sources(
+    *,
+    limit: int = 15,
+    timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+) -> tuple[str, list[dict]]:
+    """Claim extracted StandardNameSource nodes for composition (polling).
+
+    Unlike :func:`claim_standard_name_source_batch` this does NOT filter by
+    ``batch_key`` — it claims any extracted source. Workers use this in a
+    polling loop to pick up the next available batch of work regardless of
+    which batch grouping the extract phase produced.
+
+    Uses the standard ``ORDER BY rand()`` + ``claim_token`` two-step verify
+    pattern from the discovery pipelines.
+
+    Returns ``(token, claimed_sources)`` where each source dict has keys
+    ``id``, ``source_id``, ``source_type``, ``batch_key``, ``description``.
+    """
+    token = str(uuid.uuid4())
+    cutoff = f"PT{timeout_seconds}S"
+
+    with GraphClient() as gc:
+        # Step 1: Atomically claim with random ordering + unique token
+        gc.query(
+            """
+            MATCH (sns:StandardNameSource)
+            WHERE sns.status = 'extracted'
+              AND (sns.claimed_at IS NULL
+                   OR sns.claimed_at < datetime() - duration($cutoff))
+            WITH sns ORDER BY rand() LIMIT $limit
+            SET sns.claimed_at = datetime(),
+                sns.claim_token = $token
+            """,
+            limit=limit,
+            token=token,
+            cutoff=cutoff,
+        )
+        # Step 2: Verify — only our token
+        claimed = list(
+            gc.query(
+                """
+                MATCH (sns:StandardNameSource {claim_token: $token})
+                RETURN sns.id AS id,
+                       sns.source_id AS source_id,
+                       sns.source_type AS source_type,
+                       sns.batch_key AS batch_key,
+                       sns.description AS description
+                """,
+                token=token,
+            )
+        )
+
+    logger.debug(
+        "claim_compose_sources: requested %d, won %d (token=%s)",
+        limit,
+        len(claimed),
+        token[:8],
+    )
+    return token, [dict(r) for r in claimed]
+
+
+def count_eligible_compose_sources(
+    timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+) -> int:
+    """Count StandardNameSource nodes eligible for composition.
+
+    Returns the number of extracted, unclaimed (or stale-claimed) sources.
+    Used by polling workers for drain detection — when this returns 0 and
+    no active leases remain, the compose phase is complete.
+    """
+    cutoff = f"PT{timeout_seconds}S"
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sns:StandardNameSource)
+            WHERE sns.status = 'extracted'
+              AND (sns.claimed_at IS NULL
+                   OR sns.claimed_at < datetime() - duration($cutoff))
+            RETURN count(sns) AS cnt
+            """,
+            cutoff=cutoff,
+        )
+        return result[0]["cnt"] if result else 0
+
+
+@retry_on_deadlock()
+def claim_review_names(
+    name_ids: list[str],
+    *,
+    timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+) -> tuple[str, list[str]]:
+    """Claim specific StandardName nodes for review scoring.
+
+    Only claims names from *name_ids* that are still eligible — not already
+    claimed by another worker (unless the claim is stale).
+
+    Uses the same ``claim_token`` two-step verify pattern as the compose
+    claim functions.
+
+    Returns ``(token, actually_claimed_ids)``.
+    """
+    if not name_ids:
+        return "", []
+
+    token = str(uuid.uuid4())
+    cutoff = f"PT{timeout_seconds}S"
+
+    with GraphClient() as gc:
+        # Step 1: Atomically claim unclaimed/stale-claimed names
+        gc.query(
+            """
+            UNWIND $ids AS nid
+            MATCH (sn:StandardName {id: nid})
+            WHERE sn.claimed_at IS NULL
+               OR sn.claimed_at < datetime() - duration($cutoff)
+            SET sn.claimed_at = datetime(),
+                sn.claim_token = $token
+            """,
+            ids=name_ids,
+            token=token,
+            cutoff=cutoff,
+        )
+        # Step 2: Verify — only our token
+        result = gc.query(
+            """
+            MATCH (sn:StandardName {claim_token: $token})
+            RETURN sn.id AS id
+            """,
+            token=token,
+        )
+        claimed = [r["id"] for r in result] if result else []
+
+    logger.debug(
+        "claim_review_names: requested %d, won %d (token=%s)",
+        len(name_ids),
+        len(claimed),
+        token[:8],
+    )
+    return token, claimed
+
+
+def release_review_claims(token: str) -> int:
+    """Release all StandardName claims held by this token.
+
+    Clears ``claimed_at`` and ``claim_token`` without changing any other
+    fields.  Used for error recovery — released names become eligible for
+    other workers.
+
+    Returns count of released names.
+    """
+    if not token:
+        return 0
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sn:StandardName {claim_token: $token})
+            SET sn.claimed_at = null,
+                sn.claim_token = null
+            RETURN count(sn) AS affected
+            """,
+            token=token,
+        )
+        return result[0]["affected"] if result else 0
+
+
 def reconcile_standard_name_sources(source_type: str = "dd") -> dict:
     """Post-rebuild reconciliation of StandardNameSource nodes.
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from functools import cache as _cache
 from typing import TYPE_CHECKING, Any
 
@@ -1336,37 +1337,6 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
 
     from imas_codex.settings import get_compose_concurrency
 
-    sem = asyncio.Semaphore(get_compose_concurrency())
-
-    async def _compose_batch(batch: ExtractionBatch) -> list[dict]:
-        async with sem:
-            if state.should_stop():
-                return []
-
-            # Budget gate — reserve before doing any LLM work
-            lease = None
-            if state.budget_manager:
-                # Per-item cost calibrated to observed Sonnet spend (~$0.003/item
-                # average, $0.04/item worst case for Opus).  Reserve for one
-                # attempt with 30% headroom; any retry overspend is handled
-                # gracefully by charge_soft() — no need to pre-reserve for
-                # retries, which would inflate the reservation 2-3× and cause
-                # the budget pool to appear exhausted before any LLM call is made.
-                estimated = len(batch.items) * 0.04 * 1.3
-                lease = state.budget_manager.reserve(estimated)
-                if lease is None:
-                    wlog.info(
-                        "Budget exhausted — skipping compose batch %s",
-                        batch.group_key,
-                    )
-                    return []
-
-            try:
-                return await _compose_batch_body(batch, lease)
-            finally:
-                if lease:
-                    lease.release_unused()
-
     async def _compose_batch_body(
         batch: ExtractionBatch, lease: BudgetLease | None
     ) -> list[dict]:
@@ -1807,17 +1777,82 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
         )
         return candidates
 
-    tasks = [_compose_batch(batch) for batch in state.extracted]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # --- Polling-based work distribution (42-polling-workers) ---
+    # N independent workers poll an asyncio.Queue for batches. Each worker
+    # reserves budget before processing; on failure the batch is re-enqueued
+    # and the worker sleeps before retrying — no silent drops.  This replaces
+    # the previous asyncio.gather fan-out + Semaphore pattern.
+    batch_queue: asyncio.Queue = asyncio.Queue()
+    for _q_batch in state.extracted:
+        batch_queue.put_nowait(_q_batch)
 
     composed: list[dict] = []
     errors = 0
-    for r in results:
-        if isinstance(r, list):
-            composed.extend(r)
-        elif isinstance(r, Exception):
-            errors += 1
-            wlog.warning("Batch failed: %s", r)
+    _MAX_BUDGET_RETRIES = 5
+
+    async def _compose_polling_worker(worker_id: int) -> None:
+        nonlocal errors
+        budget_retries = 0
+
+        while not state.should_stop():
+            try:
+                batch = batch_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+            # Budget gate — reserve before doing any LLM work.
+            # Per-item cost calibrated to observed Sonnet spend (~$0.003/item
+            # average, $0.04/item worst case for Opus).  Reserve for one
+            # attempt with 30% headroom.
+            lease = None
+            if state.budget_manager:
+                estimated = len(batch.items) * 0.04 * 1.3
+                lease = state.budget_manager.reserve(estimated)
+                if lease is None:
+                    budget_retries += 1
+                    if (
+                        budget_retries > _MAX_BUDGET_RETRIES
+                        or state.budget_manager.exhausted()
+                    ):
+                        wlog.info(
+                            "Worker %d: budget exhausted — stopping",
+                            worker_id,
+                        )
+                        break
+                    # Re-enqueue batch and wait for other workers to release
+                    batch_queue.put_nowait(batch)
+                    wlog.debug(
+                        "Worker %d: budget reserve failed for %s, "
+                        "re-enqueuing (retry %d/%d)",
+                        worker_id,
+                        batch.group_key,
+                        budget_retries,
+                        _MAX_BUDGET_RETRIES,
+                    )
+                    await asyncio.sleep(random.uniform(1.0, 3.0))
+                    continue
+
+            try:
+                candidates = await _compose_batch_body(batch, lease)
+                if candidates:
+                    composed.extend(candidates)
+                budget_retries = 0  # Reset on success
+            except Exception as exc:
+                errors += 1
+                wlog.warning(
+                    "Worker %d: batch %s failed: %s",
+                    worker_id,
+                    batch.group_key,
+                    exc,
+                )
+            finally:
+                if lease:
+                    lease.release_unused()
+
+    n_compose_workers = get_compose_concurrency()
+    await asyncio.gather(
+        *[_compose_polling_worker(i) for i in range(n_compose_workers)]
+    )
 
     state.composed = composed
     state.compose_stats.errors = errors
