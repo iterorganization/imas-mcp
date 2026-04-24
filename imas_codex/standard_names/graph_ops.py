@@ -500,6 +500,115 @@ def fetch_review_feedback_for_sources(
     return mapping
 
 
+def fetch_reviewer_history_for_sources(
+    source_ids: list[str] | set[str] | None,
+) -> dict[str, dict[str, Any]]:
+    """Fetch full Review-node history per source for compose prompt enrichment.
+
+    For each source that currently links to a StandardName with ≥1 Review
+    node, returns:
+
+    - ``latest``: the most recent Review (score, comment ≤800 chars, model).
+    - ``prior_themes``: n-gram theme extraction from older Review comments,
+      rendered as ``[{theme, count, example}]``.
+
+    This complements :func:`fetch_review_feedback_for_sources` which injects
+    only the denormalised aggregates from the StandardName node itself.  The
+    history variant drills into *all* Review nodes for richer compose context.
+
+    Args:
+        source_ids: Iterable of source-node ids (e.g. ``dd:equilibrium/...``).
+            ``None`` or empty input returns ``{}`` without hitting the graph.
+
+    Returns:
+        ``{source_id: history_dict}`` where history_dict has keys:
+
+        - ``latest`` (dict): ``{score, comment, model}`` of newest review.
+        - ``prior_themes`` (list[dict]): theme summaries from older reviews,
+          each ``{theme, count, example}``.  Empty when only one review exists.
+    """
+    if not source_ids:
+        return {}
+
+    ids = sorted({sid for sid in source_ids if sid})
+    if not ids:
+        return {}
+
+    with GraphClient() as gc:
+        rows = gc.query(
+            """
+            UNWIND $ids AS source_id
+            MATCH (src {id: source_id})-[:HAS_STANDARD_NAME]->(sn:StandardName)
+                  <-[:REVIEWS]-(r:Review)
+            RETURN source_id,
+                   sn.id AS sn_id,
+                   r.score AS score,
+                   r.comments AS full_comment,
+                   r.model AS model,
+                   r.reviewed_at AS ts
+            ORDER BY source_id, ts DESC
+            """,
+            ids=ids,
+        )
+
+    # Group rows by source_id
+    from collections import defaultdict
+
+    by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        sid = row.get("source_id")
+        if sid:
+            by_source[sid].append(row)
+
+    mapping: dict[str, dict[str, Any]] = {}
+    for sid, reviews in by_source.items():
+        if not reviews:
+            continue
+
+        # Latest review
+        latest = reviews[0]
+        comment_text = latest.get("full_comment") or ""
+        history: dict[str, Any] = {
+            "latest": {
+                "score": latest.get("score"),
+                "comment": comment_text[:800],
+                "model": latest.get("model"),
+            },
+            "prior_themes": [],
+        }
+
+        # Extract themes from older reviews (N-1)
+        if len(reviews) > 1:
+            prior_comments = [
+                r.get("full_comment") or ""
+                for r in reviews[1:]
+                if r.get("full_comment")
+            ]
+            if prior_comments:
+                from imas_codex.standard_names.review.themes import (
+                    _extract_themes_from_texts,
+                )
+
+                themes = _extract_themes_from_texts(prior_comments, top_n=5)
+                # Build theme entries with count and example
+                for theme in themes:
+                    # Find matching example comment (first containing theme words)
+                    example = ""
+                    theme_words = set(theme.lower().split())
+                    for c in prior_comments:
+                        c_lower = c.lower()
+                        if any(w in c_lower for w in theme_words):
+                            example = c[:160]
+                            break
+                    history["prior_themes"].append(
+                        {"theme": theme, "count": 1, "example": example}
+                    )
+
+        mapping[sid] = history
+
+    return mapping
+
+
 def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
     """Emit all structural edges for a batch of StandardName nodes.
 
@@ -795,7 +904,20 @@ def write_standard_names(
                 sn.embedded_at = coalesce(b.embedded_at, sn.embedded_at),
                 sn.grammar_parse_version = coalesce(b.grammar_parse_version, sn.grammar_parse_version),
                 sn.validation_diagnostics_json = coalesce(b.validation_diagnostics_json, sn.validation_diagnostics_json),
-                sn.llm_cost = coalesce(b.llm_cost, sn.llm_cost),
+                sn.llm_cost_regen = CASE WHEN sn.compose_count IS NOT NULL
+                                             AND sn.compose_count > 0
+                                             AND b.llm_cost IS NOT NULL
+                                        THEN coalesce(sn.llm_cost_regen, 0.0) + b.llm_cost
+                                        ELSE sn.llm_cost_regen END,
+                sn.llm_cost_compose = CASE WHEN b.llm_cost IS NOT NULL
+                                      THEN coalesce(sn.llm_cost_compose, 0.0) + b.llm_cost
+                                      ELSE sn.llm_cost_compose END,
+                sn.compose_count = CASE WHEN b.llm_cost IS NOT NULL
+                                   THEN coalesce(sn.compose_count, 0) + 1
+                                   ELSE sn.compose_count END,
+                sn.llm_cost = CASE WHEN b.llm_cost IS NOT NULL
+                              THEN coalesce(sn.llm_cost, 0.0) + b.llm_cost
+                              ELSE sn.llm_cost END,
                 sn.llm_model = coalesce(b.llm_model, sn.llm_model),
                 sn.llm_service = coalesce(b.llm_service, sn.llm_service),
                 sn.llm_at = coalesce(b.llm_at, sn.llm_at),
@@ -1026,6 +1148,8 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
                 r.llm_cost = b.llm_cost,
                 r.llm_tokens_in = b.llm_tokens_in,
                 r.llm_tokens_out = b.llm_tokens_out,
+                r.llm_tokens_cached_read = b.llm_tokens_cached_read,
+                r.llm_tokens_cached_write = b.llm_tokens_cached_write,
                 r.llm_at = b.llm_at,
                 r.llm_service = b.llm_service
             WITH r, b
@@ -1056,12 +1180,37 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
                     "llm_cost": r.get("llm_cost"),
                     "llm_tokens_in": r.get("llm_tokens_in"),
                     "llm_tokens_out": r.get("llm_tokens_out"),
+                    "llm_tokens_cached_read": r.get("llm_tokens_cached_read"),
+                    "llm_tokens_cached_write": r.get("llm_tokens_cached_write"),
                     "llm_at": r.get("llm_at"),
                     "llm_service": r.get("llm_service"),
                 }
                 for r in valid
             ],
         )
+
+        # --- Accumulate review cost on StandardName ---
+        # Build per-SN cost totals from the batch (sum review costs per name).
+        sn_cost_map: dict[str, float] = {}
+        for r in valid:
+            sn_id = r.get("standard_name_id")
+            cost = r.get("llm_cost")
+            if sn_id and cost:
+                sn_cost_map[sn_id] = sn_cost_map.get(sn_id, 0.0) + cost
+        if sn_cost_map:
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (sn:StandardName {id: b.sn_id})
+                SET sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + b.cost,
+                    sn.llm_cost = coalesce(sn.llm_cost, 0.0) + b.cost
+                """,
+                batch=[
+                    {"sn_id": sn_id, "cost": cost}
+                    for sn_id, cost in sn_cost_map.items()
+                ],
+            )
+
     logger.info("Wrote %d Review nodes", len(valid))
     return len(valid)
 
@@ -1659,7 +1808,12 @@ def persist_enriched_batch(
                 sn.pipeline_status = b.pipeline_status,
                 sn.enriched_at = datetime(b.enriched_at),
                 sn.llm_model = coalesce(b.llm_model, sn.llm_model),
-                sn.llm_cost = coalesce(b.llm_cost, sn.llm_cost),
+                sn.llm_cost_enrich = CASE WHEN b.llm_cost IS NOT NULL
+                                     THEN coalesce(sn.llm_cost_enrich, 0.0) + b.llm_cost
+                                     ELSE sn.llm_cost_enrich END,
+                sn.llm_cost = CASE WHEN b.llm_cost IS NOT NULL
+                              THEN coalesce(sn.llm_cost, 0.0) + b.llm_cost
+                              ELSE sn.llm_cost END,
                 sn.llm_service = coalesce(b.llm_service, sn.llm_service),
                 sn.enrich_tokens = coalesce(b.enrich_tokens, sn.enrich_tokens),
                 sn.validation_status = coalesce(b.validation_status, sn.validation_status),

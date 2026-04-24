@@ -232,6 +232,36 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
             fb_injected,
         )
 
+    # Inject full reviewer history from Review nodes (Phase 3).
+    # Complements the single-review review_feedback above with the
+    # complete chain of prior reviews — latest full + older themes.
+    def _get_reviewer_history():
+        from imas_codex.standard_names.graph_ops import (
+            fetch_reviewer_history_for_sources,
+        )
+
+        ids: set[str] = set()
+        for batch in batches:
+            for item in batch.items:
+                path = item.get("path", item.get("signal_id"))
+                if path:
+                    ids.add(path)
+        return fetch_reviewer_history_for_sources(ids)
+
+    history_map = await asyncio.to_thread(_get_reviewer_history)
+    hist_injected = 0
+    for batch in batches:
+        for item in batch.items:
+            path = item.get("path", item.get("signal_id"))
+            if path and path in history_map:
+                item["reviewer_history"] = history_map[path]
+                hist_injected += 1
+    if hist_injected:
+        wlog.info(
+            "Injected reviewer_history for %d items",
+            hist_injected,
+        )
+
     # Write StandardNameSource nodes for crash-resilient tracking
     if not state.dry_run and batches:
         from imas_codex.standard_names.graph_ops import merge_standard_name_sources

@@ -221,6 +221,15 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
     {{ item.review_feedback.reviewer_comments | replace('\n', '\n    ') }}
 {% endif %}  - **Instruction:** Produce a name that directly fixes every concrete issue raised above. Do NOT re-emit the previous name unchanged. If the reviewer flagged excessive length, redundant qualifiers, or convention violations, your new name must be shorter / cleaner / more idiomatic. If the reviewer was satisfied with a dimension (score ≥ 15), preserve that aspect.
 {% endif %}
+{% if item.reviewer_history %}
+- **📜 Full reviewer history — HARD RULE: if a prior reviewer raised an issue, your new name MUST address it. Do not regenerate with the same flaw.**
+  - **Latest review** (model={{ item.reviewer_history.latest.model }}, score={{ "%.2f"|format(item.reviewer_history.latest.score) if item.reviewer_history.latest.score is not none else 'N/A' }}):
+    {{ item.reviewer_history.latest.comment | replace('\n', '\n    ') }}
+{% if item.reviewer_history.prior_themes %}
+  - **Recurring concerns across earlier reviews:**
+{% for theme in item.reviewer_history.prior_themes %}    - ({{ theme.count }}×) {{ theme.theme }} — e.g. "{{ theme.example }}"
+{% endfor %}{% endif %}
+{% endif %}
 {% if item.cluster_siblings %}- **Cross-IDS siblings:**
 {% for sib in item.cluster_siblings[:5] %}  - {{ sib.path }} ({{ sib.unit or '?' }})
 {% endfor %}
