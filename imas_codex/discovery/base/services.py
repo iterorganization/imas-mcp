@@ -625,7 +625,7 @@ def _probe_litellm_local(section: str) -> tuple[bool, str]:
         set_litellm_offline_env()
         import litellm
 
-        litellm.drop_params = True
+        litellm.drop_params = False
         response = litellm.completion(
             model=model,
             messages=[{"role": "user", "content": "ping"}],

@@ -1078,6 +1078,10 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
             state.tokens_in += tokens  # total tokens (in + out combined)
             state.document_stats.cost += cost
 
+            # Distribute per-item cost so persist_enriched_batch can write
+            # llm_cost_enrich on each StandardName node.
+            per_item_cost = cost / len(items) if items else 0.0
+
             # Build lookup from LLM response by standard_name
             response_map: dict[str, Any] = {}
             for enriched_item in result.items:
@@ -1113,6 +1117,8 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
                 )
                 item["enriched_tags"] = _sanitize_tags(enriched.tags)
 
+                # Per-item cost for graph_ops.persist_enriched_batch
+                item["enrich_cost_usd"] = per_item_cost
                 # Optional enrichment fields (validity_domain, constraints)
                 if enriched.validity_domain is not None:
                     item["enriched_validity_domain"] = enriched.validity_domain

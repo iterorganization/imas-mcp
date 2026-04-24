@@ -118,7 +118,7 @@ model_list:
       extra_headers: *cc_hdr
 
 litellm_settings:
-  drop_params: true
+  drop_params: false
   num_retries: 3
   request_timeout: 120
 general_settings:

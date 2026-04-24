@@ -647,6 +647,42 @@ classes:
         description: >-
           Batch identifier grouping names enriched in the same run.
           Format: "enrich-{timestamp}" or user-supplied tag.
+      # --- Per-phase cost attribution ---
+      # The LLMOperation mixin provides the aggregate ``llm_cost`` field
+      # (convenience = sum of per-phase fields).  These per-phase fields
+      # enable fine-grained cost reporting per pipeline stage.  All use
+      # ``+= coalesce(...)`` accumulation; only ``sn clear`` resets them.
+      llm_cost_compose:
+        description: >-
+          Cumulative USD cost of compose LLM calls for this name
+          (including regenerations).
+        range: float
+      llm_cost_enrich:
+        description: >-
+          Cumulative USD cost of enrichment / hybrid-search LLM calls.
+        range: float
+      llm_cost_review:
+        description: >-
+          Cumulative USD cost of review LLM calls (sum across all
+          reviewer models).
+        range: float
+      llm_cost_regen:
+        description: >-
+          Cumulative USD cost of regeneration-specific compose calls
+          (when reviewer feedback triggered a re-compose).  Subset of
+          ``llm_cost_compose``.
+        range: float
+      llm_cost_docs:
+        description: >-
+          Cumulative USD cost of docs-target compose / enrich calls.
+        range: float
+      compose_count:
+        description: >-
+          Number of compose attempts (including regenerations).
+          Incremented each time ``write_standard_names`` records a
+          non-null ``llm_cost`` for this node.
+        range: integer
+        ifabsent: int(0)
       # --- Run provenance ---
       last_run_id:
         description: >-
