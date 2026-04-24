@@ -197,8 +197,24 @@ def select_next_domain(
 
 def _write_sn_run(summary: RunSummary) -> None:
     """Persist an SNRun node using the generated Pydantic model."""
+    import json as _json
+
     from imas_codex.graph.client import GraphClient
     from imas_codex.graph.models import SNRun
+
+    # Compute pipeline hash — best-effort, never block the write
+    _pipeline_hash: str | None = None
+    _pipeline_hash_detail: str | None = None
+    try:
+        from imas_codex.standard_names.pipeline_version import compute_pipeline_hash
+
+        ph = compute_pipeline_hash()
+        _pipeline_hash = ph["_composite"]
+        _pipeline_hash_detail = _json.dumps(
+            {k: v for k, v in ph.items() if k != "_composite"}
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
     rr = SNRun(
         id=summary.run_id,
@@ -214,6 +230,8 @@ def _write_sn_run(summary: RunSummary) -> None:
         names_regenerated=summary.names_regenerated,
         domains_touched=sorted(summary.domains_touched),
         stop_reason=summary.stop_reason,
+        pipeline_hash=_pipeline_hash,
+        pipeline_hash_detail=_pipeline_hash_detail,
     )
     try:
         props = rr.model_dump(mode="json")

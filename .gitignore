@@ -18,6 +18,7 @@ imas_codex/resources/*
 # Distribution / packaging
 dist/
 build/
+!tests/build/
 wheels/
 *.egg-info/
 *.egg

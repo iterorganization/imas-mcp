@@ -1023,6 +1023,22 @@ classes:
         range: float
       description:
         description: Free-text notes about this run (optional)
+      pipeline_hash:
+        description: >-
+          Composite SHA-256 digest (16 hex chars) of all prompt files,
+          classifier code, and ISN vocab version at cycle start.
+          Computed by ``imas_codex.standard_names.pipeline_version.compute_pipeline_hash``
+          and stored as the ``_composite`` key.  Used by ``sn run`` to
+          detect pipeline changes between cycles and prompt the operator
+          to run ``sn clear`` before continuing.
+        range: string
+      pipeline_hash_detail:
+        description: >-
+          JSON-encoded dict of per-file 16-char hex digests that
+          contributed to ``pipeline_hash``.  Allows precise diff
+          reporting ("compose_system.md changed") without storing the
+          full file contents.
+        range: string
 
   Review:
     description: >-

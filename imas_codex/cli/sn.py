@@ -123,6 +123,93 @@ def _run_sn_loop_cmd(
     console.print(table)
 
 
+def _check_pipeline_clear_gate() -> None:
+    """Check whether the pipeline version has changed since the last SNRun.
+
+    Queries the graph for the most recent ``SNRun`` node that has a
+    ``pipeline_hash`` set.  If the stored composite hash differs from the
+    current one **and** there are ``StandardName`` nodes generated after
+    that run, print a warning banner and raise ``SystemExit(1)``.
+
+    Best-effort: if the graph is unreachable or the import fails, the
+    function returns silently so it never blocks a legitimate first run.
+    """
+    try:
+        import json as _json
+
+        from rich.console import Console as _Console
+
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.standard_names.pipeline_version import (
+            compute_pipeline_hash,
+            diff_pipeline_hashes,
+        )
+    except ImportError:
+        return  # bootstrap — skip gate
+
+    try:
+        current = compute_pipeline_hash()
+        current_composite = current["_composite"]
+
+        with GraphClient(timeout=5) as gc:
+            # Fetch most recent SNRun that recorded a pipeline_hash
+            rows = list(
+                gc.query(
+                    """
+                    MATCH (r:SNRun)
+                    WHERE r.pipeline_hash IS NOT NULL
+                    RETURN r.pipeline_hash          AS composite,
+                           r.pipeline_hash_detail   AS detail,
+                           r.started_at             AS started_at,
+                           r.id                     AS run_id
+                    ORDER BY r.started_at DESC
+                    LIMIT 1
+                    """
+                )
+            )
+            if not rows:
+                return  # no prior run with hash — fresh graph, skip gate
+
+            row = rows[0]
+            prev_composite = row["composite"]
+            if prev_composite == current_composite:
+                return  # no change
+
+            # Hashes differ — check whether there are generated names
+            name_count_rows = list(
+                gc.query("MATCH (sn:StandardName) RETURN count(sn) AS n")
+            )
+            name_count = name_count_rows[0]["n"] if name_count_rows else 0
+            if name_count == 0:
+                return  # empty graph — nothing to protect
+
+            # Compute which keys changed for a useful message
+            prev_detail: dict[str, str] = {}
+            if row["detail"]:
+                try:
+                    prev_detail = _json.loads(row["detail"])
+                except Exception:  # noqa: BLE001
+                    pass
+            changed_keys = diff_pipeline_hashes(prev_detail, current)
+
+            _Console(stderr=True).print(
+                "\n[bold yellow]⚠  Pipeline version changed since last cycle.[/bold yellow]\n"
+                f"   Previous composite hash : [dim]{prev_composite}[/dim]\n"
+                f"   Current  composite hash : [dim]{current_composite}[/dim]\n"
+                f"   Keys that changed       : [yellow]{', '.join(changed_keys) or '(detail unavailable)'}[/yellow]\n"
+                f"   Existing generated names: [cyan]{name_count}[/cyan]\n\n"
+                "   Recommendation: run the following command before continuing:\n"
+                "     [bold]imas-codex sn clear --all --force --include-sources[/bold]\n\n"
+                "   To bypass this check and continue anyway:\n"
+                "     [bold]imas-codex sn run --skip-clear-gate ...[/bold]\n"
+            )
+            raise SystemExit(1)
+    except SystemExit:
+        raise
+    except Exception:  # noqa: BLE001
+        return  # graph unreachable or error — skip gate silently
+
+
 @sn.command("run")
 @click.option(
     "--source",
@@ -422,6 +509,17 @@ def _run_sn_loop_cmd(
         "Repeatable: --override-edits foo --override-edits bar."
     ),
 )
+@click.option(
+    "--skip-clear-gate",
+    is_flag=True,
+    default=False,
+    help=(
+        "Bypass the pipeline-version change check. Normally ``sn run`` "
+        "exits non-zero when prompt files or ISN vocab have changed since "
+        "the last SNRun node and there are existing generated names. "
+        "Pass this flag to suppress the gate and continue anyway."
+    ),
+)
 def sn_run(
     source: str,
     domain_filter: str | None,
@@ -457,6 +555,7 @@ def sn_run(
     single_pass: bool,
     only_phase: str | None,
     override_edits: tuple[str, ...],
+    skip_clear_gate: bool,
 ) -> None:
     """Generate standard names from a source.
 
@@ -480,6 +579,13 @@ def sn_run(
       imas-codex sn run --only link                   # resolve links only
       imas-codex sn run --override-edits foo --override-edits bar  # bypass protection on foo, bar
     """
+    # --- Pipeline-version clear gate ---
+    # Check if prompt/vocab/code has changed since the last SNRun.
+    # Exits non-zero with a warning banner unless --skip-clear-gate is set
+    # or there are no existing generated names (fresh graph).
+    if not skip_clear_gate and not dry_run:
+        _check_pipeline_clear_gate()
+
     # --- Apply --only overrides ---
     if only_phase:
         from imas_codex.standard_names.turn import skip_flags_from_only
