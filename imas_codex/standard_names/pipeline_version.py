@@ -19,8 +19,8 @@ PIPELINE_PROMPTS: list[Path] = [
     Path("imas_codex/llm/prompts/sn/compose_system.md"),
     Path("imas_codex/llm/prompts/sn/compose_dd.md"),
     Path("imas_codex/llm/prompts/sn/compose_dd_names.md"),
-    Path("imas_codex/llm/prompts/sn/_grammar_reference.md"),
-    Path("imas_codex/llm/prompts/sn/_scoring_rubric.md"),
+    Path("imas_codex/llm/prompts/shared/sn/_grammar_reference.md"),
+    Path("imas_codex/llm/prompts/shared/sn/_scoring_rubric.md"),
     Path("imas_codex/llm/config/sn_review_criteria.yaml"),
 ]
 
@@ -49,20 +49,37 @@ def compute_pipeline_hash() -> dict[str, str]:
     dict[str, str]
         ``{relative_path: 16-hex-digest, ..., "isn_version": "x.y.z",
         "_composite": 16-hex-digest}``
+
+    Raises
+    ------
+    FileNotFoundError
+        If any declared pipeline input file is missing. A missing prompt
+        or code file would silently weaken the clear gate (a later edit
+        to that file would not trigger a required ``sn clear``), so we
+        fail loudly rather than skip.
     """
     root = Path(__file__).parents[2]
     result: dict[str, str] = {}
 
+    missing: list[Path] = []
     for p in PIPELINE_PROMPTS + PIPELINE_CODE:
         fp = root / p
-        if fp.exists():
-            result[str(p)] = hashlib.sha256(fp.read_bytes()).hexdigest()[:16]
+        if not fp.exists():
+            missing.append(p)
+            continue
+        result[str(p)] = hashlib.sha256(fp.read_bytes()).hexdigest()[:16]
+    if missing:
+        raise FileNotFoundError(
+            "pipeline_version: declared input(s) missing — update "
+            "PIPELINE_PROMPTS/PIPELINE_CODE or restore the file(s): "
+            + ", ".join(str(p) for p in missing)
+        )
 
     try:
-        from importlib.metadata import version
+        from importlib.metadata import PackageNotFoundError, version
 
         result["isn_version"] = version("imas-standard-names")
-    except Exception:  # noqa: BLE001
+    except PackageNotFoundError:
         result["isn_version"] = "unknown"
 
     # Composite — deterministic join of all leaf values sorted by key

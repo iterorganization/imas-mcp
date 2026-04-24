@@ -71,16 +71,63 @@ def test_pipeline_hash_graceful_when_isn_not_installed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When imas-standard-names is not installed, 'isn_version' is 'unknown'."""
-    with patch("imas_codex.standard_names.pipeline_version.hashlib"):
-        pass  # just verify the import patch approach below works
+    from importlib.metadata import PackageNotFoundError
 
-    # Patch importlib.metadata.version to raise
     with patch(
         "importlib.metadata.version",
-        side_effect=Exception("package not found"),
+        side_effect=PackageNotFoundError("imas-standard-names"),
     ):
         h = compute_pipeline_hash()
         assert h.get("isn_version") == "unknown"
+
+
+def test_pipeline_hash_reports_actual_isn_version() -> None:
+    """When ISN is installed (normal dev/CI), version must be a real PEP 440 string,
+    not the 'unknown' sentinel. Guards against upstream packaging regressions where
+    the dependency is installed but the dist metadata can't be read."""
+    h = compute_pipeline_hash()
+    assert h["isn_version"] != "unknown", (
+        "ISN version lookup returned 'unknown' — either the dependency is missing "
+        "from the env, or importlib.metadata cannot see it. Release tooling relies "
+        "on this value to stamp SNRun.pipeline_hash."
+    )
+    # Must look like a PEP 440 version (digit-dot-digit at minimum)
+    assert h["isn_version"][0].isdigit(), (
+        f"ISN version {h['isn_version']!r} does not look like a PEP 440 version"
+    )
+
+
+def test_all_declared_pipeline_files_exist() -> None:
+    """Every file in PIPELINE_PROMPTS and PIPELINE_CODE must exist on disk.
+
+    Regression guard: silent skipping of a missing declared file would weaken
+    the clear gate (a later edit to that file would not trigger a required
+    ``sn clear``). This test keeps the declaration honest.
+    """
+    project_root = Path(__file__).parents[2]
+    missing = [
+        p for p in PIPELINE_PROMPTS + PIPELINE_CODE if not (project_root / p).exists()
+    ]
+    assert not missing, (
+        "Declared pipeline inputs not found on disk: "
+        + ", ".join(str(p) for p in missing)
+        + " — fix the path in pipeline_version.py or restore the file."
+    )
+
+
+def test_compute_pipeline_hash_raises_if_declared_file_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If a declared pipeline input is missing at runtime, compute_pipeline_hash
+    must raise FileNotFoundError rather than silently producing an incomplete hash."""
+    from imas_codex.standard_names import pipeline_version
+
+    bogus = Path("imas_codex/llm/prompts/sn/NONEXISTENT_FOR_TEST.md")
+    monkeypatch.setattr(
+        pipeline_version, "PIPELINE_PROMPTS", [*PIPELINE_PROMPTS, bogus]
+    )
+    with pytest.raises(FileNotFoundError, match="NONEXISTENT_FOR_TEST"):
+        compute_pipeline_hash()
 
 
 # ---------------------------------------------------------------------------
