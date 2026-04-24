@@ -1139,6 +1139,12 @@ classes:
       detected_at:
         description: ISO 8601 timestamp when this candidate was first detected
         range: datetime
+      last_detected_at:
+        description: >-
+          ISO 8601 timestamp when this candidate was most recently observed
+          in a ``sn vocab saturated`` pass.  Updated on each detection run so
+          that stale candidates (not seen for a long time) can be culled.
+        range: datetime
       submitted_to_isn_at:
         description: >-
           ISO 8601 timestamp when a PR was opened against ISN for this

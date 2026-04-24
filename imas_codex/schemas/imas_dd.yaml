@@ -469,6 +469,20 @@ classes:
           to the graph.  Enables per-version incremental builds — versions
           with paths_built_at set are skipped on subsequent runs.
         range: datetime
+      major:
+        description: Major version number parsed from the version string (e.g. 3 from "3.42.2")
+        range: integer
+      minor:
+        description: Minor version number parsed from the version string (e.g. 42 from "3.42.2")
+        range: integer
+      patch:
+        description: Patch version number parsed from the version string (e.g. 2 from "3.42.2")
+        range: integer
+      refinement_cost:
+        description: >-
+          Total LLM cost (USD) of the Pass-2 description-refinement step for this
+          DD version. Tracked per-version for budget visibility.
+        range: float
 
   IDS:
     description: >-
@@ -864,6 +878,12 @@ classes:
         description: >-
           SHA256 hash of embedding_text content. Used for cache busting - if hash
           changes, embedding needs regeneration. Enables minimal recompute on rebuild.
+      embedded_at:
+        description: >-
+          ISO 8601 timestamp when the embedding vector was last computed for this
+          path. Used to identify paths whose embeddings may be stale after a model
+          change.
+        range: datetime
       # Error field linking (HAS_ERROR relationship with error_type property)
       error_paths:
         description: >-
@@ -938,8 +958,10 @@ classes:
         description: Cluster identifier (UUID string)
         required: true
       label:
-        description: LLM-generated semantic label (e.g., "boundary geometry")
-        required: true
+        description: >-
+          LLM-generated semantic label (e.g., "boundary geometry"). Null for
+          newly-created clusters that have not yet been through the labelling
+          pipeline (``imas-codex imas clusters label``).
       description:
         description: Extended description of the cluster concept
       physics_domain:

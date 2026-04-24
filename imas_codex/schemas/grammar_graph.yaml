@@ -99,6 +99,11 @@ classes:
       released_at:
         description: ISO 8601 timestamp when this grammar version was released
         range: datetime
+      created_at:
+        description: >-
+          ISO 8601 timestamp when this ISNGrammarVersion node was first written
+          to the graph. Distinct from ``released_at`` (the upstream release date).
+        range: datetime
       segments:
         description: Segments defined by this grammar version
         multivalued: true
@@ -218,6 +223,13 @@ classes:
           Classification of this token within its segment (e.g.
           "transformation", "substance", "region", "process"). Populated
           from the ISN spec when available; free-form string.
+      aliases:
+        description: >-
+          Alternative string forms for this token (e.g. abbreviations or
+          synonyms recognised by the grammar parser). Stored as a list so
+          that ``sn decompose`` can match multiple spellings to the same
+          GrammarToken.
+        multivalued: true
 
   GrammarTemplate:
     description: >-
