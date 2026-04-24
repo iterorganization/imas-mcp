@@ -733,10 +733,17 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
 
             # --- Budget reservation (worst-case: all cycles) -----------------
             # Per-name cost calibrated to observed Opus 4.6 + GPT-5.4 review
-            # spend.  Each review may trigger a revision cycle (3rd LLM call
-            # per reviewer), so multiplier 3.0× covers worst case.
+            # spend.  Each review cycle does one LLM call plus an optional
+            # retry on unmatched items (~30% of batch).  For 3-model
+            # RD-quorum, the escalator (cycle 2) only processes the disputed
+            # subset, not the full batch.  A 1.5× per-model multiplier
+            # conservatively covers "full batch + partial retry".
+            #
+            # Previous value was 3.0× per model (9.0× for 3 models), which
+            # made the reservation ($6.75 for 15 names) exceed the entire
+            # review phase budget ($3.00), blocking all batches.
             estimated_cost = len(names) * 0.05
-            worst_case = estimated_cost * len(models) * 3.0
+            worst_case = estimated_cost * len(models) * 1.5
             lease = None
 
             if state.budget_manager:

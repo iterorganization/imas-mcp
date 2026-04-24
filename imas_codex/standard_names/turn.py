@@ -159,6 +159,7 @@ async def _run_generate_phase(
     *,
     regen: bool = False,
     force: bool = False,
+    budget_override: float | None = None,
 ) -> PhaseResult:
     """Run the generate (or regen) pipeline phase.
 
@@ -167,10 +168,19 @@ async def _run_generate_phase(
     delegates to. When ``regen=True`` the state is configured to
     select existing reviewed names whose ``reviewer_score`` is below
     ``cfg.min_score``.
+
+    Args:
+        cfg: Turn configuration.
+        regen: If True, regenerate low-scoring names.
+        force: If True, regenerate even without stale sources.
+        budget_override: When set, use this budget instead of the fixed
+            phase split.  Used by :func:`run_turn` for adaptive regen budget.
     """
     phase_name = "regen" if regen else "generate"
     phase_idx = 4 if regen else 0
-    budget = cfg.phase_budget(phase_idx)
+    budget = (
+        budget_override if budget_override is not None else cfg.phase_budget(phase_idx)
+    )
 
     if cfg.dry_run:
         return PhaseResult(
@@ -354,14 +364,22 @@ async def _run_link_phase(
     )
 
 
-async def _run_review_names_phase(cfg: TurnConfig) -> PhaseResult:
+async def _run_review_names_phase(
+    cfg: TurnConfig,
+    budget_override: float | None = None,
+) -> PhaseResult:
     """Run the name-review pipeline phase.
 
     Reviews ``valid`` names in the given domain using the 4-dim name rubric.
     Writes ``reviewer_score_name`` + ``reviewed_name_at``.  Bootstraps
     ``reviewer_score`` from ``reviewer_score_name`` when null.
+
+    Args:
+        cfg: Turn configuration.
+        budget_override: When set, use this budget instead of the fixed
+            phase split.  Used by :func:`run_turn` for adaptive budgets.
     """
-    budget = cfg.phase_budget(2)
+    budget = budget_override if budget_override is not None else cfg.phase_budget(2)
 
     if cfg.dry_run:
         return PhaseResult(name="review_names", skipped=False, cost=0.0, count=0)
@@ -432,14 +450,22 @@ async def _run_review_names_phase(cfg: TurnConfig) -> PhaseResult:
     )
 
 
-async def _run_review_docs_phase(cfg: TurnConfig) -> PhaseResult:
+async def _run_review_docs_phase(
+    cfg: TurnConfig,
+    budget_override: float | None = None,
+) -> PhaseResult:
     """Run the docs-review pipeline phase.
 
     Reviews ``valid`` names whose ``reviewed_name_at IS NOT NULL`` using
     the 4-dim docs rubric.  Writes ``reviewer_score_docs`` +
     ``reviewed_docs_at``.  Never touches ``reviewer_score``.
+
+    Args:
+        cfg: Turn configuration.
+        budget_override: When set, use this budget instead of the fixed
+            phase split.  Used by :func:`run_turn` for adaptive budgets.
     """
-    budget = cfg.phase_budget(3)
+    budget = budget_override if budget_override is not None else cfg.phase_budget(3)
 
     if cfg.dry_run:
         return PhaseResult(name="review_docs", skipped=False, cost=0.0, count=0)
@@ -523,6 +549,44 @@ _run_review_phase = _run_review_names_phase
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
+
+# Budget shares for trailing phases, keyed by phase name.
+# These are fractions of the *remaining* budget after prior phases,
+# not fractions of the total cost_limit.
+_ADAPTIVE_SHARES: dict[str, float] = {
+    "review_names": 0.45,
+    "review_docs": 0.35,
+    "regen": 1.00,  # regen gets everything that's left
+}
+
+
+def _adaptive_review_budget(
+    cost_limit: float,
+    prior_results: list[PhaseResult],
+    phase_name: str,
+) -> float:
+    """Compute an adaptive budget for a trailing phase.
+
+    Instead of a fixed percentage split, trailing phases (review_names,
+    review_docs, regen) get a share of the *remaining* budget after
+    subtracting actual spend from prior phases.
+
+    This prevents the common scenario where generate spends $0 (all
+    names already composed) but its 30% allocation is wasted, leaving
+    review with only 15% of the total.
+
+    Args:
+        cost_limit: Total turn budget.
+        prior_results: Results from phases that have already run.
+        phase_name: Which trailing phase to compute budget for.
+
+    Returns:
+        Dollar budget for the phase.
+    """
+    prior_spend = sum(r.cost for r in prior_results if not r.skipped)
+    remaining = max(cost_limit - prior_spend, 0.0)
+    share = _ADAPTIVE_SHARES.get(phase_name, 0.15)
+    return remaining * share
 
 
 def _fetch_unresolved_links(
@@ -619,12 +683,40 @@ async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
             _skip_link,
             lambda: _run_link_phase(cfg, touched_names),
         ),
-        ("review_names", _skip_review_names, lambda: _run_review_names_phase(cfg)),
-        ("review_docs", _skip_review_docs, lambda: _run_review_docs_phase(cfg)),
+        # Trailing phases use adaptive budgets computed from actual prior spend.
+        # The lambda captures `results` by reference, so it sees the current
+        # state when called (after prior phases have completed).
+        (
+            "review_names",
+            _skip_review_names,
+            lambda: _run_review_names_phase(
+                cfg,
+                budget_override=_adaptive_review_budget(
+                    cfg.cost_limit, results, "review_names"
+                ),
+            ),
+        ),
+        (
+            "review_docs",
+            _skip_review_docs,
+            lambda: _run_review_docs_phase(
+                cfg,
+                budget_override=_adaptive_review_budget(
+                    cfg.cost_limit, results, "review_docs"
+                ),
+            ),
+        ),
         (
             "regen",
             cfg.skip_regen,
-            lambda: _run_generate_phase(cfg, regen=True, force=True),
+            lambda: _run_generate_phase(
+                cfg,
+                regen=True,
+                force=True,
+                budget_override=_adaptive_review_budget(
+                    cfg.cost_limit, results, "regen"
+                ),
+            ),
         ),
     ]
 
