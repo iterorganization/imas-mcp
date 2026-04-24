@@ -426,14 +426,18 @@ class TestBM25ScoringConstants:
         assert "max(raw, 0.7)" not in source, "BM25 score floor still present"
 
     def test_path_short_circuit(self) -> None:
-        """Verify path queries skip vector search."""
+        """Verify path queries skip vector search.
+
+        The short-circuit lives in ``hybrid_dd_search`` (imas_codex.graph.dd_search),
+        which ``GraphSearchTool.search_dd_paths`` delegates to.
+        """
         import inspect
 
-        from imas_codex.tools.graph_search import GraphSearchTool
+        from imas_codex.graph.dd_search import hybrid_dd_search
 
-        source = inspect.getsource(GraphSearchTool.search_dd_paths)
+        source = inspect.getsource(hybrid_dd_search)
         assert '"/" in query' in source or "'/' in query" in source, (
-            "Path short-circuit not found"
+            "Path short-circuit not found in hybrid_dd_search"
         )
 
 

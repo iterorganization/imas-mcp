@@ -16,16 +16,8 @@ pytestmark = pytest.mark.graph
 # has a wrong unit.  These are tracked for DD-rebuild follow-up and
 # must NOT cause test failures.
 _DD_SIDE_UNIT_BUGS: dict[str, str] = {
-    "electron_temperature_peaking_factor": "DD tags peaking factor as eV; dimensionless is correct",
-    "ion_average_charge_of_ion_state": "DD tags average charge as 'e'; dimensionless is correct",
-    "ion_average_square_charge_of_ion_state": "DD tags average square charge as 'e'; dimensionless is correct",
-    # DD-05: pulse_schedule/*/reference sentinel unit=1 caused this SN to be generated
-    # with unit='1' instead of 'ohm'; the correct unit is 'ohm'.  Remove when
-    # DD PR 5 (Fix pulse_schedule reference units) is merged and graph rebuilt.
-    "resistance_of_poloidal_field_coil": (
-        "SN unit inherited sentinel=1 from pulse_schedule/reference (DD-05 bug); "
-        "DD unit 'ohm' is correct — remove after DD fix and SN regeneration"
-    ),
+    # All previously-listed bugs have been fixed upstream in the DD.
+    # Add new entries here when a DD-side unit bug is discovered.
 }
 
 
