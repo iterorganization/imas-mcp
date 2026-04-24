@@ -1131,11 +1131,13 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
             MERGE (r:Review {id: b.id})
             SET r.standard_name_id = b.standard_name_id,
                 r.model = b.model,
+                r.reviewer_model = b.reviewer_model,
                 r.model_family = b.model_family,
                 r.is_canonical = b.is_canonical,
                 r.score = b.score,
                 r.scores_json = b.scores_json,
                 r.tier = b.tier,
+                r.verdict = b.verdict,
                 r.comments = b.comments,
                 r.comments_per_dim_json = b.comments_per_dim_json,
                 r.reviewed_at = b.reviewed_at,
@@ -1161,11 +1163,15 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
                     "id": r["id"],
                     "standard_name_id": r["standard_name_id"],
                     "model": r.get("model") or "",
+                    # reviewer_model is the consumer-facing alias; fall back to model
+                    "reviewer_model": r.get("reviewer_model") or r.get("model") or "",
                     "model_family": r.get("model_family") or "other",
                     "is_canonical": bool(r.get("is_canonical", False)),
                     "score": float(r.get("score") or 0.0),
                     "scores_json": _ensure_json(r.get("scores_json") or "{}"),
                     "tier": r.get("tier") or "unknown",
+                    # verdict is the accept/reject/revise decision from the LLM
+                    "verdict": r.get("verdict") or "",
                     "comments": r.get("comments") or "",
                     "comments_per_dim_json": _ensure_json(
                         r.get("comments_per_dim_json")

@@ -1100,6 +1100,12 @@ classes:
       model:
         description: LLM model id used for this review (OpenRouter-style slug)
         required: true
+      reviewer_model:
+        description: >-
+          LLM model id used for this review — consumer-facing alias for
+          ``model``. Set to the same value as ``model`` so that queries on
+          ``rv.reviewer_model`` return the expected string without needing
+          to alias in Cypher.
       model_family:
         description: >-
           Family of the reviewing model (anthropic, openai, google, mistral,
@@ -1123,6 +1129,12 @@ classes:
           dimensions. Values are optional strings (null for no comment).
       tier:
         description: Quality tier (outstanding, good, inadequate, poor, unknown)
+      verdict:
+        description: >-
+          Review decision: ``accept``, ``reject``, or ``revise``.
+          Sourced from the LLM's ``reviewer_verdict`` field.
+          Mirrors ``StandardName.reviewer_verdict_name`` / ``reviewer_verdict_docs``
+          for the canonical reviewer.
       comments:
         description: Free-text reviewer comments
       reviewed_at:

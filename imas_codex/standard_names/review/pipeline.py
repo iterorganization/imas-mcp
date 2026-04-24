@@ -117,6 +117,9 @@ def _build_review_record(
         "id": rid,
         "standard_name_id": sn_id,
         "model": model,
+        # reviewer_model is the consumer-facing alias for model — kept in sync
+        # so that queries on rv.reviewer_model return the expected value.
+        "reviewer_model": model,
         "model_family": _derive_model_family(model),
         "is_canonical": bool(is_canonical),
         "score": float(
@@ -124,6 +127,8 @@ def _build_review_record(
         ),
         "scores_json": scores_json,
         "tier": (tier if tier is not None else item.get("review_tier")) or "unknown",
+        # verdict is the accept/reject/revise decision from the LLM reviewer.
+        "verdict": item.get("reviewer_verdict") or "",
         "comments": (
             comments if comments is not None else item.get("reviewer_comments")
         )
