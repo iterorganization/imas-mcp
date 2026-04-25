@@ -479,10 +479,12 @@ async def _run_review_names_phase(
 
     # Invariant: if eligible names were identified but nothing was persisted
     # and we are not budget-exhausted, something silently failed.
+    budget_blocked = state.stats.get("budget_reservation_blocked", 0) > 0
     if (
         len(state.target_names) > 0
         and persist_count == 0
         and state.total_cost < budget * 0.5
+        and not budget_blocked
     ):
         msg = (
             f"invariant violated: {len(state.target_names)} eligible names "
@@ -572,10 +574,12 @@ async def _run_review_docs_phase(
 
     # Invariant: if eligible names were identified but nothing was persisted
     # and we are not budget-exhausted, something silently failed.
+    budget_blocked = state.stats.get("budget_reservation_blocked", 0) > 0
     if (
         len(state.target_names) > 0
         and persist_count == 0
         and state.total_cost < budget * 0.5
+        and not budget_blocked
     ):
         msg = (
             f"invariant violated: {len(state.target_names)} eligible names "

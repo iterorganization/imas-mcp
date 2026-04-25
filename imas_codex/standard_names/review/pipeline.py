@@ -754,6 +754,9 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
             if state.budget_manager:
                 lease = state.budget_manager.reserve(worst_case)
                 if lease is None:
+                    state.stats["budget_reservation_blocked"] = (
+                        state.stats.get("budget_reservation_blocked", 0) + 1
+                    )
                     wlog.info(
                         "Budget exhausted at batch %d — stopping review",
                         batch_idx,
