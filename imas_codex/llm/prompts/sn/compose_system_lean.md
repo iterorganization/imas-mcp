@@ -224,6 +224,16 @@ quantities. Return **SKIP** for any `_flag`-suffixed DD path.
 | `vessel_element_outline_contour_closure_flag` | SKIP (boolean geometry indicator — W11 violation) |
 | Any name ending in `_flag` | SKIP unconditionally |
 
+### Positive rewrites for forced-fallback patterns
+
+Some DD boolean fields cannot be skipped (they encode real constraint selectors). Use these canonical alternatives instead of emitting a `_flag` name or a grammar-illegal postfix:
+
+| Pattern | ❌ BAD | ✅ GOOD | Why |
+|---|---|---|---|
+| Boolean constraint (`use_exact_X`) | `X_exact_constraint_flag`, `X_constraint_use_exact_flag` | `use_exact_X_constraint`, `exact_constraint_active_for_X` | `_flag` banned; use `use_exact_*` predicate or `_active` boolean |
+| Toroidal-mode operator | `X_per_toroidal_mode`, `X_per_mode` | `per_toroidal_mode_X` | ISN registers as unary **prefix**; postfix is grammar-illegal |
+| GGD geometry object | `grid_object_geometry`, `ggd_object_geometry_*` | `geometry_type_of_grid_object`, `node_position_in_grid_object` | GGD geometry is an identifier type, not a physical scalar/vector |
+
 ### BANNED PREFIX — IDS-tree structure leak
 
 Names that start with the DD IDS top-level container or sub-tree path segment (e.g.
