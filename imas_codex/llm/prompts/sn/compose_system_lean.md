@@ -82,6 +82,13 @@ emitting it. If any check fails, revise or skip — never emit a violating name.
     are forbidden in names: `obtained_from`, `stored_in`, `derived_from`,
     `referenced_by`, `defined_in`, `used_for`. Standard names describe
     physics, not data provenance or storage.
+11. **No `_from_`/`_to_` prepositions — HARD REJECT.** Any name containing
+    `_from_` or `_to_` MUST be revised before emission.
+    ❌ `electron_particle_flux_from_plasma_to_wall` (0.42, W9A) — direction
+    information belongs in the description, not the name. Use `_at_<locus>`
+    for boundary positions: ✅ `electron_particle_flux_at_wall`.
+    If you find yourself writing `_from_X_to_Y_`, you are encoding direction
+    information that belongs in the description text, not in the name.
 
 ### DD PATH TOKEN NORMALIZATION — apply before composing
 
@@ -165,6 +172,10 @@ is a valid operator form; `raw_*` is not). Emit `vocab_gap` if no canonical form
 
 ### PREPOSITION BAN — `_from_` and `_to_` constructions
 
+**WAVE 9A VIOLATION** (score 0.42): `electron_particle_flux_from_plasma_to_wall` — this
+anti-pattern persists despite the W8 ban. This section is now CHECK #11 in the HARD
+PRE-EMIT CHECKS above. Any `_from_` or `_to_` in a name is an automatic REJECT.
+
 Do NOT use `_from_X_` or `_to_X_` constructions in any standard name (8% rate in
 plasma_wall_interactions). These encode spatial prepositions that belong in documentation,
 not in the name grammar. **Boundary and wall positions MUST use grammar position tokens**
@@ -174,8 +185,72 @@ not in the name grammar. **Boundary and wall positions MUST use grammar position
 |---|---|---|
 | `distance_from_wall` | `wall_distance_at_outboard_midplane` or `radial_distance_at_wall` | Preposition in name |
 | `distance_to_wall_at_outboard_midplane` | `radial_distance_at_wall` | Chain of prepositions |
+| `electron_particle_flux_from_plasma_to_wall` | `electron_particle_flux_at_wall` | W9A score 0.42 |
 
 When a DD path implies a "from/to" relationship, encode the position via `_at_<locus>` only.
+The "from plasma" is implicit — flux always crosses a boundary; the locus is what matters.
+
+### BANNED SUFFIX — `_flag` (DD computational metadata)
+
+Names ending in `_flag` are **boolean DD switches** — they are computational metadata, not
+physical quantities. A standard name describes what you are measuring, not how the solver
+was configured.
+
+- ❌ BAD: `gyrokinetic_model_nonlinear_run_flag` (W9A score 0.31) — this is a boolean DD
+  switch controlling whether the nonlinear term is activated, not a physical observable.
+- If a `_flag`-suffixed DD path reaches the composer, return **SKIP** rather than emit a name.
+- The field SHOULD have been filtered by node_category=metadata or similar upstream gate;
+  if it is not, treat it as a compose error and emit `vocab_gap` with a note.
+
+| ❌ Bad form | Action |
+|---|---|
+| `gyrokinetic_model_nonlinear_run_flag` | SKIP (boolean DD switch, not a quantity) |
+| `solver_configuration_flag` | SKIP (computational metadata) |
+| Any name ending in `_flag` | SKIP unconditionally |
+
+### BANNED PREFIX — IDS-tree structure leak
+
+Names that start with the DD IDS top-level container or sub-tree path segment (e.g.
+`gyrokinetic_model_`, `equilibrium_`, `core_profiles_`, `magnetics_`, `edge_profiles_`,
+`edge_transport_`) are encoding the **container hierarchy**, not the physical quantity.
+Strip the IDS-tree prefix before composing.
+
+- ❌ BAD: `gyrokinetic_model_parallel_vector_potential_flag` (W9A score 0.33) —
+  `gyrokinetic_model_` is the IDS sub-tree container path, not a meaningful quantity prefix.
+  The actual quantity is **parallel vector potential**. The `_flag` suffix also applies.
+- ✅ GOOD: `parallel_vector_potential_at_flux_surface` or simply `parallel_vector_potential`.
+
+**Banned IDS-root prefixes** (strip before composing the name):
+
+| Banned prefix | IDS it comes from |
+|---|---|
+| `gyrokinetics_` / `gyrokinetic_model_` | `gyrokinetics` IDS |
+| `equilibrium_` (when used as structural prefix) | `equilibrium` IDS |
+| `core_profiles_` | `core_profiles` IDS |
+| `edge_profiles_` | `edge_profiles` IDS |
+| `magnetics_` (when used as structural prefix) | `magnetics` IDS |
+| `edge_transport_` | `edge_transport` IDS |
+
+**Rule**: if the proposed name begins with a known IDS name as a bare prefix, it is encoding
+container hierarchy. Identify the actual physical quantity in the DD path and compose from
+that, ignoring the parent container tokens.
+
+### BANNED PATTERN — compound-coefficient axis absorption
+
+When a quantity is "X coefficient depending on Y axis", do **NOT** absorb the coordinate
+axis into the name. The coordinate on which a coefficient is tabulated is **schema metadata**
+(it belongs to the coordinate spec of the SN, not to the name identifier itself).
+
+- ❌ BAD: `sputtering_coefficient_incident_energy_grid` (W9A score 0.29) — `incident_energy_grid`
+  is the coordinate axis on which the sputtering coefficient is evaluated, not part of the
+  coefficient's identity.
+- ✅ GOOD: `sputtering_coefficient` — the dependence on incident energy is expressed via the
+  coordinate specification in the SN schema, not by appending `_incident_energy_grid` to the name.
+
+**General rule**: if a DD path segment names a grid, axis, or coordinate dimension (tokens
+ending in `_grid`, `_axis`, `_energy_grid`, `_angle_grid`, `_coordinate`), those tokens
+describe the *tabulation domain* of the coefficient — they MUST NOT appear in the SN id.
+Emit `vocab_gap` if the coordinate axis needs registration.
 
 ### FLUX-SURFACE LOCUS RULE — position specifier, not qualifier prefix
 
