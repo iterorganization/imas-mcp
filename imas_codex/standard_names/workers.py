@@ -48,6 +48,34 @@ _GRAMMAR_FIELDS = (
 )
 
 
+def _dedup_adjacent_tokens(name: str, log: logging.Logger | None = None) -> str:
+    """Remove adjacent duplicate tokens introduced by grammar round-trip.
+
+    The ISN grammar (≤ 0.7.0rc27) has a known bug where ``parse →
+    compose`` doubles certain tokens — e.g.
+    ``magnetic_field_probe`` → ``magnetic_magnetic_field_probe``.
+
+    This function collapses any ``tok_tok`` pair into a single ``tok``
+    while preserving legitimate compounds via
+    :data:`~imas_codex.standard_names.audits._COMPOUND_SUBJECT_PAIRS`.
+    """
+    from imas_codex.standard_names.audits import _COMPOUND_SUBJECT_PAIRS
+
+    tokens = name.split("_")
+    result: list[str] = [tokens[0]]
+    for tok in tokens[1:]:
+        if tok == result[-1] and f"{tok}_{tok}" not in _COMPOUND_SUBJECT_PAIRS:
+            if log:
+                log.debug(
+                    "Dedup adjacent token %r in %r",
+                    f"{tok}_{tok}",
+                    name,
+                )
+            continue
+        result.append(tok)
+    return "_".join(result)
+
+
 # =============================================================================
 # EXTRACT phase
 # =============================================================================
@@ -1598,6 +1626,12 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         "Pre-persist normalization: %r → %r", name_id, normalized
                     )
                     name_id = normalized
+
+                # Fix grammar library bug where parse→compose doubles
+                # adjacent tokens (e.g. magnetic_field_probe →
+                # magnetic_magnetic_field_probe).  Safe because no
+                # legitimate standard name has adjacent duplicate tokens.
+                name_id = _dedup_adjacent_tokens(name_id, wlog)
             except Exception as gram_exc:
                 grammar_failed = True
                 wlog.debug("Grammar parse failed for %r — attempting L6 retry", name_id)
@@ -1612,7 +1646,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         # Verify the retry result actually parses
                         parsed = parse_standard_name(retry_name)
                         normalized = compose_standard_name(parsed)
-                        name_id = normalized
+                        name_id = _dedup_adjacent_tokens(normalized, wlog)
                         grammar_failed = False
                         state.grammar_retries_succeeded += 1
                         wlog.info(
