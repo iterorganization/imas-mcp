@@ -1193,6 +1193,14 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
         if _compute_hash is not None:
             entry["review_input_hash"] = _compute_hash(entry)
 
+    # Distribute total review cost equally across entries so each
+    # StandardName gets a per-name cost share via the axis writer.
+    total_cost = state.stats.get("review_cost", 0.0)
+    if total_cost and results:
+        cost_share = total_cost / len(results)
+        for entry in results:
+            entry.setdefault("llm_cost", cost_share)
+
     # Determine review mode from state.target
     review_target = getattr(state, "target", "names")
 
@@ -1212,7 +1220,7 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
     if review_records:
 
         def _write_reviews() -> int:
-            return write_reviews(review_records)
+            return write_reviews(review_records, skip_cost=True)
 
         reviews_written = await asyncio.to_thread(_write_reviews)
         wlog.info("Wrote %d Review nodes", reviews_written)
@@ -1425,7 +1433,12 @@ def _match_reviews_to_entries(
         entry_id = original.get("id") or ""
         matched_entries.add(entry_id)
 
-        # Store review scores on the entry
+        # Store review scores on the entry (in-memory dict keys).
+        # NOTE: ``reviewer_score`` is a generic in-memory key; it is mapped
+        # to axis-specific graph properties (``reviewer_score_name`` or
+        # ``reviewer_score_docs``) by write_name_review_results /
+        # write_docs_review_results.  There is no ``reviewer_score`` graph
+        # property.
         original["reviewer_score"] = review.scores.score
         original["reviewer_scores"] = json.dumps(review.scores.model_dump())
         original["reviewer_comments"] = review.reasoning

@@ -1091,7 +1091,7 @@ def write_standard_names(
     return written
 
 
-def write_reviews(records: list[dict[str, Any]]) -> int:
+def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> int:
     """MERGE ``Review`` nodes and their ``REVIEWS`` edges to StandardName.
 
     Each record must contain:
@@ -1116,6 +1116,15 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
 
     MERGE-by-``id`` semantics make re-runs idempotent when the same
     model reviews the same name at the same timestamp.
+
+    Parameters
+    ----------
+    records:
+        Review record dicts.
+    skip_cost:
+        When ``True``, skip accumulating ``llm_cost_review`` on
+        StandardName nodes.  Use when Review records were already
+        persisted inline (crash-safety path) to avoid double-counting.
 
     Returns the number of Review records written.
     """
@@ -1198,25 +1207,27 @@ def write_reviews(records: list[dict[str, Any]]) -> int:
 
         # --- Accumulate review cost on StandardName ---
         # Build per-SN cost totals from the batch (sum review costs per name).
-        sn_cost_map: dict[str, float] = {}
-        for r in valid:
-            sn_id = r.get("standard_name_id")
-            cost = r.get("llm_cost")
-            if sn_id and cost:
-                sn_cost_map[sn_id] = sn_cost_map.get(sn_id, 0.0) + cost
-        if sn_cost_map:
-            gc.query(
-                """
-                UNWIND $batch AS b
-                MATCH (sn:StandardName {id: b.sn_id})
-                SET sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + b.cost,
-                    sn.llm_cost = coalesce(sn.llm_cost, 0.0) + b.cost
-                """,
-                batch=[
-                    {"sn_id": sn_id, "cost": cost}
-                    for sn_id, cost in sn_cost_map.items()
-                ],
-            )
+        # Skipped when skip_cost=True (records already persisted inline).
+        if not skip_cost:
+            sn_cost_map: dict[str, float] = {}
+            for r in valid:
+                sn_id = r.get("standard_name_id")
+                cost = r.get("llm_cost")
+                if sn_id and cost:
+                    sn_cost_map[sn_id] = sn_cost_map.get(sn_id, 0.0) + cost
+            if sn_cost_map:
+                gc.query(
+                    """
+                    UNWIND $batch AS b
+                    MATCH (sn:StandardName {id: b.sn_id})
+                    SET sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + b.cost,
+                        sn.llm_cost = coalesce(sn.llm_cost, 0.0) + b.cost
+                    """,
+                    batch=[
+                        {"sn_id": sn_id, "cost": cost}
+                        for sn_id, cost in sn_cost_map.items()
+                    ],
+                )
 
     logger.info("Wrote %d Review nodes", len(valid))
     return len(valid)
@@ -1272,10 +1283,17 @@ def write_name_review_results(
     name-axis rubric fields. Does **not** touch any shared aggregate slots
     (those have been removed from the schema).
 
+    The in-memory ``reviewer_score`` dict key is mapped to the graph
+    property ``reviewer_score_name`` here — there is no generic
+    ``reviewer_score`` graph property.
+
     Parameters
     ----------
     entries:
         Dicts with at least ``id`` and ``reviewer_score`` keys.
+        The ``reviewer_score`` key is the in-memory generic name used
+        by the pipeline; it maps to ``sn.reviewer_score_name`` on the
+        graph.
     stats:
         Optional mutable dict to accumulate write counters.
 
@@ -1303,7 +1321,9 @@ def write_name_review_results(
                 sn.reviewer_model_name = coalesce(b.reviewer_model_name, sn.reviewer_model_name),
                 sn.review_tier = coalesce(b.review_tier, sn.review_tier),
                 sn.review_input_hash = b.review_input_hash,
-                sn.reviewer_suggested_name = coalesce(nullIf(b.reviewer_suggested_name, ''), sn.reviewer_suggested_name)
+                sn.reviewer_suggested_name = coalesce(nullIf(b.reviewer_suggested_name, ''), sn.reviewer_suggested_name),
+                sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + coalesce(b.llm_cost_review, 0.0),
+                sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review, 0.0)
             """,
             batch=[
                 {
@@ -1320,6 +1340,7 @@ def write_name_review_results(
                     "review_tier": e.get("review_tier"),
                     "review_input_hash": e.get("review_input_hash"),
                     "reviewer_suggested_name": e.get("_suggested_name") or "",
+                    "llm_cost_review": e.get("llm_cost") or 0.0,
                 }
                 for e in entries
             ],
@@ -1344,10 +1365,17 @@ def write_docs_review_results(
     Does **not** touch any shared aggregate slots
     (those have been removed from the schema).
 
+    The in-memory ``reviewer_score`` dict key is mapped to the graph
+    property ``reviewer_score_docs`` here — there is no generic
+    ``reviewer_score`` graph property.
+
     Parameters
     ----------
     entries:
         Dicts with at least ``id`` and ``reviewer_score`` keys.
+        The ``reviewer_score`` key is the in-memory generic name used
+        by the pipeline; it maps to ``sn.reviewer_score_docs`` on the
+        graph.
     stats:
         Optional mutable dict to accumulate skip/write counters.
 
@@ -1408,7 +1436,9 @@ def write_docs_review_results(
                 sn.reviewer_comments_per_dim_docs = coalesce(b.reviewer_comments_per_dim_docs, sn.reviewer_comments_per_dim_docs),
                 sn.reviewer_verdict_docs = coalesce(b.reviewer_verdict_docs, sn.reviewer_verdict_docs),
                 sn.reviewer_model_docs = coalesce(b.reviewer_model_docs, sn.reviewer_model_docs),
-                sn.review_input_hash = b.review_input_hash
+                sn.review_input_hash = b.review_input_hash,
+                sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + coalesce(b.llm_cost_review, 0.0),
+                sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review, 0.0)
             """,
             batch=[
                 {
@@ -1423,6 +1453,7 @@ def write_docs_review_results(
                     "reviewer_verdict_docs": e.get("reviewer_verdict"),
                     "reviewer_model_docs": e.get("reviewer_model"),
                     "review_input_hash": e.get("review_input_hash"),
+                    "llm_cost_review": e.get("llm_cost") or 0.0,
                 }
                 for e in passed
             ],

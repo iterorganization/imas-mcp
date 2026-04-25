@@ -207,7 +207,8 @@ enums:
 
   StandardNameReviewMode:
     description: >-
-      Which LLM review rubric produced the most recent ``reviewer_score``.
+      Which LLM review rubric produced the most recent axis-specific
+      score (``reviewer_score_name`` or ``reviewer_score_docs``).
       ``names`` uses four dimensions (grammar, semantic, convention,
       completeness) normalised over 80 points and is used for names
       generated without rich descriptions, typically during
@@ -510,7 +511,8 @@ classes:
       review_tier:
         description: >-
           Quality tier from review: outstanding, good, inadequate, poor.
-          Derived from reviewer_score thresholds.
+          Derived from axis-specific score thresholds
+          (``reviewer_score_name`` or ``reviewer_score_docs``).
       review_count:
         description: >-
           Number of Review nodes attached to this StandardName via
