@@ -82,13 +82,15 @@ emitting it. If any check fails, revise or skip — never emit a violating name.
     are forbidden in names: `obtained_from`, `stored_in`, `derived_from`,
     `referenced_by`, `defined_in`, `used_for`. Standard names describe
     physics, not data provenance or storage.
-11. **No `_from_`/`_to_` prepositions — HARD REJECT.** Any name containing
-    `_from_` or `_to_` MUST be revised before emission.
+11. **No `_from_`/`_to_`/`_due_to_` prepositions — HARD REJECT.** Any name containing
+    `_from_`, `_to_`, or `_due_to_` MUST be revised before emission.
     ❌ `electron_particle_flux_from_plasma_to_wall` (0.42, W9A) — direction
     information belongs in the description, not the name. Use `_at_<locus>`
     for boundary positions: ✅ `electron_particle_flux_at_wall`.
-    If you find yourself writing `_from_X_to_Y_`, you are encoding direction
-    information that belongs in the description text, not in the name.
+    ❌ `wall_power_due_to_black_body_radiation` (W11) — causal attribution via
+    `_due_to_` is banned; use process segment: ✅ `wall_power_loss_black_body_radiation`.
+    If you find yourself writing `_from_X_to_Y_` or `_due_to_X_`, you are encoding
+    relational information that belongs in the description text, not in the name.
 
 ### DD PATH TOKEN NORMALIZATION — apply before composing
 
@@ -190,22 +192,36 @@ not in the name grammar. **Boundary and wall positions MUST use grammar position
 When a DD path implies a "from/to" relationship, encode the position via `_at_<locus>` only.
 The "from plasma" is implicit — flux always crosses a boundary; the locus is what matters.
 
+### PREPOSITION BAN — `_due_to_` constructions (W12A)
+
+`_due_to_` is a compound causal preposition — same class as `_from_`/`_to_`, equally banned.
+**W11 PWI** generated 3 violations; any name containing `_due_to_` is an automatic REJECT.
+Rewrite by shifting the process token into a natural segment slot:
+
+| ❌ Bad form | ✅ Canonical form |
+|---|---|
+| `wall_power_due_to_black_body_radiation` | `wall_power_loss_black_body_radiation` |
+| `wall_power_due_to_neutral_recombination` | `wall_power_loss_neutral_recombination` |
+
+If no process-segment slot fits, swap subject order: `black_body_radiation_power_at_wall`.
+
 ### BANNED SUFFIX — `_flag` (DD computational metadata)
 
-Names ending in `_flag` are **boolean DD switches** — they are computational metadata, not
-physical quantities. A standard name describes what you are measuring, not how the solver
-was configured.
+Names ending in `_flag` are **boolean DD switches** — computational metadata, not physical
+quantities. Return **SKIP** for any `_flag`-suffixed DD path.
 
-- ❌ BAD: `gyrokinetic_model_nonlinear_run_flag` (W9A score 0.31) — this is a boolean DD
-  switch controlling whether the nonlinear term is activated, not a physical observable.
-- If a `_flag`-suffixed DD path reaches the composer, return **SKIP** rather than emit a name.
-- The field SHOULD have been filtered by node_category=metadata or similar upstream gate;
-  if it is not, treat it as a compose error and emit `vocab_gap` with a note.
+- ❌ BAD: `gyrokinetic_model_nonlinear_run_flag` (W9A score 0.31) — boolean DD switch, not an observable.
+- **W12A: ban covers boolean geometry indicators too.** ❌ `limiter_contour_closure_flag`,
+  `vessel_element_outline_contour_closure_flag` (W11 PWI, 6 violations). Source field
+  `wall/description_2d/limiter/unit/outline/closed` is geometry metadata — SKIP it,
+  or if a noun form is required use `limiter_contour_closed`. Never emit `*_closure_flag`.
 
 | ❌ Bad form | Action |
 |---|---|
 | `gyrokinetic_model_nonlinear_run_flag` | SKIP (boolean DD switch, not a quantity) |
 | `solver_configuration_flag` | SKIP (computational metadata) |
+| `limiter_contour_closure_flag` | SKIP (boolean geometry indicator — W11 violation) |
+| `vessel_element_outline_contour_closure_flag` | SKIP (boolean geometry indicator — W11 violation) |
 | Any name ending in `_flag` | SKIP unconditionally |
 
 ### BANNED PREFIX — IDS-tree structure leak
@@ -230,10 +246,13 @@ Strip the IDS-tree prefix before composing.
 | `edge_profiles_` | `edge_profiles` IDS |
 | `magnetics_` (when used as structural prefix) | `magnetics` IDS |
 | `edge_transport_` | `edge_transport` IDS |
+| `ggd_` | General Grid Description sub-tree (`wall/…/ggd`, `edge_profiles/…/ggd`, etc.) |
 
 **Rule**: if the proposed name begins with a known IDS name as a bare prefix, it is encoding
-container hierarchy. Identify the actual physical quantity in the DD path and compose from
-that, ignoring the parent container tokens.
+container hierarchy. Identify the actual physical quantity and compose from that, ignoring
+parent container tokens. **W12A — `ggd_` example**: ❌ `ggd_object_geometry_coordinate` —
+drop the `ggd_` prefix (`grid_object_geometry_coordinate`) or, if purely a schema coordinate
+with no physics content, route as `coordinate` category and **SKIP**.
 
 ### BANNED PATTERN — compound-coefficient axis absorption
 
