@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 from imas_codex.discovery.base.claims import retry_on_deadlock
@@ -4036,3 +4037,119 @@ def write_run_provenance(
             tn=turn_number,
         )
         return result[0]["n"] if result else 0
+
+
+# =============================================================================
+# Review comment export (Phase F — anti-pattern feedback loop)
+# =============================================================================
+
+
+def export_review_comments(
+    output_path: str | Path,
+    *,
+    domain: str | None = None,
+) -> int:
+    """Dump Review node comment data to a JSONL file before ``sn clear``.
+
+    Queries all ``Review`` nodes (optionally filtered by the parent
+    ``StandardName.physics_domain``) and writes one JSON record per
+    line to *output_path*.  Each record contains:
+
+    * ``name`` — ``StandardName.id``
+    * ``domain`` — ``StandardName.physics_domain``
+    * ``reviewer_model`` — the model that produced the review
+    * ``score`` — numeric score (0–1)
+    * ``verdict`` — accept / reject / revise
+    * ``comments_per_dim`` — parsed dict of per-dimension comments
+    * ``comments`` — full free-text comment string
+    * ``review_axis`` — "names" or "docs"
+    * ``generated_at`` — ``StandardName.generated_at`` ISO string
+    * ``reviewed_at`` — ``Review.reviewed_at`` ISO string
+
+    Parameters
+    ----------
+    output_path:
+        Destination file path.  Parent directories are created if absent.
+    domain:
+        When provided, restrict to reviews on names with this
+        ``physics_domain``.
+
+    Returns
+    -------
+    Number of Review records written (0 if none found).
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    params: dict[str, Any] = {}
+    where_clauses: list[str] = []
+    if domain:
+        where_clauses.append("sn.physics_domain = $domain")
+        params["domain"] = domain
+
+    where = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    cypher = f"""
+        MATCH (r:Review)-[:REVIEWS]->(sn:StandardName)
+        {where}
+        RETURN sn.id AS name,
+               sn.physics_domain AS domain,
+               r.reviewer_model AS reviewer_model,
+               r.score AS score,
+               r.verdict AS verdict,
+               r.comments_per_dim_json AS comments_per_dim_json,
+               r.comments AS comments,
+               r.review_axis AS review_axis,
+               sn.generated_at AS generated_at,
+               r.reviewed_at AS reviewed_at
+        ORDER BY sn.id, r.reviewed_at
+    """
+
+    with GraphClient() as gc:
+        rows = gc.query(cypher, **params)
+
+    if not rows:
+        logger.info("export_review_comments: no Review nodes found (domain=%s)", domain)
+        return 0
+
+    count = 0
+    with output_path.open("w", encoding="utf-8") as fh:
+        for row in rows:
+            # Parse comments_per_dim_json if it's a string
+            cpd_raw = row.get("comments_per_dim_json")
+            if isinstance(cpd_raw, str):
+                try:
+                    cpd = json.loads(cpd_raw)
+                except (json.JSONDecodeError, ValueError):
+                    cpd = {}
+            elif isinstance(cpd_raw, dict):
+                cpd = cpd_raw
+            else:
+                cpd = {}
+
+            record: dict[str, Any] = {
+                "name": row.get("name"),
+                "domain": row.get("domain"),
+                "reviewer_model": row.get("reviewer_model"),
+                "score": row.get("score"),
+                "verdict": row.get("verdict"),
+                "comments_per_dim": cpd,
+                "comments": row.get("comments"),
+                "review_axis": row.get("review_axis"),
+                "generated_at": str(row["generated_at"])
+                if row.get("generated_at")
+                else None,
+                "reviewed_at": str(row["reviewed_at"])
+                if row.get("reviewed_at")
+                else None,
+            }
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            count += 1
+
+    logger.info(
+        "export_review_comments: wrote %d records to %s (domain=%s)",
+        count,
+        output_path,
+        domain,
+    )
+    return count
