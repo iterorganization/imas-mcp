@@ -547,3 +547,26 @@ def test_charge_soft_negative_amount_raises():
     assert lease is not None
     with pytest.raises(ValueError):
         lease.charge_soft(-0.1)
+
+
+# =====================================================================
+# Bug 3 regression: summary key is total_spent, not total_actual
+# =====================================================================
+
+
+def test_summary_key_is_total_spent_not_total_actual():
+    """BudgetManager.summary uses 'total_spent', not the incorrect 'total_actual'.
+
+    Regression guard for the KeyError: 'total_actual' bug in sn.py:3502.
+    """
+    mgr = BudgetManager(total_budget=2.0)
+    lease = mgr.reserve(0.5)
+    assert lease is not None
+    lease.charge_or_extend(0.3)
+    lease.release_unused()
+
+    s = mgr.summary
+    # The canonical key is 'total_spent'
+    assert "total_spent" in s, "summary must contain 'total_spent'"
+    assert "total_actual" not in s, "'total_actual' must NOT appear in summary"
+    assert abs(s["total_spent"] - 0.3) < 1e-9

@@ -153,3 +153,63 @@ class TestTargetValidation:
         result = runner.invoke(sn, ["run", "--target", "bogus", "-c", "0.01", "-q"])
         assert result.exit_code != 0
         assert "bogus" in result.output.lower() or "invalid" in result.output.lower()
+
+
+class TestTargetNamesSkipsEnrich:
+    """Bug 2 regression: --target names must set skip_enrich=True.
+
+    Wave 9A observed Opus-4.6 ran enrich on 50-200 SNs/domain consuming
+    50-60% of the $5 budget cap even though the user specified --target names.
+    The fix sets skip_enrich=True when target_normalized == 'names'.
+    """
+
+    def test_target_names_passes_skip_enrich_to_loop(self, runner):
+        """--target names must pass skip_enrich=True to the loop command."""
+        with patch(_ROTATOR) as mock_rot:
+            runner.invoke(
+                sn,
+                ["run", "--target", "names", "-c", "0.01", "-q"],
+            )
+            assert mock_rot.called, "Loop command must be invoked"
+            kwargs = mock_rot.call_args.kwargs
+            assert kwargs.get("skip_enrich") is True, (
+                f"--target names must set skip_enrich=True; got {kwargs}"
+            )
+
+    def test_default_target_also_skips_enrich(self, runner):
+        """Default target (names) must also skip enrich."""
+        with patch(_ROTATOR) as mock_rot:
+            runner.invoke(sn, ["run", "-c", "0.01", "-q"])
+            assert mock_rot.called
+            kwargs = mock_rot.call_args.kwargs
+            assert kwargs.get("skip_enrich") is True
+
+    def test_explicit_skip_enrich_flag_still_works(self, runner):
+        """--skip-enrich still passes skip_enrich=True independently of target."""
+        with patch(_ROTATOR) as mock_rot:
+            runner.invoke(
+                sn,
+                ["run", "--target", "names", "--skip-enrich", "-c", "0.01", "-q"],
+            )
+            assert mock_rot.called
+            kwargs = mock_rot.call_args.kwargs
+            assert kwargs.get("skip_enrich") is True
+
+    def test_target_docs_routes_to_docs_helper_not_loop(self, runner):
+        """Symmetric: --target docs still routes to enrich helper, not loop."""
+        with patch(_ROTATOR) as mock_rot, patch(_DOCS_HELPER) as mock_docs:
+            runner.invoke(
+                sn,
+                [
+                    "run",
+                    "--target",
+                    "docs",
+                    "--physics-domain",
+                    "equilibrium",
+                    "-c",
+                    "0.01",
+                    "-q",
+                ],
+            )
+            assert mock_docs.called, "--target docs must call docs helper"
+            assert not mock_rot.called, "--target docs must NOT call the loop"
