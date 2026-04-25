@@ -510,7 +510,7 @@ def extract_dd_candidates(
         if not force:
             where_parts.append(
                 "NOT EXISTS { MATCH (sns:StandardNameSource {source_id: n.id, source_type: 'dd'}) "
-                "WHERE NOT (sns.status IN ['stale', 'failed']) }"
+                "WHERE NOT (sns.status IN ['stale', 'failed', 'extracted']) }"
             )
 
         where_clause = " AND ".join(where_parts)
