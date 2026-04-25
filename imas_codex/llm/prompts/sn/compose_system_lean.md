@@ -78,6 +78,28 @@ emitting it. If any check fails, revise or skip — never emit a violating name.
     `referenced_by`, `defined_in`, `used_for`. Standard names describe
     physics, not data provenance or storage.
 
+### DD PATH TOKEN NORMALIZATION — apply before composing
+
+DD paths contain abbreviations and British spellings that MUST be normalized in your output.
+Apply these substitutions to any token drawn from the DD path:
+
+| DD path token | Canonical name token | Rationale |
+|---|---|---|
+| `fibre` | `fiber` | US spelling (NC-17) |
+| `centre` | `center` | US spelling (NC-17) |
+| `normalised` | `normalized` | US spelling (NC-17) |
+| `ionisation` | `ionization` | US spelling (NC-17) |
+| `polarisation` | `polarization` | US spelling (NC-17) |
+| `b_field_pol_probe` | (use `poloidal_magnetic_field_probe`) | Expand abbreviation |
+| `b_field_tor_probe` | (use `toroidal_magnetic_field_probe`) | Expand abbreviation |
+| `b_field_phi_probe` | (use `toroidal_magnetic_field_probe`) | φ = toroidal |
+| `bpol_probe` | (use `poloidal_magnetic_field_probe`) | Expand abbreviation |
+| `stokes_initial` | (drop `initial`, use `stokes_*_of_<device>_input`) | `initial_` is banned prefix |
+
+**CRITICAL: `magnetic_field_probe` already contains `magnetic`.** When naming quantities of
+a `b_field_*_probe`, the locus is `magnetic_field_probe` — do NOT add another `magnetic_`
+qualifier. ❌ `length_of_magnetic_magnetic_field_probe` → ✅ `length_of_magnetic_field_probe`.
+
 ### REJECT — Forbidden tokens (compact table)
 
 | Category | Reject | Use instead |
