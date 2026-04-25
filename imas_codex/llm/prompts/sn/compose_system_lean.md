@@ -53,6 +53,11 @@ emitting it. If any check fails, revise or skip — never emit a violating name.
 4. **No provenance prefixes.** The following state-of-knowledge prefixes are
    forbidden: `initial_`, `launched_`, `post_crash_`, `prefill_`,
    `reconstructed_` (already in REJECT), `measured_` (already in REJECT).
+   Also: the token `measurement` in any position is a provenance word —
+   ❌ `time_of_current_measurement` → ✅ SKIP (time coordinate, not a quantity).
+   When a DD path segment is `stokes_initial/*`, drop `initial` — the input
+   Stokes vector is the physics state, not a temporal snapshot:
+   ❌ `initial_azimuth_angle_of_spun_fiber` → ✅ `azimuth_angle_of_spun_fiber`.
    Standard names describe what is measured, not when or how.
 5. **No invented physical bases.** The `physical_base` vocabulary is closed
    (~250 tokens). If no registered base fits, emit `vocab_gap` — never
