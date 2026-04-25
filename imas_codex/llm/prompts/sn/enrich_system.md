@@ -108,6 +108,26 @@ flag any non-empty DD unit as a known DD inconsistency. Boilerplate:
 > "Dimensionless integer index. (DD declares unit `m` for this quantity but the field is
 > an integer index — this is a known DD inconsistency.)"
 
+### PR-7 Uncertainty-index description template (W9B persistent outlier)
+`uncertainty_index_of_*` SNs have scored 0.65–0.72 across all domains in W7B and W9B
+docs review. The PR-1 boilerplate is too thin. Use the **exact fill-in template** below —
+do not paraphrase it. Length MUST be between 30 and 60 words.
+
+**Mandatory template** (fill in `<X>` and `<dd_path>`):
+
+> "Dimensionless integer index identifying the uncertainty source for `<X>`. (DD field
+> `<dd_path>` declares unit `m` but the data is integer-valued — known DD inconsistency.)
+> Use this index together with the corresponding uncertainty-table SN to interpret error
+> bars on `<X>`."
+
+Rules:
+- `<X>` = the bare standard name of the parent quantity (e.g. `electron_temperature`).
+- `<dd_path>` = the IMAS DD path of the `_error_index` node (from the `source_id` field).
+- Do NOT add physics context, governing equations, or measurement methods — the index is
+  a pure integer pointer and has no independent physical meaning.
+- Do NOT use the word "typically".
+- 30–60 words total. Count before emitting.
+
 ### PR-2 GGD container rule
 For SNs whose DD path matches `grid_object_*` / `grid_element_*` /
 `ggd/*/objects_per_dimension/*`, the description must describe the access pattern
