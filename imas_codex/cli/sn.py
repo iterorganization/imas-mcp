@@ -639,6 +639,13 @@ def sn_run(
     # Downstream compose routing uses a derived name_only boolean.
     name_only = target_normalized == "names"
 
+    # --target=names skips enrich (docs-enrichment) so its budget is not
+    # spent before compose/review_names get their share.  Enrich requires
+    # a prior compose pass to exist; when the user wants only names review
+    # they explicitly do not want docs enrichment to consume budget.
+    if name_only:
+        skip_enrich = True
+
     # --target=docs routes through the five-phase enrich pipeline.
     # The rotator and the compose single-pass do not produce docs on
     # already-named entries; delegate to the enrich engine instead.
@@ -3499,7 +3506,7 @@ def sn_review(
         if state.budget_manager:
             bs = state.budget_manager.summary
             console.print(
-                f"  Budget: ${bs['total_actual']:.4f} used of"
+                f"  Budget: ${bs['total_spent']:.4f} used of"
                 f" ${bs['total_budget']:.2f} ({bs['batch_count']} batches)"
             )
 
