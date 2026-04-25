@@ -99,4 +99,50 @@ for the physics (e.g. `m^-1.V` on a wave magnetic-field phase), state the
 inconsistency plainly rather than constructing a Fourier-representation
 defence. The pipeline will quarantine such names for upstream correction.
 
+## PRECISION RULES
+
+### PR-1 Dimensionless-index rule
+For SN names matching `uncertainty_index_of_*` or any name where `_index_` indicates an
+integer DD index, the description MUST state "Dimensionless integer index" and explicitly
+flag any non-empty DD unit as a known DD inconsistency. Boilerplate:
+> "Dimensionless integer index. (DD declares unit `m` for this quantity but the field is
+> an integer index — this is a known DD inconsistency.)"
+
+### PR-2 GGD container rule
+For SNs whose DD path matches `grid_object_*` / `grid_element_*` /
+`ggd/*/objects_per_dimension/*`, the description must describe the access pattern
+("Geometry of the N-dimensional grid object set used by the GGD subgrid") rather than
+enumerating sub-fields. The grid object is a *container*, not a quantity — do not describe
+its leaf children.
+
+### PR-3 Cross-reference inline-link format
+All cross-references to other SNs MUST use the inline link form `[name](name:bare_id)`,
+never plain text.
+- ❌ BAD: `see also electron_temperature`
+- ✅ GOOD: `see also [electron_temperature](name:electron_temperature)`
+
+### PR-4 Calibration-parameter anti-speculation rule
+For SNs whose DD path indicates calibration data (e.g. `*/calibration/*`,
+`jones_matrix`, `transfer_function`), the description must give a *functional* definition
+(what role the parameter plays in the calibration) and MUST NOT speculate on physical
+implementation (e.g. no "this represents the polarimeter Jones matrix relating ..."). If
+the DD docstring does not specify the convention, say so explicitly: "Convention not
+specified in DD documentation."
+
+### PR-5 Ban "typically" hedging
+The word **"typically"** is forbidden in descriptions and documentation. Either the
+property holds for all valid invocations of this SN — state it definitively — or the
+property is convention-dependent — cite the convention or write
+"convention-dependent — see [related SN](name:related_sn)".
+
+### PR-6 Grammar-respect rule
+Descriptions must not introduce physical content not encoded in the SN's grammar segments.
+
+| Grammar state | Forbidden description content |
+|---|---|
+| `coordinate=second_dimension` (axis-agnostic) | Must NOT specify Z-direction or vertical-direction |
+| No normalization segment in grammar | Must NOT mention normalization |
+| `subject=element` | Must NOT use "molecular" or "compound ion" (higher-level concepts) |
+| No handedness/COCOS segment in grammar | Must NOT introduce sign conventions ("counter-clockwise", "viewed from above") |
+
 {% include "sn/_controlled_tags.md" %}

@@ -12,6 +12,11 @@ schema_needs: []
 {% for item in items %}
 ## {{ item.name }}
 
+{% set _all_paths = item.dd_paths | map(attribute='path') | join(' ') if item.dd_paths else '' %}
+{% if 'uncertainty_index' in _all_paths or '_index_' in _all_paths %}- **precision**: {{ item.name }} is a dimensionless integer index
+{% elif 'grid_object' in _all_paths or 'grid_element' in _all_paths %}- **precision**: {{ item.name }} describes a GGD container, not a leaf quantity
+{% elif '/calibration/' in _all_paths or 'jones_matrix' in _all_paths %}- **precision**: {{ item.name }} is a calibration parameter — functional definition only
+{% endif %}
 **Unit:** {{ item.unit or "—" }}  **COCOS:** {{ item.cocos or "—" }}
 **Kind:** {{ item.kind or "scalar" }}
 **Physics domain:** {{ item.physics_domain or "—" }}

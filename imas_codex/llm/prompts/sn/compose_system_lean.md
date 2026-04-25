@@ -113,6 +113,7 @@ qualifier. ❌ `length_of_magnetic_magnetic_field_probe` → ✅ `length_of_magn
 | Suffix | `_measurement_time`, `_constraint`, `_constraint_weight` | Skip or abstract |
 | Token | `equilibrium_reconstruction_`, `ggd_object_`, `ntm_`, `ec_`, `exb_`, `norm_` | Spell out: `neoclassical_tearing_mode_`, `electron_cyclotron_`, `e_cross_b_`, `normalized_` |
 | Named | `bandwidth_3db`, `turn_count`, `nuclear_charge_number`, `azimuth_angle` | Skip / `vocab_gap` / `atomic_number` / `toroidal_angle` |
+| DD index | `uncertainty_index_of_*`, any name containing `_index_` (integer DD indices) | SKIP — dimensionless integer index, not a physical quantity. ❌ `uncertainty_index_of_temperature` → REJECT (7% leak rate in W7A despite Phase C error-sibling gate) |
 | Pattern | `_of_plasma` when domain implies plasma, `_over_X` for ratios, `electron_thermal_*` | Drop suffix; use `_per_X`; use `thermal_electron_*` |
 | Constraint | `_constraint_weight`, `_constraint_measurement_time`, `_constraint_*_value` | Skip — inverse-problem metadata, not physics |
 
@@ -143,8 +144,11 @@ temporal or epistemic state of the measurement, not the physics quantity itself.
 |---|---|
 | `initial_` | Temporal state descriptor — when a quantity was measured is metadata, not physics |
 | `final_` | Temporal state descriptor — same rationale as `initial_` |
-| `reconstructed_` | Provenance — how a quantity was derived is metadata (already in REJECT list) |
-| `measured_` | Provenance — data source is metadata (already in REJECT list) |
+| `reconstructed_` | Provenance — how a quantity was derived is metadata (already in REJECT list). ❌ `reconstructed_plasma_current` → ✅ `plasma_current` |
+| `reconstruction_` | Provenance prefix form — same rule as `reconstructed_`; drop entirely (16% absorption in W7A particle_measurement_diagnostics) |
+| `measured_` | Provenance — data source is metadata (already in REJECT list). ❌ `measured_electron_temperature` → ✅ `electron_temperature` |
+| `inferred_` | Provenance — inference method is metadata. ❌ `inferred_density_profile` → ✅ `electron_density_profile` |
+| `derived_` | Provenance — derivation method is metadata |
 | `modeled_` | Provenance — model origin is metadata |
 | `predicted_` | Provenance — predictive context is metadata |
 | `expected_` | Epistemic state — expectation value belongs in documentation, not name |
@@ -158,6 +162,38 @@ temporal or epistemic state of the measurement, not the physics quantity itself.
 name entirely — the physics quantity is the same regardless of measurement state. If the
 state is critical to semantics (rare), use a registered operator (e.g. `uncertainty_of_*`
 is a valid operator form; `raw_*` is not). Emit `vocab_gap` if no canonical form exists.
+
+### PREPOSITION BAN — `_from_` and `_to_` constructions
+
+Do NOT use `_from_X_` or `_to_X_` constructions in any standard name (8% rate in
+plasma_wall_interactions). These encode spatial prepositions that belong in documentation,
+not in the name grammar. **Boundary and wall positions MUST use grammar position tokens**
+(e.g. `at_wall`, `at_separatrix`, `at_outboard_midplane`).
+
+| ❌ Bad form | ✅ Canonical form | Reason |
+|---|---|---|
+| `distance_from_wall` | `wall_distance_at_outboard_midplane` or `radial_distance_at_wall` | Preposition in name |
+| `distance_to_wall_at_outboard_midplane` | `radial_distance_at_wall` | Chain of prepositions |
+
+When a DD path implies a "from/to" relationship, encode the position via `_at_<locus>` only.
+
+### FLUX-SURFACE LOCUS RULE — position specifier, not qualifier prefix
+
+When a quantity is defined ON a flux surface (gyrokinetics, transport):
+`flux_surface_*` and `surface_averaged_*` MUST appear as a **position specifier appended
+via `_at_flux_surface` or the operator `surface_averaged`**, NOT as a qualifier prefix.
+28% of gyrokinetics names in W7A mis-placed `flux_surface` as a leading prefix.
+
+| ❌ Bad form | ✅ Canonical form |
+|---|---|
+| `flux_surface_averaged_pressure` | `pressure_surface_averaged` or `pressure_at_flux_surface` |
+
+### MULTI-CONCEPT BATCH WARNING
+
+When a single batch contains DD paths that represent semantically **distinct** quantities
+(e.g. mixing temperature with density and current density), treat each path as its own
+independent naming target. Do NOT fuse unrelated paths into a compound name — 3% of W7A
+batches produced compound nonsense from conflated paths. One DD path → one candidate.
 
 ### INSTRUMENT HANDLING — entity names as postfix locus only
 
