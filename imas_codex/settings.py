@@ -811,8 +811,116 @@ def _validate_review_models(models: list[str], axis: str) -> list[str]:
     return validated
 
 
+_VALID_REVIEWER_PROFILES: frozenset[str] = frozenset(
+    {"default", "pilot", "opus-only", "haiku-only"}
+)
+
+
+def get_sn_review_active_profile() -> str:
+    """Return the active reviewer profile name.
+
+    Resolution order:
+      1. ``IMAS_CODEX_SN_REVIEW_PROFILE`` environment variable.
+      2. Hard-coded default: ``"default"``.
+
+    Valid profile names: ``"default"``, ``"pilot"``, ``"opus-only"``,
+    ``"haiku-only"``.
+
+    Returns:
+        Profile name string (not validated here — validation happens in
+        :func:`get_sn_review_profile_models`).
+    """
+    import os as _os
+
+    return _os.environ.get("IMAS_CODEX_SN_REVIEW_PROFILE", "default")
+
+
+def get_sn_review_profile_models(profile: str) -> list[str]:
+    """Return the ordered reviewer-model chain for *profile*.
+
+    Reads from ``[tool.imas-codex.sn.review.names.profiles.<profile>].models``.
+    For ``"default"``, falls back to the top-level ``[sn.review.names].models``
+    key when no ``profiles`` section is present (backward-compat).
+
+    Length semantics (same as :func:`get_sn_review_names_models`):
+      * 1 model  → quorum disabled
+      * 2 models → blind pair, no escalator
+      * 3 models → full RD-quorum: primary, secondary, escalator
+      * 4+       → rejected (``ValueError``)
+
+    Args:
+        profile: Profile name — one of ``"default"``, ``"pilot"``,
+            ``"opus-only"``, ``"haiku-only"``.
+
+    Raises:
+        ValueError: If *profile* is not in :data:`_VALID_REVIEWER_PROFILES`
+            or the model list fails validation.
+    """
+    names_section = _get_section("sn").get("review", {}).get("names", {})
+    profiles = names_section.get("profiles", {})
+
+    if profile in profiles:
+        raw = profiles[profile].get("models", [])
+        return _validate_review_models(
+            [str(m) for m in raw if m], f"names.profiles.{profile}"
+        )
+    if profile == "default":
+        # Backward-compat: no profiles section → read top-level models key.
+        raw = names_section.get("models", _SN_REVIEW_DEFAULTS["names-models"])
+        return _validate_review_models([str(m) for m in raw if m], "names")
+    raise ValueError(
+        f"Unknown reviewer profile {profile!r}. "
+        f"Valid profiles: {sorted(_VALID_REVIEWER_PROFILES)}. "
+        f"Configure under [tool.imas-codex.sn.review.names.profiles]."
+    )
+
+
+def get_sn_review_profile_threshold(profile: str) -> float:
+    """Return the disagreement threshold for *profile*.
+
+    Reads from
+    ``[tool.imas-codex.sn.review.names.profiles.<profile>].disagreement-threshold``.
+    For ``"default"``, falls back to ``[sn.review].disagreement-threshold``
+    when no ``profiles`` section is present (backward-compat).
+
+    Args:
+        profile: Profile name.
+
+    Raises:
+        ValueError: If *profile* is not in :data:`_VALID_REVIEWER_PROFILES`.
+    """
+    names_section = _get_section("sn").get("review", {}).get("names", {})
+    profiles = names_section.get("profiles", {})
+    review_section = _get_section("sn").get("review", {})
+
+    if profile in profiles:
+        return float(
+            profiles[profile].get(
+                "disagreement-threshold",
+                _SN_REVIEW_DEFAULTS["disagreement-threshold"],
+            )
+        )
+    if profile == "default":
+        # Backward-compat: no profiles section → read shared review setting.
+        return float(
+            review_section.get(
+                "disagreement-threshold",
+                _SN_REVIEW_DEFAULTS["disagreement-threshold"],
+            )
+        )
+    raise ValueError(
+        f"Unknown reviewer profile {profile!r}. "
+        f"Valid profiles: {sorted(_VALID_REVIEWER_PROFILES)}."
+    )
+
+
 def get_sn_review_names_models() -> list[str]:
     """Return the ordered reviewer-model chain for the names review axis.
+
+    Delegates to :func:`get_sn_review_profile_models` using the active
+    profile (see :func:`get_sn_review_active_profile`).  When no profile
+    is active and no ``profiles`` section exists in config, falls back to
+    the top-level ``[sn.review.names].models`` key (backward-compat).
 
     Length semantics:
       * 1 model  → quorum disabled (single reviewer, mirrors legacy behaviour)
@@ -821,21 +929,18 @@ def get_sn_review_names_models() -> list[str]:
                    [2] escalator (sees both reviews, authoritative)
       * 4+       → rejected at config load time (``ValueError``)
 
-    Priority: ``[sn.review.names].models`` in pyproject.toml → default
-    (a single canonical model).
-
     Raises:
         ValueError: If list is empty or has more than 3 entries.
     """
-    section = _get_section("sn").get("review", {}).get("names", {})
-    raw = section.get("models", _SN_REVIEW_DEFAULTS["names-models"])
-    return _validate_review_models([str(m) for m in raw if m], "names")
+    return get_sn_review_profile_models(get_sn_review_active_profile())
 
 
 def get_sn_review_docs_models() -> list[str]:
     """Return the ordered reviewer-model chain for the docs review axis.
 
     Same length semantics as :func:`get_sn_review_names_models`.
+    Reads from ``[sn.review.docs].models`` (docs axis has no profile system;
+    use ``--models`` CLI override for ad-hoc docs model changes).
 
     Priority: ``[sn.review.docs].models`` in pyproject.toml → default
     (a single canonical model).
@@ -862,18 +967,15 @@ def get_sn_review_max_cycles() -> int:
 def get_sn_review_disagreement_threshold() -> float:
     """Get the spread threshold that flags review disagreement.
 
+    Delegates to :func:`get_sn_review_profile_threshold` using the active
+    profile (see :func:`get_sn_review_active_profile`).  Falls back to the
+    top-level ``[sn.review].disagreement-threshold`` key when no profile is
+    active (backward-compat).
+
     When N >= 2 reviewers are configured, ``review_disagreement`` is
     set ``true`` if ``max(scores) - min(scores) >= threshold``.
-
-    Priority: ``[sn.review].disagreement-threshold`` → ``0.15``.
     """
-    section = _get_section("sn").get("review", {})
-    return float(
-        section.get(
-            "disagreement-threshold",
-            _SN_REVIEW_DEFAULTS["disagreement-threshold"],
-        )
-    )
+    return get_sn_review_profile_threshold(get_sn_review_active_profile())
 
 
 # ─── SN benchmark settings ─────────────────────────────────────────────────

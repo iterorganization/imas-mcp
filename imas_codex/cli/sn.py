@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -520,6 +521,24 @@ def _check_pipeline_clear_gate() -> None:
         "Pass this flag to suppress the gate and continue anyway."
     ),
 )
+@click.option(
+    "--reviewer-profile",
+    "reviewer_profile",
+    type=click.Choice(
+        ["default", "pilot", "opus-only", "haiku-only"], case_sensitive=False
+    ),
+    default="default",
+    show_default=True,
+    envvar="IMAS_CODEX_SN_REVIEW_PROFILE",
+    help=(
+        "Reviewer model chain profile for the review phase. "
+        "'default' → Opus+GPT-5.4+Sonnet (3-model RD-quorum). "
+        "'pilot' → Haiku×2+Opus arbiter (~85%% cost reduction). "
+        "'opus-only' → single Opus reviewer. "
+        "'haiku-only' → single Haiku reviewer (cheapest). "
+        "Also read from IMAS_CODEX_SN_REVIEW_PROFILE env var."
+    ),
+)
 def sn_run(
     source: str,
     domain_filter: str | None,
@@ -556,6 +575,7 @@ def sn_run(
     only_phase: str | None,
     override_edits: tuple[str, ...],
     skip_clear_gate: bool,
+    reviewer_profile: str,
 ) -> None:
     """Generate standard names from a source.
 
@@ -578,7 +598,17 @@ def sn_run(
       imas-codex sn run --turn-number 2 --min-score 0.6 -c 5  # regen reviewed names below 0.6
       imas-codex sn run --only link                   # resolve links only
       imas-codex sn run --override-edits foo --override-edits bar  # bypass protection on foo, bar
+      imas-codex sn run --reviewer-profile pilot -c 5  # use cheap Haiku+Opus reviewer
     """
+    import os as _os
+
+    # --- Reviewer profile: propagate via env var so the review pipeline picks
+    # it up automatically wherever it reads get_sn_review_names_models() /
+    # get_sn_review_disagreement_threshold().
+    reviewer_profile = reviewer_profile.lower()
+    if reviewer_profile != "default":
+        _os.environ["IMAS_CODEX_SN_REVIEW_PROFILE"] = reviewer_profile
+
     # --- Pipeline-version clear gate ---
     # Check if prompt/vocab/code has changed since the last SNRun.
     # Exits non-zero with a warning banner unless --skip-clear-gate is set
@@ -2307,7 +2337,14 @@ def sn_import(
 @sn.command("clear")
 @click.option("--dry-run", is_flag=True, help="Preview without modifying the graph")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
-def sn_clear(dry_run: bool, force: bool) -> None:
+@click.option(
+    "--no-comment-export",
+    "no_comment_export",
+    is_flag=True,
+    default=False,
+    help="Skip the pre-clear Review comment export to JSONL.",
+)
+def sn_clear(dry_run: bool, force: bool, no_comment_export: bool) -> None:
     """Wipe every Standard Name the pipeline has produced.
 
     Deletes the five pipeline-output labels: StandardName, Review,
@@ -2319,11 +2356,18 @@ def sn_clear(dry_run: bool, force: bool) -> None:
     For scoped deletes (by status, source, IDS, score tier, …) use
     ``sn prune`` instead.
 
+    Before deleting, any existing Review nodes are exported to a JSONL
+    file in ``research/`` so reviewer feedback survives across clear
+    cycles.  Pass ``--no-comment-export`` to skip the dump (e.g. in
+    automated tests).
+
     \b
     Examples:
       imas-codex sn clear --dry-run    # Preview the wipe
       imas-codex sn clear --force      # Full wipe (non-interactive)
     """
+    import datetime
+
     from imas_codex.standard_names.graph_ops import clear_sn_subsystem
 
     try:
@@ -2348,6 +2392,24 @@ def sn_clear(dry_run: bool, force: bool) -> None:
                 abort=True,
             )
 
+        # Pre-clear comment export (Phase F)
+        if not no_comment_export and preview.get("Review", 0) > 0:
+            import pathlib
+
+            from imas_codex.standard_names.graph_ops import export_review_comments
+
+            ts = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
+            export_dir = pathlib.Path("research")
+            export_path = export_dir / f"comments-{ts}.jsonl"
+            try:
+                n_exported = export_review_comments(export_path)
+                if n_exported:
+                    console.print(
+                        f"[dim]Exported {n_exported} Review records → {export_path}[/dim]"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[yellow]Comment export skipped: {exc}[/yellow]")
+
         deleted = clear_sn_subsystem(dry_run=False)
         total_deleted = sum(deleted.values())
         console.print(f"[green]Deleted {total_deleted} nodes[/green]")
@@ -2359,6 +2421,296 @@ def sn_clear(dry_run: bool, force: bool) -> None:
     except Exception as e:
         console.print(f"[red]Clear error:[/red] {e}")
         raise SystemExit(1) from e
+
+
+@sn.command("analyse-comments")
+@click.option(
+    "--input-glob",
+    "input_glob",
+    default="research/comments-*.jsonl",
+    show_default=True,
+    help="Glob pattern for JSONL files to analyse.",
+)
+@click.option(
+    "--domain",
+    default=None,
+    help="Restrict analysis to a specific physics domain.",
+)
+@click.option(
+    "--top",
+    type=int,
+    default=10,
+    show_default=True,
+    help="Number of top phrases to show per dimension.",
+)
+@click.option(
+    "--output-file",
+    "output_file",
+    default=None,
+    help="Write markdown report to this file instead of stdout.",
+)
+def sn_analyse_comments(
+    input_glob: str,
+    domain: str | None,
+    top: int,
+    output_file: str | None,
+) -> None:
+    """Mine recurring criticisms from exported Review comment JSONL files.
+
+    Reads JSONL files produced by ``sn clear`` (pre-clear comment dumps)
+    and analyses per-dimension reviewer comments to surface recurring
+    criticism patterns.  Produces a markdown report showing:
+
+    * Top recurring noun phrases per review dimension
+    * Per-dimension score distribution (lowest-scoring dimensions)
+    * Repeat-reviewed names and score trajectory
+
+    \b
+    Examples:
+      imas-codex sn analyse-comments
+      imas-codex sn analyse-comments --domain equilibrium --top 15
+      imas-codex sn analyse-comments --input-glob "research/comments-eq-*.jsonl"
+      imas-codex sn analyse-comments --output-file research/analysis.md
+    """
+    import glob as glob_module
+    import re
+    from collections import Counter, defaultdict
+
+    # ── Collect files ─────────────────────────────────────────────────────────
+    files = sorted(glob_module.glob(input_glob))
+    if not files:
+        console.print(
+            f"[yellow]No files matched '{input_glob}'. "
+            "Run 'sn clear' first to produce JSONL exports.[/yellow]"
+        )
+        return
+
+    # ── Load records ──────────────────────────────────────────────────────────
+    records: list[dict] = []
+    for fpath in files:
+        with open(fpath, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if domain and rec.get("domain") != domain:
+                    continue
+                records.append(rec)
+
+    if not records:
+        scope = f" for domain '{domain}'" if domain else ""
+        console.print(f"[yellow]No review records found{scope}.[/yellow]")
+        return
+
+    # ── Simple NLP: extract noun phrases (stopword-filtered bigrams/unigrams) ─
+    _STOPWORDS = {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "to",
+        "of",
+        "and",
+        "or",
+        "in",
+        "for",
+        "with",
+        "on",
+        "at",
+        "by",
+        "from",
+        "as",
+        "this",
+        "that",
+        "it",
+        "its",
+        "not",
+        "no",
+        "but",
+        "also",
+        "should",
+        "must",
+        "can",
+        "may",
+        "would",
+        "could",
+        "will",
+        "has",
+        "have",
+        "had",
+        "does",
+        "do",
+        "did",
+        "very",
+        "more",
+        "than",
+        "too",
+        "just",
+        "only",
+        "per",
+        "e.g",
+        "i.e",
+        "etc",
+        "use",
+        "used",
+        "using",
+    }
+
+    def _tokenise(text: str) -> list[str]:
+        tokens = re.findall(r"[a-z][a-z_\-]*", text.lower())
+        return [t for t in tokens if t not in _STOPWORDS and len(t) > 2]
+
+    def _phrases(tokens: list[str]) -> list[str]:
+        """Unigrams + bigrams from token list."""
+        result = list(tokens)
+        for i in range(len(tokens) - 1):
+            result.append(f"{tokens[i]} {tokens[i + 1]}")
+        return result
+
+    # ── Per-dimension phrase counts ────────────────────────────────────────────
+    dim_phrase_counts: dict[str, Counter] = defaultdict(Counter)
+    dim_scores: dict[str, list[float]] = defaultdict(list)
+
+    # Track per-name score history across files
+    name_scores: dict[str, list[float]] = defaultdict(list)
+
+    for rec in records:
+        name = rec.get("name") or "unknown"
+        score = rec.get("score")
+        if score is not None:
+            name_scores[name].append(float(score))
+
+        cpd = rec.get("comments_per_dim") or {}
+        if isinstance(cpd, str):
+            try:
+                cpd = json.loads(cpd)
+            except (json.JSONDecodeError, ValueError):
+                cpd = {}
+
+        if cpd:
+            for dim, text in cpd.items():
+                if isinstance(text, str) and text.strip():
+                    tokens = _tokenise(text)
+                    for phrase in _phrases(tokens):
+                        dim_phrase_counts[dim][phrase] += 1
+                    # use overall score as proxy for dim score
+                    if score is not None:
+                        dim_scores[dim].append(float(score))
+        else:
+            # Fall back to free-text comments field
+            text = rec.get("comments") or ""
+            if text.strip():
+                dim = "general"
+                tokens = _tokenise(text)
+                for phrase in _phrases(tokens):
+                    dim_phrase_counts[dim][phrase] += 1
+                if score is not None:
+                    dim_scores[dim].append(float(score))
+
+    # ── Build markdown report ─────────────────────────────────────────────────
+    lines: list[str] = []
+    scope_label = f" — domain: `{domain}`" if domain else ""
+    lines.append(f"# Review Comment Analysis{scope_label}")
+    lines.append("")
+    lines.append(
+        f"**Files scanned**: {len(files)}  |  "
+        f"**Records loaded**: {len(records)}  |  "
+        f"**Top N**: {top}"
+    )
+    lines.append("")
+
+    # Section 1: Top criticisms per dimension
+    lines.append("## Top Criticisms by Dimension")
+    lines.append("")
+    if not dim_phrase_counts:
+        lines.append("_No per-dimension comments found in records._")
+        lines.append("")
+    else:
+        # Sort dimensions by mean score (lowest first = most problematic)
+        sorted_dims = sorted(
+            dim_phrase_counts.keys(),
+            key=lambda d: (
+                (sum(dim_scores[d]) / len(dim_scores[d])) if dim_scores[d] else 1.0
+            ),
+        )
+        for dim in sorted_dims:
+            counter = dim_phrase_counts[dim]
+            mean_score = (
+                sum(dim_scores[dim]) / len(dim_scores[dim]) if dim_scores[dim] else None
+            )
+            score_str = (
+                f" (mean score: {mean_score:.3f})" if mean_score is not None else ""
+            )
+            lines.append(f"### `{dim}`{score_str}")
+            lines.append("")
+            lines.append("| Phrase | Occurrences |")
+            lines.append("|--------|-------------|")
+            for phrase, cnt in counter.most_common(top):
+                lines.append(f"| {phrase} | {cnt} |")
+            lines.append("")
+
+    # Section 2: Per-dimension score distribution
+    lines.append("## Per-Dimension Score Distribution")
+    lines.append("")
+    if not dim_scores:
+        lines.append("_No score data available._")
+        lines.append("")
+    else:
+        lines.append("| Dimension | Reviews | Mean Score | Min Score |")
+        lines.append("|-----------|---------|-----------|-----------|")
+        for dim in sorted(
+            dim_scores, key=lambda d: sum(dim_scores[d]) / len(dim_scores[d])
+        ):
+            scores_list = dim_scores[dim]
+            mean_s = sum(scores_list) / len(scores_list)
+            min_s = min(scores_list)
+            lines.append(f"| {dim} | {len(scores_list)} | {mean_s:.3f} | {min_s:.3f} |")
+        lines.append("")
+
+    # Section 3: Repeat-reviewed names and score trajectory
+    lines.append("## Repeat-Reviewed Names")
+    lines.append("")
+    repeat_names = {n: s for n, s in name_scores.items() if len(s) > 1}
+    if not repeat_names:
+        lines.append("_No names reviewed more than once in these files._")
+        lines.append("")
+    else:
+        lines.append("| Name | Reviews | First Score | Last Score | Δ |")
+        lines.append("|------|---------|-------------|------------|---|")
+        for name, scores_list in sorted(repeat_names.items()):
+            first = scores_list[0]
+            last = scores_list[-1]
+            delta = last - first
+            delta_str = f"+{delta:.3f}" if delta >= 0 else f"{delta:.3f}"
+            lines.append(
+                f"| {name} | {len(scores_list)} | {first:.3f} | {last:.3f} | {delta_str} |"
+            )
+        lines.append("")
+
+    report = "\n".join(lines)
+
+    if output_file:
+        from pathlib import Path as _Path
+
+        out = _Path(output_file)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report, encoding="utf-8")
+        console.print(f"[green]Report written to {output_file}[/green]")
+    else:
+        # Print to stdout via console (markdown renders better without markup)
+        import sys
+
+        sys.stdout.write(report + "\n")
 
 
 @sn.command("prune")
@@ -2742,6 +3094,25 @@ def sn_sync_grammar(dry_run: bool, verbose: bool) -> None:
         "not overwrite a higher-fidelity prior review unless --force."
     ),
 )
+@click.option(
+    "--reviewer-profile",
+    "reviewer_profile",
+    type=click.Choice(
+        ["default", "pilot", "opus-only", "haiku-only"], case_sensitive=False
+    ),
+    default="default",
+    show_default=True,
+    envvar="IMAS_CODEX_SN_REVIEW_PROFILE",
+    help=(
+        "Reviewer model chain profile. "
+        "'default' → Opus+GPT-5.4+Sonnet (3-model RD-quorum, $0.027/name). "
+        "'pilot' → Haiku×2+Opus arbiter ($0.004/name, ~85%% cost reduction). "
+        "'opus-only' → single Opus reviewer (no quorum). "
+        "'haiku-only' → single Haiku reviewer (cheapest). "
+        "Overridden by --models if both are specified. "
+        "Also read from IMAS_CODEX_SN_REVIEW_PROFILE env var."
+    ),
+)
 def sn_review(
     ids: str | None,
     domain: str | None,
@@ -2756,6 +3127,7 @@ def sn_review(
     skip_audit: bool,
     concurrency: int,
     target: str,
+    reviewer_profile: str,
 ) -> None:
     """Review standard names with 3-layer pipeline.
 
@@ -2771,6 +3143,7 @@ def sn_review(
       imas-codex sn review --force --physics-domain magnetics
       imas-codex sn review --target names --unreviewed
       imas-codex sn review --target docs --physics-domain equilibrium
+      imas-codex sn review --reviewer-profile pilot --unreviewed -c 2.0
     """
     import asyncio
 
@@ -2785,20 +3158,30 @@ def sn_review(
     # Enforce batch-size cap
     batch_size = min(batch_size, 25)
 
-    # Load reviewer list (N>=1). CLI --models overrides pyproject.
+    # Load reviewer list (N>=1). Priority: --models > --reviewer-profile > config.
     from imas_codex.settings import (
         get_sn_review_disagreement_threshold,
         get_sn_review_docs_models,
         get_sn_review_names_models,
+        get_sn_review_profile_models,
+        get_sn_review_profile_threshold,
     )
 
+    reviewer_profile = reviewer_profile.lower()
     if models_override:
+        # Ad-hoc --models takes precedence over profile.
         review_models = [m.strip() for m in models_override.split(",") if m.strip()]
+        disagreement_threshold = get_sn_review_disagreement_threshold()
+    elif reviewer_profile != "default":
+        # Explicit non-default profile selected.
+        review_models = get_sn_review_profile_models(reviewer_profile)
+        disagreement_threshold = get_sn_review_profile_threshold(reviewer_profile)
     elif target_normalized == "names":
         review_models = get_sn_review_names_models()
+        disagreement_threshold = get_sn_review_disagreement_threshold()
     else:
         review_models = get_sn_review_docs_models()
-    disagreement_threshold = get_sn_review_disagreement_threshold()
+        disagreement_threshold = get_sn_review_disagreement_threshold()
 
     # Build state
     state = StandardNameReviewState(
