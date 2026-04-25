@@ -793,7 +793,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 state.review_stats.cost += c0_cost
 
                 if lease:
-                    lease.charge(c0_cost)
+                    lease.charge_or_extend(c0_cost)
 
                 # Build cycle-0 Review records
                 c0_ts = datetime.now(UTC).isoformat()
@@ -865,7 +865,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 state.review_stats.cost += c1_cost
 
                 if lease:
-                    lease.charge(c1_cost)
+                    lease.charge_or_extend(c1_cost)
 
                 # Build cycle-1 Review records
                 c1_ts = datetime.now(UTC).isoformat()
@@ -1021,7 +1021,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 state.review_stats.cost += c2_cost
 
                 if lease:
-                    lease.charge(c2_cost)
+                    lease.charge_or_extend(c2_cost)
 
                 # Build cycle-2 Review records
                 c2_ts = datetime.now(UTC).isoformat()

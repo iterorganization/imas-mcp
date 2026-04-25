@@ -185,3 +185,82 @@ class TestReviewBudgetAsync:
             assert mgr.check_invariant()
 
         asyncio.run(_run())
+
+
+class TestReviewPipelineChargeOrExtendFix:
+    """Regression tests for Bug 1: pipeline.py lease.charge → charge_or_extend.
+
+    Before the fix, charge() raised BudgetExceeded when actual LLM cost
+    exceeded the per-batch reservation estimate, silently discarding the
+    completed LLM result while the cost was already billed.
+
+    After the fix, charge_or_extend() extends the reservation from the
+    manager pool if available, so overruns are handled gracefully.
+    """
+
+    def test_overrun_extends_not_raises(self):
+        """When actual cost exceeds reservation, charge_or_extend borrows from pool.
+
+        Simulates the Opus-4.6 scenario: reservation formula underestimates
+        by ~30%, but the pool has headroom.
+        """
+        from imas_codex.standard_names.budget import BudgetExceeded
+
+        mgr = BudgetManager(total_budget=5.0)
+
+        # 15 names × $0.05 per name × 1.5× = $1.125 reservation
+        estimated = 15 * 0.05
+        worst_case = estimated * 1.5  # = 1.125
+        lease = mgr.reserve(worst_case)
+        assert lease is not None
+
+        # Opus-4.6 actually cost 30% more than reserved
+        actual_c0_cost = worst_case * 1.3  # ~$1.46
+
+        # Old code: lease.charge(actual_c0_cost) → BudgetExceeded
+        # New code: charge_or_extend extends from pool
+        lease.charge_or_extend(actual_c0_cost)  # must NOT raise
+        assert abs(lease.charged - actual_c0_cost) < 1e-9
+        assert mgr.check_invariant()
+
+    def test_overrun_raises_when_pool_also_exhausted(self):
+        """charge_or_extend still raises if both reservation and pool are empty."""
+        from imas_codex.standard_names.budget import BudgetExceeded
+
+        mgr = BudgetManager(total_budget=0.5)
+        lease = mgr.reserve(0.5)  # Pool now empty
+        assert lease is not None
+
+        # Both lease and pool are exhausted — must raise
+        with pytest.raises(BudgetExceeded):
+            lease.charge_or_extend(0.6)
+
+        assert mgr.check_invariant()
+
+    def test_all_three_review_cycles_extend(self):
+        """All three review cycles (c0, c1, c2) can overrun reservation.
+
+        Models the 3-cycle RD-quorum pattern in pipeline.py where
+        c0_cost, c1_cost, and c2_cost each call charge_or_extend.
+        """
+        mgr = BudgetManager(total_budget=5.0)
+
+        # Reserve for 3 models × 15 names × $0.05 × 1.5
+        worst_case = 3 * 15 * 0.05 * 1.5  # $3.375
+        lease = mgr.reserve(worst_case)
+        assert lease is not None
+
+        # Each cycle costs slightly more than 1/3 of reservation
+        c0_cost = worst_case / 3 * 1.2  # 20% over per-cycle share
+        c1_cost = worst_case / 3 * 1.2
+        c2_cost = worst_case / 3 * 0.8  # escalator only handles disputed
+
+        # All three should succeed without raising
+        with lease:
+            lease.charge_or_extend(c0_cost)
+            lease.charge_or_extend(c1_cost)
+            lease.charge_or_extend(c2_cost)
+
+        total = c0_cost + c1_cost + c2_cost
+        assert abs(mgr.spent - total) < 1e-9
+        assert mgr.check_invariant()
