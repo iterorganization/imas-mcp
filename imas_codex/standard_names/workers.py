@@ -1325,7 +1325,13 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
         )
     context["compose_scored_examples"] = compose_scored_examples
 
-    system_prompt = render_prompt("sn/compose_system", context)
+    from imas_codex.settings import get_compose_lean
+
+    compose_lean = get_compose_lean()
+    _compose_system_template = (
+        "sn/compose_system_lean" if compose_lean else "sn/compose_system"
+    )
+    system_prompt = render_prompt(_compose_system_template, context)
 
     wlog.info(
         "Composing standard names for %d items in %d batches (model=%s)",
@@ -1420,7 +1426,9 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             "items": batch.items,
             "ids_name": batch.group_key,
             "ids_contexts": ids_contexts,
-            "existing_names": sorted(batch.existing_names)[:200],
+            "existing_names": sorted(batch.existing_names)[
+                : 50 if compose_lean else 200
+            ],
             "cluster_context": batch.context,
             "nearby_existing_names": nearby,
             "reference_exemplars": reference_exemplars,
