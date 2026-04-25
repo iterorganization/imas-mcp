@@ -26,73 +26,155 @@ rules:
   # -------------------------------------------------------------------------
   # Class 1 — Boolean constraint selectors
   #
-  # Equilibrium constraint flags (use_exact_*) are solver configuration
-  # parameters.  They select which constraints are active, not physical
-  # quantities.  W16-W18 showed these score 0.22–0.40 in review.
+  # Equilibrium constraint /exact fields are boolean solver-configuration
+  # flags that select which constraints are active, not physical quantities.
+  # W16-W18 showed names generated from these score 0.22–0.40 in review.
+  #
+  # Actual DD paths (W21 reconnaissance):
+  #   equilibrium/time_slice/constraints/flux_loop/exact          (depth 4)
+  #   equilibrium/time_slice/constraints/iron_core_segment/*/exact (depth 5)
+  # The LLM was incorrectly generating use_exact_* names from these /exact
+  # paths — the deny pattern must match /exact, not use_exact_*.
   # -------------------------------------------------------------------------
-  - path_pattern: "**/use_exact_*"
+  - path_pattern: "equilibrium/time_slice/constraints/**/exact"
     skip_reason: "boolean_constraint_selector"
     reason: >-
       Boolean constraint selector for equilibrium solver; not a physical
-      quantity.  Solver configuration flag that enables/disables a specific
-      constraint — should not receive a standard name.
+      quantity.  The /exact field enables/disables a specific constraint —
+      should not receive a standard name.  Note: the LLM generates names
+      starting with use_exact_* from these paths, but the deny gate must
+      match the DD path (ending in /exact), not the generated name.
 
   # -------------------------------------------------------------------------
   # Class 2 — Engineering coil geometry
   #
-  # Oblique cross-section dimensions, element area, corner positions,
-  # and passive loop geometry in pf_active/pf_passive IDSs.  These are
-  # engineering design parameters of the machine, not physics quantities.
-  # W18B showed these comprise ~30-40% of magnetic_field_systems low-score
-  # names.
+  # Cross-section geometry dimensions in pf_active/pf_passive IDSs.
+  # Engineering design parameters of the machine, not physics quantities.
+  # W18B/W20B showed these comprise ~30-40% of magnetic_field_systems
+  # low-score names.
+  #
+  # W21 reconnaissance revealed TWO structural levels, both without the
+  # extra segment that the original (broken) patterns assumed:
+  #   Element-level:  pf_active/coil/element/geometry/oblique/alpha
+  #   Coil-level:     pf_active/coil/geometry/oblique/alpha
+  # Original patterns (pf_active/*/element/*/geometry/*) required a
+  # non-existent segment between element and geometry — 0 paths matched.
+  #
+  # Geometry subtypes found in DD (W21 recon):
+  #   oblique, arcs_of_circle, outline, rectangle, annulus, thick_line
+  # thick_line is nested (first_point/r|z), so uses ** at the leaf level.
   # -------------------------------------------------------------------------
-  - path_pattern: "pf_active/*/element/*/geometry/oblique/*"
+
+  # --- pf_active element-level geometry (6 subtypes) ---
+  - path_pattern: "pf_active/*/element/geometry/oblique/*"
     skip_reason: "engineering_coil_geometry"
     reason: >-
       Oblique cross-section geometry of PF active coil elements — engineering
       design parameter, not a measurable physics quantity.
 
-  - path_pattern: "pf_active/*/element/*/geometry/arcs_of_circle/*"
+  - path_pattern: "pf_active/*/element/geometry/arcs_of_circle/*"
     skip_reason: "engineering_coil_geometry"
     reason: >-
       Arcs-of-circle cross-section geometry of PF active coil elements —
       engineering design parameter.
 
-  - path_pattern: "pf_active/*/element/*/geometry/outline/*"
+  - path_pattern: "pf_active/*/element/geometry/outline/*"
     skip_reason: "engineering_coil_geometry"
     reason: >-
       Outline cross-section geometry of PF active coil elements —
       engineering design parameter.
 
-  - path_pattern: "pf_active/*/element/*/geometry/rectangle/*"
+  - path_pattern: "pf_active/*/element/geometry/rectangle/*"
     skip_reason: "engineering_coil_geometry"
     reason: >-
       Rectangle cross-section geometry of PF active coil elements —
       engineering design parameter.
 
-  - path_pattern: "pf_passive/*/element/*/geometry/oblique/*"
+  - path_pattern: "pf_active/*/element/geometry/annulus/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Annulus cross-section geometry of PF active coil elements —
+      engineering design parameter.
+
+  - path_pattern: "pf_active/*/element/geometry/thick_line/**"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Thick-line cross-section geometry of PF active coil elements
+      (nested: first_point/r, first_point/z, etc.) — engineering parameter.
+
+  # --- pf_active coil-level geometry (no element layer, 6 subtypes) ---
+  - path_pattern: "pf_active/*/geometry/oblique/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Oblique cross-section geometry at pf_active coil level — engineering
+      design parameter.
+
+  - path_pattern: "pf_active/*/geometry/arcs_of_circle/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Arcs-of-circle cross-section geometry at pf_active coil level —
+      engineering design parameter.
+
+  - path_pattern: "pf_active/*/geometry/outline/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Outline cross-section geometry at pf_active coil level —
+      engineering design parameter.
+
+  - path_pattern: "pf_active/*/geometry/rectangle/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Rectangle cross-section geometry at pf_active coil level —
+      engineering design parameter.
+
+  - path_pattern: "pf_active/*/geometry/annulus/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Annulus cross-section geometry at pf_active coil level —
+      engineering design parameter.
+
+  - path_pattern: "pf_active/*/geometry/thick_line/**"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Thick-line cross-section geometry at pf_active coil level
+      (nested: first_point/r, first_point/z, etc.) — engineering parameter.
+
+  # --- pf_passive element-level geometry (6 subtypes) ---
+  - path_pattern: "pf_passive/*/element/geometry/oblique/*"
     skip_reason: "engineering_coil_geometry"
     reason: >-
       Oblique cross-section geometry of PF passive loop elements —
       engineering design parameter.
 
-  - path_pattern: "pf_passive/*/element/*/geometry/arcs_of_circle/*"
+  - path_pattern: "pf_passive/*/element/geometry/arcs_of_circle/*"
     skip_reason: "engineering_coil_geometry"
     reason: >-
       Arcs-of-circle cross-section geometry of PF passive loop elements —
       engineering design parameter.
 
-  - path_pattern: "pf_passive/*/element/*/geometry/outline/*"
+  - path_pattern: "pf_passive/*/element/geometry/outline/*"
     skip_reason: "engineering_coil_geometry"
     reason: >-
       Outline cross-section geometry of PF passive loop elements —
       engineering design parameter.
 
-  - path_pattern: "pf_passive/*/element/*/geometry/rectangle/*"
+  - path_pattern: "pf_passive/*/element/geometry/rectangle/*"
     skip_reason: "engineering_coil_geometry"
     reason: >-
       Rectangle cross-section geometry of PF passive loop elements —
       engineering design parameter.
+
+  - path_pattern: "pf_passive/*/element/geometry/annulus/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Annulus cross-section geometry of PF passive loop elements —
+      engineering design parameter.
+
+  - path_pattern: "pf_passive/*/element/geometry/thick_line/**"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Thick-line cross-section geometry of PF passive loop elements
+      (nested: first_point/r, first_point/z, etc.) — engineering parameter.
 
   # -------------------------------------------------------------------------
   # Class 3 — Force/weight combination matrices
@@ -111,3 +193,55 @@ rules:
     reason: >-
       Cross-force per unit length in coil force combination — control-system
       engineering parameter, not a physics quantity.
+
+  # -------------------------------------------------------------------------
+  # Class 4 — Metadata uncertainty index fields
+  #
+  # W20A/W20B found names of the form uncertainty_index_of_* scoring ~0.23–
+  # 0.33.  These come from DD paths ending in *_error_index, which are
+  # metadata bookkeeping fields (indices into a homogeneous error array),
+  # not physical quantities.  W21 reconnaissance: no paths literally named
+  # uncertainty_index exist in the current DD, but the pattern is retained
+  # as forward-looking protection.  The LLM appears to rename *_error_index
+  # paths as uncertainty_index_of_X during compose; those source paths are
+  # already filtered by the node_category gate in most cases.
+  # If future DD versions add uncertainty_index paths they will be caught
+  # here.
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/uncertainty_index*"
+    skip_reason: "metadata_uncertainty_index"
+    reason: >-
+      Uncertainty index metadata field — bookkeeping reference into a shared
+      error array, not a physical quantity.
+
+  # -------------------------------------------------------------------------
+  # Class 5 — GGD structural grid object geometry
+  #
+  # General Grid Description (GGD) object geometry fields are structural
+  # mesh-topology descriptors, not physics quantities.  W20A/W20B found
+  # names of the form grid_object_geometry* scoring ~0.175–0.235.
+  #
+  # Actual DD paths (W21 reconnaissance, 229 total):
+  #   distribution_sources/source/ggd/grid/space/objects_per_dimension/object/geometry
+  #   edge_profiles/grid_ggd/space/objects_per_dimension/object/geometry
+  #   ... (across many IDSs with GGD grids)
+  # Also: geometry_2d, geometry_content/index, geometry_content/name, etc.
+  # Pattern: match any path containing objects_per_dimension/**/geometry*.
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/objects_per_dimension/object/geometry*"
+    skip_reason: "ggd_structural_geometry"
+    reason: >-
+      GGD grid object geometry descriptor — structural mesh-topology field,
+      not a measurable physics quantity.
+
+  - path_pattern: "**/objects_per_dimension/geometry_content*"
+    skip_reason: "ggd_structural_geometry"
+    reason: >-
+      GGD grid geometry content descriptor — structural mesh-topology field,
+      not a measurable physics quantity.
+
+  - path_pattern: "**/objects_per_dimension/geometry_content/**"
+    skip_reason: "ggd_structural_geometry"
+    reason: >-
+      GGD grid geometry content sub-fields (name, index, description) —
+      structural mesh-topology metadata, not a physics quantity.
