@@ -308,6 +308,15 @@ class BudgetManager:
                 self._pool -= extended
                 if lease_id in self._reserved:
                     self._reserved[lease_id] += extended
+                logger.info(
+                    "budget: extended lease %s by $%.4f "
+                    "(requested $%.4f, reservation now $%.4f, pool $%.4f)",
+                    lease_id,
+                    extended,
+                    amount,
+                    self._reserved.get(lease_id, 0.0),
+                    self._pool,
+                )
             return extended
 
     def _release(self, lease_id: str, unused: float) -> None:
