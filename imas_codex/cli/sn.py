@@ -3186,6 +3186,7 @@ def sn_sync_grammar(dry_run: bool, verbose: bool) -> None:
 )
 @click.option("--skip-audit", is_flag=True, help="Skip Layer 1 audits (debug only)")
 @click.option("--concurrency", type=int, default=2, help="Parallel review batches")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option(
     "--target",
     type=click.Choice(["names", "docs"], case_sensitive=False),
@@ -3231,6 +3232,7 @@ def sn_review(
     dry_run: bool,
     skip_audit: bool,
     concurrency: int,
+    verbose: bool,
     target: str,
     reviewer_profile: str,
 ) -> None:
@@ -3252,8 +3254,11 @@ def sn_review(
     """
     import asyncio
 
+    from imas_codex.cli.discover.common import setup_logging
     from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.review.state import StandardNameReviewState
+
+    setup_logging("sn", "sn-review", use_rich=False, verbose=verbose)
 
     # Resolve --target.
     target_normalized = target.lower()
