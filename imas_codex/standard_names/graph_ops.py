@@ -916,6 +916,9 @@ def write_standard_names(
                 sn.compose_count = CASE WHEN b.llm_cost IS NOT NULL
                                    THEN coalesce(sn.compose_count, 0) + 1
                                    ELSE sn.compose_count END,
+                sn.regen_count = CASE WHEN b.regen_increment = true
+                                 THEN coalesce(sn.regen_count, 0) + 1
+                                 ELSE sn.regen_count END,
                 sn.llm_cost = CASE WHEN b.llm_cost IS NOT NULL
                               THEN coalesce(sn.llm_cost, 0.0) + b.llm_cost
                               ELSE sn.llm_cost END,
@@ -969,6 +972,7 @@ def write_standard_names(
                     "llm_tokens_out": n.get("llm_tokens_out"),
                     "llm_tokens_cached_read": n.get("llm_tokens_cached_read"),
                     "llm_tokens_cached_write": n.get("llm_tokens_cached_write"),
+                    "regen_increment": n.get("regen_increment"),
                     **_parse_grammar_vnext(n["id"]),
                 }
                 for n in names

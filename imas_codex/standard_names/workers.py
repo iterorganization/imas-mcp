@@ -1782,6 +1782,11 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 c["llm_tokens_cached_read"] = _pro_rata_cache_r
                 c["llm_tokens_cached_write"] = _pro_rata_cache_w
 
+            # Tag regen-path candidates so persist increments regen_count
+            if state.regen:
+                for c in candidates:
+                    c["regen_increment"] = True
+
             written = await asyncio.to_thread(
                 persist_composed_batch,
                 candidates,
