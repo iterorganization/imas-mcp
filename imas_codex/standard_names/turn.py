@@ -28,7 +28,29 @@ logger = logging.getLogger(__name__)
 # Default cost-budget split across the five LLM phases.
 # Values must sum to 1.0.
 # Phases: generate (30%), enrich (25%), review_names (15%), review_docs (15%), regen (15%).
-TURN_SPLIT: tuple[float, float, float, float, float] = (0.30, 0.25, 0.15, 0.15, 0.15)
+#
+# TURN_SPLIT_LEGACY — original allocation; preserved for back-compat and as
+#   the active default until Phase A (lean compose prompt) lands.
+# TURN_SPLIT_LEAN — review-heavy allocation activated by TurnConfig.compose_lean=True.
+#   Shifts budget from over-provisioned compose/enrich toward starved review phases.
+#   Phases: generate (15%), enrich (10%), review_names (30%), review_docs (30%), regen (15%).
+TURN_SPLIT_LEGACY: tuple[float, float, float, float, float] = (
+    0.30,
+    0.25,
+    0.15,
+    0.15,
+    0.15,
+)
+TURN_SPLIT_LEAN: tuple[float, float, float, float, float] = (
+    0.15,
+    0.10,
+    0.30,
+    0.30,
+    0.15,
+)
+# Backward-compat alias — always points to the legacy split.  Callers that
+# construct TurnConfig should prefer TurnConfig.split (or compose_lean).
+TURN_SPLIT: tuple[float, float, float, float, float] = TURN_SPLIT_LEGACY
 
 # Valid --only phase choices (CLI enforces this set).
 TURN_PHASES: tuple[str, ...] = (
@@ -64,6 +86,18 @@ _MAX_RESOLVE_ROUNDS = 3
 _RESOLVE_BATCH_LIMIT = 50
 
 
+def _active_split(
+    config: TurnConfig,
+) -> tuple[float, float, float, float, float]:
+    """Return the TURN_SPLIT tuple appropriate for *config*.
+
+    When ``config.compose_lean`` is ``True`` (Phase A lean-prompt flag), the
+    review-heavy ``TURN_SPLIT_LEAN`` is used.  Otherwise ``TURN_SPLIT_LEGACY``
+    is returned unchanged, preserving production behaviour until Phase A lands.
+    """
+    return TURN_SPLIT_LEAN if config.compose_lean else TURN_SPLIT_LEGACY
+
+
 @dataclass
 class PhaseResult:
     """Outcome of a single phase within one turn."""
@@ -83,13 +117,26 @@ class TurnConfig:
     """Configuration for a single turn (one domain × seven phases).
 
     Phase budget split (5 LLM phases sharing ``cost_limit``):
+
+    Legacy split (``compose_lean=False``, default):
       - generate: 30%
       - enrich: 25%
       - review_names: 15%
       - review_docs: 15%
       - regen: 15%
 
+    Lean split (``compose_lean=True``, activated with Phase A):
+      - generate: 15%
+      - enrich: 10%
+      - review_names: 30%
+      - review_docs: 30%
+      - regen: 15%
+
     Non-LLM phases (reconcile, link) have zero cost.
+
+    ``compose_lean`` is the Phase A/B coordination flag.  Set it to
+    ``True`` only after the lean compose prompt lands; ``False`` preserves
+    legacy behaviour so Phase B merges safely before Phase A.
     """
 
     domain: str
@@ -103,12 +150,21 @@ class TurnConfig:
     skip_review: bool = False
     skip_regen: bool = False
     only: str | None = None
-    split: tuple[float, float, float, float, float] = TURN_SPLIT
+    compose_lean: bool = False
+    split: tuple[float, float, float, float, float] = field(
+        default_factory=lambda: TURN_SPLIT_LEGACY
+    )
     run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     turn_number: int = 1
     min_score: float | None = None
     source: str = "dd"
     override_edits: list[str] | None = None
+
+    def __post_init__(self) -> None:
+        # Always derive ``split`` from ``compose_lean`` so the two stay in sync.
+        # This ensures production behaviour is unchanged (compose_lean=False)
+        # until Phase A enables lean prompts.
+        self.split = _active_split(self)
 
     def phase_budget(self, index: int) -> float:
         """Return the cost budget allocated to LLM phase *index* (0–4).

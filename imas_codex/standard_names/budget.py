@@ -39,14 +39,21 @@ class BudgetLease:
         # Remaining 0.2 released to pool
     """
 
-    __slots__ = ("_mgr", "_reserved", "_lease_id", "_charged", "_released")
+    __slots__ = ("_mgr", "_reserved", "_lease_id", "_charged", "_released", "_phase")
 
-    def __init__(self, manager: BudgetManager, reserved: float, lease_id: str) -> None:
+    def __init__(
+        self,
+        manager: BudgetManager,
+        reserved: float,
+        lease_id: str,
+        phase: str = "",
+    ) -> None:
         self._mgr = manager
         self._reserved = reserved
         self._lease_id = lease_id
         self._charged = 0.0
         self._released = False
+        self._phase = phase
 
     # ------------------------------------------------------------------
     # Properties
@@ -70,6 +77,11 @@ class BudgetLease:
     @property
     def lease_id(self) -> str:
         return self._lease_id
+
+    @property
+    def phase(self) -> str:
+        """Phase tag this lease is attributed to (empty string if untagged)."""
+        return self._phase
 
     # ------------------------------------------------------------------
     # Charge / release
@@ -177,7 +189,8 @@ class BudgetLease:
 
     def __repr__(self) -> str:
         return (
-            f"BudgetLease(id={self._lease_id!r}, reserved={self._reserved:.4f}, "
+            f"BudgetLease(id={self._lease_id!r}, phase={self._phase!r}, "
+            f"reserved={self._reserved:.4f}, "
             f"charged={self._charged:.4f}, released={self._released})"
         )
 
@@ -201,32 +214,71 @@ class BudgetManager:
     Invariant: ``pool + sum(active_reserved) + spent == total``
     """
 
-    def __init__(self, total_budget: float) -> None:
+    def __init__(
+        self,
+        total_budget: float,
+        phase_caps: dict[str, float] | None = None,
+    ) -> None:
         self._total = total_budget
         self._pool = total_budget
         self._reserved: dict[str, float] = {}  # lease_id → remaining reservation
         self._spent = 0.0
         self._batch_count = 0
         self._lock = threading.Lock()
+        # Per-phase hard caps.  Keys are phase names; values are the cap in
+        # dollars.  Reservations that would push a phase's total committed
+        # budget beyond cap × 1.5 are rejected.
+        self._phase_caps: dict[str, float] = phase_caps or {}
+        # Running total of amounts reserved for each tagged phase (cumulative;
+        # not decremented on release so over-reservation is prevented even
+        # after partial refunds).
+        self._phase_committed: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Reserve
     # ------------------------------------------------------------------
 
-    def reserve(self, amount: float) -> BudgetLease | None:
+    def reserve(self, amount: float, phase: str = "") -> BudgetLease | None:
         """Atomically reserve *amount* from the pool.
 
         Returns a :class:`BudgetLease` on success, ``None`` if the pool
-        has insufficient funds.
+        has insufficient funds or the named *phase* would exceed its hard
+        cap (``phase_caps[phase] × 1.5``).
+
+        Args:
+            amount: Amount to reserve.
+            phase: Optional phase tag (e.g. ``"compose"``, ``"review_names"``).
+                When a cap is configured for this phase, the reservation is
+                rejected if it would push the phase's cumulative committed
+                spend beyond ``cap × 1.5``.
         """
         with self._lock:
+            # ── Per-phase cap check ────────────────────────────────────────
+            if phase and phase in self._phase_caps:
+                cap = self._phase_caps[phase]
+                committed = self._phase_committed.get(phase, 0.0)
+                if committed + amount > cap * 1.5 + EPSILON:
+                    logger.debug(
+                        "Phase %r cap exceeded: committed=%.4f + amount=%.4f"
+                        " > cap*1.5=%.4f — reservation rejected",
+                        phase,
+                        committed,
+                        amount,
+                        cap * 1.5,
+                    )
+                    return None
+            # ── Global pool check ──────────────────────────────────────────
             if self._pool < amount - EPSILON:
                 return None
             lease_id = str(uuid.uuid4())
             self._pool -= amount
             self._reserved[lease_id] = amount
             self._batch_count += 1
-            return BudgetLease(self, amount, lease_id)
+            if phase:
+                self._phase_committed[phase] = (
+                    self._phase_committed.get(phase, 0.0) + amount
+                )
+            return BudgetLease(self, amount, lease_id, phase=phase)
 
     # ------------------------------------------------------------------
     # Internal helpers (called by BudgetLease)
@@ -305,6 +357,7 @@ class BudgetManager:
                 "active_reservations": len(self._reserved),
                 "total_reserved": sum(self._reserved.values()),
                 "batch_count": self._batch_count,
+                "phase_committed": dict(self._phase_committed),
             }
 
     def check_invariant(self) -> bool:
