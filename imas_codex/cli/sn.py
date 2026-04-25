@@ -2423,6 +2423,104 @@ def sn_clear(dry_run: bool, force: bool, no_comment_export: bool) -> None:
         raise SystemExit(1) from e
 
 
+@sn.command("reset-domain")
+@click.option(
+    "--domain",
+    "physics_domain",
+    required=True,
+    type=_PHYSICS_DOMAIN_CHOICE,
+    help="Physics domain whose StandardNameSource nodes should be reset.",
+)
+@click.option(
+    "--hard",
+    is_flag=True,
+    default=False,
+    help="DETACH DELETE the SNS nodes entirely (recreated on next sn run extract).",
+)
+@click.option("--dry-run", is_flag=True, help="Report counts only — no writes.")
+def sn_reset_domain(physics_domain: str, hard: bool, dry_run: bool) -> None:
+    """Reset stuck StandardNameSource nodes for a physics domain.
+
+    Default (soft reset): clears ``claimed_at`` / ``claim_token`` and
+    resets ``status`` to ``extracted`` so abandoned nodes can be reclaimed
+    on the next ``sn run``.
+
+    ``--hard``: DETACH DELETE the SNS nodes entirely.  They will be
+    re-created automatically when ``sn run`` next extracts that domain.
+
+    ``--dry-run``: print the affected count only; no graph writes.
+
+    \b
+    Examples:
+      imas-codex sn reset-domain --domain magnetics --dry-run
+      imas-codex sn reset-domain --domain magnetics
+      imas-codex sn reset-domain --domain equilibrium --hard
+    """
+    from imas_codex.graph.client import GraphClient
+
+    try:
+        with GraphClient() as gc:
+            # Count affected nodes
+            count_rows = gc.query(
+                """
+                MATCH (sns:StandardNameSource)
+                WHERE (sns)-[:FROM_DD_PATH]->(:IMASNode {physics_domain: $domain})
+                   OR sns.physics_domain = $domain
+                RETURN count(sns) AS n
+                """,
+                domain=physics_domain,
+            )
+            affected = count_rows[0]["n"] if count_rows else 0
+
+            if affected == 0:
+                console.print(
+                    f"No StandardNameSource nodes found for domain [bold]{physics_domain}[/bold]."
+                )
+                return
+
+            action = "DETACH DELETE" if hard else "soft reset (clear claims)"
+            console.print(
+                f"[bold]{affected}[/bold] SNS node(s) for domain "
+                f"[bold]{physics_domain}[/bold] would be affected ({action})."
+            )
+
+            if dry_run:
+                return
+
+            if hard:
+                gc.query(
+                    """
+                    MATCH (sns:StandardNameSource)
+                    WHERE (sns)-[:FROM_DD_PATH]->(:IMASNode {physics_domain: $domain})
+                       OR sns.physics_domain = $domain
+                    DETACH DELETE sns
+                    """,
+                    domain=physics_domain,
+                )
+                console.print(
+                    f"[green]Deleted {affected} SNS node(s) for domain {physics_domain}.[/green]"
+                )
+            else:
+                gc.query(
+                    """
+                    MATCH (sns:StandardNameSource)
+                    WHERE (sns)-[:FROM_DD_PATH]->(:IMASNode {physics_domain: $domain})
+                       OR sns.physics_domain = $domain
+                    SET sns.status = 'extracted',
+                        sns.claimed_at = null,
+                        sns.claim_token = null
+                    """,
+                    domain=physics_domain,
+                )
+                console.print(
+                    f"[green]Reset {affected} SNS node(s) for domain {physics_domain} "
+                    f"to extracted status.[/green]"
+                )
+    except Exception as e:
+        console.print(f"[red]reset-domain error:[/red] {e}")
+        raise SystemExit(1) from e
+
+
 @sn.command("analyse-comments")
 @click.option(
     "--input-glob",
