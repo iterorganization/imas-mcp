@@ -1330,8 +1330,57 @@ class TestImplicitFieldDeviceWhitelist:
 
 
 # =========================================================================
-# C.5: causal_due_to_check — adjective-to-process map + suggested_fix
+# C.4b: implicit_field_check — use_exact_* exemption (W19A Issue 3)
 # =========================================================================
+
+
+class TestImplicitFieldUseExactExemption:
+    """Tests for use_exact_* prefix exemption in implicit_field_check.
+
+    Constraint selectors reference the field they constrain — the bare
+    ``_field`` token is part of the constraint target name, not a
+    physics-field concept that needs qualifying.
+    """
+
+    def test_pass_use_exact_vacuum_toroidal_field_constraint(self):
+        """use_exact_vacuum_toroidal_field_constraint must not be penalised."""
+        from imas_codex.standard_names.audits import implicit_field_check
+
+        assert (
+            implicit_field_check({"id": "use_exact_vacuum_toroidal_field_constraint"})
+            == []
+        )
+
+    def test_pass_use_exact_poloidal_field_probe(self):
+        """use_exact_poloidal_field_probe must not be penalised."""
+        from imas_codex.standard_names.audits import implicit_field_check
+
+        assert (
+            implicit_field_check(
+                {"id": "use_exact_poloidal_magnetic_field_probe_constraint"}
+            )
+            == []
+        )
+
+    def test_pass_use_exact_with_bare_field(self):
+        """Even with bare _field, use_exact prefix exempts."""
+        from imas_codex.standard_names.audits import implicit_field_check
+
+        assert implicit_field_check({"id": "use_exact_toroidal_field"}) == []
+
+    def test_fail_bare_field_non_use_exact_still_caught(self):
+        """Non-use_exact names with bare _field must still be flagged."""
+        from imas_codex.standard_names.audits import implicit_field_check
+
+        issues = implicit_field_check({"id": "vacuum_toroidal_field"})
+        assert issues and "implicit_field_check" in issues[0]
+
+    def test_fail_bare_field_poloidal_still_caught(self):
+        """Non-use_exact poloidal_field must still be flagged."""
+        from imas_codex.standard_names.audits import implicit_field_check
+
+        issues = implicit_field_check({"id": "poloidal_field_strength"})
+        assert issues and "implicit_field_check" in issues[0]
 
 
 class TestCausalDueToSuggestedFix:

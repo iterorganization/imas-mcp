@@ -1435,6 +1435,12 @@ def implicit_field_check(candidate: dict[str, Any]) -> list[str]:
     # physics-field concept.
     if name in FIELD_DEVICE_WHITELIST or "_field_coil" in name:
         return []
+    # Constraint selectors (use_exact_*) reference the field they constrain
+    # and legitimately use bare "_field" in the constraint target name.
+    # Most are filtered by the extract-deny gate (W19A), but any that
+    # survive should not be penalised for the constraint target's phrasing.
+    if name.startswith("use_exact_"):
+        return []
     tokens = name.split("_")
     issues: list[str] = []
     for i, tok in enumerate(tokens):
