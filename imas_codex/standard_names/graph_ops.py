@@ -1302,11 +1302,12 @@ def write_name_review_results(
                 sn.reviewer_verdict_name = coalesce(b.reviewer_verdict_name, sn.reviewer_verdict_name),
                 sn.reviewer_model_name = coalesce(b.reviewer_model_name, sn.reviewer_model_name),
                 sn.review_tier = coalesce(b.review_tier, sn.review_tier),
-                sn.review_input_hash = b.review_input_hash
+                sn.review_input_hash = b.review_input_hash,
+                sn.reviewer_suggested_name = coalesce(nullIf(b.reviewer_suggested_name, ''), sn.reviewer_suggested_name)
             """,
             batch=[
                 {
-                    "id": e["id"],
+                    "id": e.get("_original_id") or e["id"],
                     "reviewer_score_name": e.get("reviewer_score"),
                     "reviewed_name_at": e.get("reviewed_at"),
                     "reviewer_scores_name": _ensure_json(e.get("reviewer_scores")),
@@ -1318,6 +1319,7 @@ def write_name_review_results(
                     "reviewer_model_name": e.get("reviewer_model"),
                     "review_tier": e.get("review_tier"),
                     "review_input_hash": e.get("review_input_hash"),
+                    "reviewer_suggested_name": e.get("_suggested_name") or "",
                 }
                 for e in entries
             ],

@@ -459,6 +459,14 @@ classes:
         description: >-
           Name-axis verdict (accept, reject, or revise). Written by
           ``mode="name"`` review only.
+      reviewer_suggested_name:
+        description: >-
+          Reviewer-proposed replacement name when verdict is ``revise``.
+          Set by the name-review phase when the LLM suggests a different
+          identifier.  The original ``id`` is preserved; this field records
+          the suggestion for human editorial follow-up.  Null when the
+          verdict is accept or reject.
+        range: string
       reviewer_model_name:
         description: LLM model that produced the most recent name-axis review.
       reviewed_name_at:

@@ -102,7 +102,7 @@ def _build_review_record(
     comments_per_dim: dict | None = None,
 ) -> dict:
     """Build a Review graph record for a scored item."""
-    sn_id = item.get("id") or ""
+    sn_id = item.get("_original_id") or item.get("id") or ""
     if not sn_id or not model or not reviewed_at:
         return {}
     rid = f"{sn_id}:{_model_slug(model)}:{reviewed_at}"
@@ -1454,7 +1454,9 @@ def _match_reviews_to_entries(
                 scored.append(original)
                 continue
             revised_entry = dict(original)
-            revised_entry["id"] = review.revised_name
+            revised_entry["_original_id"] = original["id"]  # preserve real SN id
+            revised_entry["_suggested_name"] = review.revised_name  # record suggestion
+            # do NOT overwrite revised_entry["id"] — keeps MATCH on SN node correct
             if review.revised_fields:
                 for key, value in review.revised_fields.items():
                     if key in revised_entry:
