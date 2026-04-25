@@ -1,0 +1,113 @@
+# Extract-phase deny rules: DD paths excluded from standard name generation.
+#
+# These paths pass the SN_SOURCE_CATEGORIES gate (their node_category is
+# quantity or geometry) and the leaf invariant, but they are NOT meaningful
+# standard-name candidates.  Instead of inflating the compose/review budget
+# on names that reviewers will score 0.2–0.4, we filter them at extraction
+# time and record a StandardNameSource with status='skipped'.
+#
+# Architecture choice: Option B from W19A plan.  The DD classifier's
+# node_category is correct (these ARE geometry/quantity leaves), but the
+# standard-name pipeline needs a finer gate.  A DD rebuild (Option A/C)
+# would be the cleanest long-term fix, but it's a separate massive operation.
+#
+# Path pattern syntax: glob-style (same as unit_overrides.yaml).
+#   "*"  matches a single path segment (no "/")
+#   "**" matches zero or more path segments
+#
+# Each rule has:
+#   path_pattern:  glob pattern matched against full DD path
+#   skip_reason:   machine-readable label (stored on StandardNameSource)
+#   reason:        human-readable explanation
+
+version: 1
+
+rules:
+  # -------------------------------------------------------------------------
+  # Class 1 — Boolean constraint selectors
+  #
+  # Equilibrium constraint flags (use_exact_*) are solver configuration
+  # parameters.  They select which constraints are active, not physical
+  # quantities.  W16-W18 showed these score 0.22–0.40 in review.
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/use_exact_*"
+    skip_reason: "boolean_constraint_selector"
+    reason: >-
+      Boolean constraint selector for equilibrium solver; not a physical
+      quantity.  Solver configuration flag that enables/disables a specific
+      constraint — should not receive a standard name.
+
+  # -------------------------------------------------------------------------
+  # Class 2 — Engineering coil geometry
+  #
+  # Oblique cross-section dimensions, element area, corner positions,
+  # and passive loop geometry in pf_active/pf_passive IDSs.  These are
+  # engineering design parameters of the machine, not physics quantities.
+  # W18B showed these comprise ~30-40% of magnetic_field_systems low-score
+  # names.
+  # -------------------------------------------------------------------------
+  - path_pattern: "pf_active/*/element/*/geometry/oblique/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Oblique cross-section geometry of PF active coil elements — engineering
+      design parameter, not a measurable physics quantity.
+
+  - path_pattern: "pf_active/*/element/*/geometry/arcs_of_circle/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Arcs-of-circle cross-section geometry of PF active coil elements —
+      engineering design parameter.
+
+  - path_pattern: "pf_active/*/element/*/geometry/outline/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Outline cross-section geometry of PF active coil elements —
+      engineering design parameter.
+
+  - path_pattern: "pf_active/*/element/*/geometry/rectangle/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Rectangle cross-section geometry of PF active coil elements —
+      engineering design parameter.
+
+  - path_pattern: "pf_passive/*/element/*/geometry/oblique/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Oblique cross-section geometry of PF passive loop elements —
+      engineering design parameter.
+
+  - path_pattern: "pf_passive/*/element/*/geometry/arcs_of_circle/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Arcs-of-circle cross-section geometry of PF passive loop elements —
+      engineering design parameter.
+
+  - path_pattern: "pf_passive/*/element/*/geometry/outline/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Outline cross-section geometry of PF passive loop elements —
+      engineering design parameter.
+
+  - path_pattern: "pf_passive/*/element/*/geometry/rectangle/*"
+    skip_reason: "engineering_coil_geometry"
+    reason: >-
+      Rectangle cross-section geometry of PF passive loop elements —
+      engineering design parameter.
+
+  # -------------------------------------------------------------------------
+  # Class 3 — Force/weight combination matrices
+  #
+  # Control-system parameters: matrices describing how active coil forces
+  # are combined.  Not measurable physics quantities.
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/force_self_per_unit_length"
+    skip_reason: "control_system_parameter"
+    reason: >-
+      Self-force per unit length in coil force combination — control-system
+      engineering parameter, not a physics quantity.
+
+  - path_pattern: "**/force_other_per_unit_length"
+    skip_reason: "control_system_parameter"
+    reason: >-
+      Cross-force per unit length in coil force combination — control-system
+      engineering parameter, not a physics quantity.

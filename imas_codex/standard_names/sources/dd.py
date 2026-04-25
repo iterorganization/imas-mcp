@@ -206,6 +206,69 @@ def _apply_skip_by_design(
     return kept
 
 
+def _apply_extract_deny(
+    results: list[dict],
+    *,
+    source_type: str = "dd",
+    write_skipped: bool = True,
+) -> list[dict]:
+    """Filter out paths matched by the extract-deny YAML config.
+
+    Counterpart to :func:`_apply_skip_by_design` but driven by the
+    ``config/extract_deny.yaml`` rule set. Catches paths that pass the
+    ``SN_SOURCE_CATEGORIES`` gate (correct ``node_category``) but are
+    poor standard-name candidates: boolean constraint selectors,
+    engineering coil geometry, control-system parameters, etc.
+
+    Writes ``StandardNameSource`` rows with ``status='skipped'`` so the
+    audit layer can account for denied paths.
+
+    Returns the filtered list of kept rows (denied ones removed).
+    """
+    from imas_codex.standard_names.extract_deny import match_deny_rule
+
+    kept: list[dict] = []
+    skip_records: list[dict] = []
+
+    for row in results:
+        path = row.get("path") or ""
+        rule = match_deny_rule(path)
+        if rule is not None:
+            skip_records.append(
+                {
+                    "source_type": source_type,
+                    "source_id": path,
+                    "skip_reason": rule.skip_reason,
+                    "skip_reason_detail": rule.reason,
+                    "description": row.get("description") or "",
+                }
+            )
+            continue
+        kept.append(row)
+
+    if skip_records:
+        logger.info(
+            "Extract deny gate filtered %d paths (%d kept)",
+            len(skip_records),
+            len(kept),
+        )
+
+    if write_skipped and skip_records:
+        try:
+            from imas_codex.standard_names.graph_ops import write_skipped_sources
+
+            written = write_skipped_sources(skip_records)
+            logger.info("Recorded %d extract-deny DD sources", written)
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "Failed to write extract-deny DD sources to graph: %s (%d records)",
+                exc,
+                len(skip_records),
+            )
+
+    return kept
+
+
 # Enriched extraction query — single Cypher surfacing all context.
 # LIMIT is applied on DISTINCT (n, ids) pairs first, then clusters/coords
 # are joined.  This guarantees $limit unique paths regardless of how many
@@ -548,6 +611,15 @@ def extract_dd_candidates(
         results = _apply_skip_by_design(results, source_type="dd")
         if not results:
             logger.info("No DD paths remain after skip-by-design filtering")
+            return []
+
+        # Extract-phase deny gate (W19A): skip paths that pass the
+        # SN_SOURCE_CATEGORIES gate but should not receive standard names.
+        # Examples: boolean constraint selectors (use_exact_*), engineering
+        # coil geometry, control-system force matrices.
+        results = _apply_extract_deny(results, source_type="dd")
+        if not results:
+            logger.info("No DD paths remain after extract deny filtering")
             return []
 
         # Collect cluster IDs for sibling lookup
