@@ -79,6 +79,10 @@ STRUCTURAL_KEYWORDS: frozenset[str] = frozenset(
         "selector",
         "interpolation",
         "position",
+        # W37: structural config flags / enumerations
+        "closed",
+        "spacing",
+        "transformation",
     }
 )
 
@@ -112,6 +116,18 @@ _METADATA_SUBTREES: frozenset[str] = frozenset({"ids_properties", "code"})
 # Generic metadata leaf names (depth ≥ 3)
 _METADATA_LEAVES: frozenset[str] = frozenset(
     {"description", "name", "comment", "source", "provider"}
+)
+
+# ──────────────────────────────────────────────────────────────────
+# Hardware / engineering metadata constants
+# ──────────────────────────────────────────────────────────────────
+
+#: Non-leaf path segments identifying hardware-configuration subtrees.
+#: All children of these containers describe instrument internals
+#: (ADC settings, detector pixel layout, detector image geometry)
+#: rather than measured or computed physics quantities.
+_HARDWARE_SUBTREE_SEGMENTS: frozenset[str] = frozenset(
+    {"adc", "detector_layout", "detector_image"}
 )
 
 # ──────────────────────────────────────────────────────────────────
@@ -406,6 +422,26 @@ def classify_node_pass1(
     # exclude from SN extraction until DD is corrected.
     if _DIAMAGNETIC_AXIS_RE.match(path):
         return "representation"
+
+    # ── Hardware / engineering metadata rules ──
+
+    # Rule M1: Hardware-configuration subtree → metadata
+    # Children of ADC, detector_layout, detector_image containers describe
+    # instrument internals, not measured/computed physics quantities.
+    if any(seg in _HARDWARE_SUBTREE_SEGMENTS for seg in parts[:-1]):
+        return "metadata"
+
+    # Rule M2: Engineering operational limits → metadata
+    # Names ending in _limit_max / _limit_min define machine-protection
+    # envelopes (max current, max temperature, …), not physics measurements.
+    if last_seg.endswith("_limit_max") or last_seg.endswith("_limit_min"):
+        return "metadata"
+
+    # Rule M3: Instrument-specification suffixes → metadata
+    # E.g. bandwidth_3db describes the probe's frequency response, not
+    # a plasma physics quantity.
+    if last_seg.endswith("_3db"):
+        return "metadata"
 
     # Rule 9a: Physics leaf type + spatial unit + geometry ancestor → geometry
     if dt in PHYSICS_LEAF_TYPES and unit_str and unit_str not in _NO_UNIT:

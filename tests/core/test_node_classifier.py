@@ -957,3 +957,331 @@ class TestFitChildPromotionPass2:
             name="some_field",
         )
         assert result == "identifier"
+
+
+# ──────────────────────────────────────────────────────────────────
+# Hardware subtree classification (Rule M1)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestHardwareSubtreePass1:
+    """Tests for hardware-configuration subtree → metadata (Rule M1)."""
+
+    @pytest.mark.parametrize(
+        "path,name,data_type,unit",
+        [
+            # ADC subtree — instrument configuration
+            ("neutron_diagnostic/detector/adc/bias", "bias", "FLT_0D", None),
+            (
+                "neutron_diagnostic/detector/adc/input_range",
+                "input_range",
+                "FLT_0D",
+                None,
+            ),
+            ("neutron_diagnostic/detector/adc/impedance", "impedance", "FLT_0D", None),
+            (
+                "neutron_diagnostic/detector/adc/sampling_rate",
+                "sampling_rate",
+                "INT_0D",
+                None,
+            ),
+            (
+                "neutron_diagnostic/detectors/adc/discriminator_level_lower",
+                "discriminator_level_lower",
+                "INT_0D",
+                None,
+            ),
+            # detector_layout subtree — pixel configuration
+            (
+                "spectrometer_uv/channel/detector_layout/detector_dimensions",
+                "detector_dimensions",
+                "FLT_1D",
+                "m",
+            ),
+            (
+                "spectrometer_uv/channel/detector_layout/pixel_dimensions",
+                "pixel_dimensions",
+                "FLT_1D",
+                "m",
+            ),
+            # detector_image subtree — image shape configuration
+            (
+                "spectrometer_visible/channel/detector_image/circular/radius",
+                "radius",
+                "FLT_0D",
+                "m",
+            ),
+            (
+                "spectrometer_visible/channel/detector_image/circular/ellipticity",
+                "ellipticity",
+                "FLT_0D",
+                "1",
+            ),
+        ],
+    )
+    def test_hardware_subtree_metadata(self, path, name, data_type, unit):
+        result = classify_node_pass1(path, name, data_type=data_type, unit=unit)
+        assert result == "metadata"
+
+    @pytest.mark.parametrize(
+        "path,name,data_type,unit,expected",
+        [
+            # Physics quantities that happen to be near hardware paths
+            # — must NOT be captured by the hardware rule
+            (
+                "neutron_diagnostic/detector/mode/count_rate",
+                "count_rate",
+                "FLT_0D",
+                "s^-1",
+                "quantity",
+            ),
+            # Detector temperature as a direct leaf (not under hardware subtree)
+            (
+                "spectrometer_mass/detector_voltage",
+                "detector_voltage",
+                "FLT_0D",
+                "V",
+                "quantity",
+            ),
+            # Physics quantity with 'detector' in ancestor (but not a hardware
+            # subtree segment)
+            (
+                "bolometer/channel/detector/centre/r",
+                "r",
+                "FLT_0D",
+                "m",
+                "geometry",
+            ),
+        ],
+    )
+    def test_hardware_subtree_no_false_positives(
+        self, path, name, data_type, unit, expected
+    ):
+        result = classify_node_pass1(path, name, data_type=data_type, unit=unit)
+        assert result == expected
+
+
+# ──────────────────────────────────────────────────────────────────
+# Engineering limits classification (Rule M2)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestEngineeringLimitsPass1:
+    """Tests for engineering limits → metadata (Rule M2)."""
+
+    @pytest.mark.parametrize(
+        "path,name,data_type,unit",
+        [
+            # Temperature limits
+            (
+                "divertors/divertor/target/temperature_limit_max",
+                "temperature_limit_max",
+                "FLT_0D",
+                "K",
+            ),
+            (
+                "breeding_blanket/steel_temperature_limit_max",
+                "steel_temperature_limit_max",
+                "FLT_0D",
+                "K",
+            ),
+            # Current limits
+            (
+                "pf_active/supply/current_limit_max",
+                "current_limit_max",
+                "FLT_0D",
+                "A",
+            ),
+            (
+                "pf_active/supply/current_limit_min",
+                "current_limit_min",
+                "FLT_0D",
+                "A",
+            ),
+            # Voltage limits
+            (
+                "pf_active/supply/voltage_limit_max",
+                "voltage_limit_max",
+                "FLT_0D",
+                "V",
+            ),
+            # Count-rate limits
+            (
+                "neutron_diagnostic/characteristics/reaction/mode/count_limit_max",
+                "count_limit_max",
+                "FLT_0D",
+                "cps",
+            ),
+            (
+                "neutron_diagnostic/detector/mode/count_limit_min",
+                "count_limit_min",
+                "FLT_0D",
+                "s^-1",
+            ),
+            # Heat flux limits
+            (
+                "divertors/divertor/target/heat_flux_steady_limit_max",
+                "heat_flux_steady_limit_max",
+                "FLT_0D",
+                "W.m^-2",
+            ),
+            # Spatial extent limits (position envelopes)
+            (
+                "ec_launchers/beam/launching_position/r_limit_max",
+                "r_limit_max",
+                "FLT_0D",
+                "m",
+            ),
+            (
+                "ec_launchers/beam/launching_position/r_limit_min",
+                "r_limit_min",
+                "FLT_0D",
+                "m",
+            ),
+            # Energy limits
+            (
+                "pf_active/coil/energy_limit_max",
+                "energy_limit_max",
+                "FLT_0D",
+                "J",
+            ),
+        ],
+    )
+    def test_engineering_limit_metadata(self, path, name, data_type, unit):
+        result = classify_node_pass1(path, name, data_type=data_type, unit=unit)
+        assert result == "metadata"
+
+    @pytest.mark.parametrize(
+        "path,name,data_type,unit",
+        [
+            # Physics quantities with 'limit' in name but NOT _limit_max/_limit_min
+            (
+                "summary/global_quantities/beta_limit",
+                "beta_limit",
+                "FLT_0D",
+                "-",
+            ),
+            (
+                "summary/global_quantities/density_limit",
+                "density_limit",
+                "FLT_0D",
+                "m^-3",
+            ),
+            # Physics boundary quantities
+            (
+                "core_profiles/profiles_1d/grid/psi_boundary",
+                "psi_boundary",
+                "FLT_0D",
+                "Wb",
+            ),
+        ],
+    )
+    def test_engineering_limit_no_false_positives(self, path, name, data_type, unit):
+        """Physics quantities with 'limit'/'boundary' must stay quantity."""
+        result = classify_node_pass1(path, name, data_type=data_type, unit=unit)
+        assert result == "quantity"
+
+
+# ──────────────────────────────────────────────────────────────────
+# Instrument-specification suffix (Rule M3)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestInstrumentSpecPass1:
+    """Tests for instrument-specification suffixes → metadata (Rule M3)."""
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            ("magnetics/b_field_pol_probe/bandwidth_3db", "bandwidth_3db"),
+            ("magnetics/b_field_phi_probe/bandwidth_3db", "bandwidth_3db"),
+            ("magnetics/b_field_tor_probe/bandwidth_3db", "bandwidth_3db"),
+            ("magnetics/bpol_probe/bandwidth_3db", "bandwidth_3db"),
+        ],
+    )
+    def test_3db_metadata(self, path, name):
+        result = classify_node_pass1(path, name, data_type="FLT_1D")
+        assert result == "metadata"
+
+    def test_non_3db_bandwidth_stays_quantity(self):
+        """IF bandwidth (without _3db) is a physics quantity, keep it."""
+        result = classify_node_pass1(
+            "ece/channel/if_bandwidth",
+            "if_bandwidth",
+            data_type="FLT_0D",
+        )
+        # if_bandwidth doesn't end with _3db → not caught by M3
+        assert result == "quantity"
+
+
+# ──────────────────────────────────────────────────────────────────
+# Extended STRUCTURAL_KEYWORDS (W37 additions)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestExtendedStructuralKeywords:
+    """Tests for W37 structural keyword additions: closed, spacing, transformation."""
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            # Outline closure flags
+            (
+                "wall/description_2d/vessel/unit/annular/outline_outer/closed",
+                "closed",
+            ),
+            (
+                "wall/description_2d/vessel/unit/annular/outline_inner/closed",
+                "closed",
+            ),
+            (
+                "cryostat/vacuum_vessel/annular/outline_inner/closed",
+                "closed",
+            ),
+            # Grid spacing mode
+            (
+                "amns_data/coordinate_system/coordinate/spacing",
+                "spacing",
+            ),
+            # Coordinate transformation mode
+            (
+                "amns_data/coordinate_system/coordinate/transformation",
+                "transformation",
+            ),
+            # result_transformation — also caught by substring match
+            (
+                "amns_data/process/result_transformation",
+                "result_transformation",
+            ),
+        ],
+    )
+    def test_structural_config_flags(self, path, name):
+        result = classify_node_pass1(path, name, data_type="INT_0D")
+        assert result == "structural"
+
+    def test_safety_factor_stays_quantity(self):
+        """safety_factor (dimensionless, unit='1') must remain quantity."""
+        result = classify_node_pass1(
+            "equilibrium/time_slice/global_quantities/q_95",
+            "q_95",
+            data_type="FLT_0D",
+        )
+        assert result == "quantity"
+
+    def test_elongation_stays_quantity(self):
+        """Dimensionless geometry ratio must remain quantity."""
+        result = classify_node_pass1(
+            "equilibrium/time_slice/boundary/elongation",
+            "elongation",
+            data_type="FLT_0D",
+        )
+        assert result == "quantity"
+
+    def test_beta_pol_stays_quantity(self):
+        """Dimensionless plasma beta must remain quantity."""
+        result = classify_node_pass1(
+            "equilibrium/time_slice/global_quantities/beta_pol",
+            "beta_pol",
+            data_type="FLT_0D",
+        )
+        assert result == "quantity"
