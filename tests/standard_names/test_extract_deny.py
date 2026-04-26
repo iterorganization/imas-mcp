@@ -3,14 +3,15 @@
 Validates that paths matched by ``config/extract_deny.yaml`` rules are
 excluded from standard-name extraction and recorded as skipped SNS nodes.
 
-Covers five denial classes:
+Covers denial classes:
 1. Boolean constraint selectors (equilibrium /exact fields)
 2. Engineering coil geometry (pf_active/pf_passive element & coil level)
 3. Control-system parameters (force_self_per_unit_length)
-4. Metadata uncertainty index fields
+4. Metadata uncertainty / error index fields
 5. GGD structural grid object geometry
+6. Temporal coordinate arrays (W22A)
 
-Tests use ACTUAL DD path strings harvested from the graph in W21 recon.
+Tests use ACTUAL DD path strings harvested from the graph in W21/W22A recon.
 """
 
 from __future__ import annotations
@@ -120,13 +121,16 @@ class TestLoadRules:
             assert rule.reason, f"Rule missing reason: {rule}"
 
     def test_has_five_deny_classes(self) -> None:
-        """All five skip_reason classes must be present in the config."""
+        """All core skip_reason classes must be present in the config."""
         reasons = {r.skip_reason for r in _load_rules()}
         assert "boolean_constraint_selector" in reasons
         assert "engineering_coil_geometry" in reasons
         assert "control_system_parameter" in reasons
         assert "metadata_uncertainty_index" in reasons
         assert "ggd_structural_geometry" in reasons
+        # W22A additions
+        assert "error_index_metadata" in reasons
+        assert "temporal_coordinate" in reasons
 
 
 class TestMatchDenyRule:
@@ -283,6 +287,34 @@ class TestMatchDenyRule:
         assert rule is not None
         assert rule.skip_reason == "metadata_uncertainty_index"
 
+    # --- Class 4b: *_error_index paths (W22A — actual DD paths) ---
+
+    def test_error_index_top_level_denied(self) -> None:
+        """amns_data/a_error_index — error index bookkeeping field."""
+        rule = match_deny_rule("amns_data/a_error_index")
+        assert rule is not None
+        assert rule.skip_reason == "error_index_metadata"
+
+    def test_error_index_nested_denied(self) -> None:
+        """amns_data/coordinate_system/coordinate/values_error_index."""
+        rule = match_deny_rule(
+            "amns_data/coordinate_system/coordinate/values_error_index"
+        )
+        assert rule is not None
+        assert rule.skip_reason == "error_index_metadata"
+
+    def test_error_index_table_denied(self) -> None:
+        """amns_data/process/charge_state/table_0d_error_index."""
+        rule = match_deny_rule("amns_data/process/charge_state/table_0d_error_index")
+        assert rule is not None
+        assert rule.skip_reason == "error_index_metadata"
+
+    def test_error_index_tf_b_field_denied(self) -> None:
+        """tf/field_map/b_field_r/values_error_index — MFS-domain example."""
+        rule = match_deny_rule("tf/field_map/b_field_r/values_error_index")
+        assert rule is not None
+        assert rule.skip_reason == "error_index_metadata"
+
     # --- Class 5: GGD structural geometry ---
 
     def test_ggd_object_geometry_denied(self) -> None:
@@ -313,6 +345,52 @@ class TestMatchDenyRule:
         )
         assert rule is not None
         assert rule.skip_reason == "ggd_structural_geometry"
+
+    # --- Class 6: Temporal coordinate arrays (W22A) ---
+
+    def test_time_slice_time_denied(self) -> None:
+        """Depth-2 time path: equilibrium/time_slice/time — W22A rule."""
+        rule = match_deny_rule("equilibrium/time_slice/time")
+        assert rule is not None
+        assert rule.skip_reason == "temporal_coordinate"
+
+    def test_magnetics_ip_time_denied(self) -> None:
+        """Depth-2 time path: magnetics/ip/time — MFS signal time coord."""
+        rule = match_deny_rule("magnetics/ip/time")
+        assert rule is not None
+        assert rule.skip_reason == "temporal_coordinate"
+
+    def test_magnetics_nested_field_time_denied(self) -> None:
+        """Depth-3 time path: magnetics/bpol_probe/field/time."""
+        rule = match_deny_rule("magnetics/bpol_probe/field/time")
+        assert rule is not None
+        assert rule.skip_reason == "temporal_coordinate"
+
+    def test_pf_active_circuit_current_time_denied(self) -> None:
+        """Depth-3 time path: pf_active/circuit/current/time."""
+        rule = match_deny_rule("pf_active/circuit/current/time")
+        assert rule is not None
+        assert rule.skip_reason == "temporal_coordinate"
+
+    def test_deep_signal_time_denied(self) -> None:
+        """Depth-4 time path: bolometer/camera/channel/power/time."""
+        rule = match_deny_rule("bolometer/camera/channel/power/time")
+        assert rule is not None
+        assert rule.skip_reason == "temporal_coordinate"
+
+    # --- Top-level IDS time arrays must NOT be denied ---
+
+    def test_toplevel_magnetics_time_not_denied(self) -> None:
+        """magnetics/time (depth 1) is the IDS time coordinate — must pass through."""
+        assert match_deny_rule("magnetics/time") is None
+
+    def test_toplevel_equilibrium_time_not_denied(self) -> None:
+        """equilibrium/time (depth 1) — top-level IDS time array, not denied."""
+        assert match_deny_rule("equilibrium/time") is None
+
+    def test_toplevel_pf_active_time_not_denied(self) -> None:
+        """pf_active/time (depth 1) — top-level IDS time array, not denied."""
+        assert match_deny_rule("pf_active/time") is None
 
     # --- Paths that should NOT be denied ---
 

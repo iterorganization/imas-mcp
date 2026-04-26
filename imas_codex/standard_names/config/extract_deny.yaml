@@ -195,24 +195,71 @@ rules:
       engineering parameter, not a physics quantity.
 
   # -------------------------------------------------------------------------
-  # Class 4 — Metadata uncertainty index fields
+  # Class 4 — Metadata uncertainty / error index fields
   #
   # W20A/W20B found names of the form uncertainty_index_of_* scoring ~0.23–
   # 0.33.  These come from DD paths ending in *_error_index, which are
   # metadata bookkeeping fields (indices into a homogeneous error array),
-  # not physical quantities.  W21 reconnaissance: no paths literally named
-  # uncertainty_index exist in the current DD, but the pattern is retained
-  # as forward-looking protection.  The LLM appears to rename *_error_index
-  # paths as uncertainty_index_of_X during compose; those source paths are
-  # already filtered by the node_category gate in most cases.
-  # If future DD versions add uncertainty_index paths they will be caught
-  # here.
+  # not physical quantities.
+  #
+  # W22A reconnaissance: all 9853 *_error_index paths have node_category=error
+  # which is already excluded by the SN_SOURCE_CATEGORIES gate.  The
+  # **/*_error_index rule below adds an explicit audit-trail entry and
+  # provides forward-looking protection should the DD category assignment
+  # change.  Real DD paths (W22A sample):
+  #   tf/field_map/b_field_r/values_error_index
+  #   ferritic/object/time_slice/b_field_z_error_index
+  #   amns_data/process/charge_state/table_0d_error_index
+  #
+  # The **/uncertainty_index* rule is retained as forward-looking protection
+  # for any future path literally named uncertainty_index*.
   # -------------------------------------------------------------------------
+  - path_pattern: "**/*_error_index"
+    skip_reason: "error_index_metadata"
+    reason: >-
+      Error index metadata field — bookkeeping reference into a shared error
+      array (e.g. values_error_index, table_0d_error_index).  Not a physical
+      quantity; node_category=error already excludes these from the
+      SN_SOURCE_CATEGORIES gate.  This rule adds an explicit audit-trail
+      entry and guards against future category reassignment.
+
   - path_pattern: "**/uncertainty_index*"
     skip_reason: "metadata_uncertainty_index"
     reason: >-
       Uncertainty index metadata field — bookkeeping reference into a shared
       error array, not a physical quantity.
+
+  # -------------------------------------------------------------------------
+  # Class 6 — Temporal coordinate arrays
+  #
+  # DD /time paths have node_category=coordinate, which IS included in
+  # SN_SOURCE_CATEGORIES (coordinate, geometry, quantity).  This means all
+  # 578+ time coordinate arrays in the DD are extracted as SN candidates.
+  #
+  # W20B: 36 MFS /time paths produced 9 spurious time_of_* names (score
+  # ~0.2–0.35).  Time arrays are dimension coordinates for time-varying data,
+  # not physical quantities deserving a standard name.
+  #
+  # W22A reconnaissance: top-level IDS time arrays (<ids>/time, depth=1)
+  # are legitimate coordinate references; they are NOT caught by these rules.
+  # Nested time arrays (depth≥2) are measurement/profile time axes:
+  #   magnetics/bpol_probe/field/time       (depth 3 — signal time coord)
+  #   pf_active/circuit/current/time        (depth 3 — measurement time axis)
+  #   equilibrium/time_slice/time           (depth 2 — time_slice timestamp)
+  #   magnetics/ip/time                     (depth 2 — IP signal time coord)
+  # -------------------------------------------------------------------------
+  - path_pattern: "*/*/time"
+    skip_reason: "temporal_coordinate"
+    reason: >-
+      Depth-2 time coordinate array — dimension axis for a measurement or
+      profile structure, not a physical quantity.  Only top-level <ids>/time
+      arrays (depth 1) are exempted from this class.
+
+  - path_pattern: "*/*/**/time"
+    skip_reason: "temporal_coordinate"
+    reason: >-
+      Deeply nested time coordinate array (depth≥3) — dimension axis for
+      measurement data, not a physical quantity.
 
   # -------------------------------------------------------------------------
   # Class 5 — GGD structural grid object geometry

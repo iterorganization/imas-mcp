@@ -222,6 +222,7 @@ quantities. Return **SKIP** for any `_flag`-suffixed DD path.
 | `solver_configuration_flag` | SKIP (computational metadata) |
 | `limiter_contour_closure_flag` | SKIP (boolean geometry indicator — W11 violation) |
 | `vessel_element_outline_contour_closure_flag` | SKIP (boolean geometry indicator — W11 violation) |
+| `toroidal_field_coil_periodicity_flag` | SKIP (symmetry kind, not boolean — W22A violation) |
 | Any name ending in `_flag` | SKIP unconditionally |
 
 ### Positive rewrites for forced-fallback patterns
