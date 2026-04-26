@@ -1,13 +1,13 @@
-"""Tests for one-domain-per-turn rotation and turn-entry floor.
+"""Tests for one-domain-per-turn rotation and budget soft-limit gate.
 
 Plan 39, phase 5b: verifies that the SN loop uses stale-first rotation
 to pick ONE domain per turn, gives it the full remaining budget, and
-stops when budget drops below MIN_VIABLE_TURN.
+stops when remaining budget can no longer fund a single unit of work.
 
 Covers:
   - ``select_next_domain`` stale-first ordering
   - ``_pick_stalest_domain`` with null / dated SNRun.ended_at
-  - Turn-entry floor enforcement
+  - Budget gate enforcement (soft limit via ``EST_UNIT_COST``)
   - Loop iteration with domain rotation
   - Explicit ``--physics-domain`` bypass
 """
@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from imas_codex.standard_names.loop import (
-    MIN_VIABLE_TURN,
+    EST_UNIT_COST,
     _pick_stalest_domain,
     run_sn_loop,
     select_next_domain,
@@ -242,7 +242,7 @@ class TestLoopFloor:
     """Turn-entry floor enforcement."""
 
     async def test_stops_below_floor(self, caplog):
-        """Budget below MIN_VIABLE_TURN → immediate stop with INFO log."""
+        """Budget below EST_UNIT_COST → immediate stop with INFO log."""
         with (
             patch("imas_codex.standard_names.loop._write_sn_run"),
             patch(
@@ -251,7 +251,7 @@ class TestLoopFloor:
             ) as mock_turn,
         ):
             with caplog.at_level(logging.INFO, logger="imas_codex.standard_names.loop"):
-                summary = await run_sn_loop(cost_limit=0.50)
+                summary = await run_sn_loop(cost_limit=0.03)
 
         assert summary.stop_reason == "budget_exhausted"
         assert summary.cost_spent == 0.0
@@ -259,9 +259,9 @@ class TestLoopFloor:
         assert any("Budget exhausted" in m for m in caplog.messages)
 
     async def test_floor_constant_is_meaningful(self):
-        """MIN_VIABLE_TURN is positive and reasonable."""
-        assert MIN_VIABLE_TURN > 0.0
-        assert MIN_VIABLE_TURN <= 2.0  # sanity: not absurdly large
+        """EST_UNIT_COST is positive and small (soft limit, not a hard floor)."""
+        assert EST_UNIT_COST > 0.0
+        assert EST_UNIT_COST <= 0.10  # soft limit — much smaller than old $0.75 floor
 
 
 @pytest.mark.asyncio

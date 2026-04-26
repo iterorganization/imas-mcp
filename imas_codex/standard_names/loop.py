@@ -3,8 +3,8 @@
 Picks the stalest extract-eligible physics domain via stale-first
 rotation (oldest ``SNRun.ended_at`` wins, with eligible-source count as
 tiebreak), runs one :func:`run_turn` on it with the full remaining
-budget, and repeats until the budget drops below the turn-entry floor or
-no domain has eligible work.
+budget, and repeats until the remaining budget can no longer fund a
+single unit of work or no domain has eligible work.
 
 Entry point: :func:`run_sn_loop`.
 """
@@ -21,10 +21,10 @@ from imas_codex.core.node_categories import SN_SOURCE_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
-# Minimum remaining budget required to start a new turn.  Below this
-# threshold the loop stops cleanly — a viable turn needs enough budget
-# to fund at least one compose batch plus a review pass (~$0.75).
-MIN_VIABLE_TURN: float = 0.75
+# Estimated cost of one minimal unit of LLM work (a single compose or
+# review API call).  The loop continues scheduling turns while the
+# remaining budget exceeds this estimate — no fixed dollar floor.
+EST_UNIT_COST: float = 0.05
 
 
 @dataclass
@@ -267,8 +267,12 @@ async def run_sn_loop(
     Each iteration picks ONE domain via stale-first rotation (oldest
     ``SNRun.ended_at`` wins, eligible-source count as tiebreak) and
     runs a full turn on it with the entire remaining budget.  The loop
-    stops when the remaining budget drops below :data:`MIN_VIABLE_TURN`
-    or no domain has eligible work.
+    stops when the remaining budget can no longer fund a single unit of
+    work (< :data:`EST_UNIT_COST`) or no domain has eligible work.
+
+    Soft-limit semantics: the loop continues scheduling new turns while
+    ``remaining > EST_UNIT_COST``.  In-flight leases always settle
+    naturally — no truncation mid-LLM-call.
 
     When *only_domain* is set the rotation is bypassed — the explicit
     user choice is used every iteration until budget runs out or the
@@ -320,16 +324,17 @@ async def run_sn_loop(
 
     try:
         while True:
-            # ── Turn-entry floor ──────────────────────────────────
+            # ── Budget gate (soft limit) ──────────────────────────
             # Use the minimum of the local tracker and the shared manager's
-            # pool so both sources of truth contribute to the floor check.
+            # pool so both sources of truth contribute to the gate check.
+            # Continue while we can afford at least one more LLM call.
             remaining_budget = min(_remaining, shared_mgr.remaining)
-            if remaining_budget < MIN_VIABLE_TURN:
+            if remaining_budget < EST_UNIT_COST:
                 summary.stop_reason = "budget_exhausted"
                 logger.info(
-                    "Budget exhausted: $%.2f remaining < floor $%.2f",
+                    "Budget exhausted: $%.4f remaining < est unit cost $%.2f",
                     remaining_budget,
-                    MIN_VIABLE_TURN,
+                    EST_UNIT_COST,
                 )
                 break
 

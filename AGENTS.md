@@ -1188,6 +1188,69 @@ ISN owns grammar, vocabulary, and validation. Codex owns the pipeline, evaluatio
 
 **Rules:** Never import from ISN private modules. Never hardcode grammar rules — get them from `get_grammar_context()`. Review criteria and scoring live in codex (`sn_review_criteria.yaml`).
 
+### Vocabulary Rotation: ISN Fork RC Workflow
+
+When rotations surface novel `physical_base` tokens or other grammar segment candidates that are
+blocked by the current ISN vocabulary, follow this workflow to unblock naming without waiting for
+upstream editorial review.
+
+**When to use:**
+- Rotation surfaces ≥5 strong novel `physical_base` (or other grammar segment) candidates
+- An existing closed grammar segment is blocking high-value names
+- Auto-detected `VocabGap` nodes accumulate above a meaningful threshold (check via `sn gaps`)
+
+**The fork:** `~/Code/imas-standard-names` is `Simon-McIntosh/IMAS-Standard-Names` (origin).
+Upstream is `iterorganization/IMAS-Standard-Names`. The fork uses `hatch-vcs` for versioning
+(git tag-based) and GitHub Actions for CI + GitHub Releases. The dep in imas-codex is pinned
+to a git tag via `git+https://` URL, not a PyPI version.
+
+**Steps:**
+
+1. **Harvest** candidate tokens from rotation evidence — diff `VocabGap` nodes or
+   `_load_known_physical_bases()` against the current ISN vocabulary.
+2. **Rubber-duck review** each addition:
+   - Single-word base preferred; physical-quantity semantics only
+   - No overlap with existing tokens
+   - Not a unit name, geometry primitive already covered, or domain-specific compound
+     expressible via existing components
+   - Document in YAML with description + dimensions if applicable
+3. **Apply** changes on a feature branch in `~/Code/imas-standard-names`:
+   ```bash
+   cd ~/Code/imas-standard-names
+   git checkout -b w<XX>-vocab-<topic>
+   # Edit vocabulary files, commit
+   ```
+4. **Run ISN test suite:**
+   ```bash
+   cd ~/Code/imas-standard-names && uv run pytest
+   ```
+5. **Merge to main** and **mint RC release** via git tag + push:
+   ```bash
+   git checkout main && git merge w<XX>-vocab-<topic>
+   git tag -a v0.7.0rc<NN> -m "feat: <description>"
+   git push origin main && git push origin v0.7.0rc<NN>
+   ```
+   GitHub Actions creates a GitHub Release automatically. The imas-codex dep uses
+   `git+https://` pinned to a tag, so PyPI publishing is not required.
+6. **Bump** `imas-standard-names` rev in imas-codex `pyproject.toml` to the new
+   RC tag:
+   ```bash
+   cd ~/Code/imas-codex
+   # Update the @<tag> in the git+https:// URL in pyproject.toml (both occurrences)
+   ```
+7. **Sync** imas-codex: `uv sync`
+8. **Run SN tests** in imas-codex:
+   ```bash
+   uv run pytest tests/standard_names/ -x -q
+   ```
+9. **Re-rotate** vocab-bound domains to measure lift; commit with conventional message.
+
+**Editorial review** on iterorganization upstream PRs proceeds in parallel.
+Once merged upstream, bump the dep to the official commit in a follow-up.
+
+**Multi-RC chain is normal:** Rotate ISN vocabulary as many times as needed during
+bootstrap. Each RC unblocks a batch of vocab-gapped names.
+
 ### Prompt Context Injection
 
 Four context channels are injected per-item into compose, review, and enrich prompts:

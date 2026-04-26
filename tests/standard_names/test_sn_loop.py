@@ -175,7 +175,7 @@ class TestRunDdCompletion:
 
         # run_turn burns the full budget on the selected domain.
         # With one-domain-per-turn rotation, remaining drops below
-        # MIN_VIABLE_TURN and the loop stops.
+        # EST_UNIT_COST and the loop stops.
 
         def make_results(*_args, **_kwargs):
             return [
@@ -365,9 +365,10 @@ class TestStallDetection:
             ),
             patch("imas_codex.standard_names.loop._write_sn_run"),
         ):
-            summary = await run_sn_loop(cost_limit=10.5, dry_run=False)
+            summary = await run_sn_loop(cost_limit=10.34, dry_run=False)
 
         # All 4 turns ran; stop is budget_exhausted, not stalled.
+        # (Total spend = 0.05+0.20+0.05+10.0 = 10.30; remaining = $0.04 < EST_UNIT_COST)
         assert mock_run.await_count == 4
         assert summary.stop_reason == "budget_exhausted"
         assert summary.names_composed == 5
