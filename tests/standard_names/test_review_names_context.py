@@ -328,3 +328,53 @@ def test_review_batch_parses_full_sample() -> None:
     assert len(batch.reviews) == 2
     assert batch.reviews[0].suggested_name is None
     assert batch.reviews[1].suggested_name == "better_name"
+
+
+def test_prior_reviews_iteration_uses_dict_index() -> None:
+    """W37: prior_reviews[i].items must use dict indexing, not Jinja attribute access.
+
+    Jinja2 resolves ``pr.items`` on a dict to the bound ``dict.items`` method
+    (a builtin_function_or_method), not the value at key ``'items'``. This
+    triggers ``TypeError: 'builtin_function_or_method' object is not iterable``
+    when Jinja tries ``{% for x in pr.items %}``.
+
+    The escalator (RD-quorum cycle 2) populates ``prior_reviews`` with dicts
+    that have an ``items`` key, so the bug fired silently across docs review
+    in the W37 Set B rotation, suppressing layer-2 docs scores. Both
+    ``review_names.md`` and ``review_docs.md`` must use ``pr['items']``.
+    """
+    base_ctx = {
+        "items": [],
+        "existing_names": [],
+        "review_scored_examples": [],
+        "batch_context": "",
+        "nearby_existing_names": [],
+        "audit_findings": [],
+        "grammar_segments": [],
+        "grammar_tokens_by_segment": {},
+        "prior_reviews": [
+            {
+                "role": "primary",
+                "model": "anthropic/claude-opus-4.6",
+                "items": [
+                    {
+                        "standard_name": "ion_pressure",
+                        "score": 0.95,
+                        "tier": "outstanding",
+                        "verdict": "accept",
+                        "scores_json": "{}",
+                        "comments_per_dim_json": "{}",
+                        "reasoning": "Strong grammar.",
+                    }
+                ],
+            }
+        ],
+    }
+    for template in ("sn/review_names", "sn/review_docs"):
+        out = render_prompt(template, base_ctx)
+        assert "ion_pressure" in out, (
+            f"{template}: prior_reviews block did not render — bug regressed"
+        )
+        assert "Strong grammar" in out, (
+            f"{template}: reasoning text missing from prior_reviews block"
+        )

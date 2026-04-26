@@ -161,7 +161,7 @@ Weight both prior reviews fairly. Where they agree, your score should be close t
 
 {% for pr in prior_reviews %}
 ### {{ pr.role | title }} Reviewer ({{ pr.model }})
-{% for item in pr.items %}
+{% for item in pr['items'] %}
 - **{{ item.standard_name }}**: score={{ item.score }}, tier={{ item.tier }}, verdict={{ item.verdict }}
   - Scores: {{ item.scores_json }}
   - Comments: {{ item.comments_per_dim_json | default('N/A', true) }}
