@@ -1227,10 +1227,12 @@ async def _opus_revise_candidate(
     domain_vocabulary: str,
     reviewer_themes: list[str],
     acall_fn,
-) -> str | None:
+) -> tuple[str | None, float]:
     """L7: Revision pass for low-confidence candidates using Opus model.
 
-    Returns revised name string, or None on failure.
+    Returns ``(revised_name_or_None, cost_usd)``.  The cost is always
+    returned so callers can account for it even when the revision is
+    discarded.
     """
     from pydantic import BaseModel, Field
 
@@ -1280,10 +1282,10 @@ async def _opus_revise_candidate(
             service="standard-names",
         )
         if result and result.confidence > original_confidence:
-            return result.revised_name
-        return None
+            return result.revised_name, float(_cost or 0.0)
+        return None, float(_cost or 0.0)
     except Exception:
-        return None
+        return None, 0.0
 
 
 async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
@@ -1965,7 +1967,8 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             lease = None
             if state.budget_manager:
                 estimated = len(batch.items) * 0.04 * 1.3
-                lease = state.budget_manager.reserve(estimated)
+                phase_tag = getattr(state, "budget_phase_tag", "") or "generate"
+                lease = state.budget_manager.reserve(estimated, phase=phase_tag)
                 if lease is None:
                     budget_retries += 1
                     if (
@@ -2033,12 +2036,14 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 break
             state.opus_revisions_attempted += 1
             try:
-                revised = await _opus_revise_candidate(
+                revised, l7_cost = await _opus_revise_candidate(
                     cand,
                     domain_vocab,
                     reviewer_themes,
                     acall_llm_structured,
                 )
+                # Track L7 cost unconditionally so it appears in compose_cost.
+                state.compose_stats.cost += l7_cost
                 if revised and revised != cand.get("id"):
                     # Verify revised name parses
                     from imas_standard_names.grammar import (

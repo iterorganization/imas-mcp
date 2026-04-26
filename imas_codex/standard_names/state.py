@@ -64,6 +64,8 @@ class StandardNameBuildState(DiscoveryStateBase):
 
     # Budget manager (lease-style)
     budget_manager: Any = None  # BudgetManager from .budget
+    # Optional phase tag for budget attribution (e.g. "generate", "regen").
+    budget_phase_tag: str = ""
 
     # Model overrides (None = use defaults from pyproject.toml)
     compose_model: str | None = None  # Override for compose step (default: reasoning)

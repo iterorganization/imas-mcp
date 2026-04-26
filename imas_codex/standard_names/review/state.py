@@ -68,6 +68,8 @@ class StandardNameReviewState(DiscoveryStateBase):
 
     # Budget manager (set by CLI)
     budget_manager: Any = None  # ReviewBudgetManager
+    # Optional phase tag for budget attribution (e.g. "review_names", "review_docs").
+    budget_phase_tag: str = ""
 
     # ------------------------------------------------------------------
     # Per-phase stats

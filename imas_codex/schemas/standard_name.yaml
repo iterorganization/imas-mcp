@@ -999,6 +999,18 @@ classes:
       cost_limit:
         description: Cost budget supplied to this run (USD)
         range: float
+      compose_cost:
+        description: >-
+          LLM cost attributable to the generate and regen phases (USD).
+          Populated from the shared BudgetManager phase-spend map.
+        range: float
+        ifabsent: float(0.0)
+      review_cost:
+        description: >-
+          LLM cost attributable to the review_names and review_docs phases (USD).
+          Populated from the shared BudgetManager phase-spend map.
+        range: float
+        ifabsent: float(0.0)
       names_composed:
         description: Count of names produced by the generate phase
         range: integer

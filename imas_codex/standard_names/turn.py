@@ -159,6 +159,11 @@ class TurnConfig:
     min_score: float | None = None
     source: str = "dd"
     override_edits: list[str] | None = None
+    # Shared budget pool for the entire run (passed down from run_sn_loop).
+    # When set, all phases draw from this single BudgetManager rather than
+    # creating independent per-phase managers.  This enforces the global
+    # cost_limit across compose AND review so neither phase can overshoot.
+    shared_budget: Any = None  # BudgetManager | None
 
     def __post_init__(self) -> None:
         # Always derive ``split`` from ``compose_lean`` so the two stay in sync.
@@ -250,6 +255,15 @@ async def _run_generate_phase(
     from imas_codex.standard_names.pipeline import run_sn_pipeline
     from imas_codex.standard_names.state import StandardNameBuildState
 
+    # Use shared budget pool (from run_sn_loop) when available — this ensures
+    # compose draw and review draw come from the same pot and neither can
+    # overshoot the global cost_limit.  Fall back to a local per-phase manager
+    # when called standalone (e.g. from tests or single-pass CLI path).
+    budget_mgr = (
+        cfg.shared_budget if cfg.shared_budget is not None else BudgetManager(budget)
+    )
+    phase_tag = "regen" if regen else "generate"
+
     state = StandardNameBuildState(
         facility="dd",
         source="dd",
@@ -262,7 +276,8 @@ async def _run_generate_phase(
         turn_number=cfg.turn_number,
         run_id=cfg.run_id,
         limit=cfg.limit,
-        budget_manager=BudgetManager(budget),
+        budget_manager=budget_mgr,
+        budget_phase_tag=phase_tag,
     )
 
     t0 = time.monotonic()
@@ -445,6 +460,11 @@ async def _run_review_names_phase(
     from imas_codex.standard_names.review.pipeline import run_sn_review_engine
     from imas_codex.standard_names.review.state import StandardNameReviewState
 
+    # Use shared budget pool when available.
+    budget_mgr = (
+        cfg.shared_budget if cfg.shared_budget is not None else BudgetManager(budget)
+    )
+
     state = StandardNameReviewState(
         facility="dd",
         cost_limit=budget,
@@ -455,7 +475,8 @@ async def _run_review_names_phase(
         concurrency=cfg.concurrency,
         dry_run=False,
         target="names",
-        budget_manager=BudgetManager(budget),
+        budget_manager=budget_mgr,
+        budget_phase_tag="review_names",
     )
 
     t0 = time.monotonic()
@@ -533,6 +554,11 @@ async def _run_review_docs_phase(
     from imas_codex.standard_names.review.pipeline import run_sn_review_engine
     from imas_codex.standard_names.review.state import StandardNameReviewState
 
+    # Use shared budget pool when available.
+    budget_mgr = (
+        cfg.shared_budget if cfg.shared_budget is not None else BudgetManager(budget)
+    )
+
     state = StandardNameReviewState(
         facility="dd",
         cost_limit=budget,
@@ -543,7 +569,8 @@ async def _run_review_docs_phase(
         concurrency=cfg.concurrency,
         dry_run=False,
         target="docs",
-        budget_manager=BudgetManager(budget),
+        budget_manager=budget_mgr,
+        budget_phase_tag="review_docs",
     )
 
     t0 = time.monotonic()

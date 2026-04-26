@@ -752,7 +752,8 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
             lease = None
 
             if state.budget_manager:
-                lease = state.budget_manager.reserve(worst_case)
+                phase_tag = getattr(state, "budget_phase_tag", "") or "review"
+                lease = state.budget_manager.reserve(worst_case, phase=phase_tag)
                 if lease is None:
                     state.stats["budget_reservation_blocked"] = (
                         state.stats.get("budget_reservation_blocked", 0) + 1

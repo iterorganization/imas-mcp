@@ -47,6 +47,8 @@ class RunSummary:
     domains_touched: set[str] = field(default_factory=set)
     stop_reason: str = "completed"
     pass_records: list[dict[str, Any]] = field(default_factory=list)
+    compose_cost: float = 0.0
+    review_cost: float = 0.0
 
 
 def _count_eligible_domains(
@@ -223,6 +225,8 @@ def _write_sn_run(summary: RunSummary) -> None:
         ended_at=summary.ended_at,
         cost_spent=round(summary.cost_spent, 6),
         cost_limit=round(summary.cost_limit, 6),
+        compose_cost=round(summary.compose_cost, 6),
+        review_cost=round(summary.review_cost, 6),
         min_score=summary.min_score,
         names_composed=summary.names_composed,
         names_enriched=summary.names_enriched,
@@ -270,6 +274,7 @@ async def run_sn_loop(
     user choice is used every iteration until budget runs out or the
     domain has no remaining work.
     """
+    from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.turn import TurnConfig, run_turn
 
     started = datetime.now(UTC)
@@ -296,7 +301,10 @@ async def run_sn_loop(
         summary.stop_reason = "dry_run"
         return summary
 
-    remaining_budget = cost_limit
+    # Single shared BudgetManager for the entire run.  All phases (compose,
+    # review_names, review_docs, regen) draw from the same pool so the total
+    # spend across every phase is gated by the user-specified cost_limit.
+    shared_mgr = BudgetManager(cost_limit)
 
     # Per-domain stall detection: track (last_remaining, stall_count).
     # If a domain is selected with the same `remaining` count as its previous
@@ -305,10 +313,17 @@ async def run_sn_loop(
     # turn loops that burn $0.05/turn in extract/enrich overhead.
     MAX_STALLS = 2
     domain_stalls: dict[str, tuple[int, int]] = {}
+    # Local remaining budget tracker — stays in sync with shared_mgr in
+    # production (where all LLM calls record actual spend) but also decrements
+    # based on phase-result costs so tests that mock run_turn still work.
+    _remaining = cost_limit
 
     try:
         while True:
             # ── Turn-entry floor ──────────────────────────────────
+            # Use the minimum of the local tracker and the shared manager's
+            # pool so both sources of truth contribute to the floor check.
+            remaining_budget = min(_remaining, shared_mgr.remaining)
             if remaining_budget < MIN_VIABLE_TURN:
                 summary.stop_reason = "budget_exhausted"
                 logger.info(
@@ -344,6 +359,7 @@ async def run_sn_loop(
                 + summary.names_reviewed
                 + summary.names_regenerated
             )
+            spent_before = shared_mgr.spent
 
             # ── Run turn with full remaining budget ───────────────
             cfg = TurnConfig(
@@ -362,13 +378,21 @@ async def run_sn_loop(
                 source=source,
                 override_edits=override_edits,
                 only=only,
+                shared_budget=shared_mgr,
             )
             results = await run_turn(cfg)
 
+            # Measure turn cost: prefer the shared manager's actual spend delta
+            # (which captures all LLM calls including L7 Opus revisions) but
+            # fall back to summing PhaseResult.cost values for backwards
+            # compatibility with tests that mock run_turn without touching the
+            # shared BudgetManager.
+            mgr_delta = shared_mgr.spent - spent_before
+            phase_sum = sum(r.cost for r in results)
+            turn_cost = max(mgr_delta, phase_sum)
+
             # ── Accumulate counters ───────────────────────────────
-            turn_cost = 0.0
             for phase in results:
-                turn_cost += phase.cost
                 if phase.name == "generate":
                     summary.names_composed += phase.count
                 elif phase.name == "enrich":
@@ -382,15 +406,24 @@ async def run_sn_loop(
                 elif phase.name == "link":
                     summary.links_resolved += phase.count
 
-            summary.cost_spent += turn_cost
-            remaining_budget -= turn_cost
+            summary.cost_spent = max(shared_mgr.spent, summary.cost_spent + phase_sum)
+            _remaining -= turn_cost
             summary.domains_touched.add(dom)
+
+            # Update phase-level cost breakdowns from shared manager.
+            phase_spent = shared_mgr.phase_spent
+            summary.compose_cost = phase_spent.get("generate", 0.0) + phase_spent.get(
+                "regen", 0.0
+            )
+            summary.review_cost = phase_spent.get(
+                "review_names", 0.0
+            ) + phase_spent.get("review_docs", 0.0)
 
             summary.pass_records.append(
                 {
                     "domain": dom,
                     "remaining_before": entry["remaining"],
-                    "budget": remaining_budget + turn_cost,
+                    "budget": remaining_budget,
                     "phases": [
                         {
                             "name": r.name,

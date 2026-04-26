@@ -233,6 +233,10 @@ class BudgetManager:
         # not decremented on release so over-reservation is prevented even
         # after partial refunds).
         self._phase_committed: dict[str, float] = {}
+        # Per-lease phase tag (for spend attribution).
+        self._lease_phases: dict[str, str] = {}
+        # Actual spend per phase tag.
+        self._phase_spent: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Reserve
@@ -278,6 +282,7 @@ class BudgetManager:
                 self._phase_committed[phase] = (
                     self._phase_committed.get(phase, 0.0) + amount
                 )
+            self._lease_phases[lease_id] = phase
             return BudgetLease(self, amount, lease_id, phase=phase)
 
     # ------------------------------------------------------------------
@@ -288,10 +293,14 @@ class BudgetManager:
         """Record actual spend from a lease.
 
         Decrements the reservation's remaining balance and increments
-        the manager-wide spent counter.
+        the manager-wide spent counter.  Also tracks per-phase spend
+        for diagnostic attribution.
         """
         with self._lock:
             self._spent += amount
+            phase = self._lease_phases.get(lease_id, "")
+            if phase:
+                self._phase_spent[phase] = self._phase_spent.get(phase, 0.0) + amount
             if lease_id in self._reserved:
                 self._reserved[lease_id] -= amount
 
@@ -324,6 +333,7 @@ class BudgetManager:
         with self._lock:
             self._pool += unused
             self._reserved.pop(lease_id, None)
+            self._lease_phases.pop(lease_id, None)
 
     # ------------------------------------------------------------------
     # Read-only access
@@ -340,6 +350,12 @@ class BudgetManager:
         """Total spend recorded across all leases."""
         with self._lock:
             return self._spent
+
+    @property
+    def phase_spent(self) -> dict[str, float]:
+        """Per-phase spend snapshot.  Keys are phase tags; values are USD."""
+        with self._lock:
+            return dict(self._phase_spent)
 
     @property
     def total_budget(self) -> float:
@@ -367,6 +383,7 @@ class BudgetManager:
                 "total_reserved": sum(self._reserved.values()),
                 "batch_count": self._batch_count,
                 "phase_committed": dict(self._phase_committed),
+                "phase_spent": dict(self._phase_spent),
             }
 
     def check_invariant(self) -> bool:
