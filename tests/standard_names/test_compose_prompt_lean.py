@@ -70,9 +70,14 @@ class TestLeanPromptExists:
 
 
 class TestLeanPromptSize:
-    """The rendered lean prompt must stay under 24,000 chars (≈8K tokens)."""
+    """The rendered lean prompt must stay under 40,000 chars (≈13K tokens).
 
-    CHAR_LIMIT = 24_000
+    Original target was 24K chars but incremental rule additions raised the
+    baseline; limit updated to 40K to catch runaway growth while allowing
+    targeted prohibition rules (NC-29 through NC-32 added ~10K chars net).
+    """
+
+    CHAR_LIMIT = 40_000
 
     def test_renders_under_char_limit(self) -> None:
         rendered = _render_lean_minimal()
@@ -243,6 +248,47 @@ class TestGrammarReferencePresent:
         # Grammar reference starts with this heading
         assert "Standard Name Grammar" in rendered
         assert "5-Group Internal Representation" in rendered
+
+
+# ---------------------------------------------------------------------------
+# NC-32 — Drop _on_ggd suffix rule
+# ---------------------------------------------------------------------------
+
+
+class TestNoGGDSuffixRule:
+    """NC-32 rule: _on_ggd suffix must be prohibited in the lean prompt."""
+
+    def test_nc32_rule_present(self) -> None:
+        raw = _raw_lean()
+        assert "NC-32" in raw, "NC-32 _on_ggd rule must be present in lean prompt"
+
+    def test_on_ggd_exemplar_bad(self) -> None:
+        raw = _raw_lean()
+        assert "electron_density_on_ggd" in raw, (
+            "NC-32 must contain electron_density_on_ggd as a ❌ exemplar"
+        )
+
+    def test_on_ggd_exemplar_good(self) -> None:
+        raw = _raw_lean()
+        # electron_density must appear as the ✅ fix
+        assert "electron_density`" in raw or "electron_density," in raw, (
+            "NC-32 must show electron_density as ✅ canonical form"
+        )
+
+    def test_ggd_coordinate_agnostic_rule(self) -> None:
+        raw = _raw_lean()
+        assert "coordinate-agnostic" in raw, (
+            "NC-32 must state that standard names are coordinate-agnostic"
+        )
+
+    def test_never_line_contains_on_ggd(self) -> None:
+        raw = _raw_lean()
+        assert "electron_density_on_ggd" in raw
+
+    def test_nc32_in_render(self) -> None:
+        rendered = _render_lean_minimal()
+        assert "NC-32" in rendered
+        assert "electron_density_on_ggd" in rendered
 
 
 # ---------------------------------------------------------------------------

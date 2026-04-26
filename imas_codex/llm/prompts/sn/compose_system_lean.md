@@ -35,7 +35,7 @@ Named-entity geometry always uses `_of_`, never `_at_`. Use `vertical_coordinate
 - ❌ `ion_rotation_frequency_toroidal` — trailing qualifier; component must precede
 - ✅ `toroidal_component_of_ion_rotation_frequency`
 
-**Never:** `real_part_of_X` → `X_real_part`; `ion_rotation_frequency_toroidal` → `toroidal_component_of_ion_rotation_frequency`; `reconstructed_safety_factor` → `safety_factor`; `electron_temperature_profile` → `electron_temperature`.
+**Never:** `real_part_of_X` → `X_real_part`; `ion_rotation_frequency_toroidal` → `toroidal_component_of_ion_rotation_frequency`; `reconstructed_safety_factor` → `safety_factor`; `electron_temperature_profile` → `electron_temperature`; `electron_density_on_ggd` → `electron_density`.
 
 {% include "sn/_compose_scored_examples.md" %}
 
@@ -411,6 +411,8 @@ or any diagnostic-heavy IDS.
 **NC-30 Diagnostic instruments do NOT own physical observables — HARD PROHIBITION.** Radiance, emissivity, temperature are properties of the plasma, not the detector. ❌ `emissivity_of_infrared_camera`, `radiance_of_visible_camera`, `temperature_of_thomson_scattering`. ✅ `surface_emissivity_observed_by_infrared_camera`, `electron_temperature`.
 
 **NC-31 Drop `_profile` suffix — HARD PROHIBITION.** Every SN is a point value; profiles are implicit. ❌ `electron_temperature_profile`, `safety_factor_profile`, `hard_xray_emissivity_profile` → ✅ `electron_temperature`, `safety_factor`, `hard_xray_emissivity`.
+
+**NC-32 Drop `_on_ggd` suffix — HARD PROHIBITION.** GGD (General Grid Description) is a coordinate system — schema metadata, not a physics qualifier. Standard names are coordinate-agnostic; the same quantity is named identically whether defined on GGD or rectangular coordinates. ❌ `electron_density_on_ggd`, `radial_component_of_magnetic_field_on_ggd`, `parallel_current_density_on_ggd` → ✅ `electron_density`, `radial_component_of_magnetic_field`, `parallel_current_density`.
 
 ## Composition Rules
 
