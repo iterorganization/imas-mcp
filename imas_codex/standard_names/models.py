@@ -286,6 +286,20 @@ class StandardNameQualityReview(BaseModel):
     revised_fields: dict[str, Any] | None = Field(
         default=None, description="Revised grammar fields"
     )
+    suggested_name: str | None = Field(
+        default=None,
+        description=(
+            "Reviewer-recommended improved name. Required for verdict=revise "
+            "or verdict=reject; null for verdict=accept."
+        ),
+    )
+    suggestion_justification: str | None = Field(
+        default=None,
+        description=(
+            "1–3 sentence justification for suggested_name. Null when "
+            "suggested_name is null."
+        ),
+    )
     issues: list[str] = Field(default_factory=list, description="Specific issues found")
 
 
@@ -353,6 +367,20 @@ class StandardNameQualityReviewNameOnly(BaseModel):
     )
     revised_fields: dict[str, Any] | None = Field(
         default=None, description="Revised grammar fields"
+    )
+    suggested_name: str | None = Field(
+        default=None,
+        description=(
+            "Reviewer-recommended improved name. Required for verdict=revise "
+            "or verdict=reject; null for verdict=accept."
+        ),
+    )
+    suggestion_justification: str | None = Field(
+        default=None,
+        description=(
+            "1–3 sentence justification for suggested_name, grounded in ISN "
+            "grammar and the per-item DD context. Null when suggested_name is null."
+        ),
     )
     issues: list[str] = Field(default_factory=list, description="Specific issues found")
 

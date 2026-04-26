@@ -119,37 +119,96 @@ These names already exist in the catalog. Flag candidates that duplicate them:
 
 ## Candidates to Review
 
+You receive **the same per-item DD context the composer received**, so you can
+verify whether the candidate name is consistent with the cluster siblings,
+identifier enums, error companions, version history, and prior reviewer
+feedback that informed the original generation. Use this context to detect
+real defects, not phantom ones.
+
 {% for item in items %}
-### Candidate {{ loop.index }}
-- **Standard name**: {{ item.standard_name or item.id }}
+### Candidate {{ loop.index }} — `{{ item.standard_name or item.id }}`
 - **Source ID**: {{ item.source_id }}
-- **Unit**: {{ item.unit | default('N/A', true) }}
+- **Unit**: {{ item.unit | default('N/A', true) }} *(authoritative)*
 - **Kind**: {{ item.kind | default('N/A', true) }}
 - **Tags**: {{ item.tags | default([], true) | join(', ') }}
 - **Grammar Fields**: {{ item.grammar_fields or item.fields | default({}, true) }}
-{% if item.source_paths %}
-- **IMAS Paths**: {{ item.source_paths | join(', ') }}
+{% if item.source_paths %}- **IMAS Paths**: {{ item.source_paths | join(', ') }}
 {% endif %}
 {% if item.validation_issues %}
-**ISN Validation Issues:**
-{% for issue in item.validation_issues %}
-- {{ issue }}
-{% endfor %}
-{% endif %}
-{% if item.dd_source_docs %}
-**Source DD paths**:
-{% for p in item.dd_source_docs %}- `{{ p.id }}` [{{ p.unit }}]: {{ p.documentation or p.description }}
+**ISN Validation Issues** (treat as candidate defects — verify each):
+{% for issue in item.validation_issues %}- {{ issue }}
 {% endfor %}{% endif %}
-{% if item.nearest_peers %}
-**DD neighbours** `[hybrid]` (cross-IDS naming consistency):
-{% for n in item.nearest_peers %}- `{{ n.tag }}` [{{ n.unit }}, {{ n.physics_domain }}]: {{ n.doc_short }}{% if n.cocos_label %} (COCOS {{ n.cocos_label }}){% endif %}
+{% if item.dd_source_docs %}
+- **Source DD paths**:
+{% for p in item.dd_source_docs %}  - `{{ p.id }}` [{{ p.unit }}]: {{ p.documentation or p.description }}
+{% endfor %}{% endif %}
+{% if item.data_type %}- **Data type:** {{ item.data_type }}{% endif %}
+{% if item.node_type %}- **Node type:** {{ item.node_type }}{% endif %}
+{% if item.physics_domain %}- **Physics domain:** {{ item.physics_domain }}{% endif %}
+{% if item.ndim is not none %}- **Dimensions:** {{ item.ndim }}D{% endif %}
+{% if item.lifecycle_status %}- **Lifecycle:** {{ item.lifecycle_status }} ⚠️{% endif %}
+{% if item.cocos_label %}- **COCOS transformation type:** `{{ item.cocos_label }}`{% endif %}
+{% if item.parent_path %}- **Parent:** {{ item.parent_path }}{% if item.parent_description %} — {{ item.parent_description }}{% endif %}{% endif %}
+{% if item.previous_name %}- **⟳ Previous generation:** `{{ item.previous_name.name }}`{% if item.previous_name.pipeline_status %} ({{ item.previous_name.pipeline_status }}){% endif %}{% endif %}
+{% if item.identifier_schema %}- **Identifier schema:** {{ item.identifier_schema }}{% if item.identifier_schema_doc %} — {{ item.identifier_schema_doc }}{% endif %}{% endif %}
+{% if item.identifier_values %}
+- **Identifier enum values:**
+{% for iv in item.identifier_values %}  - `{{ iv.name }}` ({{ iv.index }}): {{ iv.description | default('', true) }}
+{% endfor %}{% endif %}
+{% if item.clusters %}
+- **Semantic clusters:**
+{% for cl in item.clusters %}  - **{{ cl.label }}** ({{ cl.scope }}): {{ cl.description }}
+{% endfor %}{% endif %}
+{% if item.cross_ids_paths %}
+- **Cross-IDS equivalents** (same quantity in other IDSs — name should cover all):
+{% for xp in item.cross_ids_paths %}  - `{{ xp }}`
+{% endfor %}{% endif %}
+{% if item.hybrid_neighbours %}
+- **Hybrid-search neighbours** (physics-concept + structural cousins):
+{% for n in item.hybrid_neighbours %}  - `{{ n.tag }}` [{{ n.unit }}, {{ n.physics_domain }}]: {{ n.doc_short }}{% if n.cocos_label %} (COCOS {{ n.cocos_label }}){% endif %}
 {% endfor %}{% endif %}
 {% if item.related_neighbours %}
-**DD relatives** `[related]` (cluster + unit siblings):
-{% for r in item.related_neighbours %}{% if r.relationship_type in ['cluster', 'unit'] %}- `{{ r.path }}` ({{ r.ids }}) — {{ r.relationship_type }}{% if r.via %} via {{ r.via }}{% endif %}
-{% endif %}{% endfor %}{% endif %}
+- **Graph-relationship neighbours** (cluster / coordinate / unit / identifier / COCOS edges):
+{% for r in item.related_neighbours %}  - `{{ r.path }}` ({{ r.ids }}) — {{ r.relationship_type }}{% if r.via %} via {{ r.via }}{% endif %}
+{% endfor %}{% endif %}
+{% if item.error_fields %}
+- **DD error companions:**
+{% for ef in item.error_fields %}  - `{{ ef }}`
+{% endfor %}{% endif %}
+{% if item.sibling_fields %}
+- **Sibling fields** (same parent):
+{% for sib in item.sibling_fields %}  - `{{ sib.path }}`: {{ sib.description or 'no description' }} ({{ sib.data_type or '?' }})
+{% endfor %}{% endif %}
+{% if item.version_history %}
+- **DD version history:**
+{% for vh in item.version_history %}  - {{ vh.version }}: {{ vh.change_type }}
+{% endfor %}{% endif %}
+{% if item.review_feedback %}
+- **📝 Prior reviewer feedback** (informed regeneration):
+  - **Previous name:** `{{ item.review_feedback.previous_name }}`{% if item.review_feedback.reviewer_score is not none %} (score={{ item.review_feedback.reviewer_score | round(2) }}{% if item.review_feedback.review_tier %}, tier={{ item.review_feedback.review_tier }}{% endif %}){% endif %}
+{% if item.review_feedback.reviewer_comments %}  - **Prior critique:** {{ item.review_feedback.reviewer_comments | replace('\n', ' ') }}
+{% endif %}{% endif %}
 
 {% endfor %}
+
+## Suggested-Name Policy
+
+In addition to scoring, **propose an improved name with a short justification
+when the candidate falls short**:
+
+- If `verdict == "accept"` → set both `suggested_name` and
+  `suggestion_justification` to `null`. The name is good; no improvement is
+  needed.
+- If `verdict == "revise"` or `"reject"` → propose a concrete,
+  grammar-compliant replacement in `suggested_name`, and a 1–3 sentence
+  `suggestion_justification` grounded in ISN grammar and the per-item
+  context above (cluster siblings, cross-IDS equivalents, identifier
+  schema, COCOS, etc.).
+- If you also populate `revised_name` on a `revise` verdict, it must equal
+  `suggested_name` — they are the same recommendation.
+
+**Score the candidate first using the rubric, then derive the suggestion.**
+The suggestion must not influence your scores.
 
 ## Output Format
 
@@ -177,9 +236,22 @@ Return a JSON object with a `reviews` array. Each review MUST include:
       "reasoning": "Brief specific justification covering each dimension",
       "revised_name": null,
       "revised_fields": null,
+      "suggested_name": null,
+      "suggestion_justification": null,
       "issues": []
     }
   ]
+}
+```
+
+For a `revise` or `reject` verdict, populate the suggestion fields:
+
+```json
+{
+  "verdict": "revise",
+  "revised_name": "electron_temperature_core",
+  "suggested_name": "electron_temperature_core",
+  "suggestion_justification": "Original name lacked a locus distinguisher; the cluster siblings show all related paths use _core for inner-flux-surface quantities."
 }
 ```
 

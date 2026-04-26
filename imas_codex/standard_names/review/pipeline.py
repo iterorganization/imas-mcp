@@ -138,6 +138,8 @@ def _build_review_record(
             if comments_per_dim
             else item.get("reviewer_comments_per_dim")
         ),
+        "suggested_name": item.get("_suggested_name") or "",
+        "suggestion_justification": item.get("_suggestion_justification") or "",
         "reviewed_at": reviewed_at,
         "llm_model": model,
         "llm_cost": cost_usd,
@@ -481,6 +483,7 @@ def _fetch_review_dd_context(names: list[dict]) -> None:
     """
     from imas_codex.graph.client import GraphClient
     from imas_codex.standard_names.workers import (
+        _enrich_batch_items,
         _hybrid_search_neighbours,
         _related_path_neighbours,
     )
@@ -605,6 +608,68 @@ def _fetch_review_dd_context(names: list[dict]) -> None:
                             item.get("id"),
                             exc_info=True,
                         )
+
+    # Reuse compose's per-item enrichment so the reviewer sees the SAME 11
+    # context channels the composer received: identifier_schema/values,
+    # clusters, cross_ids_paths, sibling_fields, error_fields, hybrid_neighbours,
+    # related_neighbours, parent_description, version_history, COCOS, etc.
+    # Build stub items keyed on the primary source_path, then merge back.
+    _CONTEXT_KEYS = (
+        "coordinate_paths",
+        "timebase",
+        "cocos_label",
+        "cocos_expression",
+        "lifecycle_status",
+        "identifier_schema",
+        "identifier_schema_doc",
+        "identifier_values",
+        "sibling_fields",
+        "clusters",
+        "cross_ids_paths",
+        "version_history",
+        "hybrid_neighbours",
+        "related_neighbours",
+        "error_fields",
+        "parent_path",
+        "parent_description",
+    )
+    stubs: list[dict] = []
+    stub_by_id: dict[str, dict] = {}
+    for item in names:
+        sp = item.get("source_paths")
+        if not sp:
+            continue
+        if isinstance(sp, str):
+            try:
+                sp = json.loads(sp)
+            except (json.JSONDecodeError, TypeError):
+                sp = [sp]
+        if not sp:
+            continue
+        stub = {
+            "path": sp[0],
+            "description": item.get("description"),
+            "physics_domain": item.get("physics_domain"),
+        }
+        stubs.append(stub)
+        stub_by_id[item.get("id") or ""] = stub
+
+    if stubs:
+        try:
+            _enrich_batch_items(stubs)
+        except Exception:
+            logger.debug("Review compose-parity enrichment failed", exc_info=True)
+
+        for item in names:
+            stub = stub_by_id.get(item.get("id") or "")
+            if not stub:
+                continue
+            for key in _CONTEXT_KEYS:
+                # Don't clobber values already populated by the review-specific
+                # enrichment above (e.g. nearest_peers/related_neighbours from
+                # _hybrid_search_neighbours which uses different defaults).
+                if key in stub and key not in item:
+                    item[key] = stub[key]
 
 
 # =============================================================================
@@ -1452,6 +1517,24 @@ def _match_reviews_to_entries(
                 review.comments.model_dump()
             )
         original["reviewer_verdict"] = review.verdict.value
+
+        # Capture reviewer's suggested-name + justification.
+        # Per the W37 prompt rewrite, the reviewer offers a concrete
+        # alternative for revise/reject verdicts (and null for accept).
+        suggested_name = getattr(review, "suggested_name", None)
+        suggestion_justification = getattr(review, "suggestion_justification", None)
+        if suggested_name and not _valid_sn_id(suggested_name):
+            wlog.warning(
+                "Rejecting malformed suggested_name (len=%d) for %r",
+                len(suggested_name),
+                review.standard_name,
+            )
+            suggested_name = None
+            suggestion_justification = None
+        if suggested_name:
+            original["_suggested_name"] = suggested_name
+            if suggestion_justification:
+                original["_suggestion_justification"] = suggestion_justification
 
         # Review writes score/tier/comments but does NOT demote
         # validation_status. Regeneration targeting is driven by the

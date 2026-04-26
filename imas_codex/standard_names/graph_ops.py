@@ -1154,6 +1154,8 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
                 r.verdict = b.verdict,
                 r.comments = b.comments,
                 r.comments_per_dim_json = b.comments_per_dim_json,
+                r.suggested_name = b.suggested_name,
+                r.suggestion_justification = b.suggestion_justification,
                 r.reviewed_at = b.reviewed_at,
                 r.review_axis = b.review_axis,
                 r.cycle_index = b.cycle_index,
@@ -1190,6 +1192,8 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
                     "comments_per_dim_json": _ensure_json(
                         r.get("comments_per_dim_json")
                     ),
+                    "suggested_name": r.get("suggested_name") or "",
+                    "suggestion_justification": r.get("suggestion_justification") or "",
                     "reviewed_at": r.get("reviewed_at"),
                     "review_axis": r.get("review_axis"),
                     "cycle_index": r.get("cycle_index"),
@@ -1326,6 +1330,7 @@ def write_name_review_results(
                 sn.review_tier = coalesce(b.review_tier, sn.review_tier),
                 sn.review_input_hash = b.review_input_hash,
                 sn.reviewer_suggested_name = coalesce(nullIf(b.reviewer_suggested_name, ''), sn.reviewer_suggested_name),
+                sn.reviewer_suggestion_justification_name = coalesce(nullIf(b.reviewer_suggestion_justification_name, ''), sn.reviewer_suggestion_justification_name),
                 sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + coalesce(b.llm_cost_review, 0.0),
                 sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review, 0.0)
             """,
@@ -1344,6 +1349,10 @@ def write_name_review_results(
                     "review_tier": e.get("review_tier"),
                     "review_input_hash": e.get("review_input_hash"),
                     "reviewer_suggested_name": e.get("_suggested_name") or "",
+                    "reviewer_suggestion_justification_name": e.get(
+                        "_suggestion_justification"
+                    )
+                    or "",
                     "llm_cost_review": e.get("llm_cost") or 0.0,
                 }
                 for e in entries

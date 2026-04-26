@@ -467,11 +467,17 @@ classes:
           ``mode="name"`` review only.
       reviewer_suggested_name:
         description: >-
-          Reviewer-proposed replacement name when verdict is ``revise``.
-          Set by the name-review phase when the LLM suggests a different
-          identifier.  The original ``id`` is preserved; this field records
-          the suggestion for human editorial follow-up.  Null when the
-          verdict is accept or reject.
+          Reviewer-proposed replacement name when verdict is ``revise``
+          or ``reject``. Set by the name-review phase whenever the LLM
+          offers a concrete improved name. The original ``id`` is
+          preserved; this field records the suggestion for human editorial
+          follow-up.  Null when the verdict is ``accept``.
+        range: string
+      reviewer_suggestion_justification_name:
+        description: >-
+          1–3 sentence justification for ``reviewer_suggested_name``,
+          grounded in ISN grammar and the per-item DD context the reviewer
+          received. Null when ``reviewer_suggested_name`` is null.
         range: string
       reviewer_model_name:
         description: LLM model that produced the most recent name-axis review.
@@ -1164,6 +1170,17 @@ classes:
           for the canonical reviewer.
       comments:
         description: Free-text reviewer comments
+      suggested_name:
+        description: >-
+          Reviewer-proposed replacement name when verdict is ``revise``
+          or ``reject``. Null when verdict is ``accept``. Mirrors
+          ``StandardName.reviewer_suggested_name`` for the canonical reviewer.
+        range: string
+      suggestion_justification:
+        description: >-
+          1–3 sentence justification for ``suggested_name``. Null when
+          ``suggested_name`` is null.
+        range: string
       reviewed_at:
         description: ISO 8601 timestamp when the review completed
         range: datetime
