@@ -1123,8 +1123,8 @@ StandardName and StandardNameSource nodes defined in `imas_codex/schemas/standar
 - `(FacilitySignal)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(StandardName)-[:HAS_UNIT]->(Unit)`
 - `(StandardName)-[:HAS_COCOS]->(COCOS)`
-- `(StandardNameSource)-[:SOURCE_DD_PATH]->(IMASNode)` — DD-sourced extraction tracking
-- `(StandardNameSource)-[:SOURCE_SIGNAL]->(FacilitySignal)` — signal-sourced extraction tracking
+- `(StandardNameSource)-[:FROM_DD_PATH]->(IMASNode)` — DD-sourced extraction tracking
+- `(StandardNameSource)-[:FROM_SIGNAL]->(FacilitySignal)` — signal-sourced extraction tracking
 - `(StandardNameSource)-[:PRODUCED_NAME]->(StandardName)` — links source to result
 
 **COCOS provenance:** `cocos_transformation_type` (string, e.g. `psi_like`, `ip_like`) records
