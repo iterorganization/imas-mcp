@@ -1021,6 +1021,10 @@ Rotates **one physics domain per turn** using stale-first selection from `SNRun.
 the domain least recently processed is always picked first. Stops when every domain reports
 zero eligible work, when `--cost-limit` is exhausted, or when the remaining budget drops below
 `MIN_VIABLE_TURN` ($0.75) — too little to start a productive turn.
+`--cost-limit` sets a **single shared budget pool** across all LLM phases within the run
+(generate, review_names, review_docs, regen) — not independent per-phase limits.
+If generate exhausts the pool, review and regen are blocked immediately; partial-phase spend
+is reported per category on the `SNRun` node as `compose_cost` and `review_cost`.
 On `Ctrl-C`. Writes an `SNRun` audit node capturing cost, phase counters, domains touched,
 `turn_number`, `min_score`, and `stop_reason`; `sn status` surfaces the most recent run.
 `--physics-domain` bypasses rotation and pins to a single domain.
