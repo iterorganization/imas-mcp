@@ -308,15 +308,41 @@ class BudgetManager:
         """Atomically extend an active reservation by drawing from the pool.
 
         Returns the amount actually extended, which may be less than
-        *amount* when the pool is insufficient.  The caller is responsible
-        for checking whether the extension was sufficient.
+        *amount* when the pool is insufficient or the lease's phase would
+        exceed its hard cap (``phase_caps[phase] × 1.5``).  The caller is
+        responsible for checking whether the extension was sufficient.
+
+        Phase-cap enforcement on extension prevents a compose batch from
+        draining the global pool past its allocated share via in-flight
+        overshoot, which would starve downstream phases (review, regen).
         """
         with self._lock:
             extended = min(amount, self._pool)
+            # ── Per-phase cap check on extension ───────────────────────────
+            phase = self._lease_phases.get(lease_id, "")
+            if extended > 0 and phase and phase in self._phase_caps:
+                cap = self._phase_caps[phase]
+                committed = self._phase_committed.get(phase, 0.0)
+                room = cap * 1.5 - committed
+                if room < extended:
+                    if room <= EPSILON:
+                        logger.debug(
+                            "Phase %r cap exhausted on extension: "
+                            "committed=%.4f cap*1.5=%.4f — extension refused",
+                            phase,
+                            committed,
+                            cap * 1.5,
+                        )
+                        return 0.0
+                    extended = room
             if extended > 0:
                 self._pool -= extended
                 if lease_id in self._reserved:
                     self._reserved[lease_id] += extended
+                if phase:
+                    self._phase_committed[phase] = (
+                        self._phase_committed.get(phase, 0.0) + extended
+                    )
                 logger.info(
                     "budget: extended lease %s by $%.4f "
                     "(requested $%.4f, reservation now $%.4f, pool $%.4f)",

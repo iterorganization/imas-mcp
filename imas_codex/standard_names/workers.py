@@ -1961,12 +1961,14 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 break
 
             # Budget gate — reserve before doing any LLM work.
-            # Per-item cost calibrated to observed Sonnet spend (~$0.003/item
-            # average, $0.04/item worst case for Opus).  Reserve for one
-            # attempt with 30% headroom.
+            # Per-item cost calibrated to W36 graph data: compose mean
+            # $0.13/item, p95 $0.47/item.  Reserve at $0.20/item (mean+50%
+            # headroom) to cover the typical extension and avoid draining
+            # the global pool via in-flight overshoot, which would starve
+            # downstream review phases.
             lease = None
             if state.budget_manager:
-                estimated = len(batch.items) * 0.04 * 1.3
+                estimated = len(batch.items) * 0.20
                 phase_tag = getattr(state, "budget_phase_tag", "") or "generate"
                 lease = state.budget_manager.reserve(estimated, phase=phase_tag)
                 if lease is None:
