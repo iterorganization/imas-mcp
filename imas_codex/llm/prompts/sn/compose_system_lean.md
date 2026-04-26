@@ -26,6 +26,13 @@ Your output is a **canonical vNext name string** plus a description. The ISN par
 **P5. Structural geometry** — `major_radius_of_plasma_boundary_outline_point`
 Named-entity geometry always uses `_of_`, never `_at_`. Use `vertical_coordinate_of_` (not `vertical_position_of_`) for Z.
 
+**P7. Physics compound bases** — compound physical bases are registered tokens:
+✓ `bootstrap_current_density` (registered base, not `current_density_due_to_bootstrap`)
+✓ `heat_viscosity_current_density` (registered base for j_heat_viscosity)
+✓ `sonic_rotation_frequency` (subject=sonic + base=rotation_frequency)
+✗ `viscosity_current_density` (underspecified — specify parallel/perpendicular/heat)
+✗ `current_driven` (passive participle — use `_due_to_` form)
+
 **Never:** `real_part_of_X` → `X_real_part`; `ion_rotation_frequency_toroidal` → `toroidal_component_of_ion_rotation_frequency`; `reconstructed_safety_factor` → `safety_factor`; `electron_temperature_profile` → `electron_temperature`.
 
 {% include "sn/_compose_scored_examples.md" %}
@@ -91,6 +98,11 @@ emitting it. If any check fails, revise or skip — never emit a violating name.
     `_due_to_` is banned; use process segment: ✅ `wall_power_loss_black_body_radiation`.
     If you find yourself writing `_from_X_to_Y_` or `_due_to_X_`, you are encoding
     relational information that belongs in the description text, not in the name.
+12. **No passive participle suffixes.** The following trailing modifiers are INVALID
+    as name suffixes: `_driven`, `_heated`, `_generated`, `_emitted`, `_absorbed`,
+    `_radiated`. Use the `_due_to_<process>` mechanism instead.
+    ❌ `parallel_current_driven` → ✅ `bootstrap_current_density` or `current_density_due_to_bootstrap`
+    ❌ `beam_heated_ion_temperature` → ✅ `ion_temperature_due_to_neutral_beam_injection`
 
 ### DD PATH TOKEN NORMALIZATION — apply before composing
 
@@ -137,6 +149,11 @@ Your name must render from this IR. Key composition rules:
   `vocab_gap` with the needed token. Do NOT invent a base or use a free-form string.
 - **Operators require explicit `_of_` scope**: `time_derivative_of_X`, `gradient_of_X`,
   `volume_averaged_of_X`. Never bare-concatenate a prefix operator to the base.
+  - **Chained operators stack outer-to-inner, each with `_of_`**:
+    ✓ `flux_surface_averaged_of_square_of_gradient_of_poloidal_flux`
+    ✓ `time_derivative_of_gradient_of_poloidal_flux`
+    ✗ `flux_surface_averaged_gradient_squared_poloidal_flux` (missing ALL `_of_` connectors)
+    ✗ `gradient_squared_of_X` (wrong: `squared` is not part of `gradient`; use `square_of_gradient_of_X`)
 - **Postfix operators concatenate directly**: `X_magnitude`, `X_real_part`, `X_amplitude`.
   Never use prefix form (`magnitude_of_X`, `real_part_of_X`).
 - **Projection is always prefix**: `radial_component_of_magnetic_field`. Never trail the axis.
