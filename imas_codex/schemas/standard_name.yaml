@@ -146,7 +146,7 @@ enums:
   StandardNameSourceStatus:
     description: >-
       Lifecycle status of a StandardNameSource node.
-      extracted → composed | attached | vocab_gap | failed | stale
+      extracted → composed | attached | vocab_gap | failed | stale | skipped | not_physical_quantity
     permissible_values:
       extracted:
         description: Source entity identified and queued for composition
@@ -165,6 +165,11 @@ enums:
           DD path cannot be resolved to a valid standard name source due to
           upstream defects (prose unit, unresolvable Jinja template,
           context-dependent inheritance). See skip_reason for classification.
+      not_physical_quantity:
+        description: >-
+          DD path is configuration metadata, not a physical/geometric/coordinate
+          quantity. Filtered at extract time by attribute predicates (data_type,
+          units, doc). Distinct from 'skipped' which signals upstream defect.
 
   StandardNameValidationStatus:
     description: >-

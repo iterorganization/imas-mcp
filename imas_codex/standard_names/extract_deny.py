@@ -33,15 +33,63 @@ _CONFIG = Path(__file__).parent / "config" / "extract_deny.yaml"
 
 @dataclass(frozen=True)
 class DenyRule:
-    """A single extract-deny rule."""
+    """A single extract-deny rule.
+
+    Rules with only ``path_pattern`` match purely on the DD path (backward
+    compatible).  Optional attribute predicates (``data_type_in``,
+    ``units_empty``, ``doc_contains_any``) refine the match using node
+    metadata — all specified predicates must hold.
+
+    ``status`` controls the ``StandardNameSource.status`` written on match
+    (default ``'skipped'`` for backward compatibility; new classes may use
+    ``'not_physical_quantity'``).
+    """
 
     path_pattern: str
     skip_reason: str
     reason: str
+    # Optional attribute predicates — all must match if specified.
+    data_type_in: tuple[str, ...] = ()
+    units_empty: bool = False
+    doc_contains_any: tuple[str, ...] = ()
+    status: str = "skipped"
 
-    def matches(self, path: str) -> bool:
-        """Return True if *path* matches this rule's glob pattern."""
-        return _glob_match(self.path_pattern, path)
+    def matches(self, path: str, node_attrs: dict | None = None) -> bool:
+        """Return True if *path* (and optional *node_attrs*) match this rule.
+
+        Path pattern is checked first; if predicates are defined, *node_attrs*
+        must also satisfy them.
+        """
+        if not _glob_match(self.path_pattern, path):
+            return False
+        return _predicates_match(self, node_attrs)
+
+
+def _predicates_match(rule: DenyRule, attrs: dict | None) -> bool:
+    """Return True if all attribute predicates on *rule* are satisfied.
+
+    When no predicates are defined the match is path-only (always True).
+    When predicates exist but *attrs* is ``None`` the match fails — the
+    caller did not supply enough context to evaluate.
+    """
+    has_predicates = bool(
+        rule.data_type_in or rule.units_empty or rule.doc_contains_any
+    )
+    if not has_predicates:
+        return True  # path-only rule
+    if attrs is None:
+        return False  # predicates exist but no attrs supplied
+    if rule.data_type_in and attrs.get("data_type") not in rule.data_type_in:
+        return False
+    if rule.units_empty:
+        u = attrs.get("units")
+        if u not in (None, "", "-"):
+            return False
+    if rule.doc_contains_any:
+        doc = (attrs.get("documentation") or "").lower()
+        if not any(s.lower() in doc for s in rule.doc_contains_any):
+            return False
+    return True
 
 
 def _glob_match(pattern: str, path: str) -> bool:
@@ -88,19 +136,46 @@ def _load_rules() -> tuple[DenyRule, ...]:
             raise ValueError(f"extract_deny.yaml: rule missing path_pattern: {r}")
         if not r.get("skip_reason"):
             raise ValueError(f"extract_deny.yaml: rule missing skip_reason: {r}")
+        # Parse optional attribute predicates
+        data_type_in: tuple[str, ...] = ()
+        if "data_type_in" in r:
+            raw = r["data_type_in"]
+            if isinstance(raw, str):
+                data_type_in = (raw,)
+            else:
+                data_type_in = tuple(raw)
+        doc_contains_any: tuple[str, ...] = ()
+        if "doc_contains_any" in r:
+            raw_doc = r["doc_contains_any"]
+            if isinstance(raw_doc, str):
+                doc_contains_any = (raw_doc,)
+            else:
+                doc_contains_any = tuple(raw_doc)
         rules.append(
             DenyRule(
                 path_pattern=r["path_pattern"],
                 skip_reason=r["skip_reason"],
                 reason=r.get("reason", ""),
+                data_type_in=data_type_in,
+                units_empty=bool(r.get("units_empty", False)),
+                doc_contains_any=doc_contains_any,
+                status=r.get("status", "skipped"),
             )
         )
     return tuple(rules)
 
 
-def match_deny_rule(path: str) -> DenyRule | None:
-    """Return the first matching deny rule for *path*, or ``None``."""
+def match_deny_rule(
+    path: str,
+    node_attrs: dict | None = None,
+) -> DenyRule | None:
+    """Return the first matching deny rule for *path*, or ``None``.
+
+    When *node_attrs* is supplied (dict with ``data_type``, ``units``,
+    ``documentation`` keys), rules with attribute predicates can match.
+    Without it, only path-only rules are evaluated.
+    """
     for rule in _load_rules():
-        if rule.matches(path):
+        if rule.matches(path, node_attrs):
             return rule
     return None

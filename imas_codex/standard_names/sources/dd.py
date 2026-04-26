@@ -232,7 +232,13 @@ def _apply_extract_deny(
 
     for row in results:
         path = row.get("path") or ""
-        rule = match_deny_rule(path)
+        # Build node_attrs for attribute-predicate rules
+        node_attrs = {
+            "data_type": row.get("data_type"),
+            "units": row.get("unit") or row.get("unit_from_rel"),
+            "documentation": row.get("documentation"),
+        }
+        rule = match_deny_rule(path, node_attrs=node_attrs)
         if rule is not None:
             skip_records.append(
                 {
@@ -241,6 +247,7 @@ def _apply_extract_deny(
                     "skip_reason": rule.skip_reason,
                     "skip_reason_detail": rule.reason,
                     "description": row.get("description") or "",
+                    "status": rule.status,
                 }
             )
             continue

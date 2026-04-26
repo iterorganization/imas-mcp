@@ -1895,6 +1895,8 @@ def persist_enriched_batch(
 def write_vocab_gaps(
     gaps: list[dict[str, str]],
     source_type: str = "dd",
+    *,
+    skip_segment_filter: bool = False,
 ) -> int:
     """Persist VocabGap nodes and HAS_STANDARD_NAME_VOCAB_GAP relationships.
 
@@ -1904,6 +1906,14 @@ def write_vocab_gaps(
     Creates HAS_STANDARD_NAME_VOCAB_GAP relationships from source entities with
     per-source reason as a relationship property.
 
+    Args:
+        gaps: List of gap dicts.
+        source_type: Source type ('dd' or 'signals').
+        skip_segment_filter: When ``True``, bypass the open-segment filter.
+            Used by auto-VocabGap detection for ``physical_base`` — the
+            segment is open (any token is valid) but we still want to
+            track novel tokens for ISN review.
+
     Returns the number of VocabGap nodes written.
     """
     if not gaps:
@@ -1911,22 +1921,23 @@ def write_vocab_gaps(
 
     from datetime import UTC, datetime
 
-    from imas_codex.standard_names.segments import filter_closed_segment_gaps
+    if not skip_segment_filter:
+        from imas_codex.standard_names.segments import filter_closed_segment_gaps
 
-    # Drop gaps reported against open-vocabulary segments (e.g. physical_base)
-    # and pseudo segments (grammar_ambiguity) — they are not missing tokens.
-    gaps, dropped = filter_closed_segment_gaps(gaps)
-    if dropped:
-        from collections import Counter
+        # Drop gaps reported against open-vocabulary segments (e.g. physical_base)
+        # and pseudo segments (grammar_ambiguity) — they are not missing tokens.
+        gaps, dropped = filter_closed_segment_gaps(gaps)
+        if dropped:
+            from collections import Counter
 
-        drop_hist = Counter(g.get("segment") for g in dropped)
-        logger.info(
-            "write_vocab_gaps: skipped %d gaps on open/pseudo segments (%s)",
-            len(dropped),
-            ", ".join(f"{seg}={n}" for seg, n in drop_hist.most_common()),
-        )
-    if not gaps:
-        return 0
+            drop_hist = Counter(g.get("segment") for g in dropped)
+            logger.info(
+                "write_vocab_gaps: skipped %d gaps on open/pseudo segments (%s)",
+                len(dropped),
+                ", ".join(f"{seg}={n}" for seg, n in drop_hist.most_common()),
+            )
+        if not gaps:
+            return 0
 
     now = datetime.now(UTC).isoformat()
 
@@ -3509,7 +3520,9 @@ def write_skipped_sources(records: list[dict]) -> int:
 
     Each record must have: source_type, source_id, skip_reason,
     skip_reason_detail. Optional: description, dd_path (auto-derived from
-    source_id for DD sources), signal (for signal sources).
+    source_id for DD sources), signal (for signal sources), status
+    (defaults to ``'skipped'`` for backward compatibility; may be
+    ``'not_physical_quantity'`` for configuration metadata).
 
     The ``id`` is derived as ``{source_type}:{source_id}`` (matches the
     existing ``merge_standard_name_sources`` key convention).
@@ -3534,6 +3547,7 @@ def write_skipped_sources(records: list[dict]) -> int:
                 "skip_reason": r["skip_reason"],
                 "skip_reason_detail": r.get("skip_reason_detail", ""),
                 "description": r.get("description", ""),
+                "status": r.get("status", "skipped"),
                 "dd_path": r.get("dd_path")
                 or (source_id if source_type == "dd" else None),
                 "signal": r.get("signal")
@@ -3549,13 +3563,13 @@ def write_skipped_sources(records: list[dict]) -> int:
             ON CREATE SET
                 sns.source_type = src.source_type,
                 sns.source_id = src.source_id,
-                sns.status = 'skipped',
+                sns.status = src.status,
                 sns.skip_reason = src.skip_reason,
                 sns.skip_reason_detail = src.skip_reason_detail,
                 sns.description = src.description,
                 sns.attempt_count = 0
             ON MATCH SET
-                sns.status = 'skipped',
+                sns.status = src.status,
                 sns.skip_reason = src.skip_reason,
                 sns.skip_reason_detail = src.skip_reason_detail,
                 sns.description = coalesce(src.description, sns.description),
@@ -3583,7 +3597,7 @@ def list_skipped_sources(
     limit: int = 100,
     reason: str | None = None,
 ) -> list[dict]:
-    """Query skipped StandardNameSource records.
+    """Query skipped/not_physical_quantity StandardNameSource records.
 
     Returns a list of dicts with keys: id, source_type, source_id,
     skip_reason, skip_reason_detail, description.
@@ -3592,7 +3606,7 @@ def list_skipped_sources(
         limit: Maximum rows to return.
         reason: Optional skip_reason filter.
     """
-    where = "sns.status = 'skipped'"
+    where = "sns.status IN ['skipped', 'not_physical_quantity']"
     params: dict = {"limit": limit}
     if reason is not None:
         where += " AND sns.skip_reason = $reason"

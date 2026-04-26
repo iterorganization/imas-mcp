@@ -345,3 +345,35 @@ rules:
       identifiers, geometry type identifiers, and element object references.
       All paths under grid_ggd are structural mesh metadata, not physical
       observables.  Physics values live under ggd/* (not grid_ggd/*).
+
+  # -------------------------------------------------------------------------
+  # Class 8 — Configuration flag pseudo-quantities
+  #
+  # Boolean configuration switches under */model/* and similar paths that
+  # the DD classifier marks as quantity.  They describe how a calculation
+  # was set up, not what was measured.
+  # 26 paths confirmed (87% in gyrokinetics IDS).
+  # Mean reviewer score on leaked composed names: 0.324 (deep RED).
+  #
+  # Matching criteria (ALL must hold):
+  #   - Any path (glob **)
+  #   - data_type is INT_0D or INT_1D
+  #   - units are empty/None/"-"
+  #   - documentation contains flag-style language
+  # -------------------------------------------------------------------------
+  - path_pattern: "**"
+    data_type_in:
+      - "INT_0D"
+      - "INT_1D"
+    units_empty: true
+    doc_contains_any:
+      - "Flag = 1"
+      - "Flag = 0"
+      - "Flag if"
+      - "1 if"
+      - "0 if not"
+    status: "not_physical_quantity"
+    skip_reason: "configuration_flag"
+    reason: >-
+      Boolean configuration flag (INT data type, no units, flag-style
+      documentation).  Describes calculation setup, not a physical quantity.
