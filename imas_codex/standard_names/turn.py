@@ -613,11 +613,25 @@ _run_review_phase = _run_review_names_phase
 # Budget shares for trailing phases, keyed by phase name.
 # These are fractions of the *remaining* budget after prior phases,
 # not fractions of the total cost_limit.
+#
+# Share table for review_names:
+#   Full pipeline (generate + enrich both active)  → 0.45
+#   Review-only   (generate + enrich both skipped) → 0.85
+#
+# The review-only share (0.85) ensures that ``--only review --cost-limit 1.50``
+# allocates ~$1.275 to review_names, clearing the opus-only batch reservation
+# floor (~$1.125 for a 15-name batch).  With the 0.45 default the allocation
+# would be $0.675 — below the floor — causing zero reviews to run.
 _ADAPTIVE_SHARES: dict[str, float] = {
     "review_names": 0.45,
     "review_docs": 0.35,
     "regen": 1.00,  # regen gets everything that's left
 }
+
+# review_names share when generate and enrich are both skipped (--only review /
+# --only review_names).  Higher than the full-pipeline share because review is
+# the sole consumer of the budget.
+_REVIEW_NAMES_SHARE_REVIEW_ONLY: float = 0.85
 
 
 def _adaptive_review_budget(
@@ -635,6 +649,11 @@ def _adaptive_review_budget(
     names already composed) but its 30% allocation is wasted, leaving
     review with only 15% of the total.
 
+    When both ``generate`` and ``enrich`` phases are skipped (e.g.
+    ``--only review`` or ``--only review_names``), ``review_names``
+    receives a higher share (``_REVIEW_NAMES_SHARE_REVIEW_ONLY``) so
+    that the full cost_limit is usable for reviewing.
+
     Args:
         cost_limit: Total turn budget.
         prior_results: Results from phases that have already run.
@@ -645,6 +664,14 @@ def _adaptive_review_budget(
     """
     prior_spend = sum(r.cost for r in prior_results if not r.skipped)
     remaining = max(cost_limit - prior_spend, 0.0)
+
+    # Boost review_names share when generate phases are both absent so that
+    # --only review --cost-limit 1.50 can clear the batch reservation floor.
+    if phase_name == "review_names":
+        skipped_names = {r.name for r in prior_results if r.skipped}
+        if "generate" in skipped_names and "enrich" in skipped_names:
+            return remaining * _REVIEW_NAMES_SHARE_REVIEW_ONLY
+
     share = _ADAPTIVE_SHARES.get(phase_name, 0.15)
     return remaining * share
 
