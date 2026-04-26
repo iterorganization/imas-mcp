@@ -54,6 +54,23 @@ _CATEGORICAL_SUFFIXES: tuple[str, ...] = (
     "_name",
 )
 
+# Name prefixes that indicate a pure geometric dimension of a device or
+# structure (e.g. "length_of_magnetic_field_probe",
+# "major_radius_of_magnetic_field_probe").  These are exact geometric
+# properties, not stochastic measurements, so an uncertainty_index sibling
+# is semantically invalid.  Confirmed from Phase E cycle-4 and cycle-5b logs
+# where ``length_of_*`` and ``major_radius_of_*`` parents slipped through
+# the earlier gate rules.
+_GEOMETRY_DIMENSION_PREFIXES: tuple[str, ...] = (
+    "length_of_",
+    "major_radius_of_",
+    "minor_radius_of_",
+    "height_of_",
+    "width_of_",
+    "depth_of_",
+    "radius_of_",
+)
+
 
 def _parent_supports_uncertainty_index(parent_name: str, unit: str | None) -> bool:
     """Return True only when an ``uncertainty_index_of_<parent>`` sibling is
@@ -73,8 +90,18 @@ def _parent_supports_uncertainty_index(parent_name: str, unit: str | None) -> bo
     4. **Dimensionless unit** – *unit* is ``None``, ``""``, ``"1"``, or
        ``"-"``: uncertainty discretisation has no meaning for dimensionless
        scalars (ratios, fractions, counters).
-
-    All other parents are considered suitable and return True.
+    5. **Pure geometry dimension prefix** – name starts with a prefix from
+       ``_GEOMETRY_DIMENSION_PREFIXES`` (e.g. ``length_of_``,
+       ``major_radius_of_``): exact geometric dimensions are deterministic,
+       not stochastic measurements, so an uncertainty_index sibling is
+       semantically invalid.
+    6. **Policy gate (W24 audit)** – ``uncertainty_index_of_*`` names are
+       bookkeeping integer indices into a shared error array, never physics
+       quantities.  W20A/W20B/W24 audits found zero useful standard names of
+       this form (typical reviewer scores 0.20–0.35).  This function always
+       returns False to close the pipeline leak; ``upper_uncertainty_of_*``
+       and ``lower_uncertainty_of_*`` siblings remain unaffected (they are
+       not gated by this function).
     """
     # Rule 1: process attribution patterns
     if "_due_to_" in parent_name or "caused_by_" in parent_name:
@@ -92,7 +119,13 @@ def _parent_supports_uncertainty_index(parent_name: str, unit: str | None) -> bo
     if unit is None or unit.strip().lower() in _DIMENSIONLESS_UNITS:
         return False
 
-    return True
+    # Rule 5: pure geometry dimension prefixes
+    if parent_name.startswith(_GEOMETRY_DIMENSION_PREFIXES):
+        return False
+
+    # Rule 6: policy gate — uncertainty_index_of_* is always a bookkeeping
+    # integer, never a physics quantity (W24 audit: 5 leaks, 0 useful names).
+    return False
 
 
 def _detect_error_suffix(error_node_id: str) -> str | None:

@@ -40,28 +40,33 @@ class TestParentSupportsUncertaintyIndex:
     """Direct unit tests for the gate helper function."""
 
     def test_allow_temperature(self):
-        """Dimensional scalar (eV) with no deny pattern → allowed."""
+        """W24 policy gate: ALL parents now return False for uncertainty_index.
+
+        Prior to W24 audit, dimensional scalars were allowed.  W20A/W20B/W24
+        audits found zero useful uncertainty_index_of_* names; Rule 6 closes
+        the gate unconditionally.
+        """
         from imas_codex.standard_names.error_siblings import (
             _parent_supports_uncertainty_index,
         )
 
-        assert _parent_supports_uncertainty_index("electron_temperature", "eV") is True
+        assert _parent_supports_uncertainty_index("electron_temperature", "eV") is False
 
     def test_allow_current(self):
-        """Dimensional scalar (A) with no deny pattern → allowed."""
+        """W24 policy gate: dimensional scalar (A) now also blocked by Rule 6."""
         from imas_codex.standard_names.error_siblings import (
             _parent_supports_uncertainty_index,
         )
 
-        assert _parent_supports_uncertainty_index("plasma_current", "A") is True
+        assert _parent_supports_uncertainty_index("plasma_current", "A") is False
 
     def test_allow_ion_density(self):
-        """Dimensional scalar (m^-3) with no deny pattern → allowed."""
+        """W24 policy gate: dimensional scalar (m^-3) now also blocked by Rule 6."""
         from imas_codex.standard_names.error_siblings import (
             _parent_supports_uncertainty_index,
         )
 
-        assert _parent_supports_uncertainty_index("ion_density", "m^-3") is True
+        assert _parent_supports_uncertainty_index("ion_density", "m^-3") is False
 
     def test_deny_process_term(self):
         """Name containing _due_to_ → denied (process attribution)."""
@@ -216,7 +221,12 @@ class TestMintErrorSiblingsGate:
         )
 
     def test_mint_allows_approved_parent(self):
-        """Physical scalar (eV, plasma_current) → uncertainty_index IS produced."""
+        """W24 policy gate: uncertainty_index is NO LONGER produced for any parent.
+
+        Prior to W24, dimensional parents (eV) were allowed to produce
+        uncertainty_index_of_* siblings.  Rule 6 now blocks all of them.
+        upper/lower uncertainty siblings are still produced (not gated).
+        """
         from imas_codex.standard_names.error_siblings import mint_error_siblings
 
         parse_mock, compose_mock = _make_isn_passthrough()
@@ -244,8 +254,8 @@ class TestMintErrorSiblingsGate:
             )
 
         ids = [s["id"] for s in siblings]
-        assert any("uncertainty_index" in sid for sid in ids), (
-            f"Expected uncertainty_index sibling, got: {ids}"
+        assert not any("uncertainty_index" in sid for sid in ids), (
+            f"W24 policy gate: uncertainty_index siblings must not be produced, got: {ids}"
         )
 
     def test_upper_lower_not_blocked_for_denied_parent(self):
@@ -318,3 +328,113 @@ class TestMintErrorSiblingsGate:
         ids = [s["id"] for s in siblings]
         assert len(siblings) == 2, f"Expected 2 siblings (upper+lower), got: {ids}"
         assert not any("uncertainty_index" in sid for sid in ids)
+
+
+class TestW24UncertaintyIndexLeak:
+    """Regression tests for W24 audit: uncertainty_index_of_* leak via error_siblings.
+
+    Root cause: error_siblings pipeline mints uncertainty_index_of_<parent>
+    deterministically from parent names + error_node_ids, bypassing the
+    extract_deny gate (which only applies to DD path extraction).  For
+    dimensional parents like current density (A.m^-2), the previous gate
+    allowed the sibling.  W24 confirmed 5 leaks:
+      - uncertainty_index_of_vertical_component_of_inertial_current_density
+      - uncertainty_index_of_radial_component_of_diamagnetic_current_density
+      (and 3 similar forms)
+
+    Fix: Rule 6 in _parent_supports_uncertainty_index always returns False,
+    blocking ALL uncertainty_index_of_* sibling creation.
+    """
+
+    def test_current_density_component_blocked(self):
+        """W24 leak pattern: component_of current density must not produce uncertainty_index."""
+        from unittest.mock import MagicMock, patch
+
+        from imas_codex.standard_names.error_siblings import mint_error_siblings
+
+        def _parse(name):
+            m = MagicMock()
+            m.ir = name
+            return m
+
+        with (
+            patch("imas_standard_names.grammar.parser.parse", side_effect=_parse),
+            patch(
+                "imas_standard_names.grammar.render.compose",
+                side_effect=lambda ir: ir,
+            ),
+        ):
+            siblings = mint_error_siblings(
+                "vertical_component_of_inertial_current_density",
+                error_node_ids=[
+                    "edge_profiles/ggd/j_inertial/z_error_index",
+                ],
+                unit="A.m^-2",
+                physics_domain="edge_plasma_physics",
+                cocos_type=None,
+                cocos_version=None,
+                dd_version="4.0.0",
+            )
+
+        ids = [s["id"] for s in siblings]
+        assert not any("uncertainty_index" in sid for sid in ids), (
+            f"W24 regression: uncertainty_index_of_vertical_component_of_inertial_"
+            f"current_density must not be generated, got: {ids}"
+        )
+
+    def test_diamagnetic_current_density_blocked(self):
+        """W24 leak pattern: diamagnetic current density component blocked."""
+        from unittest.mock import MagicMock, patch
+
+        from imas_codex.standard_names.error_siblings import mint_error_siblings
+
+        def _parse(name):
+            m = MagicMock()
+            m.ir = name
+            return m
+
+        with (
+            patch("imas_standard_names.grammar.parser.parse", side_effect=_parse),
+            patch(
+                "imas_standard_names.grammar.render.compose",
+                side_effect=lambda ir: ir,
+            ),
+        ):
+            siblings = mint_error_siblings(
+                "radial_component_of_diamagnetic_current_density",
+                error_node_ids=[
+                    "edge_profiles/ggd/j_diamagnetic/radial_error_index",
+                ],
+                unit="A.m^-2",
+                physics_domain="edge_plasma_physics",
+                cocos_type=None,
+                cocos_version=None,
+                dd_version="4.0.0",
+            )
+
+        ids = [s["id"] for s in siblings]
+        assert not any("uncertainty_index" in sid for sid in ids), (
+            f"W24 regression: uncertainty_index_of_radial_component_of_diamagnetic_"
+            f"current_density must not be generated, got: {ids}"
+        )
+
+    def test_geometry_dimension_prefix_blocked(self):
+        """Rule 5 regression: length_of_* parents must not produce uncertainty_index."""
+        from imas_codex.standard_names.error_siblings import (
+            _parent_supports_uncertainty_index,
+        )
+
+        assert (
+            _parent_supports_uncertainty_index("length_of_magnetic_field_probe", "m")
+            is False
+        )
+        assert (
+            _parent_supports_uncertainty_index(
+                "major_radius_of_magnetic_field_probe", "m"
+            )
+            is False
+        )
+        assert (
+            _parent_supports_uncertainty_index("minor_radius_of_plasma_boundary", "m")
+            is False
+        )

@@ -20,7 +20,12 @@ class TestMintErrorSiblings:
     """Unit tests for the mint_error_siblings helper."""
 
     def test_error_siblings_minted_for_parent_with_errors(self):
-        """A parent with 3 error node IDs produces 3 sibling candidates."""
+        """A parent with 3 error node IDs produces 2 sibling candidates (W24 policy).
+
+        W24 policy gate (Rule 6 in _parent_supports_uncertainty_index) blocks
+        uncertainty_index_of_* for all parents.  Only upper and lower uncertainty
+        siblings are produced.
+        """
         from imas_codex.standard_names.error_siblings import mint_error_siblings
 
         siblings = mint_error_siblings(
@@ -37,12 +42,12 @@ class TestMintErrorSiblings:
             dd_version="4.0.0",
         )
 
-        assert len(siblings) == 3
+        assert len(siblings) == 2
 
         ids = {s["id"] for s in siblings}
         assert "upper_uncertainty_of_plasma_current" in ids
         assert "lower_uncertainty_of_plasma_current" in ids
-        assert "uncertainty_index_of_plasma_current" in ids
+        assert "uncertainty_index_of_plasma_current" not in ids
 
     def test_error_sibling_shares_parent_unit(self):
         """Each sibling inherits the parent's unit."""
@@ -103,7 +108,11 @@ class TestMintErrorSiblings:
         assert len(siblings) == 0
 
     def test_error_sibling_naming(self):
-        """Verify exact naming pattern for all three suffixes."""
+        """Verify exact naming pattern for upper and lower suffixes (W24 policy).
+
+        W24 policy gate blocks uncertainty_index_of_* for all parents.
+        Only upper and lower uncertainty siblings are produced.
+        """
         from imas_codex.standard_names.error_siblings import mint_error_siblings
 
         siblings = mint_error_siblings(
@@ -125,7 +134,7 @@ class TestMintErrorSiblings:
 
         assert "upper_uncertainty_of_plasma_current" in name_map
         assert "lower_uncertainty_of_plasma_current" in name_map
-        assert "uncertainty_index_of_plasma_current" in name_map
+        assert "uncertainty_index_of_plasma_current" not in name_map
 
     def test_error_sibling_provenance_fields(self):
         """Error siblings have deterministic provenance markers."""
@@ -202,7 +211,12 @@ class TestMintErrorSiblings:
         assert len(siblings) == 0
 
     def test_uncertainty_index_kind_is_scalar(self):
-        """The uncertainty_index sibling always has kind='scalar'."""
+        """W24 policy: uncertainty_index siblings are never produced (blocked by Rule 6).
+
+        Prior to W24, _error_index siblings had kind='scalar'.  Rule 6 now
+        blocks all uncertainty_index_of_* creation, so passing only
+        _error_index returns an empty list.
+        """
         from imas_codex.standard_names.error_siblings import mint_error_siblings
 
         siblings = mint_error_siblings(
@@ -215,7 +229,10 @@ class TestMintErrorSiblings:
             dd_version="4.0.0",
         )
 
-        assert siblings[0]["kind"] == "scalar"
+        assert len(siblings) == 0, (
+            "W24 policy: uncertainty_index_of_* must not be generated; "
+            f"got {[s['id'] for s in siblings]}"
+        )
 
 
 # -----------------------------------------------------------------------
