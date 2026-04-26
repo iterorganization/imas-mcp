@@ -542,6 +542,114 @@ class TestActualDDPathsDenied:
             )
 
 
+class TestGGDSubgridMetadataDenied:
+    """Regression tests: GGD subgrid metadata paths must be denied (W24 patch).
+
+    Covers:
+    - ggd/**/grid_index — back-references to grid definition (INT_0D)
+    - ggd/**/grid_subset_index — back-references to grid subset (INT_0D)
+    - grid_ggd/** — complete grid topology subtree (structural metadata)
+
+    Physics value paths within ggd/ (e.g. ggd/j_total/radial, ggd/pressure_thermal/values)
+    must NOT be denied.
+    """
+
+    GGD_SUBGRID_METADATA = [
+        # grid_index / grid_subset_index within ggd/* fields
+        "edge_profiles/ggd/a_field/grid_index",
+        "edge_profiles/ggd/a_field/grid_subset_index",
+        "edge_profiles/ggd/b_field/grid_index",
+        "edge_profiles/ggd/b_field/grid_subset_index",
+        "edge_profiles/ggd/j_total/grid_index",
+        "edge_profiles/ggd/j_total/grid_subset_index",
+        "edge_profiles/ggd/pressure_thermal/grid_index",
+        "edge_profiles/ggd/pressure_thermal/grid_subset_index",
+        "edge_profiles/ggd/ion/temperature/grid_index",
+        "edge_profiles/ggd/ion/temperature/grid_subset_index",
+        # grid_ggd topology paths
+        "edge_profiles/grid_ggd/grid_subset/dimension",
+        "edge_profiles/grid_ggd/grid_subset/element/object/index",
+        "edge_profiles/grid_ggd/grid_subset/element/object/dimension",
+        "edge_profiles/grid_ggd/grid_subset/element/object/space",
+        "edge_profiles/grid_ggd/grid_subset/identifier/index",
+        "edge_profiles/grid_ggd/grid_subset/metric/jacobian",
+        "edge_profiles/grid_ggd/grid_subset/metric/tensor_contravariant",
+        "edge_profiles/grid_ggd/space/coordinates_type",
+        "edge_profiles/grid_ggd/space/coordinates_type/index",
+        "edge_profiles/grid_ggd/space/geometry_type/index",
+        "edge_profiles/grid_ggd/space/identifier/index",
+        "edge_profiles/grid_ggd/identifier/index",
+        "edge_profiles/grid_ggd/path",
+    ]
+
+    GGD_PHYSICS_PATHS_NOT_DENIED = [
+        # Physics value fields within ggd/ — must NOT be denied
+        "edge_profiles/ggd/j_total/radial",
+        "edge_profiles/ggd/j_total/parallel",
+        "edge_profiles/ggd/pressure_thermal/values",
+        "edge_profiles/ggd/ion/temperature/values",
+        "edge_profiles/ggd/a_field/diamagnetic",
+        "edge_profiles/ggd/b_field/parallel",
+        "edge_profiles/ggd/e_field",
+    ]
+
+    def test_grid_index_denied(self) -> None:
+        rule = match_deny_rule("edge_profiles/ggd/a_field/grid_index")
+        assert rule is not None
+        assert rule.skip_reason == "ggd_subgrid_metadata"
+
+    def test_grid_subset_index_denied(self) -> None:
+        rule = match_deny_rule("edge_profiles/ggd/j_total/grid_subset_index")
+        assert rule is not None
+        assert rule.skip_reason == "ggd_subgrid_metadata"
+
+    def test_nested_grid_index_denied(self) -> None:
+        """Deeply nested path with grid_index must also be denied."""
+        rule = match_deny_rule("edge_profiles/ggd/ion/temperature/grid_index")
+        assert rule is not None
+        assert rule.skip_reason == "ggd_subgrid_metadata"
+
+    def test_grid_ggd_dimension_denied(self) -> None:
+        rule = match_deny_rule("edge_profiles/grid_ggd/grid_subset/dimension")
+        assert rule is not None
+        assert rule.skip_reason == "ggd_subgrid_metadata"
+
+    def test_grid_ggd_element_object_index_denied(self) -> None:
+        rule = match_deny_rule(
+            "edge_profiles/grid_ggd/grid_subset/element/object/index"
+        )
+        assert rule is not None
+        assert rule.skip_reason == "ggd_subgrid_metadata"
+
+    def test_grid_ggd_identifier_denied(self) -> None:
+        rule = match_deny_rule("edge_profiles/grid_ggd/identifier/index")
+        assert rule is not None
+        assert rule.skip_reason == "ggd_subgrid_metadata"
+
+    def test_grid_ggd_path_denied(self) -> None:
+        rule = match_deny_rule("edge_profiles/grid_ggd/path")
+        assert rule is not None
+        assert rule.skip_reason == "ggd_subgrid_metadata"
+
+    def test_all_ggd_subgrid_metadata_denied(self) -> None:
+        for path in self.GGD_SUBGRID_METADATA:
+            rule = match_deny_rule(path)
+            assert rule is not None, f"Not denied: {path}"
+            assert rule.skip_reason == "ggd_subgrid_metadata", (
+                f"Wrong reason for {path}: {rule.skip_reason}"
+            )
+
+    def test_ggd_physics_paths_not_denied(self) -> None:
+        """Physics value fields within ggd/ must pass through the deny gate."""
+        for path in self.GGD_PHYSICS_PATHS_NOT_DENIED:
+            rule = match_deny_rule(path)
+            # Accept if not denied OR if denied for a reason OTHER than ggd_subgrid_metadata
+            if rule is not None:
+                assert rule.skip_reason != "ggd_subgrid_metadata", (
+                    f"Physics GGD path incorrectly denied as ggd_subgrid_metadata: {path}"
+                )
+
+
 class TestApplyExtractDeny:
     """Verify the pipeline integration function."""
 

@@ -292,3 +292,56 @@ rules:
     reason: >-
       GGD grid geometry content sub-fields (name, index, description) —
       structural mesh-topology metadata, not a physics quantity.
+
+  # -------------------------------------------------------------------------
+  # Class 7 — GGD subgrid metadata
+  #
+  # W24 rotation on edge_plasma_physics revealed two categories of non-physics
+  # GGD paths:
+  #
+  # (a) grid_index / grid_subset_index fields within ggd/* arrays — integer
+  #     indices that reference which grid definition and subset applies to the
+  #     stored values.  These are back-references into the grid_ggd topology
+  #     section, not physical observables.  Real DD paths (W24 recon):
+  #       edge_profiles/ggd/a_field/grid_index          (INT_0D)
+  #       edge_profiles/ggd/a_field/grid_subset_index   (INT_0D)
+  #       edge_profiles/ggd/b_field/grid_index          (INT_0D)
+  #       edge_profiles/ggd/j_total/grid_subset_index   (INT_0D)
+  #
+  # (b) grid_ggd/** — the complete grid topology subtree defining spaces,
+  #     subsets, coordinate types, geometry type identifiers, and element
+  #     object references.  None of these carry physics values; all are
+  #     structural mesh metadata.  Real DD paths (W24 recon):
+  #       edge_profiles/grid_ggd/grid_subset/dimension
+  #       edge_profiles/grid_ggd/grid_subset/element/object/index
+  #       edge_profiles/grid_ggd/space/coordinates_type
+  #       edge_profiles/grid_ggd/identifier/index
+  #       edge_profiles/grid_ggd/path
+  #
+  # Note: GGD physics value fields (edge_profiles/ggd/j_total/radial,
+  # edge_profiles/ggd/pressure_thermal/values, etc.) are NOT denied.
+  # The _on_ggd suffix anti-pattern in W24 names from physics GGD paths
+  # requires Option A (register on_ggd as ISN locus specifier) — flagged
+  # as W26 architect work.
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/ggd/**/grid_index"
+    skip_reason: "ggd_subgrid_metadata"
+    reason: >-
+      GGD grid index back-reference — integer pointing to which grid_ggd
+      definition applies to a stored field.  Structural bookkeeping, not a
+      physical quantity.
+
+  - path_pattern: "**/ggd/**/grid_subset_index"
+    skip_reason: "ggd_subgrid_metadata"
+    reason: >-
+      GGD grid subset index — integer pointing to which grid_ggd subset
+      contains the stored field values.  Structural bookkeeping, not a
+      physical quantity.
+
+  - path_pattern: "**/grid_ggd/**"
+    skip_reason: "ggd_subgrid_metadata"
+    reason: >-
+      GGD grid topology subtree — defines spaces, subsets, coordinate type
+      identifiers, geometry type identifiers, and element object references.
+      All paths under grid_ggd are structural mesh metadata, not physical
+      observables.  Physics values live under ggd/* (not grid_ggd/*).
