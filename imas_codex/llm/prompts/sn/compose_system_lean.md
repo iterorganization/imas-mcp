@@ -32,6 +32,8 @@ Named-entity geometry always uses `_of_`, never `_at_`. Use `vertical_coordinate
 ✓ `sonic_rotation_frequency` (subject=sonic + base=rotation_frequency)
 ✗ `viscosity_current_density` (underspecified — specify parallel/perpendicular/heat)
 ✗ `current_driven` (passive participle — use `_due_to_` form)
+- ❌ `ion_rotation_frequency_toroidal` — trailing qualifier; component must precede
+- ✅ `toroidal_component_of_ion_rotation_frequency`
 
 **Never:** `real_part_of_X` → `X_real_part`; `ion_rotation_frequency_toroidal` → `toroidal_component_of_ion_rotation_frequency`; `reconstructed_safety_factor` → `safety_factor`; `electron_temperature_profile` → `electron_temperature`.
 
