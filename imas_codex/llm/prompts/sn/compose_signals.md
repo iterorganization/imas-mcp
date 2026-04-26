@@ -81,6 +81,16 @@ Facility: {{ facility }}, Domain: {{ domain }}
 - Units: {{ item.units or 'unspecified' }}
 - Physics domain: {{ item.physics_domain or 'unspecified' }}
 
+{% if item.sn_reuse_candidates %}
+**Candidate standard names to reuse** (by description similarity):
+{% for sn in item.sn_reuse_candidates %}- `name:{{ sn.id }}` ({{ sn.unit }}): {{ sn.description_short }}
+{% endfor %}{% endif %}
+
+{% if item.dd_path_candidates %}
+**Nearest DD paths** (via hybrid search):
+{% for p in item.dd_path_candidates %}- `{{ p.tag }}` ({{ p.ids }}, {{ p.unit }}): {{ p.doc_short }}
+{% endfor %}{% endif %}
+
 {% endfor %}
 
 ## Output Format
