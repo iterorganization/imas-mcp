@@ -34,6 +34,9 @@ Projection prefix + locus postfix coexist cleanly: `[projection] base [locus]`.
 **E10. Nested operators** — `time_derivative_of_volume_averaged_of_electron_density`
 Outer operator `time_derivative` wraps inner operator `volume_averaged` wraps base `electron_density`. Each `_of_` is an operator scope marker; the last `_of_` (if any) would be a locus.
 
+**E11. Spectral decomposition** — `per_toroidal_mode_of_wave_absorbed_power`
+Prefix operator `per_toroidal_mode` applied to base `wave_absorbed_power`. Indicates the quantity is resolved per Fourier toroidal-mode component. `per_toroidal_mode` and `per_poloidal_mode` are registered operators — do not flag them as unknown.
+
 ### ❌ Negative Exemplars — rc20 forms now rejected
 
 **N1.** ❌ `real_part_of_perturbed_electrostatic_potential`

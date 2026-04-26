@@ -15,7 +15,7 @@ Every standard name decomposes into five groups:
 
 | Group | Role | Example tokens |
 |-------|------|----------------|
-| **operators** | Math ops, applied outer→inner | prefix: `time_derivative`, `gradient`, `normalized`; postfix: `magnitude`, `real_part`, `fourier_coefficient` |
+| **operators** | Math ops, applied outer→inner | prefix: `time_derivative`, `gradient`, `normalized`, `per_toroidal_mode`, `per_poloidal_mode`, `cumulative_inside_flux_surface`; postfix: `magnitude`, `real_part`, `fourier_coefficient` |
 | **projection** | Axis decomposition of vector/tensor | `radial_component_of_`, `toroidal_component_of_`, `parallel_component_of_` |
 | **qualifiers** | Species or population prefix | `electron`, `ion`, `deuterium`, `fast_ion`, `thermal_electron` |
 | **base** | Physical quantity (**closed** vocab, ~250 tokens) | `temperature`, `pressure`, `density`, `magnetic_field`, `safety_factor` |
@@ -50,6 +50,7 @@ After vNext, `_of_` appears in exactly three structural roles:
 - **DD path independence** — names describe physics, not DD location. Never include IDS names or DD section prefixes.
 - **No processing verbs** — `reconstructed_`, `measured_`, `fitted_` are provenance, not physics. Drop them.
 - **Preposition discipline** — use `_of_` for properties of named entities, `_at_` for field values at points, `_over_` for region integrals. Never use `_from_`.
+- **Spectral decomposition** — `per_toroidal_mode` and `per_poloidal_mode` are registered **unary prefix** operators. Canonical form: `per_toroidal_mode_of_X`. They indicate the quantity is resolved per Fourier toroidal/poloidal mode component. Do not penalise these as unknown operators.
 
 ### Rejected rc20 Forms
 
