@@ -76,6 +76,89 @@ def _dedup_adjacent_tokens(name: str, log: logging.Logger | None = None) -> str:
     return "_".join(result)
 
 
+# ---------------------------------------------------------------------------
+# Auto-VocabGap detection for physical_base (W29)
+# ---------------------------------------------------------------------------
+
+
+@_cache
+def _load_known_physical_bases() -> frozenset[str]:
+    """Return the set of registered physical_base tokens from ISN.
+
+    Reads the ``grammar/vocabularies/physical_bases.yml`` vocabulary file
+    from the installed ``imas_standard_names`` package.  Falls back to an
+    empty set if the package or file is unavailable.
+    """
+    try:
+        from importlib.resources import files
+
+        import yaml
+
+        text = (
+            files("imas_standard_names")
+            .joinpath("grammar/vocabularies/physical_bases.yml")
+            .read_text()
+        )
+        data = yaml.safe_load(text)
+        bases = data.get("bases", {})
+        if isinstance(bases, dict):
+            return frozenset(bases.keys())
+        return frozenset()
+    except Exception:
+        return frozenset()
+
+
+def _auto_detect_physical_base_gaps(
+    candidates: list,  # StandardNameCandidate instances
+    known_bases: frozenset[str] | None = None,
+) -> list[dict]:
+    """Parse each candidate name and surface novel ``physical_base`` tokens.
+
+    Returns a list of VocabGap-compatible dicts for bases not in the ISN
+    registry.  These are auto-tracked so the LLM does not need to emit
+    explicit ``vocab_gap`` exits for ``physical_base``.
+
+    Args:
+        candidates: Parsed ``StandardNameCandidate`` objects from the LLM.
+        known_bases: Pre-loaded set of registered physical_base tokens.
+            Defaults to ``_load_known_physical_bases()`` if not provided.
+    """
+    if known_bases is None:
+        known_bases = _load_known_physical_bases()
+
+    gaps: list[dict] = []
+    seen: set[tuple[str, str]] = set()  # (source_id, base) dedup
+
+    try:
+        from imas_standard_names.grammar import parse_standard_name
+    except ImportError:
+        return gaps  # ISN not installed — skip detection
+
+    for c in candidates:
+        try:
+            parsed = parse_standard_name(c.standard_name)
+            base = parsed.physical_base
+            if base and base not in known_bases:
+                key = (c.source_id, base)
+                if key not in seen:
+                    seen.add(key)
+                    gaps.append(
+                        {
+                            "source_id": c.source_id,
+                            "segment": "physical_base",
+                            "needed_token": base,
+                            "reason": (
+                                f"Novel physical_base proposed by compose: "
+                                f"{base!r} (from name {c.standard_name!r})"
+                            ),
+                        }
+                    )
+        except Exception:
+            continue  # parse failures already handled elsewhere
+
+    return gaps
+
+
 # =============================================================================
 # EXTRACT phase
 # =============================================================================
@@ -1740,7 +1823,35 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             if not state.dry_run:
                 _update_sources_after_vocab_gap(gap_dicts, state.source, wlog)
 
-        # Process attachments — paths that map to existing names
+        # Auto-detect novel physical_base tokens in composed candidates (W29).
+        # These are surfaced as VocabGap nodes for ISN review without
+        # requiring the LLM to emit explicit vocab_gap exits.
+        if candidates:
+            auto_gaps = _auto_detect_physical_base_gaps(candidates)
+            if auto_gaps:
+                # Dedupe against LLM-emitted gaps (by source_id+segment+needed_token)
+                existing_keys = {
+                    (g["source_id"], g["segment"], g["needed_token"])
+                    for g in state.stats.get("vocab_gaps", [])
+                }
+                novel = [
+                    g
+                    for g in auto_gaps
+                    if (g["source_id"], g["segment"], g["needed_token"])
+                    not in existing_keys
+                ]
+                if novel:
+                    from imas_codex.standard_names.graph_ops import write_vocab_gaps
+
+                    source_type = "dd" if state.source == "dd" else "signals"
+                    await asyncio.to_thread(
+                        write_vocab_gaps,
+                        novel,
+                        source_type,
+                        skip_segment_filter=True,
+                    )
+                    state.stats.setdefault("vocab_gaps", []).extend(novel)
+                    wlog.info("Auto-detected %d novel physical_base gaps", len(novel))
         if result.attachments:
             _process_attachments(result.attachments, state, wlog)
             if not state.dry_run:

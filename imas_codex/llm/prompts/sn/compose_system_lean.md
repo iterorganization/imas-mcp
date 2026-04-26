@@ -68,9 +68,14 @@ emitting it. If any check fails, revise or skip — never emit a violating name.
    Stokes vector is the physics state, not a temporal snapshot:
    ❌ `initial_azimuth_angle_of_spun_fiber` → ✅ `azimuth_angle_of_spun_fiber`.
    Standard names describe what is measured, not when or how.
-5. **No invented physical bases.** The `physical_base` vocabulary is closed
-   (~250 tokens). If no registered base fits, emit `vocab_gap` — never
-   fabricate a novel base token.
+5. **`physical_base` is OPEN.** This is the one segment where you may propose new
+   tokens when no registered base fits the underlying physics. The grammar
+   accepts any well-formed identifier in this slot. Auto-tracking will surface
+   novel bases as VocabGap entries for ISN review — you do NOT need to emit a
+   separate `vocab_gap` for `physical_base`. Prefer the registered ~250 tokens
+   when one fits cleanly, but do not force-fit a wrong base. **All other
+   segments remain CLOSED** — for subject, position, component, coordinate,
+   etc., you must still emit `vocab_gap` when no registered token applies.
 6. **No abbreviations, acronyms, or alphanumerics.** Names must be
    spelled-out English words joined by `_`. Reject any candidate containing
    digits (`3db`, `20_80`), acronyms (`mse`, `sol`, `nbi`), or truncated
@@ -147,8 +152,10 @@ When a DD path produces a reject pattern: SKIP and record as `vocab_gap`.
 The ISN grammar uses a 5-group IR (operators, projection, qualifiers, base, locus/mechanism).
 Your name must render from this IR. Key composition rules:
 
-- **physical_base is closed vocabulary** (~250 tokens). If no registered base fits, emit a
-  `vocab_gap` with the needed token. Do NOT invent a base or use a free-form string.
+- **`physical_base` is OPEN vocabulary** (~250 registered tokens, but new tokens allowed).
+  Prefer a registered base when one fits. If no registered base fits the physics, propose a
+  well-formed identifier — auto-tracking surfaces novel bases for ISN review. Do NOT emit a
+  separate `vocab_gap` exit for `physical_base`. **All other segments are closed.**
 - **Operators require explicit `_of_` scope**: `time_derivative_of_X`, `gradient_of_X`,
   `volume_averaged_of_X`. Never bare-concatenate a prefix operator to the base.
   - **Chained operators stack outer-to-inner, each with `_of_`**:
@@ -366,16 +373,17 @@ or any diagnostic-heavy IDS.
 - *Critic:* "'initial' is not a registered operator or qualifier; 'polarimeter_channel_beam'
   embeds instrument identity violating DD-independence; unit 'm' is incorrect for ellipticity
   (dimensionless)."
-- ✅ Emit `vocab_gap` — `ellipticity` is not in the closed `physical_base` vocabulary.
-  Proposed token: `ellipticity_angle` (unit: `rad`) pending vocabulary registration.
+- ✅ `ellipticity_angle_of_polarimeter_beam` — `ellipticity_angle` is a novel
+  `physical_base` token (allowed since `physical_base` is open). Auto-VocabGap
+  tracking will surface it for ISN review. No need to emit a `vocab_gap` exit.
 - *Fix:* Drop `initial_`; simplify locus to `_of_polarimeter_beam`; surface vocab gap
   rather than fabricating a base token.
 
 **Entry 3 — State prefix + vocab gap + unit mismatch**
 - ❌ `initial_polarization_of_polarimeter_channel_beam` (score 0.3625)
-- *Critic:* "'polarization' is not confirmed in the closed physical_base vocabulary;
-  'initial' prefix is a state descriptor that should be excluded; unit 'm' is wrong
-  (should be rad or dimensionless)."
+- *Critic:* "'polarization' base uncertain — propose `polarization_angle` (a novel but
+  well-formed `physical_base` token); 'initial' prefix is a state descriptor that should be
+  excluded; unit 'm' is wrong (should be rad or dimensionless)."
 - ✅ `polarization_angle_of_polarimeter_beam`
 - *Fix:* Drop `initial_`; use `polarization_angle` (registered, unit `rad`); simplify
   locus to `_of_polarimeter_beam`.
@@ -395,6 +403,15 @@ or any diagnostic-heavy IDS.
 - ✅ `polarization_angle_of_polarimeter_beam`
 - *Fix:* Use `polarization_angle` (registered base, unit `rad`); simplify locus by
   removing `_channel` sub-component identifier.
+
+**Exemplar — proposing a new `physical_base`:**
+
+DD path: `gyrokinetics/wavevector/.../absorbed_power_thermal_electrons_per_n_tor`
+- Reviewer-suggested form: `toroidal_mode_fourier_coefficient_of_absorbed_wave_power_for_thermal_electrons`
+- `toroidal_mode_fourier_coefficient_of_` is not a registered prefix construction
+  in ISN — but it is the cleanest semantically. Propose it. The auto-VocabGap
+  tracker will flag the unregistered base for ISN review.
+- Do NOT emit a `vocab_gap` exit — the name is COMPOSED, scored, persisted.
 
 ## Critical Naming Rules (most-violated)
 
@@ -416,10 +433,10 @@ or any diagnostic-heavy IDS.
 
 ## Composition Rules
 
-1. Every name must have a `physical_base` from the closed vocabulary (or a `geometric_base` for geometry carriers — never both)
+1. Every name must have a `physical_base` from the registered vocabulary OR a well-formed novel token (or a `geometric_base` for geometry carriers — never both)
 2. Follow the canonical 5-group pattern: `[operators] [projection] [qualifiers] base [locus] [mechanism]`
 3. Prefix operators require explicit `_of_` scope; postfix operators concatenate directly
-4. `physical_base` is **closed vocabulary** — if no token fits, report as `vocab_gap`
+4. `physical_base` is **open vocabulary** — prefer registered tokens; novel bases are auto-tracked for ISN review. All other segments remain closed.
 5. **Reuse existing standard names** — use `attachments` to link a DD path to an existing name rather than regenerating
 6. Skip paths that are: array indices, metadata/timestamps, structural containers, coordinate grids
 7. Set confidence < 0.5 when the mapping is ambiguous or multiple names could apply
