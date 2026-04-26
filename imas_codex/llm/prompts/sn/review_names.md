@@ -15,14 +15,20 @@ Do **not** penalise entries for missing or terse `description`/`documentation`. 
 
 {% include "sn/_exemplars.md" %}
 
-## Closed `physical_base` Vocabulary
+## `physical_base` is OPEN vocabulary
 
-`physical_base` is a **closed vocabulary** (~250 tokens). If a candidate name
-uses a `physical_base` token not in the registry, it is a grammar defect —
-the reviewer should flag `vocab_gap` and dock grammar points.
+`physical_base` is the ONE open grammar segment. New tokens are tracked
+automatically as VocabGap entries for ISN review — they are **NOT**
+grammar defects and you must **NOT** dock grammar points for them. Only
+flag a name as defective on `physical_base` when the token is genuinely
+malformed (mixed casing, contains digits, or is otherwise unparseable).
 
 Compound `physical_base` tokens like `poloidal_flux` or `minor_radius` are
-valid only when they appear as single entries in the registry.
+valid registered atoms; treat them as single entries.
+
+All OTHER segments (subject, component, position, coordinate, process,
+operator, statistic, reference) remain CLOSED. Flag `vocab_gap` and dock
+points only when those segments use unregistered tokens.
 
 ## Scoring Dimensions
 
@@ -33,10 +39,12 @@ genuine quality problems or false positives. Factor genuine issues into your
 grammar and convention scores.
 
 ### 1. Grammar Correctness (0-20)
-**0**: Would fail vNext grammar validation, uses unknown `physical_base` token, or prefix/postfix operator confusion.
+**0**: Would fail vNext grammar validation, malformed `physical_base` token (mixed casing/digits/unparseable), or prefix/postfix operator confusion. (Note: novel but well-formed `physical_base` tokens are tracked as VocabGaps and are NOT a grammar defect.)
 **20**: Perfect 5-group IR decomposition with correct operator form and in-vocabulary base.
 
-- Is the `physical_base` token in the closed vocabulary?
+- Is the `physical_base` token well-formed? (Open vocabulary — novel
+  but well-formed tokens are not defects; only malformed ones are.)
+- For all OTHER segments, is the token in its closed registry?
 - Are prefix operators written with explicit `_of_` scope marker?
 - Are postfix operators (`_magnitude`, `_real_part`, etc.) correctly appended (not prefix `_of_` form)?
 - Is locus correctly expressed with `_of_`/`_at_`/`_over_` prepositions?

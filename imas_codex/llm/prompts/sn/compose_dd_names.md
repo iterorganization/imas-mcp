@@ -108,6 +108,21 @@ they match; otherwise use them to calibrate style and specificity.
 {% endfor %}
 {% endif %}
 
+{% if reference_exemplars %}
+## REFERENCE EXEMPLARS — match this level of specificity
+
+These validated standard names are semantically similar to items in this batch.
+Use them as quality benchmarks for naming style and field usage:
+
+{% for ex in reference_exemplars %}
+### `{{ ex.name }}`
+- **Description:** {{ ex.description }}
+- **Unit:** {{ ex.unit }}
+{% if ex.tags %}- **Tags:** {{ ex.tags | join(', ') if ex.tags is iterable and ex.tags is not string else ex.tags }}{% endif %}
+
+{% endfor %}
+{% endif %}
+
 ## DD Paths to Name
 
 {% for item in items %}
@@ -131,6 +146,43 @@ they match; otherwise use them to calibrate style and specificity.
 {% if item.cocos_label %}- **COCOS transformation type:** `{{ item.cocos_label }}` — include a brief sign-convention sentence in documentation.{% endif %}
 {% if item.parent_path %}- **Parent:** {{ item.parent_path }}{% endif %}
 {% if item.previous_name %}- **⟳ Previous generation:** `{{ item.previous_name.name }}`{% if item.previous_name.pipeline_status %} ({{ item.previous_name.pipeline_status }}){% endif %}{% endif %}
+{% if item.identifier_schema %}- **Identifier schema:** {{ item.identifier_schema }}{% if item.identifier_schema_doc %} — {{ item.identifier_schema_doc }}{% endif %}{% endif %}
+{% if item.identifier_values %}
+- **Identifier enum values:**
+{% for iv in item.identifier_values %}  - `{{ iv.name }}` ({{ iv.index }}): {{ iv.description | default('', true) }}
+{% endfor %}{% endif %}
+{% if item.clusters %}
+- **Semantic clusters:**
+{% for cl in item.clusters %}  - **{{ cl.label }}** ({{ cl.scope }}): {{ cl.description }}
+{% endfor %}{% endif %}
+{% if item.cross_ids_paths %}
+- **Cross-IDS equivalents:** Same quantity in other IDSs — generate ONE name covering all:
+{% for xp in item.cross_ids_paths %}  - `{{ xp }}`
+{% endfor %}{% endif %}
+{% if item.hybrid_neighbours %}
+- **Hybrid-search neighbours** (physics-concept + structural cousins):
+{% for n in item.hybrid_neighbours %}  - `{{ n.tag }}` [{{ n.unit }}, {{ n.physics_domain }}]: {{ n.doc_short }}{% if n.cocos_label %} (COCOS {{ n.cocos_label }}){% endif %}
+{% endfor %}  → Reuse a name above when your source measures the same quantity.
+{% endif %}
+{% if item.related_neighbours %}
+- **Graph-relationship neighbours** (cluster / coordinate / unit / identifier / COCOS edges):
+{% for r in item.related_neighbours %}  - `{{ r.path }}` ({{ r.ids }}) — {{ r.relationship_type }}{% if r.via %} via {{ r.via }}{% endif %}
+{% endfor %}{% endif %}
+{% if item.error_fields %}
+- **DD error companions:**
+{% for ef in item.error_fields %}  - `{{ ef }}`
+{% endfor %}  → Error companions are minted deterministically — do NOT produce `*_uncertainty` variants. SKIP if this path IS an error field (`_error_upper`/`_error_lower`/`_error_index`).
+{% endif %}
+{% if item.sibling_fields %}
+- **Sibling fields** (same parent — for cross-reference):
+{% for sib in item.sibling_fields %}  - `{{ sib.path }}`: {{ sib.description or 'no description' }} ({{ sib.data_type or '?' }})
+{% endfor %}{% endif %}
+{% if item.review_feedback %}
+- **📝 Prior reviewer feedback — your new name MUST address every issue raised:**
+  - **Previous name:** `{{ item.review_feedback.previous_name }}`{% if item.review_feedback.reviewer_score is not none %} (score={{ item.review_feedback.reviewer_score | round(2) }}{% if item.review_feedback.review_tier %}, tier={{ item.review_feedback.review_tier }}{% endif %}){% endif %}
+{% if item.review_feedback.reviewer_comments %}  - **Reviewer critique:** {{ item.review_feedback.reviewer_comments | replace('\n', ' ') }}
+{% endif %}  - Do NOT re-emit the previous name unchanged.
+{% endif %}
 
 {% endfor %}
 
