@@ -41,6 +41,7 @@ def run_preview(
     staging_dir: str | Path,
     *,
     port: int | None = None,
+    host: str | None = None,
 ) -> PreviewHandle:
     """Launch the ISN catalog-site server on a staging directory.
 
@@ -51,6 +52,11 @@ def run_preview(
     port:
         Optional port number for the dev server. If ``None``, uses
         the ISN default (typically 8000).
+    host:
+        Optional host to bind to. Defaults to ``127.0.0.1`` (loopback).
+        Pass ``0.0.0.0`` to allow other machines on the network to
+        reach the dev server (useful when previewing over an SSH tunnel
+        with shared access for collaborators).
 
     Returns
     -------
@@ -68,9 +74,12 @@ def run_preview(
     cmd = ["uv", "run", "standard-names", "catalog-site", "serve", str(staging)]
     if port is not None:
         cmd.extend(["--port", str(port)])
+    if host is not None:
+        cmd.extend(["--host", host])
 
     effective_port = port or 8000
-    url = f"http://localhost:{effective_port}"
+    effective_host = host or "127.0.0.1"
+    url = f"http://{effective_host}:{effective_port}"
 
     logger.info("Starting preview server: %s", " ".join(cmd))
     logger.info("Preview URL: %s", url)

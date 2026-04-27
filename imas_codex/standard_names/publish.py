@@ -214,18 +214,21 @@ def run_publish(
             )
             return report
 
-        # Full-scope: additional domain-set validation
+        # Full-scope: manifest must be subset of graph domains.
+        # (Quality-gate filtering can legitimately drop domains where every
+        # candidate scored below threshold; a domain in manifest but not in
+        # the graph is the real corruption signal.)
         if export_scope == "full":
             expected = _fetch_expected_domains()
-            if expected is not None and domains_included != expected:
+            if expected is not None and not domains_included.issubset(expected):
                 report.errors.append(
-                    f"Full-scope domain mismatch: manifest has "
-                    f"{sorted(domains_included)}, graph has "
-                    f"{sorted(expected)}"
+                    f"Full-scope domain mismatch: manifest has domains "
+                    f"not present in graph: "
+                    f"{sorted(domains_included - expected)}"
                 )
                 return report
 
-        # ISNC working tree clean check
+        # ISNC working tree clean check (excluding our own lock file).
         try:
             status = subprocess.run(
                 ["git", "status", "--porcelain"],
@@ -234,7 +237,12 @@ def run_publish(
                 text=True,
                 timeout=10,
             )
-            if status.stdout.strip():
+            dirty_lines = [
+                line
+                for line in status.stdout.splitlines()
+                if line.strip() and ".sn-publish.lock" not in line
+            ]
+            if dirty_lines:
                 report.errors.append(
                     "ISNC working tree is not clean — commit or stash changes first"
                 )
@@ -380,7 +388,7 @@ def _fetch_expected_domains() -> set[str] | None:
             rows = gc.query(
                 """
                 MATCH (sn:StandardName)
-                WHERE sn.pipeline_status IN ['drafted', 'published', 'accepted']
+                WHERE sn.pipeline_status IN ['published', 'accepted', 'reviewed', 'enriched']
                 RETURN DISTINCT sn.physics_domain AS domain
                 """
             )

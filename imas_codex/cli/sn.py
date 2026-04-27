@@ -2100,9 +2100,21 @@ def sn_export(
     default=None,
     help="Port for the local preview server (default: 8000)",
 )
+@click.option(
+    "--host",
+    type=str,
+    default=None,
+    help=(
+        "Host to bind to (default: 127.0.0.1). Pass 0.0.0.0 to expose "
+        "the dev server to other machines on the network — useful when "
+        "previewing over an SSH tunnel that other collaborators on the "
+        "same cluster can reach."
+    ),
+)
 def sn_preview(
     staging: str,
     port: int | None,
+    host: str | None,
 ) -> None:
     """Preview a staging directory in the browser via ISN catalog-site.
 
@@ -2113,17 +2125,20 @@ def sn_preview(
     Examples:
       imas-codex sn preview --staging ./staging
       imas-codex sn preview --staging ./staging --port 9090
+      imas-codex sn preview --staging ./staging --host 0.0.0.0
     """
     from imas_codex.standard_names.preview import run_preview
 
     console.print("\n[bold]Standard Name Preview[/bold]")
     console.print(f"  Staging: {staging}")
+    if host:
+        console.print(f"  Host: {host}")
     if port:
         console.print(f"  Port: {port}")
     console.print("")
 
     try:
-        handle = run_preview(staging, port=port)
+        handle = run_preview(staging, port=port, host=host)
     except FileNotFoundError as exc:
         console.print(f"[red]Precondition failure:[/red] {exc}")
         raise SystemExit(2) from exc
