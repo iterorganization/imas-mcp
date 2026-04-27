@@ -52,6 +52,19 @@ _(none available)_
 {% if item.current.links %}- **Links:** {{ item.current.links | join(", ") }}{% endif %}
 {% endif %}
 
+{% if item.docs_review_feedback %}### Prior docs-axis reviewer feedback
+
+The previous enrichment was reviewed and scored on the docs axis. Address
+the specific weaknesses below — do not regress on dimensions that already
+scored well.
+
+- **Docs score:** {{ "%.2f"|format(item.docs_review_feedback.reviewer_score) if item.docs_review_feedback.reviewer_score is not none else "—" }}
+{% if item.docs_review_feedback.reviewer_verdict %}- **Verdict:** {{ item.docs_review_feedback.reviewer_verdict }}
+{% endif %}{% if item.docs_review_feedback.reviewer_scores %}- **Per-dimension scores (0–20):** {% for dim, val in item.docs_review_feedback.reviewer_scores.items() %}{{ dim }}={{ val }}{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}{% if item.docs_review_feedback.reviewer_comments %}- **Reviewer critique:** {{ item.docs_review_feedback.reviewer_comments }}
+{% endif %}{% if item.docs_review_feedback.validation_issues %}- **Validation issues:** {% for iss in item.docs_review_feedback.validation_issues %}{{ iss }}{% if not loop.last %}; {% endif %}{% endfor %}
+{% endif %}{% endif %}
+
 {% if item.link_candidates %}### Candidate cross-references (for `links` field)
 
 Prefer `name:` when the target is already minted. Use `dd:` for paths not

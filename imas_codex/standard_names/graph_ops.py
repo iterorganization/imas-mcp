@@ -615,6 +615,91 @@ def fetch_reviewer_history_for_sources(
     return mapping
 
 
+def fetch_docs_review_feedback_for_sns(
+    sn_ids: list[str] | set[str] | None,
+) -> dict[str, dict[str, Any]]:
+    """Fetch prior docs-axis reviewer feedback keyed by StandardName id.
+
+    Used by the enrich contextualise worker when re-enriching SNs that
+    already have a docs-axis review on file.  Lets the LLM target the
+    specific weaknesses (description quality, documentation_quality,
+    completeness, physics_accuracy) the reviewer flagged previously
+    instead of running blind.
+
+    This is the docs-axis analogue of
+    :func:`fetch_review_feedback_for_sources` — it keys on SN id (since
+    enrich operates on SN nodes directly, not on sources) and pulls the
+    ``*_docs`` reviewer fields plus ``validation_issues``.
+
+    Args:
+        sn_ids: Iterable of StandardName ids. ``None`` or empty returns
+            ``{}`` without hitting the graph.
+
+    Returns:
+        ``{sn_id: feedback_dict}`` where feedback_dict has keys:
+
+        - ``reviewer_score`` (float | None): docs-axis 0–1 score.
+        - ``reviewer_comments`` (str | None): free-form docs critique.
+        - ``reviewer_scores`` (dict | None): parsed docs-axis dimensional
+          scores (description_quality / documentation_quality /
+          completeness / physics_accuracy).
+        - ``reviewer_verdict`` (str | None): accept / revise / reject.
+        - ``validation_issues`` (list[str] | None): tagged ISN validation
+          issue strings, when present.
+
+        Only SNs with ``reviewer_score_docs IS NOT NULL`` are returned —
+        cold-start enrichments are silently omitted.
+    """
+    if not sn_ids:
+        return {}
+
+    ids = sorted({sid for sid in sn_ids if sid})
+    if not ids:
+        return {}
+
+    with GraphClient() as gc:
+        rows = gc.query(
+            """
+            UNWIND $ids AS sn_id
+            MATCH (sn:StandardName {id: sn_id})
+            WHERE sn.reviewer_score_docs IS NOT NULL
+            RETURN sn_id AS sn_id,
+                   sn.reviewer_score_docs AS reviewer_score,
+                   sn.reviewer_comments_docs AS reviewer_comments,
+                   sn.reviewer_scores_docs AS reviewer_scores_json,
+                   sn.reviewer_verdict_docs AS reviewer_verdict,
+                   sn.validation_issues AS validation_issues
+            """,
+            ids=ids,
+        )
+
+    mapping: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        sid = row.get("sn_id")
+        if not sid:
+            continue
+        scores_json = row.get("reviewer_scores_json")
+        scores_dict: dict[str, Any] | None = None
+        if scores_json:
+            try:
+                scores_dict = json.loads(scores_json)
+            except (TypeError, ValueError):
+                scores_dict = None
+        issues = row.get("validation_issues")
+        if isinstance(issues, str):
+            issues = [issues]
+        elif issues is None:
+            issues = None
+        mapping[sid] = {
+            "reviewer_score": row.get("reviewer_score"),
+            "reviewer_comments": row.get("reviewer_comments"),
+            "reviewer_scores": scores_dict,
+            "reviewer_verdict": row.get("reviewer_verdict"),
+            "validation_issues": issues if issues else None,
+        }
+    return mapping
+
+
 def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
     """Emit all structural edges for a batch of StandardName nodes.
 

@@ -430,6 +430,7 @@ class TestContextualiseWorker:
                     {"electron_temperature": []},
                     {"electron_temperature": []},
                     {"electron_temperature": []},
+                    {},
                 )
             raise ConnectionError("Neo4j unreachable")
 
@@ -538,6 +539,9 @@ class TestContextualiseWorker:
                         {f"name_{call_count}": {"dd_paths": [], "cocos": None}},
                         {f"name_{call_count}": []},
                         {f"name_{call_count}": []},
+                        {f"name_{call_count}": []},
+                        {f"name_{call_count}": []},
+                        {},
                     )
 
                 with patch(
@@ -575,6 +579,7 @@ class TestContextualiseWorker:
                 {"name_a": [], "name_b": []},
                 {"name_a": [], "name_b": []},
                 {"name_a": [], "name_b": []},
+                {},
             )
 
         with patch(

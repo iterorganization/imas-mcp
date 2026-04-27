@@ -813,6 +813,9 @@ async def enrich_contextualise_worker(
             _items: list[dict[str, Any]] = items,
         ):
             from imas_codex.graph.client import GraphClient
+            from imas_codex.standard_names.graph_ops import (
+                fetch_docs_review_feedback_for_sns,
+            )
 
             with GraphClient() as gc:
                 dd_data = _fetch_dd_paths_batch(gc, _sn_ids)
@@ -820,7 +823,15 @@ async def enrich_contextualise_worker(
                 sibling_data = _fetch_domain_siblings(gc, _items)
                 link_data = _fetch_link_candidates(gc, dd_data, _items)
                 related_data = _fetch_related_neighbours(gc, dd_data, _items)
-            return dd_data, nearby_data, sibling_data, link_data, related_data
+            docs_feedback = fetch_docs_review_feedback_for_sns(_sn_ids)
+            return (
+                dd_data,
+                nearby_data,
+                sibling_data,
+                link_data,
+                related_data,
+                docs_feedback,
+            )
 
         try:
             (
@@ -829,6 +840,7 @@ async def enrich_contextualise_worker(
                 sibling_data,
                 link_data,
                 related_data,
+                docs_feedback,
             ) = await asyncio.to_thread(_fetch_context)
         except Exception:
             wlog.warning(
@@ -855,6 +867,9 @@ async def enrich_contextualise_worker(
                 item["link_candidates"] = link_data.get(sid, [])
                 item["related_neighbours"] = related_data.get(sid, [])
                 item["grammar"] = _build_grammar(item)
+                feedback = docs_feedback.get(sid)
+                if feedback:
+                    item["docs_review_feedback"] = feedback
 
                 # Preserve existing description/documentation as "current"
                 # so the LLM can improve upon prior enrichment attempts
