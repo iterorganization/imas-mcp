@@ -19,6 +19,8 @@ grammar fields, kind, or unit.
 
 {% include "sn/_enrich_style_guide.md" %}
 
+{% include "sn/_coordinate_conventions.md" %}
+
 {% include "sn/_exemplars_enrich.md" %}
 
 {% include "sn/_compose_scored_examples.md" %}
