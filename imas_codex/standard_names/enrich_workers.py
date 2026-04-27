@@ -1071,6 +1071,15 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
                     service="standard-names",
                 )
                 lease.charge_event(cost, _event)
+                if state.progress_display is not None:
+                    _plabel = (
+                        f"sn={_event.sn_ids[0]}"
+                        if _event.sn_ids
+                        else f"batch={_event.batch_id}"
+                    )
+                    state.progress_display.push_event(
+                        phase="enrich", label=_plabel, cost=cost
+                    )
                 # Soft-stop: ignore result.hard_stop — never drop in-flight
 
             # Distribute per-item cost so persist_enriched_batch can write

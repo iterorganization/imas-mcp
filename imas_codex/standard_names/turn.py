@@ -282,6 +282,7 @@ async def _run_generate_phase(
         limit=cfg.limit,
         budget_manager=budget_mgr,
         budget_phase_tag=phase_tag,
+        progress_display=cfg.progress_display,
     )
 
     t0 = time.monotonic()
@@ -345,6 +346,7 @@ async def _run_enrich_phase(cfg: TurnConfig) -> PhaseResult:
         limit=cfg.limit,
         dry_run=False,
         force=False,
+        progress_display=cfg.progress_display,
     )
 
     t0 = time.monotonic()
@@ -481,6 +483,7 @@ async def _run_review_names_phase(
         target="names",
         budget_manager=budget_mgr,
         budget_phase_tag="review_names",
+        progress_display=cfg.progress_display,
     )
 
     t0 = time.monotonic()
@@ -575,6 +578,7 @@ async def _run_review_docs_phase(
         target="docs",
         budget_manager=budget_mgr,
         budget_phase_tag="review_docs",
+        progress_display=cfg.progress_display,
     )
 
     t0 = time.monotonic()

@@ -66,6 +66,9 @@ class StandardNameBuildState(DiscoveryStateBase):
     budget_manager: Any = None  # BudgetManager from .budget
     # Optional phase tag for budget attribution (e.g. "generate", "regen").
     budget_phase_tag: str = ""
+    # Optional progress display for loop mode.  Workers call
+    # ``progress_display.push_event()`` after each LLM charge.
+    progress_display: Any = None  # SNLoopProgressDisplay | None
 
     # Model overrides (None = use defaults from pyproject.toml)
     compose_model: str | None = None  # Override for compose step (default: reasoning)

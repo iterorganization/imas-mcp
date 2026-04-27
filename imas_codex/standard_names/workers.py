@@ -1579,6 +1579,15 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     service="standard-names",
                 )
                 _charge = lease.charge_event(cost, _event)
+                if state.progress_display is not None:
+                    _plabel = (
+                        f"sn={_event.sn_ids[0]}"
+                        if _event.sn_ids
+                        else f"batch={_event.batch_id}"
+                    )
+                    state.progress_display.push_event(
+                        phase=_event.phase, label=_plabel, cost=cost
+                    )
                 if _charge.overspend > 0:
                     wlog.warning(
                         "Compose batch %s overspent reservation by $%.4f "
@@ -1723,6 +1732,12 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             service="standard-names",
                         )
                         lease.charge_event(_l6_cost, _l6_event)
+                        if state.progress_display is not None:
+                            state.progress_display.push_event(
+                                phase=_l6_event.phase,
+                                label=f"sn={name_id}",
+                                cost=_l6_cost,
+                            )
                     if retry_name and retry_name != name_id:
                         # Verify the retry result actually parses
                         parsed = parse_standard_name(retry_name)
@@ -2065,6 +2080,12 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             service="standard-names",
                         )
                         l7_lease.charge_event(l7_cost, _l7_event)
+                        if state.progress_display is not None:
+                            state.progress_display.push_event(
+                                phase=_l7_event.phase,
+                                label=f"sn={cand.get('id', '')}",
+                                cost=l7_cost,
+                            )
                     if revised and revised != cand.get("id"):
                         # Verify revised name parses
                         from imas_standard_names.grammar import (
