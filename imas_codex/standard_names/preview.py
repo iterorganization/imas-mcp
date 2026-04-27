@@ -71,7 +71,7 @@ def run_preview(
         raise FileNotFoundError(f"No catalog.yml in staging directory: {staging}")
 
     # Build the command
-    cmd = ["uv", "run", "standard-names", "catalog-site", "serve", str(staging)]
+    cmd = ["uv", "run", "standard-names", "serve", str(staging)]
     if port is not None:
         cmd.extend(["--port", str(port)])
     if host is not None:
