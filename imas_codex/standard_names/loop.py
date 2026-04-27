@@ -228,7 +228,8 @@ async def run_sn_loop(
     source: str = "dd",
     override_edits: list[str] | None = None,
     only: str | None = None,
-    progress_display: Any | None = None,
+    loop_state: Any | None = None,
+    stop_event: Any | None = None,
 ) -> RunSummary:
     """Drive the ``sn run`` loop with one-domain-per-turn rotation.
 
@@ -247,9 +248,12 @@ async def run_sn_loop(
     domain has no remaining work.
 
     Args:
-        progress_display: Optional :class:`SNLoopProgressDisplay` for
-            Rich live monitoring.  When ``None``, progress is logged
-            via the standard logger (plain mode).
+        loop_state: Optional :class:`SNLoopState` whose :class:`WorkerStats`
+            fields are updated by workers for live progress display.
+            When ``None``, progress is logged via the standard logger
+            (plain mode).
+        stop_event: Optional :class:`asyncio.Event` set by the shutdown
+            harness.  Checked between turns for soft shutdown.
     """
     from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.turn import TurnConfig, run_turn
@@ -305,17 +309,23 @@ async def run_sn_loop(
     domain_stalls: dict[str, tuple[int, int]] = {}
 
     # ── Display: signal run start ─────────────────────────────────
-    if progress_display is not None:
-        # Count eligible domains for the domains tracker.
+    if loop_state is not None:
+        # Count eligible domains for the domain tracker.
         # Best-effort: don't let display setup block the pipeline.
         try:
             _eligible = _count_eligible_domains(only_domain=only_domain)
-            progress_display.start_run(total_domains=len(_eligible))
+            loop_state.total_domains = len(_eligible)
         except Exception:
-            progress_display.start_run(total_domains=0)
+            loop_state.total_domains = 0
 
     try:
         while True:
+            # ── Soft shutdown check ───────────────────────────────
+            if stop_event is not None and stop_event.is_set():
+                summary.stop_reason = "interrupted"
+                logger.info("Stop event set — exiting loop.")
+                break
+
             # ── Budget gate (soft limit) ──────────────────────────
             # Continue while we can afford at least one more LLM call.
             # Use summary.cost_spent (which accumulates via max(mgr.spent,
@@ -350,20 +360,8 @@ async def run_sn_loop(
             )
 
             # ── Display: signal turn start ────────────────────────
-            if progress_display is not None:
-                # Build phase plan from skip flags
-                _phase_plan = []
-                for _pname, _skip in [
-                    ("reconcile", False),
-                    ("generate", skip_generate),
-                    ("enrich", skip_enrich),
-                    ("link", False),
-                    ("review_names", skip_review),
-                    ("review_docs", skip_review),
-                    ("regen", skip_regen or min_score is None),
-                ]:
-                    _phase_plan.append(_pname)
-                progress_display.start_turn(domain=dom, phase_plan=_phase_plan)
+            if loop_state is not None:
+                loop_state.current_domain = dom
 
             # Snapshot forward-progress counters before the turn so we can
             # detect whether the turn actually advanced anything.
@@ -392,7 +390,8 @@ async def run_sn_loop(
                 override_edits=override_edits,
                 only=only,
                 shared_budget=shared_mgr,
-                progress_display=progress_display,
+                loop_state=loop_state,
+                stop_event=stop_event,
             )
             results = await run_turn(cfg)
 
@@ -423,19 +422,9 @@ async def run_sn_loop(
             summary.cost_spent = max(shared_mgr.spent, summary.cost_spent + phase_sum)
             summary.domains_touched.add(dom)
 
-            # ── Display: update phase results and signal turn end ──
-            if progress_display is not None:
-                for phase in results:
-                    if phase.skipped:
-                        progress_display.end_phase(phase.name, status="skipped")
-                    else:
-                        progress_display.update_phase(
-                            phase.name,
-                            completed=phase.count,
-                            cost=phase.cost,
-                        )
-                        progress_display.end_phase(phase.name, status="completed")
-                progress_display.end_turn(domain=dom)
+            # ── Display: signal turn end ──────────────────────────
+            if loop_state is not None:
+                loop_state.done_domains += 1
 
             # Update phase-level cost breakdowns from shared manager.
             phase_spent = shared_mgr.phase_spent

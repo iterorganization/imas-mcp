@@ -1579,14 +1579,22 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     service="standard-names",
                 )
                 _charge = lease.charge_event(cost, _event)
-                if state.progress_display is not None:
+                if state.loop_stats is not None:
+                    state.loop_stats.processed += 1
+                    state.loop_stats.cost += cost
                     _plabel = (
                         f"sn={_event.sn_ids[0]}"
                         if _event.sn_ids
                         else f"batch={_event.batch_id}"
                     )
-                    state.progress_display.push_event(
-                        phase=_event.phase, label=_plabel, cost=cost
+                    state.loop_stats.stream_queue.add(
+                        [
+                            {
+                                "primary_text": _plabel,
+                                "primary_text_style": "white",
+                                "description": batch.group_key,
+                            }
+                        ]
                     )
                 if _charge.overspend > 0:
                     wlog.warning(
@@ -1732,11 +1740,16 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             service="standard-names",
                         )
                         lease.charge_event(_l6_cost, _l6_event)
-                        if state.progress_display is not None:
-                            state.progress_display.push_event(
-                                phase=_l6_event.phase,
-                                label=f"sn={name_id}",
-                                cost=_l6_cost,
+                        if state.loop_stats is not None:
+                            state.loop_stats.cost += _l6_cost
+                            state.loop_stats.stream_queue.add(
+                                [
+                                    {
+                                        "primary_text": f"sn={name_id}",
+                                        "primary_text_style": "white",
+                                        "description": f"{batch.group_key}-L6",
+                                    }
+                                ]
                             )
                     if retry_name and retry_name != name_id:
                         # Verify the retry result actually parses
@@ -2080,11 +2093,16 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             service="standard-names",
                         )
                         l7_lease.charge_event(l7_cost, _l7_event)
-                        if state.progress_display is not None:
-                            state.progress_display.push_event(
-                                phase=_l7_event.phase,
-                                label=f"sn={cand.get('id', '')}",
-                                cost=l7_cost,
+                        if state.loop_stats is not None:
+                            state.loop_stats.cost += l7_cost
+                            state.loop_stats.stream_queue.add(
+                                [
+                                    {
+                                        "primary_text": f"sn={cand.get('id', '')}",
+                                        "primary_text_style": "white",
+                                        "description": "L7-revision",
+                                    }
+                                ]
                             )
                     if revised and revised != cand.get("id"):
                         # Verify revised name parses

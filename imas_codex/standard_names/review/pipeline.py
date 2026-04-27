@@ -36,7 +36,7 @@ def _charge_review_cycle(
     group_key: str,
     cycle: str,
     phase: str,
-    progress_display: Any | None = None,
+    loop_stats: Any | None = None,
 ) -> None:
     """Create charge event(s) for a review cycle (primary + optional retry)."""
     primary_cost = result_dict.get("_primary_cost", cost)
@@ -57,9 +57,19 @@ def _charge_review_cycle(
         service="standard-names",
     )
     lease.charge_event(primary_cost, _event)
-    if progress_display is not None:
+    if loop_stats is not None:
+        loop_stats.processed += 1
+        loop_stats.cost += primary_cost
         _plabel = f"sn={_event.sn_ids[0]}" if _event.sn_ids else f"batch={group_key}"
-        progress_display.push_event(phase=phase, label=_plabel, cost=primary_cost)
+        loop_stats.stream_queue.add(
+            [
+                {
+                    "primary_text": _plabel,
+                    "primary_text_style": "white",
+                    "description": group_key,
+                }
+            ]
+        )
 
     if retry_cost > 0:
         _retry = LLMCostEvent(
@@ -81,9 +91,16 @@ def _charge_review_cycle(
             service="standard-names",
         )
         lease.charge_event(retry_cost, _retry)
-        if progress_display is not None:
-            progress_display.push_event(
-                phase=phase, label=f"batch={group_key}-retry", cost=retry_cost
+        if loop_stats is not None:
+            loop_stats.cost += retry_cost
+            loop_stats.stream_queue.add(
+                [
+                    {
+                        "primary_text": f"batch={group_key}-retry",
+                        "primary_text_style": "white",
+                        "description": group_key,
+                    }
+                ]
             )
 
 
@@ -981,7 +998,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                         _group_key,
                         "c0",
                         review_phase,
-                        progress_display=state.progress_display,
+                        loop_stats=state.loop_stats,
                     )
 
                 # Build cycle-0 Review records
@@ -1063,7 +1080,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                         _group_key,
                         "c1",
                         review_phase,
-                        progress_display=state.progress_display,
+                        loop_stats=state.loop_stats,
                     )
 
                 # Build cycle-1 Review records
@@ -1235,7 +1252,7 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                         _group_key,
                         "c2",
                         review_phase,
-                        progress_display=state.progress_display,
+                        loop_stats=state.loop_stats,
                     )
 
                 # Build cycle-2 Review records

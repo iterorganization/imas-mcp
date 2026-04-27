@@ -75,12 +75,17 @@ def _run_sn_loop_cmd(
         run_sn_loop,
         summary_table,
     )
+    from imas_codex.standard_names.progress import (
+        SNLoopState,
+        build_sn_loop_stages,
+    )
 
     run_id = str(_uuid.uuid4())
     use_rich = not quiet and not dry_run and use_rich_output()
 
     # Build Rich display or fall back to plain logging
     display = None
+    loop_state: SNLoopState | None = None
     cli_console: Console | None = None
     if use_rich:
         cli_console = Console()
@@ -100,7 +105,11 @@ def _run_sn_loop_cmd(
             def _cost_fn() -> float:
                 return 0.0
 
-        from imas_codex.standard_names.progress import SNLoopProgressDisplay
+        from imas_codex.discovery.base.progress import (
+            DataDrivenProgressDisplay,
+        )
+
+        _skip_regen = skip_regen or min_score is None
 
         target = "full"
         if skip_enrich:
@@ -108,14 +117,32 @@ def _run_sn_loop_cmd(
         elif skip_review:
             target = "compose+enrich"
 
-        display = SNLoopProgressDisplay(
-            run_id=run_id,
-            mode="loop",
-            target=target,
+        loop_state = SNLoopState()
+
+        display = DataDrivenProgressDisplay(
+            facility="sn",
             cost_limit=cost_limit,
-            accumulated_cost_fn=_cost_fn,
+            stages=build_sn_loop_stages(
+                skip_generate=skip_generate,
+                skip_enrich=skip_enrich,
+                skip_review=skip_review,
+                skip_regen=_skip_regen,
+            ),
             console=cli_console,
+            title_suffix="Standard Name Loop",
+            mode_label=f"target={target}",
+            accumulated_cost_fn=_cost_fn,
+            stats_fn=lambda: [
+                ("done", str(loop_state.done_domains), "green"),
+                ("current", loop_state.current_domain or "—", "cyan"),
+                (
+                    "pending",
+                    str(max(0, loop_state.total_domains - loop_state.done_domains)),
+                    "dim",
+                ),
+            ],
         )
+        display.set_engine_state(loop_state)
     else:
         setup_logging("sn", "sn-run", use_rich=False, verbose=verbose)
         cli_console = Console(quiet=quiet)
@@ -142,6 +169,12 @@ def _run_sn_loop_cmd(
         suppress_loggers=[
             "imas_codex.standard_names",
             "imas_codex.graph",
+            "litellm",
+            "httpx",
+            "httpcore",
+            "openai",
+            "urllib3",
+            "neo4j",
         ]
         if use_rich
         else [],
@@ -162,7 +195,8 @@ def _run_sn_loop_cmd(
             source=source,
             override_edits=override_edits,
             only=only,
-            progress_display=display,
+            loop_state=loop_state,
+            stop_event=stop_event,
         )
         return {"summary": summary}
 

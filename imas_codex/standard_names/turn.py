@@ -164,10 +164,12 @@ class TurnConfig:
     # creating independent per-phase managers.  This enforces the global
     # cost_limit across compose AND review so neither phase can overshoot.
     shared_budget: Any = None  # BudgetManager | None
-    # Optional Rich progress display for loop mode.  Workers call
-    # display.push_event() and display.update_phase() when set.
-    # NO-OP when None (plain mode or single-pass pipeline).
-    progress_display: Any = None  # SNLoopProgressDisplay | None
+    # Loop-level observable state for DataDrivenProgressDisplay.
+    # When set, turn phases extract the appropriate WorkerStats and pass
+    # them as ``loop_stats`` on per-phase state classes.
+    loop_state: Any = None  # SNLoopState | None
+    # Stop event for soft shutdown propagation from the harness.
+    stop_event: asyncio.Event | None = None
 
     def __post_init__(self) -> None:
         # Always derive ``split`` from ``compose_lean`` so the two stay in sync.
@@ -282,7 +284,13 @@ async def _run_generate_phase(
         limit=cfg.limit,
         budget_manager=budget_mgr,
         budget_phase_tag=phase_tag,
-        progress_display=cfg.progress_display,
+        loop_stats=(
+            getattr(cfg.loop_state, "regen_stats", None)
+            if regen
+            else getattr(cfg.loop_state, "generate_stats", None)
+        )
+        if cfg.loop_state is not None
+        else None,
     )
 
     t0 = time.monotonic()
@@ -346,7 +354,9 @@ async def _run_enrich_phase(cfg: TurnConfig) -> PhaseResult:
         limit=cfg.limit,
         dry_run=False,
         force=False,
-        progress_display=cfg.progress_display,
+        loop_stats=(getattr(cfg.loop_state, "enrich_stats", None))
+        if cfg.loop_state is not None
+        else None,
     )
 
     t0 = time.monotonic()
@@ -483,12 +493,14 @@ async def _run_review_names_phase(
         target="names",
         budget_manager=budget_mgr,
         budget_phase_tag="review_names",
-        progress_display=cfg.progress_display,
+        loop_stats=(getattr(cfg.loop_state, "review_names_stats", None))
+        if cfg.loop_state is not None
+        else None,
     )
 
     t0 = time.monotonic()
     try:
-        stop_event = asyncio.Event()
+        stop_event = cfg.stop_event if cfg.stop_event is not None else asyncio.Event()
         await run_sn_review_engine(state, stop_event=stop_event)
         run_consolidation(state)
     except Exception as exc:
@@ -578,12 +590,14 @@ async def _run_review_docs_phase(
         target="docs",
         budget_manager=budget_mgr,
         budget_phase_tag="review_docs",
-        progress_display=cfg.progress_display,
+        loop_stats=(getattr(cfg.loop_state, "review_docs_stats", None))
+        if cfg.loop_state is not None
+        else None,
     )
 
     t0 = time.monotonic()
     try:
-        stop_event = asyncio.Event()
+        stop_event = cfg.stop_event if cfg.stop_event is not None else asyncio.Event()
         await run_sn_review_engine(state, stop_event=stop_event)
         run_consolidation(state)
     except Exception as exc:
@@ -846,23 +860,17 @@ async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
         if skip:
             results.append(PhaseResult(name=name, skipped=True))
             logger.info("Skipping phase: %s", name)
-            if cfg.progress_display is not None:
-                cfg.progress_display.end_phase(name, status="skipped")
+            continue
+
+        # Check stop_event between phases for soft shutdown
+        if cfg.stop_event is not None and cfg.stop_event.is_set():
+            logger.info("Stop event set — aborting before phase %s", name)
+            results.append(PhaseResult(name=name, skipped=True))
             continue
 
         logger.info("Starting phase: %s", name)
-        if cfg.progress_display is not None:
-            cfg.progress_display.start_phase(name)
         result = await fn()
         results.append(result)
-
-        # Update display with phase result
-        if cfg.progress_display is not None:
-            cfg.progress_display.update_phase(
-                name, completed=result.count, cost=result.cost
-            )
-            status = "completed" if result.exit_code == 0 else "failed"
-            cfg.progress_display.end_phase(name, status=status)
 
         # Accumulate touched names for downstream scoping
         if result.touched_names:

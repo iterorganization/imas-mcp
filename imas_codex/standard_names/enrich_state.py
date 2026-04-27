@@ -44,8 +44,8 @@ class StandardNameEnrichState(DiscoveryStateBase):
     # Budget manager (lease-style) — optional, added in Phase 4.
     budget_manager: Any = None  # BudgetManager from .budget
     budget_phase_tag: str = ""
-    # Optional progress display for loop mode (SNLoopProgressDisplay).
-    progress_display: Any = None
+    # Optional loop-level WorkerStats for live display updates.
+    loop_stats: WorkerStats | None = None
 
     # --- Batch / accumulator data ---
     batches: list[Any] = field(default_factory=list)
