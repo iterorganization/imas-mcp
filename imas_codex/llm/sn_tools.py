@@ -42,6 +42,16 @@ def _search_standard_names(
     tags: list[str] | None = None,
     pipeline_status: str | None = None,
     cocos_type: str | None = None,
+    physical_base: str | None = None,
+    subject: str | None = None,
+    transformation: str | None = None,
+    component: str | None = None,
+    coordinate: str | None = None,
+    process: str | None = None,
+    position: str | None = None,
+    region: str | None = None,
+    device: str | None = None,
+    geometric_base: str | None = None,
     k: int = 20,
     gc: GraphClient | None = None,
 ) -> str:
@@ -49,6 +59,13 @@ def _search_standard_names(
 
     Hybrid search (vector + keyword) over StandardName descriptions.
     Falls back to keyword-only if no embeddings present.
+
+    When any grammar-segment filter is provided (``physical_base``,
+    ``subject``, ``transformation``, etc.), the search is routed through a
+    graph-native query that uses the typed edges written by W40 Phase 4
+    (``HAS_PHYSICAL_BASE``, ``HAS_SUBJECT``, …).  Names ingested before the
+    Phase 7 migration will not yet have typed edges, so these filters return
+    only newly-persisted names — this is expected and documented behaviour.
     """
     try:
         if gc is None:
@@ -57,6 +74,24 @@ def _search_standard_names(
         return NEO4J_NOT_RUNNING_MSG
     except Exception as e:
         return f"Error connecting to graph: {e}"
+
+    # Collect segment filter kwargs for graph-native filtering
+    segment_filters: dict[str, str] = {}
+    _seg_map = {
+        "physical_base": physical_base,
+        "subject": subject,
+        "transformation": transformation,
+        "component": component,
+        "coordinate": coordinate,
+        "process": process,
+        "position": position,
+        "region": region,
+        "device": device,
+        "geometric_base": geometric_base,
+    }
+    for seg, val in _seg_map.items():
+        if val is not None:
+            segment_filters[seg] = val
 
     # Try to get embedding for vector search
     has_embedding = False
@@ -72,7 +107,9 @@ def _search_standard_names(
         pass
 
     try:
-        if has_embedding:
+        if segment_filters:
+            rows = _segment_filter_search_sn(gc, query, k, segment_filters)
+        elif has_embedding:
             rows = _vector_search_sn(gc, embedding, k)
         else:
             rows = _keyword_search_sn(gc, query, k)
@@ -98,6 +135,74 @@ def _search_standard_names(
         ]
 
     return _format_search_report(query, rows)
+
+
+def _segment_filter_search_sn(
+    gc: GraphClient,
+    query: str,
+    k: int,
+    segment_filters: dict[str, str],
+) -> list[dict]:
+    """Query StandardName nodes using typed grammar-segment edges (W40 Phase 4).
+
+    Builds a Cypher query that MATCH-traverses the typed edges written by
+    :func:`_write_segment_edges` (e.g. ``HAS_PHYSICAL_BASE``, ``HAS_SUBJECT``).
+    Multiple filters are combined as AND conditions.  If no SN has the typed
+    edges (pre-migration graph), the query returns an empty list gracefully.
+
+    Args:
+        gc: Open GraphClient.
+        query: Keyword passed through to a WHERE clause for fuzzy name matching
+            (falls back gracefully when no typed edges exist).
+        k: Maximum rows to return.
+        segment_filters: Mapping of segment name → token value, e.g.
+            ``{"physical_base": "temperature", "subject": "electron"}``.
+
+    Returns:
+        List of dicts matching the column schema of :func:`_keyword_search_sn`.
+    """
+    # Map segment names to their typed edge labels
+    _edge_label: dict[str, str] = {
+        "physical_base": "HAS_PHYSICAL_BASE",
+        "subject": "HAS_SUBJECT",
+        "transformation": "HAS_TRANSFORMATION",
+        "component": "HAS_COMPONENT",
+        "coordinate": "HAS_COORDINATE",
+        "process": "HAS_PROCESS",
+        "position": "HAS_POSITION",
+        "region": "HAS_REGION",
+        "device": "HAS_DEVICE",
+        "geometric_base": "HAS_GEOMETRIC_BASE",
+    }
+
+    params: dict = {"k": k}
+    match_clauses: list[str] = ["MATCH (sn:StandardName)"]
+
+    for i, (segment, token_value) in enumerate(segment_filters.items()):
+        label = _edge_label.get(segment)
+        if label is None:
+            continue  # unknown segment — skip silently
+        param_key = f"seg_val_{i}"
+        params[param_key] = token_value
+        match_clauses.append(
+            f"MATCH (sn)-[:{label}]->(:GrammarToken {{value: ${param_key}}})"
+        )
+
+    cypher = (
+        "\n".join(match_clauses)
+        + """
+OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
+RETURN sn.id AS name, sn.description AS description,
+       sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
+       sn.tags AS tags, sn.pipeline_status AS pipeline_status,
+       sn.documentation AS documentation,
+       sn.cocos_transformation_type AS cocos_transformation_type,
+       sn.cocos AS cocos,
+       1.0 AS score
+LIMIT $k
+"""
+    )
+    return gc.query(cypher, **params)
 
 
 def _vector_search_sn(gc: GraphClient, embedding: list[float], k: int) -> list[dict]:

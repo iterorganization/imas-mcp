@@ -3091,6 +3091,16 @@ class AgentsServer:
                 review_status: str | None = None,
                 k: int = 20,
                 cocos_type: str | None = None,
+                physical_base: str | None = None,
+                subject: str | None = None,
+                transformation: str | None = None,
+                component: str | None = None,
+                coordinate: str | None = None,
+                process: str | None = None,
+                position: str | None = None,
+                region: str | None = None,
+                device: str | None = None,
+                geometric_base: str | None = None,
             ) -> str:
                 """Search standard names by physics concept.
 
@@ -3106,10 +3116,36 @@ class AgentsServer:
                     k: Maximum results to return (default 20).
                     cocos_type: Filter by COCOS transformation type (e.g. "psi_like",
                         "ip_like", "b0_like"). Only returns names with that transformation.
+                    physical_base: Filter by physical base token (e.g. "temperature",
+                        "pressure"). Uses typed HAS_PHYSICAL_BASE graph edges (W40).
+                    subject: Filter by subject token (e.g. "electron", "ion").
+                        Uses typed HAS_SUBJECT graph edges (W40).
+                    transformation: Filter by transformation token (e.g. "time_derivative").
+                        Uses typed HAS_TRANSFORMATION graph edges (W40).
+                    component: Filter by component token (e.g. "toroidal", "radial").
+                        Uses typed HAS_COMPONENT graph edges (W40).
+                    coordinate: Filter by coordinate token (e.g. "poloidal", "parallel").
+                        Uses typed HAS_COORDINATE graph edges (W40).
+                    process: Filter by process token.
+                        Uses typed HAS_PROCESS graph edges (W40).
+                    position: Filter by position token.
+                        Uses typed HAS_POSITION graph edges (W40).
+                    region: Filter by region token.
+                        Uses typed HAS_REGION graph edges (W40).
+                    device: Filter by device token.
+                        Uses typed HAS_DEVICE graph edges (W40).
+                    geometric_base: Filter by geometric base token.
+                        Uses typed HAS_GEOMETRIC_BASE graph edges (W40).
 
                 Returns:
                     Formatted text report with matched standard names, descriptions,
                     units, tags, and relevance scores.
+
+                Note:
+                    Grammar-segment filters (physical_base, subject, …) rely on typed
+                    edges written at persist time (W40 Phase 4). Names ingested before
+                    the W40 Phase 7 migration do not yet have typed edges and will not
+                    appear in filtered results. All segment filters are AND-combined.
                 """
                 from imas_codex.llm.sn_tools import _search_standard_names as _ssn
 
@@ -3120,6 +3156,16 @@ class AgentsServer:
                     pipeline_status=review_status,
                     k=k,
                     cocos_type=cocos_type,
+                    physical_base=physical_base,
+                    subject=subject,
+                    transformation=transformation,
+                    component=component,
+                    coordinate=coordinate,
+                    process=process,
+                    position=position,
+                    region=region,
+                    device=device,
+                    geometric_base=geometric_base,
                 )
 
             @self.mcp.tool()
