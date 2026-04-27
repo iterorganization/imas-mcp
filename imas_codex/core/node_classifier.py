@@ -130,6 +130,18 @@ _HARDWARE_SUBTREE_SEGMENTS: frozenset[str] = frozenset(
     {"adc", "detector_layout", "detector_image"}
 )
 
+#: Top-level IDS names that are pure scratch / user-defined storage.
+#: Every node under these IDSs is provenance / scratch metadata, not
+#: physics — e.g. ``temporary/constant_float5d/value`` is a generic
+#: typed-storage container with arbitrary user content.
+_SCRATCH_IDS: frozenset[str] = frozenset({"temporary"})
+
+#: Path-segment markers for legacy temporary-storage subtrees that may
+#: appear in older DD versions (``temporary_storage_*`` containers,
+#: e.g. inside the ``summary`` IDS).  Any ancestor segment matching this
+#: prefix routes the node to ``metadata``.
+_TEMPORARY_STORAGE_PREFIX: str = "temporary_storage"
+
 #: Integer identifier leaf names that appear inside ``data_entry_identifier``
 #: structs (IMAS path parent segment ``data_entry``).  These fields pin a
 #: reproducible dataset in the IMAS back-end (run number, shot number, pulse
@@ -226,15 +238,26 @@ FIT_CHILD_SEGMENTS: frozenset[str] = frozenset(
 _FIT_PARENT_RE: re.Pattern[str] = re.compile(r"[A-Za-z0-9_]*_fit$")
 
 #: Regex matching transport_solver_numerics boundary-condition subtree.
-#: Covers e.g. ``transport_solver_numerics/boundary_conditions_ion/.../value``.
+#: Covers both top-level ``boundary_conditions_*`` (plural, ion/electrons/...)
+#: AND nested ``solver_1d/.../boundary_condition`` (singular) — both are
+#: solver-internal numerical configuration, not physics quantities.
 _TRANSPORT_SOLVER_BC_RE: re.Pattern[str] = re.compile(
-    r"^transport_solver_numerics/[^/]*boundary_conditions[^/]*/"
+    r"^transport_solver_numerics/(?:[^/]*boundary_conditions[^/]*/"
+    r"|solver_1d(?:/[^/]+)*?/boundary_condition(?:/|$))"
 )
 
 #: Regex matching transport_solver_numerics solver_1d coefficient leaves.
 #: Covers e.g. ``transport_solver_numerics/solver_1d/*/equation/*/coefficient``.
 _TRANSPORT_SOLVER_COEFF_RE: re.Pattern[str] = re.compile(
     r"^transport_solver_numerics/solver_1d(?:/[^/]+)*/coefficient[^/]*(?:/.*)?$"
+)
+
+#: Regex matching transport_solver_numerics convergence subtree.
+#: All paths under ``transport_solver_numerics/convergence/`` are solver
+#: convergence diagnostics (residuals, iteration counts, delta_relative,
+#: time_step) — numerical artefacts, not physics quantities.
+_TRANSPORT_SOLVER_CONVERGENCE_RE: re.Pattern[str] = re.compile(
+    r"^transport_solver_numerics/convergence(?:/|$)"
 )
 
 # ──────────────────────────────────────────────────────────────────
@@ -391,6 +414,7 @@ def classify_node_pass1(
     last_seg = parts[-1] if parts else name
     dt = (data_type or "").upper()
     unit_str = unit if unit is not None else ""
+    ids_root = parts[0] if parts else ""
 
     # Rule 1: Error suffix
     if (
@@ -402,6 +426,17 @@ def classify_node_pass1(
 
     # Rule 2: Metadata subtree (ids_properties/*, code/*)
     if any(seg in _METADATA_SUBTREES for seg in parts[1:]):
+        return "metadata"
+
+    # Rule 2a: Scratch IDS (`temporary` and similar) — every node is
+    # user-defined typed-storage scratch, never a physics quantity.
+    if ids_root in _SCRATCH_IDS:
+        return "metadata"
+
+    # Rule 2b: Legacy temporary-storage subtree (any ancestor segment
+    # starting with ``temporary_storage``).  Catches DD3-era paths like
+    # ``summary/.../temporary_storage_integer_value``.
+    if any(seg.startswith(_TEMPORARY_STORAGE_PREFIX) for seg in parts):
         return "metadata"
 
     # Rule 3: Generic metadata leaf at depth ≥ 3
@@ -472,6 +507,13 @@ def classify_node_pass1(
     # Rule F4: transport_solver_numerics/solver_1d/*/coefficient* → fit_artifact
     # Finite-volume / finite-difference PDE coefficients are solver internals.
     if _TRANSPORT_SOLVER_COEFF_RE.match(path):
+        return "fit_artifact"
+
+    # Rule F5: transport_solver_numerics/convergence/* → fit_artifact
+    # Solver convergence diagnostics — residuals (delta_relative), iteration
+    # counts (iterations_n), per-equation containers — are numerical artefacts
+    # of the iterative solver, not independent physics quantities.
+    if _TRANSPORT_SOLVER_CONVERGENCE_RE.match(path):
         return "fit_artifact"
 
     # ── Representation rules (before quantity/geometry fallthrough) ──
@@ -550,6 +592,14 @@ def classify_node_pass1(
         # Top-level children of dataset_description / summary
         if len(parts) == 2 and parts[0] in ("dataset_description", "summary"):
             return "metadata"
+
+    # Rule M7: ``summary/<topic>/occurrence`` flag containers → metadata.
+    # The ``summary`` IDS uses ``occurrence`` STRUCTURE nodes (with quirky
+    # ``Hz`` units inherited from a time-reference template) to indicate
+    # whether a feature was active during the pulse — pure flags
+    # ("Flag set to 1 if …, 0 otherwise"), not physics quantities.
+    if len(parts) == 3 and parts[0] == "summary" and last_seg == "occurrence":
+        return "metadata"
 
     # Rule 9a: Physics leaf type + spatial unit + geometry ancestor → geometry
     if dt in PHYSICS_LEAF_TYPES and unit_str and unit_str not in _NO_UNIT:
@@ -721,6 +771,8 @@ __all__ = [
     "_BOOLEAN_FLAG_LEAVES",
     "_DATA_ENTRY_ID_LEAVES",
     "_PHYSICS_INT_LEAVES",
+    "_SCRATCH_IDS",
+    "_TEMPORARY_STORAGE_PREFIX",
     "classify_node_pass1",
     "classify_node_pass2",
 ]

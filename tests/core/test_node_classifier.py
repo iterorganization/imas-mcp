@@ -1481,7 +1481,7 @@ class TestINT0DFalsePositiveRegression:
             (
                 "temporary/constant_integer0d/value",
                 "value",
-                "structural",
+                "metadata",
             ),
         ],
     )
@@ -1655,3 +1655,219 @@ class TestPhysicsQuantityNonRegression:
         """FLT physics quantities must remain unaffected by INT_0D changes."""
         cat = classify_node_pass1(path, name, data_type=dt, unit=unit)
         assert cat == "quantity", f"{path} should be quantity but got {cat!r}"
+
+
+# ──────────────────────────────────────────────────────────────────
+# Leak-by-construction guarantees (Standard-Name extraction safety net)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestStandardNameLeakClasses:
+    """Each parametrized leak class must NOT classify as quantity/geometry/coordinate.
+
+    These categories are the SN-extraction inputs (``SN_SOURCE_CATEGORIES``);
+    any leak here is a structural bug.  All checks are deterministic — no LLM
+    or graph context required — so the rule set in ``classify_node_pass1`` is
+    the single point of enforcement.
+    """
+
+    # Leaf names that, with INT_0D + no unit, must NOT become quantity.
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            # *_flag patterns (W12A regression)
+            (
+                "pf_active/coil/toroidal_field_coil_periodicity_flag",
+                "toroidal_field_coil_periodicity_flag",
+            ),
+            (
+                "coils_non_axisymmetric/non_axisymmetric_coil_periodicity_flag",
+                "non_axisymmetric_coil_periodicity_flag",
+            ),
+            ("ec_launchers/beam/some_flag", "some_flag"),
+            # *_index storage indexes
+            ("equilibrium/time_slice/profiles_2d/grid_index", "grid_index"),
+            # *_identifier
+            ("ic_antennas/antenna/some_identifier", "some_identifier"),
+            # *_status
+            ("interferometer/status", "status"),
+        ],
+    )
+    def test_int_storage_keywords_not_quantity(self, path, name):
+        cat = classify_node_pass1(path, name, data_type="INT_0D", unit=None)
+        assert cat == "structural", f"{path} → {cat!r} (expected structural)"
+
+    # data_entry/* metadata leaks
+    @pytest.mark.parametrize(
+        "path,name,dt",
+        [
+            ("dataset_description/data_entry/run", "run", "INT_0D"),
+            ("dataset_description/data_entry/pulse", "pulse", "INT_0D"),
+            ("dataset_description/data_entry/user", "user", "STR_0D"),
+            (
+                "thomson_scattering/equilibrium_id/data_entry/run",
+                "run",
+                "INT_0D",
+            ),
+            (
+                "amns_data/release/data_entry/description",
+                "description",
+                "STR_0D",
+            ),
+        ],
+    )
+    def test_data_entry_subtree_metadata(self, path, name, dt):
+        cat = classify_node_pass1(path, name, data_type=dt, unit=None)
+        assert cat == "metadata", f"{path} → {cat!r} (expected metadata)"
+
+    # Scratch IDS — every node, regardless of dtype/unit, is metadata.
+    @pytest.mark.parametrize(
+        "path,name,dt,unit",
+        [
+            ("temporary/constant_float0d/value", "value", "FLT_0D", "1"),
+            ("temporary/constant_float1d/value", "value", "FLT_1D", "1"),
+            ("temporary/constant_float5d/value", "value", "FLT_5D", "mixed"),
+            ("temporary/constant_float6d/value", "value", "FLT_6D", "mixed"),
+            ("temporary/constant_integer0d/value", "value", "INT_0D", None),
+            ("temporary/constant_string0d/value", "value", "STR_0D", None),
+        ],
+    )
+    def test_scratch_ids_temporary_metadata(self, path, name, dt, unit):
+        cat = classify_node_pass1(path, name, data_type=dt, unit=unit)
+        assert cat == "metadata", f"{path} → {cat!r} (expected metadata)"
+
+    # Legacy temporary_storage_* path-segment leaks (W28A user-flagged).
+    @pytest.mark.parametrize(
+        "path,name,dt,unit",
+        [
+            (
+                "summary/temporary_storage_integer_value/value",
+                "value",
+                "INT_0D",
+                None,
+            ),
+            (
+                "summary/temporary_storage_float/data",
+                "data",
+                "FLT_1D",
+                "1",
+            ),
+            (
+                "ec_launchers/temporary_storage_string/foo",
+                "foo",
+                "STR_0D",
+                None,
+            ),
+        ],
+    )
+    def test_legacy_temporary_storage_metadata(self, path, name, dt, unit):
+        cat = classify_node_pass1(path, name, data_type=dt, unit=unit)
+        assert cat == "metadata", f"{path} → {cat!r} (expected metadata)"
+
+    # transport_solver_numerics convergence subtree → fit_artifact.
+    @pytest.mark.parametrize(
+        "path,name,dt,unit",
+        [
+            (
+                "transport_solver_numerics/convergence/equations/ion/energy/delta_relative/value",
+                "value",
+                "FLT_0D",
+                "-",
+            ),
+            (
+                "transport_solver_numerics/convergence/equations/current/iterations_n",
+                "iterations_n",
+                "INT_0D",
+                None,
+            ),
+            (
+                "transport_solver_numerics/convergence/time_step",
+                "time_step",
+                "STRUCTURE",
+                "s",
+            ),
+            (
+                "transport_solver_numerics/convergence/equations/electrons/particles",
+                "particles",
+                "STRUCTURE",
+                "m^-3.s^-1",
+            ),
+        ],
+    )
+    def test_transport_solver_convergence_fit_artifact(self, path, name, dt, unit):
+        cat = classify_node_pass1(path, name, data_type=dt, unit=unit)
+        assert cat == "fit_artifact", f"{path} → {cat!r} (expected fit_artifact)"
+
+    # Singular ``boundary_condition`` under solver_1d/equation/ → fit_artifact.
+    @pytest.mark.parametrize(
+        "path,name,dt,unit",
+        [
+            (
+                "transport_solver_numerics/solver_1d/equation/boundary_condition/value",
+                "value",
+                "FLT_1D",
+                "mixed",
+            ),
+            (
+                "transport_solver_numerics/solver_1d/equation/boundary_condition/position",
+                "position",
+                "FLT_0D",
+                "mixed",
+            ),
+        ],
+    )
+    def test_solver_1d_boundary_condition_singular(self, path, name, dt, unit):
+        cat = classify_node_pass1(path, name, data_type=dt, unit=unit)
+        assert cat == "fit_artifact", f"{path} → {cat!r} (expected fit_artifact)"
+
+    # summary/<topic>/occurrence flag containers → metadata.
+    @pytest.mark.parametrize(
+        "topic",
+        ["pellets", "rmps", "kicks"],
+    )
+    def test_summary_occurrence_flag_metadata(self, topic):
+        path = f"summary/{topic}/occurrence"
+        cat = classify_node_pass1(path, "occurrence", data_type="STRUCTURE", unit="Hz")
+        assert cat == "metadata", f"{path} → {cat!r} (expected metadata)"
+
+    # Pre-existing F3 plural form must continue to work.
+    def test_transport_solver_boundary_conditions_plural(self):
+        cat = classify_node_pass1(
+            "transport_solver_numerics/boundary_conditions_ion/value",
+            "value",
+            data_type="FLT_1D",
+            unit="m^-3",
+        )
+        assert cat == "fit_artifact"
+
+    # Non-leak guards: legitimate physics that share suffixes/segments.
+    @pytest.mark.parametrize(
+        "path,name,dt,unit",
+        [
+            # refractive_index is a real physics quantity, despite ending _index.
+            (
+                "camera_visible/channel/optical_element/material_properties/refractive_index",
+                "refractive_index",
+                "FLT_1D",
+                "1",
+            ),
+            # 'value' inside a real summary physics container is fine.
+            (
+                "summary/global_quantities/energy_total/value",
+                "value",
+                "FLT_1D",
+                "J",
+            ),
+            # equilibrium boundary outline r/z (geometry exclusion handled
+            # elsewhere — must remain a quantity in this regime).
+            (
+                "core_profiles/profiles_1d/electrons/temperature",
+                "temperature",
+                "FLT_1D",
+                "eV",
+            ),
+        ],
+    )
+    def test_non_leak_physics_remains_quantity(self, path, name, dt, unit):
+        cat = classify_node_pass1(path, name, data_type=dt, unit=unit)
+        assert cat == "quantity", f"{path} → {cat!r} (expected quantity)"
