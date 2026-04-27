@@ -143,6 +143,64 @@ _DATA_ENTRY_ID_LEAVES: frozenset[str] = frozenset(
 )
 
 # ──────────────────────────────────────────────────────────────────
+# INT_0D physics allowlist & boolean flag constants
+# ──────────────────────────────────────────────────────────────────
+
+#: INT_0D leaf names that represent genuine physics integers and must
+#: remain classified as ``quantity`` under the revised Rule 13.  New
+#: physics integers can be added one-line at a time.
+_PHYSICS_INT_LEAVES: frozenset[str] = frozenset(
+    {
+        # Nuclear/atomic composition
+        "z_n",  # Nuclear charge
+        "atoms_n",  # Atoms in molecule
+        # Mode numbers
+        "n_tor",  # Toroidal mode number
+        "n_phi",  # Toroidal mode number (alternative)
+        "m_pol",  # Poloidal mode number
+        "toroidal_mode",  # MHD perturbation mode index
+        # Hardware counts
+        "turns",  # Coil turns (including sign → physics)
+        "poloidal_turns",  # Flux tube turns
+        "nuclei_n",  # Target nuclei count
+        "modules_n",  # Blanket module count
+        "modules_pol_n",  # Poloidal module count
+        "coils_n",  # Coil count
+        "pixels_n_horizontal",  # Detector pixel count
+        "pixels_n_vertical",  # Detector pixel count
+        "voxels_n",  # Voxel count
+        "fluids_n",  # Number of fluids in model
+        # Convergence
+        "iterations_n",  # Convergence iteration count
+        # Composition
+        "fraction",  # Species fraction (sometimes INT)
+    }
+)
+
+#: INT_0D leaves that encode boolean flags or configuration enumerations.
+#: These are treated as ``structural`` — they control model behaviour
+#: rather than represent physics quantities.
+_BOOLEAN_FLAG_LEAVES: frozenset[str] = frozenset(
+    {
+        "is_periodic",
+        "is_neutral",
+        "reciprocating",
+        "adiabatic_electrons",
+        "varying_n_tor",
+        "distribution_assumption",
+        "execution_mode",
+        "collisions_finite_larmor_radius",
+    }
+)
+
+#: INT_0D leaf names that are IDS-reference identifiers (occurrence, pulse,
+#: shot) when found under identifier-like parent segments.
+_IDS_REF_LEAVES: frozenset[str] = frozenset({"occurrence", "pulse", "shot", "run"})
+
+#: Parent segments that signal an IDS cross-reference struct.
+_IDS_REF_PARENTS: frozenset[str] = frozenset({"equilibrium_id", "parent_entry"})
+
+# ──────────────────────────────────────────────────────────────────
 # Fit-artifact constants
 # ──────────────────────────────────────────────────────────────────
 
@@ -369,8 +427,12 @@ def classify_node_pass1(
     if last_seg == "time" and dt in PHYSICS_LEAF_TYPES:
         return "coordinate"
 
-    # Rule 6: validity / validity_timed → structural
-    if last_seg in ("validity", "validity_timed"):
+    # Rule 6 + R13a: validity / validity_timed / *_validity → structural
+    if (
+        last_seg == "validity"
+        or last_seg == "validity_timed"
+        or last_seg.endswith("_validity")
+    ):
         return "structural"
 
     # Rule 7: /data leaf under STRUCTURE parent → structural
@@ -469,6 +531,26 @@ def classify_node_pass1(
     ):
         return "metadata"
 
+    # Rule M5: Epoch timestamp subtree → metadata
+    # Epoch timestamps (seconds, nanoseconds since Unix epoch) under
+    # ``pulse_time_*_epoch/`` are dataset-level temporal coordinates,
+    # not physics quantities.
+    if last_seg in ("seconds", "nanoseconds") and any(
+        "epoch" in seg for seg in parts[:-1]
+    ):
+        return "metadata"
+
+    # Rule M6: IDS-reference occurrence/pulse/shot → metadata
+    # Outside ``data_entry/``, these fields still serve as dataset
+    # cross-reference metadata (e.g. ``equilibrium_id/occurrence``).
+    if last_seg in _IDS_REF_LEAVES and len(parts) >= 2:
+        # Direct parent is an IDS-reference struct
+        if parts[-2] in _IDS_REF_PARENTS:
+            return "metadata"
+        # Top-level children of dataset_description / summary
+        if len(parts) == 2 and parts[0] in ("dataset_description", "summary"):
+            return "metadata"
+
     # Rule 9a: Physics leaf type + spatial unit + geometry ancestor → geometry
     if dt in PHYSICS_LEAF_TYPES and unit_str and unit_str not in _NO_UNIT:
         if _is_geometry_path(path, unit_str):
@@ -494,9 +576,28 @@ def classify_node_pass1(
     if dt in STRUCTURE_TYPES:
         return "structural"
 
-    # Rule 13: INT_0D without unit, no structural keywords → quantity
+    # Rule R13d: INT_0D boolean flags → structural
+    # Known boolean flags and configuration enumerations are not physics
+    # quantities — they control model behaviour.
+    if dt == "INT_0D" and last_seg in _BOOLEAN_FLAG_LEAVES:
+        return "structural"
+
+    # Rule R13e: INT_0D /value containers → structural
+    # Generic typed containers (e.g. summary/*/value, temporary/*/value)
+    # where the physics meaning lives in the parent structure.
+    if dt == "INT_0D" and last_seg == "value":
+        return "structural"
+
+    # Rule 13 (revised): INT_0D without unit — physics allowlist
+    # Flipped default: unrecognised INT_0D → structural (conservative).
+    # False negatives (missed physics) are recoverable by extending
+    # _PHYSICS_INT_LEAVES; false positives (SN pollution) are not.
     if dt == "INT_0D" and (not unit_str or unit_str in _NO_UNIT):
-        return "quantity"
+        # 13a: Allowlisted physics integers
+        if last_seg in _PHYSICS_INT_LEAVES:
+            return "quantity"
+        # 13b: Default to structural
+        return "structural"
 
     # Rule 14a: INT + spatial unit + geometry ancestor → geometry
     if dt in INTEGER_TYPES and unit_str and unit_str not in _NO_UNIT:
@@ -617,7 +718,9 @@ __all__ = [
     "STRING_TYPES",
     "STRUCTURAL_KEYWORDS",
     "STRUCTURE_TYPES",
+    "_BOOLEAN_FLAG_LEAVES",
     "_DATA_ENTRY_ID_LEAVES",
+    "_PHYSICS_INT_LEAVES",
     "classify_node_pass1",
     "classify_node_pass2",
 ]

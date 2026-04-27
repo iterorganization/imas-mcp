@@ -6,7 +6,9 @@ Covers geometry detection, Pass 1 rules (1–15), and Pass 2 rules (R1–R3).
 import pytest
 
 from imas_codex.core.node_classifier import (
+    _BOOLEAN_FLAG_LEAVES,
     _DATA_ENTRY_ID_LEAVES,
+    _PHYSICS_INT_LEAVES,
     COORDINATE_SEGMENTS,
     GEOMETRY_EXCLUSION_PATTERNS,
     GEOMETRY_PATH_PATTERNS,
@@ -255,13 +257,13 @@ class TestClassifyNodePass1:
         result = classify_node_pass1(path, "profiles_1d", data_type="STRUCTURE")
         assert result == "structural"
 
-    # --- Rule 13: INT_0D no unit → quantity ---
+    # --- Rule 13 (revised): INT_0D no unit → structural (default) or quantity (allowlist) ---
 
-    def test_int0d_no_unit_quantity(self):
+    def test_int0d_no_unit_not_on_allowlist_structural(self):
         path = "equilibrium/time_slice/profiles_1d/n_r"
         result = classify_node_pass1(path, "n_r", data_type="INT_0D")
-        # Structural keywords would catch most INT_0D — n_r is not a keyword
-        assert result == "quantity"
+        # n_r is not in _PHYSICS_INT_LEAVES — revised Rule 13 defaults to structural
+        assert result == "structural"
 
     # --- Rule 14a/14b: INT + unit ---
 
@@ -1359,11 +1361,297 @@ class TestDataEntryIdentifierPass1:
         assert result == "quantity"
 
     def test_int_quantity_outside_data_entry_unaffected(self):
-        """INT_0D whose parent is NOT data_entry must not be caught by Rule M4."""
+        """INT_0D whose parent is NOT data_entry must not be caught by Rule M4.
+
+        Note: n_r is not in _PHYSICS_INT_LEAVES so revised Rule 13 defaults
+        it to structural.  This is expected — n_r is a grid resolution count.
+        """
         result = classify_node_pass1(
             "equilibrium/time_slice/profiles_1d/n_r",
             "n_r",
             data_type="INT_0D",
         )
-        # n_r is not under data_entry — Rule 13 gives quantity
-        assert result == "quantity"
+        # n_r is not under data_entry AND not in physics allowlist → structural
+        assert result == "structural"
+
+
+# ──────────────────────────────────────────────────────────────────
+# INT_0D classifier tightening (systemic fix)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestINT0DFalsePositiveRegression:
+    """INT_0D nodes that MUST NOT be classified as quantity.
+
+    These were false positives under the old Rule 13 (INT_0D no-unit → quantity).
+    After the systemic fix each must classify as ``structural`` or ``metadata``.
+    """
+
+    @pytest.mark.parametrize(
+        "path,name,expected",
+        [
+            # ── R13a: _validity suffix → structural ──
+            (
+                "core_profiles/profiles_1d/electrons/density_validity",
+                "density_validity",
+                "structural",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/temperature_validity",
+                "temperature_validity",
+                "structural",
+            ),
+            (
+                "core_profiles/profiles_1d/ion/density_validity",
+                "density_validity",
+                "structural",
+            ),
+            (
+                "edge_profiles/profiles_1d/electrons/density_validity",
+                "density_validity",
+                "structural",
+            ),
+            # ── M5: Epoch timestamps → metadata ──
+            (
+                "dataset_description/pulse_time_begin_epoch/seconds",
+                "seconds",
+                "metadata",
+            ),
+            (
+                "dataset_description/pulse_time_begin_epoch/nanoseconds",
+                "nanoseconds",
+                "metadata",
+            ),
+            (
+                "summary/pulse_time_end_epoch/seconds",
+                "seconds",
+                "metadata",
+            ),
+            (
+                "summary/pulse_time_end_epoch/nanoseconds",
+                "nanoseconds",
+                "metadata",
+            ),
+            # ── M6: IDS-reference occurrence/pulse/shot → metadata ──
+            (
+                "langmuir_probes/equilibrium_id/occurrence",
+                "occurrence",
+                "metadata",
+            ),
+            (
+                "thomson_scattering/equilibrium_id/occurrence",
+                "occurrence",
+                "metadata",
+            ),
+            ("dataset_description/pulse", "pulse", "metadata"),
+            (
+                "dataset_description/parent_entry/pulse",
+                "pulse",
+                "metadata",
+            ),
+            ("summary/pulse", "pulse", "metadata"),
+            # ── R13d: Boolean flags → structural ──
+            (
+                "coils_non_axisymmetric/is_periodic",
+                "is_periodic",
+                "structural",
+            ),
+            (
+                "langmuir_probes/probe/reciprocating",
+                "reciprocating",
+                "structural",
+            ),
+            (
+                "gyrokinetics/model/adiabatic_electrons",
+                "adiabatic_electrons",
+                "structural",
+            ),
+            (
+                "waves/coherent_wave/beam_tracing/beam/wave_vector/varying_n_tor",
+                "varying_n_tor",
+                "structural",
+            ),
+            # ── R13e: Generic /value containers → structural ──
+            (
+                "summary/disruption/mitigation_valve/value",
+                "value",
+                "structural",
+            ),
+            ("summary/pellets/occurrence/value", "value", "structural"),
+            (
+                "temporary/constant_integer0d/value",
+                "value",
+                "structural",
+            ),
+        ],
+    )
+    def test_int0d_false_positive_not_quantity(self, path, name, expected):
+        """INT_0D false positives must be reclassified (not quantity)."""
+        cat = classify_node_pass1(path, name, data_type="INT_0D")
+        assert cat == expected, f"{path} got {cat!r}, expected {expected!r}"
+
+
+class TestINT0DPhysicsTruePositive:
+    """INT_0D nodes that MUST remain classified as ``quantity``.
+
+    These are genuine physics integers on the ``_PHYSICS_INT_LEAVES`` allowlist.
+    """
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            # Nuclear charge
+            ("core_profiles/profiles_1d/ion/element/z_n", "z_n"),
+            ("nbi/unit/species/z_n", "z_n"),
+            # Atom count
+            ("core_profiles/profiles_1d/ion/element/atoms_n", "atoms_n"),
+            (
+                "gas_injection/valve/species/element/atoms_n",
+                "atoms_n",
+            ),
+            # Mode numbers
+            (
+                "mhd_linear/time_slice/toroidal_mode/n_tor",
+                "n_tor",
+            ),
+            ("ntms/time_slice/mode/n_tor", "n_tor"),
+            (
+                "ntms/time_slice/mode/detailed_evolution/m_pol",
+                "m_pol",
+            ),
+            # Coil turns
+            ("magnetics/bpol_probe/turns", "turns"),
+            ("magnetics/b_field_tor_probe/turns", "turns"),
+            # Module/coil counts
+            ("breeding_blanket/modules_n", "modules_n"),
+            ("coils_non_axisymmetric/coils_n", "coils_n"),
+            # Convergence iterations
+            (
+                "transport_solver_numerics/solver_1d/equation/convergence/iterations_n",
+                "iterations_n",
+            ),
+            # Species fraction
+            (
+                "core_profiles/profiles_1d/ion/fraction",
+                "fraction",
+            ),
+        ],
+    )
+    def test_int0d_physics_remains_quantity(self, path, name):
+        """Genuine physics integers must stay classified as quantity."""
+        cat = classify_node_pass1(path, name, data_type="INT_0D")
+        assert cat == "quantity", f"{path} should be quantity but got {cat!r}"
+
+
+class TestValidityClassification:
+    """Paths with ``_validity`` suffix → structural (Rule 6 + R13a)."""
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            # Exact match (existing Rule 6 behaviour)
+            ("core_profiles/profiles_1d/validity", "validity"),
+            ("core_profiles/profiles_1d/validity_timed", "validity_timed"),
+            # Suffix match (R13a extension)
+            (
+                "core_profiles/profiles_1d/electrons/density_validity",
+                "density_validity",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/temperature_validity",
+                "temperature_validity",
+            ),
+            (
+                "edge_profiles/profiles_1d/electrons/density_validity",
+                "density_validity",
+            ),
+            (
+                "core_profiles/profiles_1d/ion/state/density_validity",
+                "density_validity",
+            ),
+        ],
+    )
+    def test_validity_structural(self, path, name):
+        """Validity indicators must be classified as structural."""
+        cat = classify_node_pass1(path, name, data_type="INT_0D")
+        assert cat == "structural", f"{path} got {cat!r}, expected 'structural'"
+
+
+class TestEpochTimestampClassification:
+    """Epoch timestamp paths → metadata (Rule M5)."""
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            (
+                "dataset_description/pulse_time_begin_epoch/seconds",
+                "seconds",
+            ),
+            (
+                "dataset_description/pulse_time_begin_epoch/nanoseconds",
+                "nanoseconds",
+            ),
+            ("summary/pulse_time_end_epoch/seconds", "seconds"),
+            (
+                "summary/pulse_time_end_epoch/nanoseconds",
+                "nanoseconds",
+            ),
+        ],
+    )
+    def test_epoch_metadata(self, path, name):
+        """Epoch timestamp leaves must be classified as metadata."""
+        cat = classify_node_pass1(path, name, data_type="INT_0D")
+        assert cat == "metadata", f"{path} got {cat!r}, expected 'metadata'"
+
+
+class TestPhysicsQuantityNonRegression:
+    """Core FLT physics paths must always classify as quantity.
+
+    Guards that the INT_0D tightening did NOT break FLT/CPX rules.
+    """
+
+    @pytest.mark.parametrize(
+        "path,name,dt,unit",
+        [
+            (
+                "core_profiles/profiles_1d/electrons/temperature",
+                "temperature",
+                "FLT_1D",
+                "eV",
+            ),
+            (
+                "equilibrium/time_slice/global_quantities/ip",
+                "ip",
+                "FLT_0D",
+                "A",
+            ),
+            (
+                "equilibrium/time_slice/profiles_1d/psi",
+                "psi",
+                "FLT_1D",
+                "Wb",
+            ),
+            (
+                "core_profiles/profiles_1d/electrons/density",
+                "density",
+                "FLT_1D",
+                "m^-3",
+            ),
+            (
+                "equilibrium/time_slice/profiles_1d/elongation",
+                "elongation",
+                "FLT_1D",
+                None,
+            ),
+            (
+                "equilibrium/time_slice/global_quantities/beta_tor",
+                "beta_tor",
+                "FLT_0D",
+                None,
+            ),
+        ],
+    )
+    def test_flt_physics_quantity(self, path, name, dt, unit):
+        """FLT physics quantities must remain unaffected by INT_0D changes."""
+        cat = classify_node_pass1(path, name, data_type=dt, unit=unit)
+        assert cat == "quantity", f"{path} should be quantity but got {cat!r}"
