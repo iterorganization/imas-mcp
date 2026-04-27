@@ -996,6 +996,8 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
             "Link validation active: %d existing SN names known", len(valid_names)
         )
 
+    from imas_codex.standard_names.budget import LLMCostEvent
+
     processed = 0
     errors = 0
 
@@ -1029,18 +1031,47 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
             {"role": "user", "content": user_prompt},
         ]
 
+        # Acquire lease for graph-backed cost tracking (soft-stop:
+        # enrich NEVER drops in-flight items even if budget exceeded).
+        lease = None
+        if state.budget_manager:
+            estimated = len(items) * 0.05
+            phase_tag = getattr(state, "budget_phase_tag", "") or "enrich"
+            lease = state.budget_manager.reserve(estimated, phase=phase_tag)
+            # Soft-stop: proceed even if reserve returns None
+            # (no budget left — still enrich, just untracked)
+
         try:
-            result, cost, tokens = await acall_llm_structured(
+            llm_out = await acall_llm_structured(
                 model=model,
                 messages=messages,
                 response_model=StandardNameEnrichBatch,
                 service="standard-names",
             )
+            result, cost, tokens = llm_out
 
             # Accumulate cost/tokens on state
             state.cost += cost
             state.tokens_in += tokens  # total tokens (in + out combined)
             state.document_stats.cost += cost
+
+            # Charge to graph via lease (soft-stop: never raises)
+            if lease:
+                _event = LLMCostEvent(
+                    model=model,
+                    tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                    tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                    tokens_cached_read=(getattr(llm_out, "cache_read_tokens", 0) or 0),
+                    tokens_cached_write=(
+                        getattr(llm_out, "cache_creation_tokens", 0) or 0
+                    ),
+                    sn_ids=tuple(item["id"] for item in items),
+                    batch_id=str(batch.get("batch_index", 0)),
+                    phase="enrich",
+                    service="standard-names",
+                )
+                lease.charge_event(cost, _event)
+                # Soft-stop: ignore result.hard_stop — never drop in-flight
 
             # Distribute per-item cost so persist_enriched_batch can write
             # llm_cost_enrich on each StandardName node.
@@ -1100,6 +1131,9 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
             batch["failed"] = True
             errors += len(items)
             state.document_stats.errors += len(items)
+        finally:
+            if lease:
+                lease.release_unused()
 
     state.document_stats.processed = processed
     state.stats["document_processed"] = processed

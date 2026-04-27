@@ -1143,13 +1143,13 @@ async def _grammar_retry(
     parse_error: str,
     model: str,
     acall_fn,
-) -> str | None:
+) -> tuple[str | None, float, int, int]:
     """L6: Single grammar-failure re-prompt.
 
     Asks the LLM to revise a name that failed grammar round-trip,
     providing the parse error and a grammar cheat-sheet fragment.
 
-    Returns the revised name string, or None on failure.
+    Returns ``(revised_name | None, cost_usd, tokens_in, tokens_out)``.
     """
     from pydantic import BaseModel, Field
 
@@ -1171,15 +1171,21 @@ async def _grammar_retry(
     )
 
     try:
-        result, _cost, _tokens = await acall_fn(
+        llm_out = await acall_fn(
             model=model,
             messages=[{"role": "user", "content": retry_prompt}],
             response_model=GrammarRetryResponse,
             service="standard-names",
         )
-        return result.revised_name if result else None
+        result, _cost, _tokens = llm_out
+        return (
+            result.revised_name if result else None,
+            float(_cost or 0.0),
+            getattr(llm_out, "input_tokens", 0) or 0,
+            getattr(llm_out, "output_tokens", 0) or 0,
+        )
     except Exception:
-        return None
+        return None, 0.0, 0, 0
 
 
 async def _opus_revise_candidate(
@@ -1187,12 +1193,12 @@ async def _opus_revise_candidate(
     domain_vocabulary: str,
     reviewer_themes: list[str],
     acall_fn,
-) -> tuple[str | None, float]:
+) -> tuple[str | None, float, int, int]:
     """L7: Revision pass for low-confidence candidates using Opus model.
 
-    Returns ``(revised_name_or_None, cost_usd)``.  The cost is always
-    returned so callers can account for it even when the revision is
-    discarded.
+    Returns ``(revised_name_or_None, cost_usd, tokens_in, tokens_out)``.
+    The cost is always returned so callers can account for it even when
+    the revision is discarded.
     """
     from pydantic import BaseModel, Field
 
@@ -1235,17 +1241,20 @@ async def _opus_revise_candidate(
     )
 
     try:
-        result, _cost, _tokens = await acall_fn(
+        llm_out = await acall_fn(
             model=_L7_REVISION_MODEL,
             messages=[{"role": "user", "content": "\n".join(prompt_parts)}],
             response_model=OpusRevisionResponse,
             service="standard-names",
         )
+        result, _cost, _tokens = llm_out
+        _ti = getattr(llm_out, "input_tokens", 0) or 0
+        _to = getattr(llm_out, "output_tokens", 0) or 0
         if result and result.confidence > original_confidence:
-            return result.revised_name, float(_cost or 0.0)
-        return None, float(_cost or 0.0)
+            return result.revised_name, float(_cost or 0.0), _ti, _to
+        return None, float(_cost or 0.0), _ti, _to
     except Exception:
-        return None, 0.0
+        return None, 0.0, 0, 0
 
 
 async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
@@ -1279,6 +1288,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.settings import get_model
+    from imas_codex.standard_names.budget import LLMCostEvent
     from imas_codex.standard_names.context import build_compose_context
     from imas_codex.standard_names.models import StandardNameComposeBatch
 
@@ -1549,19 +1559,32 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             _total_cache_read += getattr(llm_out, "cache_read_tokens", 0) or 0
             _total_cache_creation += getattr(llm_out, "cache_creation_tokens", 0) or 0
 
-            # Charge actual LLM cost to budget lease.
-            # Use charge_soft: the LLM has already been paid for, so we
-            # MUST record the spend regardless of whether it fits the
-            # reservation.  BudgetManager is a soft tracker — overspend
-            # is logged but never aborts completed work.
+            # Charge actual LLM cost to budget lease via typed event.
+            # charge_event uses soft-charge semantics: the LLM has
+            # already been paid for, so spend is always recorded.
             if lease:
-                overspend = lease.charge_soft(cost)
-                if overspend > 0:
+                _event = LLMCostEvent(
+                    model=model,
+                    tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                    tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                    tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
+                    tokens_cached_write=(
+                        getattr(llm_out, "cache_creation_tokens", 0) or 0
+                    ),
+                    sn_ids=tuple(
+                        c.standard_name for c in (result.candidates if result else [])
+                    ),
+                    batch_id=batch.group_key,
+                    phase=getattr(state, "budget_phase_tag", "") or "generate",
+                    service="standard-names",
+                )
+                _charge = lease.charge_event(cost, _event)
+                if _charge.overspend > 0:
                     wlog.warning(
                         "Compose batch %s overspent reservation by $%.4f "
                         "(batch cost $%.4f); budget tracking will report overrun",
                         batch.group_key,
-                        overspend,
+                        _charge.overspend,
                         cost,
                     )
 
@@ -1684,9 +1707,22 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 # --- L6: Grammar-failure re-prompt (single retry) ---
                 state.grammar_retries += 1
                 try:
-                    retry_name = await _grammar_retry(
+                    retry_name, _l6_cost, _l6_ti, _l6_to = await _grammar_retry(
                         name_id, str(gram_exc), model, acall_llm_structured
                     )
+                    if lease and _l6_cost > 0:
+                        _l6_event = LLMCostEvent(
+                            model=model,
+                            tokens_in=_l6_ti,
+                            tokens_out=_l6_to,
+                            sn_ids=(name_id,),
+                            batch_id=f"{batch.group_key}-grammar-retry",
+                            phase=(
+                                getattr(state, "budget_phase_tag", "") or "generate"
+                            ),
+                            service="standard-names",
+                        )
+                        lease.charge_event(_l6_cost, _l6_event)
                     if retry_name and retry_name != name_id:
                         # Verify the retry result actually parses
                         parsed = parse_standard_name(retry_name)
@@ -1993,40 +2029,68 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             "L7: Attempting Opus revision for %d low-confidence candidates",
             len(low_confidence),
         )
-        for cand in low_confidence:
-            if state.should_stop():
-                break
-            state.opus_revisions_attempted += 1
-            try:
-                revised, l7_cost = await _opus_revise_candidate(
-                    cand,
-                    domain_vocab,
-                    reviewer_themes,
-                    acall_llm_structured,
-                )
-                # Track L7 cost unconditionally so it appears in compose_cost.
-                state.compose_stats.cost += l7_cost
-                if revised and revised != cand.get("id"):
-                    # Verify revised name parses
-                    from imas_standard_names.grammar import (
-                        compose_standard_name as _compose_sn,
-                        parse_standard_name as _parse_sn,
+        # Acquire L7 lease for the revision pass
+        l7_lease = None
+        if state.budget_manager:
+            l7_estimated = len(low_confidence) * 0.10
+            l7_lease = state.budget_manager.reserve(
+                l7_estimated,
+                phase=getattr(state, "budget_phase_tag", "") or "generate",
+            )
+        try:
+            for cand in low_confidence:
+                if state.should_stop():
+                    break
+                state.opus_revisions_attempted += 1
+                try:
+                    revised, l7_cost, l7_ti, l7_to = await _opus_revise_candidate(
+                        cand,
+                        domain_vocab,
+                        reviewer_themes,
+                        acall_llm_structured,
                     )
+                    # Track L7 cost unconditionally so it appears in compose_cost.
+                    state.compose_stats.cost += l7_cost
+                    # Charge to graph via lease
+                    if l7_lease and l7_cost > 0:
+                        _l7_event = LLMCostEvent(
+                            model=_L7_REVISION_MODEL,
+                            tokens_in=l7_ti,
+                            tokens_out=l7_to,
+                            sn_ids=(cand.get("id", ""),),
+                            batch_id=f"l7-{cand.get('id', '')}",
+                            phase=(
+                                getattr(state, "budget_phase_tag", "") or "generate"
+                            ),
+                            service="standard-names",
+                        )
+                        l7_lease.charge_event(l7_cost, _l7_event)
+                    if revised and revised != cand.get("id"):
+                        # Verify revised name parses
+                        from imas_standard_names.grammar import (
+                            compose_standard_name as _compose_sn,
+                            parse_standard_name as _parse_sn,
+                        )
 
-                    parsed = _parse_sn(revised)
-                    normalized = _compose_sn(parsed)
-                    # Accept only if self-reported improvement
-                    wlog.info(
-                        "L7: Opus revision accepted: %r → %r",
-                        cand["id"],
-                        normalized,
+                        parsed = _parse_sn(revised)
+                        normalized = _compose_sn(parsed)
+                        # Accept only if self-reported improvement
+                        wlog.info(
+                            "L7: Opus revision accepted: %r → %r",
+                            cand["id"],
+                            normalized,
+                        )
+                        cand["id"] = normalized
+                        state.opus_revisions_accepted += 1
+                except Exception:
+                    wlog.debug(
+                        "L7: Opus revision failed for %r",
+                        cand.get("id"),
+                        exc_info=True,
                     )
-                    cand["id"] = normalized
-                    state.opus_revisions_accepted += 1
-            except Exception:
-                wlog.debug(
-                    "L7: Opus revision failed for %r", cand.get("id"), exc_info=True
-                )
+        finally:
+            if l7_lease:
+                l7_lease.release_unused()
     elif low_confidence and remaining_budget < _L7_MIN_REMAINING_BUDGET:
         wlog.info(
             "L7: Skipped — remaining budget $%.2f < $%.2f threshold",

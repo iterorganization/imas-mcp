@@ -19,11 +19,64 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
+from imas_codex.standard_names.budget import LLMCostEvent
 
 # Defense-in-depth: strict SN id pattern used to reject reviewer-hallucinated
 # revised_name values (e.g. multi-hundred-char stream-of-consciousness strings).
 _SN_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _SN_ID_MAX_LEN = 120
+
+
+def _charge_review_cycle(
+    lease,
+    cost: float,
+    result_dict: dict,
+    model: str,
+    items: list[dict],
+    group_key: str,
+    cycle: str,
+    phase: str,
+) -> None:
+    """Create charge event(s) for a review cycle (primary + optional retry)."""
+    primary_cost = result_dict.get("_primary_cost", cost)
+    retry_cost = cost - primary_cost
+
+    _event = LLMCostEvent(
+        model=model,
+        tokens_in=result_dict.get(
+            "_primary_input_tokens", result_dict.get("_input_tokens", 0)
+        ),
+        tokens_out=result_dict.get(
+            "_primary_output_tokens", result_dict.get("_output_tokens", 0)
+        ),
+        sn_ids=tuple(item.get("id", "") for item in items),
+        batch_id=group_key,
+        cycle=cycle,
+        phase=phase,
+        service="standard-names",
+    )
+    lease.charge_event(primary_cost, _event)
+
+    if retry_cost > 0:
+        _retry = LLMCostEvent(
+            model=model,
+            tokens_in=max(
+                result_dict.get("_input_tokens", 0)
+                - result_dict.get("_primary_input_tokens", 0),
+                0,
+            ),
+            tokens_out=max(
+                result_dict.get("_output_tokens", 0)
+                - result_dict.get("_primary_output_tokens", 0),
+                0,
+            ),
+            sn_ids=tuple(item.get("id", "") for item in items),
+            batch_id=f"{group_key}-retry",
+            cycle=cycle,
+            phase=phase,
+            service="standard-names",
+        )
+        lease.charge_event(retry_cost, _retry)
 
 
 def _axis_overwrite_blocked(
@@ -878,6 +931,8 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
 
             review_group_id = str(_uuid.uuid4())
             batch_review_records: list[dict] = []
+            review_phase = "review_docs" if review_target == "docs" else "review_names"
+            _group_key = batch.get("group_key", "")
 
             try:
                 # ============================================================
@@ -909,7 +964,16 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 state.review_stats.cost += c0_cost
 
                 if lease:
-                    lease.charge_or_extend(c0_cost)
+                    _charge_review_cycle(
+                        lease,
+                        c0_cost,
+                        result_0,
+                        models[0],
+                        c0_items,
+                        _group_key,
+                        "c0",
+                        review_phase,
+                    )
 
                 # Build cycle-0 Review records
                 c0_ts = datetime.now(UTC).isoformat()
@@ -981,7 +1045,16 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 state.review_stats.cost += c1_cost
 
                 if lease:
-                    lease.charge_or_extend(c1_cost)
+                    _charge_review_cycle(
+                        lease,
+                        c1_cost,
+                        result_1,
+                        models[1],
+                        c1_items,
+                        _group_key,
+                        "c1",
+                        review_phase,
+                    )
 
                 # Build cycle-1 Review records
                 c1_ts = datetime.now(UTC).isoformat()
@@ -1143,7 +1216,16 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 state.review_stats.cost += c2_cost
 
                 if lease:
-                    lease.charge_or_extend(c2_cost)
+                    _charge_review_cycle(
+                        lease,
+                        c2_cost,
+                        result_2,
+                        models[2],
+                        c2_items,
+                        _group_key,
+                        "c2",
+                        review_phase,
+                    )
 
                 # Build cycle-2 Review records
                 c2_ts = datetime.now(UTC).isoformat()
@@ -1823,6 +1905,9 @@ async def _review_single_batch(
         "_tokens": total_tokens,
         "_input_tokens": total_input_tokens,
         "_output_tokens": total_output_tokens,
+        "_primary_cost": cost,
+        "_primary_input_tokens": getattr(llm_out, "input_tokens", 0) or 0,
+        "_primary_output_tokens": getattr(llm_out, "output_tokens", 0) or 0,
         "_revised": revised_count,
         "_unscored": unscored_count,
     }

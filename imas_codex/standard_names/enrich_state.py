@@ -41,6 +41,10 @@ class StandardNameEnrichState(DiscoveryStateBase):
     model: str | None = None
     status_filter: list[str] | None = None
 
+    # Budget manager (lease-style) — optional, added in Phase 4.
+    budget_manager: Any = None  # BudgetManager from .budget
+    budget_phase_tag: str = ""
+
     # --- Batch / accumulator data ---
     batches: list[Any] = field(default_factory=list)
     enriched: list[dict[str, Any]] = field(default_factory=list)

@@ -252,7 +252,7 @@ class TestGrammarRetry:
             "test-model",
             mock_acall,
         )
-        assert result == "electron_temperature"
+        assert result[0] == "electron_temperature"
 
     @pytest.mark.asyncio
     async def test_retry_returns_none_on_failure(self):
@@ -268,7 +268,7 @@ class TestGrammarRetry:
             "test-model",
             mock_acall,
         )
-        assert result is None
+        assert result[0] is None
 
 
 # =========================================================================
@@ -304,7 +304,7 @@ class TestOpusRevision:
             [],
             mock_acall,
         )
-        assert result == "electron_temperature"
+        assert result[0] == "electron_temperature"
 
     @pytest.mark.asyncio
     async def test_revision_returns_none_when_not_improved(self):
@@ -331,7 +331,7 @@ class TestOpusRevision:
             [],
             mock_acall,
         )
-        assert result is None
+        assert result[0] is None
 
     @pytest.mark.asyncio
     async def test_revision_returns_none_on_error(self):
@@ -353,7 +353,7 @@ class TestOpusRevision:
             ["theme1"],
             mock_acall,
         )
-        assert result is None
+        assert result[0] is None
 
 
 # =========================================================================
