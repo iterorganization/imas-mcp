@@ -433,9 +433,13 @@ For path access (e.g., in tests), import `PROMPTS_DIR` from the same module — 
 | **Direct (bypass)** | `supports_cache(model)` AND `OPENROUTER_API_KEY_IMAS_CODEX` set | ✅ `response_cost` populated | ✅ `cache_control` preserved | All cache-capable models on the codex billing account |
 | **Proxy** | Otherwise (no IMAS_CODEX key, or non-caching model) | ❌ `response_cost = 0` | ❌ `cache_control` stripped | Air-gapped clusters, models without caching, dev environments |
 
-Keep `OPENROUTER_API_KEY_IMAS_CODEX` set and use `openrouter/anthropic/<model>` (or unprefixed `anthropic/<model>` — `ensure_model_prefix()` normalizes) and you get cost + cache for free.
+**Validated empirically (2026-04-27)** with `openrouter/anthropic/claude-haiku-4.5` on the direct path:
+- COLD call: cost = $0.006335, cache_write = 4801 tokens
+- WARM call: cost = $0.000814 (87% cheaper), cache_read = 4801 tokens
 
-**Proxy alias resolution:** `cc:*` model aliases (`cc:haiku`, `cc:sonnet`, `cc:opus`) are resolved to their real model names (e.g. `anthropic/claude-haiku-4.5`) at the top of `_build_kwargs()` via `resolve_model_alias()`. This loads the alias map from `config/litellm_config.yaml` so the routing logic sees the real model name — enabling correct `cache_control` injection, `openrouter/` prefix addition, and cost tracking. Use `cc:haiku` for cheap probe calls.
+The bypass logic lives in `imas_codex/discovery/base/llm.py` lines 794-799. Keep `OPENROUTER_API_KEY_IMAS_CODEX` set and use `openrouter/anthropic/<model>` (or unprefixed `anthropic/<model>` — `ensure_model_prefix()` normalizes) and you get cost + cache for free.
+
+**Anti-pattern: do not invent `cc:*` model strings.** A `cc:opus` / `cc:sonnet` / `cc:haiku` proxy alias exists in `litellm_config.yaml` for billing isolation to a separate OpenRouter account, but it routes via the **proxy path** which silently breaks both `response_cost` and `cache_control`. If you need spend isolation, add a per-service env var (`OPENROUTER_API_KEY_<SERVICE>`) and let the direct path handle routing — it preserves cost + cache.
 
 ### Service Tagging
 

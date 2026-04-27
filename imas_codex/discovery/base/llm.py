@@ -387,75 +387,6 @@ def ensure_model_prefix(model: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Proxy alias resolution (cc:* → real model names)
-# ---------------------------------------------------------------------------
-
-_LITELLM_CONFIG_PATH = (
-    Path(__file__).resolve().parents[2] / "config" / "litellm_config.yaml"
-)
-
-
-@lru_cache(maxsize=1)
-def _proxy_alias_map() -> dict[str, str]:
-    """Load ``cc:*`` → real model name mappings from litellm proxy config.
-
-    The proxy config registers ``cc:opus``, ``cc:sonnet``, ``cc:haiku`` as
-    billing-isolated aliases that resolve to real Anthropic model names.
-    This function extracts the mapping so the client can resolve aliases
-    before routing — enabling cost tracking and prompt caching that would
-    otherwise be stripped by the proxy path.
-
-    Returns:
-        Dict mapping alias names (e.g. ``"cc:haiku"``) to real model names
-        (e.g. ``"anthropic/claude-haiku-4.5"``).
-    """
-    try:
-        with _LITELLM_CONFIG_PATH.open() as f:
-            config = yaml.safe_load(f)
-    except (OSError, yaml.YAMLError):
-        logger.debug("Could not load litellm config for alias resolution")
-        return {}
-
-    aliases: dict[str, str] = {}
-    for entry in config.get("model_list", []):
-        name = entry.get("model_name", "")
-        if name.startswith("cc:"):
-            real_model = entry.get("litellm_params", {}).get("model", "")
-            if real_model:
-                aliases[name] = real_model
-    return aliases
-
-
-def resolve_model_alias(model: str) -> str:
-    """Resolve proxy-level aliases to real model names.
-
-    Translates ``cc:*`` aliases (e.g. ``cc:haiku``) to their underlying
-    model identifiers (e.g. ``anthropic/claude-haiku-4.5``).  Non-alias
-    model strings pass through unchanged.
-
-    This resolution enables the direct/bypass path to handle ``cc:*``
-    models correctly — ``_supports_cache_control()`` matches the real
-    model name, ``ensure_model_prefix()`` adds the ``openrouter/`` prefix,
-    and cost tracking + prompt caching both work.
-
-    Args:
-        model: Model identifier, possibly a ``cc:*`` alias.
-
-    Returns:
-        Resolved model name, or the original if not an alias.
-    """
-    if not model.startswith("cc:"):
-        return model
-    aliases = _proxy_alias_map()
-    resolved = aliases.get(model)
-    if resolved:
-        logger.debug("Resolved proxy alias %s → %s", model, resolved)
-        return resolved
-    logger.warning("Unknown proxy alias %s — not found in litellm config", model)
-    return model
-
-
-# ---------------------------------------------------------------------------
 # JSON schema format — always convert Pydantic models to json_schema dicts
 # ---------------------------------------------------------------------------
 
@@ -845,12 +776,6 @@ def _build_kwargs(
     enable prompt caching via OpenRouter.
     """
     from imas_codex.settings import get_llm_location, get_llm_proxy_url
-
-    # Resolve proxy-level aliases (cc:haiku → anthropic/claude-haiku-4.5)
-    # before any routing decisions.  This ensures _supports_cache_control(),
-    # get_model_limits(), and ensure_model_prefix() all see the real model
-    # name — enabling correct cache injection, cost tracking, and token limits.
-    model = resolve_model_alias(model)
 
     limits = get_model_limits(model)
 
