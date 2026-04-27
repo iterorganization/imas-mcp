@@ -7,10 +7,7 @@ from typing import Any
 
 from imas_codex.discovery.base.progress import (
     DataDrivenProgressDisplay,
-    ResourceConfig,
     StageDisplaySpec,
-    WorkerStats,
-    build_resource_section,
 )
 from imas_codex.discovery.base.supervision import SupervisedWorkerGroup
 
@@ -75,23 +72,6 @@ class StandardNameProgressDisplay(DataDrivenProgressDisplay):
     def on_worker_status(self, group: SupervisedWorkerGroup) -> None:
         """Callback for worker status updates."""
         self.update_worker_status(group)
-
-    def _build_resources_section(self):
-        """Build resource gauges: elapsed, cost."""
-        total_cost = 0.0
-        if self._engine_state:
-            stats: WorkerStats | None = getattr(
-                self._engine_state, "compose_stats", None
-            )
-            if stats and stats.cost > 0:
-                total_cost += stats.cost
-
-        config = ResourceConfig(
-            elapsed=self.elapsed,
-            run_cost=total_cost if total_cost > 0 else None,
-            cost_limit=self.cost_limit if self.cost_limit > 0 else None,
-        )
-        return build_resource_section(config, self.gauge_width)
 
     def refresh_from_graph(self, facility: str) -> None:
         """Refresh display data from graph (no-op for SN build)."""
