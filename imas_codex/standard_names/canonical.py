@@ -60,6 +60,7 @@ CANONICAL_KEY_ORDER: tuple[str, ...] = (
     "deprecates",
     "superseded_by",
     "provenance",
+    "sources",
 )
 
 _CANONICAL_KEY_SET: frozenset[str] = frozenset(CANONICAL_KEY_ORDER)
