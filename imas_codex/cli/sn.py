@@ -1978,6 +1978,12 @@ def sn_gaps(
     multiple=True,
     help="Name(s) to reset from catalog_edit to pipeline origin (repeatable; or 'all')",
 )
+@click.option(
+    "--include-sources/--no-include-sources",
+    default=True,
+    show_default=True,
+    help="Populate sources field in each entry with graph provenance (debug aid)",
+)
 def sn_export(
     staging: str,
     min_score: float,
@@ -1989,6 +1995,7 @@ def sn_export(
     gate_scope: str,
     domain: str | None,
     override_edits: tuple[str, ...],
+    include_sources: bool,
 ) -> None:
     """Export validated standard names from graph to a staging directory.
 
@@ -2002,6 +2009,7 @@ def sn_export(
       imas-codex sn export --staging ./staging --gate-only
       imas-codex sn export --staging ./staging --domain equilibrium
       imas-codex sn export --staging ./staging --min-score 0.8 --force
+      imas-codex sn export --staging ./staging --no-include-sources
     """
     from pathlib import Path
 
@@ -2020,6 +2028,8 @@ def sn_export(
         console.print("  Mode: [yellow]gate-only (no YAML output)[/yellow]")
     if skip_gate:
         console.print("  Gates: [yellow]skipped[/yellow]")
+    if not include_sources:
+        console.print("  Sources: [dim]excluded (--no-include-sources)[/dim]")
     if edits_list:
         console.print(f"  Override edits: {', '.join(edits_list)}")
     console.print("")
@@ -2036,6 +2046,7 @@ def sn_export(
             gate_only=gate_only,
             gate_scope=gate_scope,
             override_edits=edits_list,
+            include_sources=include_sources,
         )
     except FileExistsError as exc:
         console.print(f"[red]Precondition failure:[/red] {exc}")

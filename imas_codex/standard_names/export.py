@@ -544,6 +544,49 @@ def _derive_error_variants_for_entry(
     return {k: variants[k] for k in _ERROR_VARIANT_KEY_ORDER if k in variants}
 
 
+def _fetch_sources_for_entry(
+    gc: Any,
+    name: str,
+) -> list[dict[str, Any]] | None:
+    """Query graph for StandardNameSource nodes that produced this name.
+
+    Returns a compact list of source dicts with keys
+    ``source_id``, ``dd_path``, ``signal_id``, ``status``,
+    or ``None`` if no sources are found.
+    """
+    rows = gc.query(
+        """
+        MATCH (sn:StandardName {id: $name})<-[:PRODUCED_NAME]-(src:StandardNameSource)
+        OPTIONAL MATCH (src)-[:FROM_DD_PATH]->(n:IMASNode)
+        OPTIONAL MATCH (src)-[:FROM_SIGNAL]->(s:FacilitySignal)
+        RETURN src.id AS source_id,
+               n.id   AS dd_path,
+               s.id   AS signal_id,
+               src.status AS status
+        ORDER BY src.id
+        """,
+        name=name,
+    )
+    if not rows:
+        return None
+
+    sources: list[dict[str, Any]] = []
+    for row in rows:
+        src: dict[str, Any] = {}
+        if row.get("source_id"):
+            src["id"] = row["source_id"]
+        if row.get("dd_path"):
+            src["dd_path"] = row["dd_path"]
+        if row.get("signal_id"):
+            src["signal_id"] = row["signal_id"]
+        if row.get("status"):
+            src["status"] = row["status"]
+        if src:
+            sources.append(src)
+
+    return sources or None
+
+
 def _fetch_ordering_edges_for_domain(
     gc: Any,
     domain: str,
@@ -765,6 +808,7 @@ def run_export(
     gate_scope: str = "all",
     override_edits: list[str] | None = None,
     cocos_convention: int = _DEFAULT_COCOS_CONVENTION,
+    include_sources: bool = True,
 ) -> ExportReport:
     """Export standard names from the graph to a staging directory.
 
@@ -793,6 +837,10 @@ def run_export(
         ``pipeline`` origin. Pass ``["all"]`` to override all.
     cocos_convention:
         COCOS convention for the manifest (default 17).
+    include_sources:
+        Populate ``sources`` field in each entry with the graph
+        provenance (``StandardNameSource`` nodes). Default ``True``
+        (useful debug info); set ``False`` for a clean catalog export.
 
     Returns
     -------
@@ -917,6 +965,12 @@ def run_export(
             error_variants = _derive_error_variants_for_entry(gc, entry_name)
             if error_variants:
                 entry_dict["error_variants"] = error_variants
+
+            # Optionally attach source provenance for debug rendering
+            if include_sources:
+                sources = _fetch_sources_for_entry(gc, entry_name)
+                if sources:
+                    entry_dict["sources"] = sources
 
             domain_entries[entry_domain].append(entry_dict)
             exported_names.append(cand["id"])
