@@ -413,6 +413,57 @@ DD path: `gyrokinetics/wavevector/.../absorbed_power_thermal_electrons_per_n_tor
   tracker will flag the unregistered base for ISN review.
 - Do NOT emit a `vocab_gap` exit — the name is COMPOSED, scored, persisted.
 
+### W38 ANTI-PATTERN GALLERY — recurring failures from rotation Set C
+
+These three patterns recurred across W37 rotation Set C (spectrometers, gyrokinetics,
+halo regions, wall geometry). Apply them BEFORE emitting any name.
+
+**W38-A1 — Instrument prefix carry-over (physics-quantity case).**
+*Why wrong:* Standard names describe physical quantities, not instrument readings.
+DD paths under an instrument subtree (spectrometer, camera, magnet, coil, probe,
+detector, sensor) whose leaf is a generic physical observable (photon energy, count
+rate, brightness) MUST drop the instrument tokens — they are DD-tree leakage.
+- ❌ `x_ray_crystal_spectrometer_pixel_photon_energy_lower_bound`
+- ✅ `photon_energy_lower_bound`
+- *Hardware-property exception:* Keep the instrument as `_of_<instrument>` locus
+  ONLY when the quantity is intrinsic to the device itself:
+  ✓ `cross_sectional_area_of_rogowski_coil` (★0.94), ✓ `length_of_flux_loop`.
+- *Decision rule:* If the observable is instrument-agnostic in meaning → drop the
+  instrument. If it describes the instrument's geometry / electrical state / material
+  → keep it as postfix locus per INSTRUMENT HANDLING above.
+
+**W38-A2 — Suffix-form for component instead of canonical prefix.**
+*Why wrong:* The ISN 5-group decomposition places component (`parallel`,
+`perpendicular`, `poloidal`, `toroidal`, `radial`, `vertical`) and transformation
+(`derivative_of`, `normalized_of`, `imaginary_part_of`) BEFORE the base via
+`<modifier>_of_<base>`. Suffix forms collapse them into `physical_base` and break
+the parser.
+- ❌ `halo_region_parallel_energy_due_to_heat_flux`
+- ✅ `parallel_component_of_halo_energy`
+- ❌ `vertical_coordinate_of_geometric_axis_radial_derivative_wrt_minor_radius`
+- ✅ `derivative_with_respect_to_minor_radius_of_vertical_coordinate_of_geometric_axis`
+- ❌ `gyroaveraged_parallel_velocity_moment_imaginary_part_normalized`
+- ✅ Restructure as `<component>_component_of_<base>` chain, or skip + emit
+  `vocab_gap` if it exceeds the two-`_of_` nesting limit (HARD PRE-EMIT #9).
+- *Top-scoring W37 exemplars:* `parallel_component_of_runaway_electron_current_density`
+  (★0.95), `parallel_component_of_fast_electron_pressure` (★0.95).
+- *Decision rule:* Component, transformation, and reducer tokens always come BEFORE
+  the base via `_of_`. NC-20 (real_part / imaginary_part / amplitude / phase) is the
+  only sanctioned SUFFIX exception.
+
+**W38-A3 — Compound hardware identifiers concatenated in name body.**
+*Why wrong:* DD paths nesting multiple hardware-tree segments (e.g.
+`magnetics/.../sensor/direction/unit_vector`) get concatenated into a name body
+(`sensor_direction_unit_vector`) that re-introduces the leakage HARD PRE-EMIT #3 and
+INSTRUMENT HANDLING ban. Extract the most general physical concept.
+- ❌ `z_coordinate_of_sensor_direction_unit_vector`
+- ✅ `z_component_of_direction_unit_vector` (a unit-vector field's Z-component is a
+  projection, not a coordinate of a point — see `vertical_component_of_surface_normal_vector`)
+- *Decision rule:* If the DD path stacks ≥2 hardware tokens (`sensor/direction`,
+  `coil/turn/winding`, `probe/tip/electrode`), keep at most ONE — and only if it is
+  intrinsic to the physics. Otherwise drop them all and name the underlying concept
+  (`direction_unit_vector`, `winding_number`, `electrode_voltage`).
+
 ## Critical Naming Rules (most-violated)
 
 **NC-1 No synonymous names.** When a controlled vocabulary term exists (`magnetic_flux`), always use it. Never create alternative wordings for the same physical quantity. ❌ `poloidal_flux` → ✅ `poloidal_magnetic_flux`.

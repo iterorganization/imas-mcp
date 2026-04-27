@@ -297,6 +297,64 @@ or any diagnostic-heavy IDS.
 - *Fix:* Use `polarization_angle` (registered base, unit `rad`); simplify locus by
   removing `_channel` sub-component identifier.
 
+### W38 ANTI-PATTERN GALLERY — recurring failures from rotation Set C
+
+These three patterns recurred across W37 rotation Set C (spectrometers, gyrokinetics,
+halo regions, wall geometry) and were caught by the reviewer via `suggested_name`. They
+extend the EMW gallery above with non-polarimetry exemplars. Apply them BEFORE emitting
+any name.
+
+**W38-A1 — Instrument prefix carry-over (physics-quantity case).**
+*Why wrong:* Standard names describe physical quantities, not instrument readings.
+When the DD path lives under an instrument subtree (spectrometer, camera, magnet,
+coil, probe, detector, sensor) but the leaf is a generic physical observable
+(photon energy, count rate, brightness), the instrument tokens MUST be dropped — they
+are DD-tree leakage, not physics qualifiers.
+- ❌ `x_ray_crystal_spectrometer_pixel_photon_energy_lower_bound`
+- ✅ `photon_energy_lower_bound`
+- *Hardware-property exception:* When the quantity is INTRINSIC to the device
+  (geometric or electrical property of the hardware itself), keep the instrument as
+  postfix locus: ✓ `cross_sectional_area_of_rogowski_coil` (★0.94),
+  ✓ `length_of_flux_loop` — these IS-A coil/loop properties.
+- *Decision rule:* If the same observable could be measured by a different instrument
+  and yield the same physical meaning → drop the instrument. If the quantity describes
+  the instrument's geometry, electrical state, or material → keep it as
+  `_of_<instrument>` locus per INSTRUMENT HANDLING above.
+
+**W38-A2 — Suffix-form for component instead of canonical prefix.**
+*Why wrong:* The ISN 5-group decomposition (transformation, component, base, position,
+qualifier) places the component (`parallel`, `perpendicular`, `poloidal`, `toroidal`,
+`radial`, `vertical`) and transformation (`derivative_of`, `normalized_of`,
+`imaginary_part_of`) BEFORE the base via `<modifier>_of_<base>`. Suffix forms collapse
+component, transformation, and reducer tokens into `physical_base`, breaking the parser.
+- ❌ `halo_region_parallel_energy_due_to_heat_flux`
+- ✅ `parallel_component_of_halo_energy`
+- ❌ `vertical_coordinate_of_geometric_axis_radial_derivative_wrt_minor_radius`
+- ✅ `derivative_with_respect_to_minor_radius_of_vertical_coordinate_of_geometric_axis`
+- ❌ `gyroaveraged_parallel_velocity_moment_imaginary_part_normalized`
+- ✅ Restructure as `<component>_component_of_<base>` chain, or skip + emit
+  `vocab_gap` if the chain exceeds the two-`_of_` nesting limit (HARD PRE-EMIT #9).
+- *Top-scoring W37 exemplars:* `parallel_component_of_runaway_electron_current_density`
+  (★0.95), `parallel_component_of_fast_electron_pressure` (★0.95).
+- *Decision rule:* Component, transformation, and reducer tokens always come BEFORE
+  the base via `_of_`. Never trail them as suffixes. Cross-check with NC-20 (real_part /
+  imaginary_part / amplitude / phase are the only sanctioned SUFFIX modifiers).
+
+**W38-A3 — Compound hardware identifiers concatenated in name body.**
+*Why wrong:* When a DD path nests multiple hardware-tree segments (e.g.
+`magnetics/.../sensor/direction/unit_vector`), concatenating all of them into the
+name body (`sensor_direction_unit_vector`) duplicates the leakage warned against in
+HARD PRE-EMIT CHECK #3 and INSTRUMENT HANDLING. Extract the most general physical
+concept; drop intermediate hardware tokens.
+- ❌ `z_coordinate_of_sensor_direction_unit_vector`
+- ✅ `z_component_of_direction_unit_vector` (a unit vector field's Z-component
+  is a vector projection, not a coordinate of a point)
+- *Decision rule:* If the DD path stacks ≥2 hardware tokens (`sensor/direction`,
+  `coil/turn/winding`, `probe/tip/electrode`), keep at most ONE hardware token, and
+  only if it is intrinsic to the physics. Otherwise drop them all and let the standard
+  name describe the underlying physical concept (`direction_unit_vector`,
+  `winding_number`, `electrode_voltage`).
+
 {% if field_guidance.naming_guidance %}
 ## Naming Guidance
 
