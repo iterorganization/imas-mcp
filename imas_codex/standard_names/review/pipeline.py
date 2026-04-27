@@ -269,6 +269,23 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
                     state.stats.get("docs_skipped_missing_name", 0) + 1
                 )
                 continue
+            # Content gate: docs review of empty/stub content scores 0/80
+            # and pollutes aggregate stats. Require minimum content before
+            # the LLM is asked to grade documentation quality.
+            doc_text = (name.get("documentation") or "").strip()
+            desc_text = (name.get("description") or "").strip()
+            if len(doc_text) < 50 and len(desc_text) < 20:
+                wlog.debug(
+                    "Docs gate: skipping %r — insufficient content "
+                    "(doc=%d, desc=%d chars)",
+                    nid,
+                    len(doc_text),
+                    len(desc_text),
+                )
+                state.stats["docs_skipped_empty_content"] = (
+                    state.stats.get("docs_skipped_empty_content", 0) + 1
+                )
+                continue
 
         # --status filter
         if state.status_filter:
@@ -1250,7 +1267,7 @@ async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
     wlog.info("Persisting %d review results", len(results))
 
     # Stamp provenance
-    model = state.review_model or "unknown"
+    model = state.canonical_review_model or state.review_model or "unknown"
     reviewed_at = datetime.now(UTC).isoformat()
     _compute_hash = _get_hash_fn()
 
