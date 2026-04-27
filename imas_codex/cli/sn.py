@@ -54,36 +54,101 @@ def _run_sn_loop_cmd(
     override_edits: list[str] | None = None,
     only: str | None = None,
 ) -> None:
-    """Execute the DD completion loop and render the summary."""
-    import asyncio
+    """Execute the DD completion loop with Rich progress display.
+
+    Uses the ``run_discovery()`` harness for 3-press shutdown,
+    periodic ticker, graph-refresh, and service monitoring.
+    Falls back to plain-mode logging when Rich is unavailable.
+    """
+    import uuid as _uuid
 
     from rich.console import Console
     from rich.table import Table
 
-    from imas_codex.cli.discover.common import setup_logging
+    from imas_codex.cli.discover.common import (
+        DiscoveryConfig,
+        run_discovery,
+        setup_logging,
+        use_rich_output,
+    )
     from imas_codex.standard_names.loop import (
         run_sn_loop,
         summary_table,
     )
 
-    console = Console(quiet=quiet)
+    run_id = str(_uuid.uuid4())
+    use_rich = not quiet and not dry_run and use_rich_output()
 
-    # Wire INFO-level logs to stderr so per-phase progress from run_sn_loop
-    # / run_turn / workers is visible. Without this the user sees the
-    # "DD completion loop" header and then nothing for the whole run.
-    if not quiet:
-        setup_logging("sn", "sn-run", use_rich=False, verbose=verbose)
+    # Build Rich display or fall back to plain logging
+    display = None
+    cli_console: Console | None = None
+    if use_rich:
+        cli_console = Console()
+        setup_logging("sn", "sn-run", use_rich=True, verbose=verbose)
 
-    if not quiet:
-        console.print(
-            f"[bold]DD completion loop[/bold] "
-            f"(budget=${cost_limit:.2f}, turn={turn_number}"
-            f"{f', min_score={min_score}' if min_score is not None else ''}"
-            f"{', dry-run' if dry_run else ''})"
+        # Cost gauge: graph-backed when available, else returns 0.0
+        try:
+            from imas_codex.standard_names.graph_ops import (
+                aggregate_spend_for_run,
+            )
+
+            def _cost_fn() -> float:
+                return aggregate_spend_for_run(run_id)
+
+        except ImportError:
+
+            def _cost_fn() -> float:
+                return 0.0
+
+        from imas_codex.standard_names.progress import SNLoopProgressDisplay
+
+        target = "full"
+        if skip_enrich:
+            target = "names"
+        elif skip_review:
+            target = "compose+enrich"
+
+        display = SNLoopProgressDisplay(
+            run_id=run_id,
+            mode="loop",
+            target=target,
+            cost_limit=cost_limit,
+            accumulated_cost_fn=_cost_fn,
+            console=cli_console,
         )
+    else:
+        setup_logging("sn", "sn-run", use_rich=False, verbose=verbose)
+        cli_console = Console(quiet=quiet)
+        if not quiet:
+            cli_console.print(
+                f"[bold]DD completion loop[/bold] "
+                f"(budget=${cost_limit:.2f}, turn={turn_number}"
+                f"{f', min_score={min_score}' if min_score is not None else ''}"
+                f"{', dry-run' if dry_run else ''})"
+            )
 
-    summary = asyncio.run(
-        run_sn_loop(
+    # Build harness config — SN loop doesn't need SSH/embed/auth checks
+    disc_config = DiscoveryConfig(
+        domain="standard-names",
+        facility="sn",
+        facility_config={},  # SN has no facility YAML
+        display=display,
+        check_graph=not dry_run,
+        check_embed=False,
+        check_ssh=False,
+        check_auth=False,
+        check_model=False,
+        verbose=verbose,
+        suppress_loggers=[
+            "imas_codex.standard_names",
+            "imas_codex.graph",
+        ]
+        if use_rich
+        else [],
+    )
+
+    async def async_main(stop_event, service_monitor):
+        summary = await run_sn_loop(
             cost_limit=cost_limit,
             per_domain_limit=per_domain_limit,
             dry_run=dry_run,
@@ -97,13 +162,22 @@ def _run_sn_loop_cmd(
             source=source,
             override_edits=override_edits,
             only=only,
+            progress_display=display,
         )
-    )
+        return {"summary": summary}
+
+    result = run_discovery(disc_config, async_main)
+    summary = result.get("summary")
+    if summary is None:
+        return
+
     row = summary_table(summary)
 
     if quiet:
         return
 
+    # Print summary table (in both rich and plain mode, after display exits)
+    out_console = cli_console or Console()
     table = Table(title=f"Run {row['run_id'][:8]}… (turn {row.get('turn_number', 1)})")
     table.add_column("field", style="cyan")
     table.add_column("value", style="white")
@@ -121,7 +195,7 @@ def _run_sn_loop_cmd(
         if key in row:
             table.add_row(key, str(row[key]))
     table.add_row("domains_touched", ", ".join(row["domains_touched"]) or "—")
-    console.print(table)
+    out_console.print(table)
 
 
 def _check_pipeline_clear_gate() -> None:

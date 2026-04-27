@@ -164,6 +164,10 @@ class TurnConfig:
     # creating independent per-phase managers.  This enforces the global
     # cost_limit across compose AND review so neither phase can overshoot.
     shared_budget: Any = None  # BudgetManager | None
+    # Optional Rich progress display for loop mode.  Workers call
+    # display.push_event() and display.update_phase() when set.
+    # NO-OP when None (plain mode or single-pass pipeline).
+    progress_display: Any = None  # SNLoopProgressDisplay | None
 
     def __post_init__(self) -> None:
         # Always derive ``split`` from ``compose_lean`` so the two stay in sync.
@@ -838,11 +842,23 @@ async def run_turn(cfg: TurnConfig) -> list[PhaseResult]:
         if skip:
             results.append(PhaseResult(name=name, skipped=True))
             logger.info("Skipping phase: %s", name)
+            if cfg.progress_display is not None:
+                cfg.progress_display.end_phase(name, status="skipped")
             continue
 
         logger.info("Starting phase: %s", name)
+        if cfg.progress_display is not None:
+            cfg.progress_display.start_phase(name)
         result = await fn()
         results.append(result)
+
+        # Update display with phase result
+        if cfg.progress_display is not None:
+            cfg.progress_display.update_phase(
+                name, completed=result.count, cost=result.cost
+            )
+            status = "completed" if result.exit_code == 0 else "failed"
+            cfg.progress_display.end_phase(name, status=status)
 
         # Accumulate touched names for downstream scoping
         if result.touched_names:

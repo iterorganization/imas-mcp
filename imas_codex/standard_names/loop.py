@@ -261,6 +261,7 @@ async def run_sn_loop(
     source: str = "dd",
     override_edits: list[str] | None = None,
     only: str | None = None,
+    progress_display: Any | None = None,
 ) -> RunSummary:
     """Drive the ``sn run`` loop with one-domain-per-turn rotation.
 
@@ -277,6 +278,11 @@ async def run_sn_loop(
     When *only_domain* is set the rotation is bypassed — the explicit
     user choice is used every iteration until budget runs out or the
     domain has no remaining work.
+
+    Args:
+        progress_display: Optional :class:`SNLoopProgressDisplay` for
+            Rich live monitoring.  When ``None``, progress is logged
+            via the standard logger (plain mode).
     """
     from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.turn import TurnConfig, run_turn
@@ -322,6 +328,16 @@ async def run_sn_loop(
     # based on phase-result costs so tests that mock run_turn still work.
     _remaining = cost_limit
 
+    # ── Display: signal run start ─────────────────────────────────
+    if progress_display is not None:
+        # Count eligible domains for the domains tracker.
+        # Best-effort: don't let display setup block the pipeline.
+        try:
+            _eligible = _count_eligible_domains(only_domain=only_domain)
+            progress_display.start_run(total_domains=len(_eligible))
+        except Exception:
+            progress_display.start_run(total_domains=0)
+
     try:
         while True:
             # ── Budget gate (soft limit) ──────────────────────────
@@ -357,6 +373,22 @@ async def run_sn_loop(
                 remaining_budget,
             )
 
+            # ── Display: signal turn start ────────────────────────
+            if progress_display is not None:
+                # Build phase plan from skip flags
+                _phase_plan = []
+                for _pname, _skip in [
+                    ("reconcile", False),
+                    ("generate", skip_generate),
+                    ("enrich", skip_enrich),
+                    ("link", False),
+                    ("review_names", skip_review),
+                    ("review_docs", skip_review),
+                    ("regen", skip_regen or min_score is None),
+                ]:
+                    _phase_plan.append(_pname)
+                progress_display.start_turn(domain=dom, phase_plan=_phase_plan)
+
             # Snapshot forward-progress counters before the turn so we can
             # detect whether the turn actually advanced anything.
             prev_progress = (
@@ -384,6 +416,7 @@ async def run_sn_loop(
                 override_edits=override_edits,
                 only=only,
                 shared_budget=shared_mgr,
+                progress_display=progress_display,
             )
             results = await run_turn(cfg)
 
@@ -414,6 +447,20 @@ async def run_sn_loop(
             summary.cost_spent = max(shared_mgr.spent, summary.cost_spent + phase_sum)
             _remaining -= turn_cost
             summary.domains_touched.add(dom)
+
+            # ── Display: update phase results and signal turn end ──
+            if progress_display is not None:
+                for phase in results:
+                    if phase.skipped:
+                        progress_display.end_phase(phase.name, status="skipped")
+                    else:
+                        progress_display.update_phase(
+                            phase.name,
+                            completed=phase.count,
+                            cost=phase.cost,
+                        )
+                        progress_display.end_phase(phase.name, status="completed")
+                progress_display.end_turn(domain=dom)
 
             # Update phase-level cost breakdowns from shared manager.
             phase_spent = shared_mgr.phase_spent
