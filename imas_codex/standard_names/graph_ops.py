@@ -1593,10 +1593,11 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> list[dict[str,
         if not edge_specs:
             continue
 
-        # Idempotent: delete old HAS_SEGMENT edges before re-writing
+        # Idempotent: delete old HAS_SEGMENT and all 10 typed segment edges
+        # before re-writing so repeated calls leave exactly one edge per type.
         gc.query(
             """
-            MATCH (sn:StandardName {id: $sn_id})-[r:HAS_SEGMENT]->(:GrammarToken)
+            MATCH (sn:StandardName {id: $sn_id})-[r:HAS_SEGMENT|HAS_PHYSICAL_BASE|HAS_SUBJECT|HAS_TRANSFORMATION|HAS_COMPONENT|HAS_COORDINATE|HAS_PROCESS|HAS_POSITION|HAS_REGION|HAS_DEVICE|HAS_GEOMETRIC_BASE]->(:GrammarToken)
             DELETE r
             """,
             sn_id=sn_id,
@@ -1627,6 +1628,36 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> list[dict[str,
                     MERGE (sn)-[r:HAS_SEGMENT]->(t)
                     SET r.position = edge.position,
                         r.segment = edge.segment
+                )
+                FOREACH (_ IN CASE WHEN t IS NOT NULL AND edge.segment = 'physical_base' THEN [1] ELSE [] END |
+                    MERGE (sn)-[:HAS_PHYSICAL_BASE]->(t)
+                )
+                FOREACH (_ IN CASE WHEN t IS NOT NULL AND edge.segment = 'subject' THEN [1] ELSE [] END |
+                    MERGE (sn)-[:HAS_SUBJECT]->(t)
+                )
+                FOREACH (_ IN CASE WHEN t IS NOT NULL AND edge.segment = 'transformation' THEN [1] ELSE [] END |
+                    MERGE (sn)-[:HAS_TRANSFORMATION]->(t)
+                )
+                FOREACH (_ IN CASE WHEN t IS NOT NULL AND edge.segment = 'component' THEN [1] ELSE [] END |
+                    MERGE (sn)-[:HAS_COMPONENT]->(t)
+                )
+                FOREACH (_ IN CASE WHEN t IS NOT NULL AND edge.segment = 'coordinate' THEN [1] ELSE [] END |
+                    MERGE (sn)-[:HAS_COORDINATE]->(t)
+                )
+                FOREACH (_ IN CASE WHEN t IS NOT NULL AND edge.segment = 'process' THEN [1] ELSE [] END |
+                    MERGE (sn)-[:HAS_PROCESS]->(t)
+                )
+                FOREACH (_ IN CASE WHEN t IS NOT NULL AND edge.segment = 'position' THEN [1] ELSE [] END |
+                    MERGE (sn)-[:HAS_POSITION]->(t)
+                )
+                FOREACH (_ IN CASE WHEN t IS NOT NULL AND edge.segment = 'region' THEN [1] ELSE [] END |
+                    MERGE (sn)-[:HAS_REGION]->(t)
+                )
+                FOREACH (_ IN CASE WHEN t IS NOT NULL AND edge.segment = 'device' THEN [1] ELSE [] END |
+                    MERGE (sn)-[:HAS_DEVICE]->(t)
+                )
+                FOREACH (_ IN CASE WHEN t IS NOT NULL AND edge.segment = 'geometric_base' THEN [1] ELSE [] END |
+                    MERGE (sn)-[:HAS_GEOMETRIC_BASE]->(t)
                 )
                 RETURN edge.token AS token,
                        edge.segment AS segment,

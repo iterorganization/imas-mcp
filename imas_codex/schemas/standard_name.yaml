@@ -649,6 +649,25 @@ classes:
             - segment: string   — grammar segment name this token
               occupied (e.g. "subject", "transformation").
 
+          In addition to the generic HAS_SEGMENT edge, 10 typed edges are
+          written alongside it for direct graph traversal and MCP filtering
+          (W40 Phase 4). The typed edges are keyed on segment name:
+            physical_base  → HAS_PHYSICAL_BASE
+            subject        → HAS_SUBJECT
+            transformation → HAS_TRANSFORMATION
+            component      → HAS_COMPONENT
+            coordinate     → HAS_COORDINATE
+            process        → HAS_PROCESS
+            position       → HAS_POSITION
+            region         → HAS_REGION
+            device         → HAS_DEVICE
+            geometric_base → HAS_GEOMETRIC_BASE
+          Each typed edge carries no extra properties; target is the same
+          GrammarToken node referenced by HAS_SEGMENT. LinkML does not
+          natively model edge labels, so the convention mirrors the
+          existing HAS_SEGMENT pattern (relationship_type annotation).
+          See plans/w40-schema-redesign-plan.md §Phase 4 for details.
+
           LinkML does not natively model edge properties, so those two
           attributes live on the Cypher edge rather than as StandardName
           properties. See plan 29 §E.5 / §E.7 for details.
