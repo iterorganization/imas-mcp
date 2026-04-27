@@ -1224,26 +1224,57 @@ to a git tag via `git+https://` URL, not a PyPI version.
    ```bash
    cd ~/Code/imas-standard-names && uv run pytest
    ```
-5. **Merge to main** and **mint RC release** via git tag + push:
+5. **Merge to main** and **cut an RC release using the ISN release CLI** (NEVER tag manually).
+   The release CLI is state-machine driven: it auto-computes the next version from the latest
+   git tag and routes RCs to `origin` (fork) or finals to `upstream` (iterorganization). The
+   dep in imas-codex pins to a git tag on the fork, so RC tags on origin are sufficient — no
+   PyPI publish required.
+
    ```bash
+   cd ~/Code/imas-standard-names
    git checkout main && git merge w<XX>-vocab-<topic>
-   git tag -a v0.7.0rc<NN> -m "feat: <description>"
-   git push origin main && git push origin v0.7.0rc<NN>
+   git push origin main          # always push main BEFORE the release CLI
+
+   # Inspect current state and what the next bump would do:
+   uv run standard-names release status
+
+   # Cut a new RC. Pick ONE of:
+   #   - First RC of a new minor/major series (e.g. v0.7.0 → v0.8.0rc1):
+   uv run standard-names release --bump minor -m "feat: <topic> vocab additions"
+   #   - Increment within an existing RC series (e.g. v0.7.0rc30 → v0.7.0rc31):
+   uv run standard-names release -m "feat: <topic> vocab additions"
+   #   - Dry-run first to verify the computed version & remote:
+   uv run standard-names release --bump minor -m "..." --dry-run
    ```
-   GitHub Actions creates a GitHub Release automatically. The imas-codex dep uses
-   `git+https://` pinned to a tag, so PyPI publishing is not required.
-6. **Bump** `imas-standard-names` rev in imas-codex `pyproject.toml` to the new
-   RC tag:
+
+   The CLI runs pre-flight checks (clean tree, on `main`, synced with origin), creates the
+   annotated tag, and pushes to the correct remote. Fork CI publishes a GitHub Release. **Do
+   not** run `git tag` or `git push --tags` manually — bypassing the CLI loses the state-
+   machine guarantees and risks pushing RC tags to upstream by accident.
+
+   To finalize an RC to a stable release (push to upstream → PyPI publish), use
+   `--final -m "..."` — this is rare during bootstrap; coordinate with maintainers first.
+
+6. **Bump** `imas-standard-names` rev in imas-codex `pyproject.toml` to the new RC tag.
+   The dep appears **twice** in `pyproject.toml` (main `dependencies` block + `[dependency-groups]`).
+   Update both occurrences:
    ```bash
    cd ~/Code/imas-codex
-   # Update the @<tag> in the git+https:// URL in pyproject.toml (both occurrences)
+   sed -i 's|@v0\.7\.0rc[0-9]\+|@v0.7.0rc<NN>|g' pyproject.toml
+   grep "imas-standard-names @" pyproject.toml   # verify both bumped
    ```
-7. **Sync** imas-codex: `uv sync`
+7. **Sync** imas-codex: `uv sync` — verify with
+   `uv run python -c "import imas_standard_names; print(imas_standard_names.__version__)"`
 8. **Run SN tests** in imas-codex:
    ```bash
    uv run pytest tests/standard_names/ -x -q
    ```
-9. **Re-rotate** vocab-bound domains to measure lift; commit with conventional message.
+9. **Commit + push** the dep bump:
+   ```bash
+   uv run git commit -am "deps: bump imas-standard-names to v0.7.0rc<NN>"
+   git pull --no-rebase origin main && git push origin main
+   ```
+10. **Re-rotate** vocab-bound domains to measure lift; commit results separately.
 
 **Editorial review** on iterorganization upstream PRs proceeds in parallel.
 Once merged upstream, bump the dep to the official commit in a follow-up.
