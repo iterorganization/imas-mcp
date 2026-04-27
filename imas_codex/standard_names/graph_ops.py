@@ -4321,3 +4321,314 @@ def export_review_comments(
         domain,
     )
     return count
+
+
+# =============================================================================
+# Graph-backed LLM cost tracking API  (Phase 2)
+# =============================================================================
+
+# Phase → StandardName.llm_cost_<suffix> field mapping.
+_PHASE_TO_SN_COST_FIELD: dict[str, str] = {
+    "generate": "llm_cost_compose",
+    "enrich": "llm_cost_enrich",
+    "review_names": "llm_cost_review",
+    "review_docs": "llm_cost_docs",
+    "regen": "llm_cost_regen",
+}
+
+
+def create_sn_run_open(
+    run_id: str,
+    *,
+    started_at: Any,
+    cost_limit: float,
+    turn_number: int = 1,
+    min_score: float | None = None,
+) -> None:
+    """Pre-create an ``SNRun`` node with ``status='started'``.
+
+    Called at the START of ``run_sn_loop`` so that ``(LLMCost)-[:FOR_RUN]->
+    (SNRun)`` edges have a target from the first LLM call onward.
+
+    Uses MERGE so repeated calls (e.g. after a retry) are safe.
+    """
+    from imas_codex.graph.models import SNRun
+
+    run = SNRun(
+        id=run_id,
+        started_at=started_at,
+        cost_limit=round(cost_limit, 6),
+        cost_spent=0.0,
+        turn_number=turn_number,
+        min_score=min_score,
+        status="started",
+        cost_is_exact=True,
+    )
+    props = run.model_dump(mode="json")
+    try:
+        with GraphClient() as gc:
+            gc.create_nodes("SNRun", [props])
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Failed to pre-create SNRun %s: %s", run_id, exc)
+
+
+def finalize_sn_run(
+    run_id: str,
+    *,
+    status: str,
+    cost_spent: float,
+    cost_is_exact: bool = True,
+    ended_at: Any,
+    **summary_fields: Any,
+) -> None:
+    """Update an existing ``SNRun`` node at run end.
+
+    Uses ``MATCH + SET`` (not CREATE) — the node must already exist
+    (created by :func:`create_sn_run_open`).
+
+    ``summary_fields`` may contain any other ``SNRun`` property such as
+    ``domains_touched``, ``stop_reason``, ``pipeline_hash``,
+    ``names_composed``, ``names_enriched``, etc.
+    """
+    set_clauses = [
+        "rr.status = $status",
+        "rr.cost_spent = $cost_spent",
+        "rr.cost_is_exact = $cost_is_exact",
+        "rr.ended_at = datetime($ended_at)",
+    ]
+    params: dict[str, Any] = {
+        "run_id": run_id,
+        "status": status,
+        "cost_spent": round(cost_spent, 6),
+        "cost_is_exact": cost_is_exact,
+        "ended_at": ended_at if isinstance(ended_at, str) else ended_at.isoformat(),
+    }
+
+    for key, value in summary_fields.items():
+        set_clauses.append(f"rr.{key} = ${key}")
+        params[key] = value
+
+    cypher = (
+        "MATCH (rr:SNRun {id: $run_id}) "
+        "SET " + ", ".join(set_clauses) + " "
+        "RETURN rr.id AS id"
+    )
+    try:
+        with GraphClient() as gc:
+            result = gc.query(cypher, **params)
+            if not result:
+                logger.warning("finalize_sn_run: no SNRun found with id=%s", run_id)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Failed to finalize SNRun %s: %s", run_id, exc)
+
+
+@retry_on_deadlock()
+def record_llm_cost(
+    *,
+    run_id: str,
+    phase: str,
+    cycle: str | None = None,
+    sn_ids: list[str] | None = None,
+    model: str,
+    cost: float,
+    tokens_in: int,
+    tokens_out: int,
+    tokens_cached_read: int = 0,
+    tokens_cached_write: int = 0,
+    service: str = "standard-names",
+    batch_id: str | None = None,
+    overspend: float = 0.0,
+    llm_at: Any | None = None,
+) -> str:
+    """Write an atomic ``LLMCost`` node and ``FOR_RUN`` edge.
+
+    **Idempotency contract**: ``id`` is a deterministic UUID-5 over
+    ``(run_id, phase, batch_id, model, llm_at_iso, cost, tokens_in,
+    tokens_out)``.  The node is written with ``CREATE`` (not MERGE).
+    If a uniqueness constraint violation fires (duplicate id), the
+    exception is swallowed — the previous write already succeeded.
+
+    Returns:
+        The deterministic ``id`` string.
+    """
+    from datetime import UTC, datetime
+
+    if llm_at is None:
+        llm_at = datetime.now(UTC)
+    llm_at_iso = llm_at.isoformat() if not isinstance(llm_at, str) else llm_at
+
+    # Deterministic id — uuid5 over immutable call identity
+    id_seed = (
+        f"{run_id}|{phase}|{batch_id}|{model}"
+        f"|{llm_at_iso}|{cost}|{tokens_in}|{tokens_out}"
+    )
+    spend_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, id_seed))
+
+    sn_ids_clean = list(sn_ids) if sn_ids else []
+
+    cypher = """
+        CREATE (c:LLMCost {
+            id: $id,
+            run_id: $run_id,
+            phase: $phase,
+            cycle: $cycle,
+            sn_ids: $sn_ids,
+            batch_id: $batch_id,
+            overspend: $overspend,
+            llm_model: $llm_model,
+            llm_cost: $llm_cost,
+            llm_tokens_in: $llm_tokens_in,
+            llm_tokens_out: $llm_tokens_out,
+            llm_tokens_cached_read: $llm_tokens_cached_read,
+            llm_tokens_cached_write: $llm_tokens_cached_write,
+            llm_service: $llm_service,
+            llm_at: datetime($llm_at),
+            for_run: $run_id
+        })
+        WITH c
+        MATCH (rr:SNRun {id: $run_id})
+        MERGE (c)-[:FOR_RUN]->(rr)
+    """
+    params = {
+        "id": spend_id,
+        "run_id": run_id,
+        "phase": phase,
+        "cycle": cycle,
+        "sn_ids": sn_ids_clean,
+        "batch_id": batch_id,
+        "overspend": round(overspend, 6),
+        "llm_model": model,
+        "llm_cost": round(cost, 6),
+        "llm_tokens_in": tokens_in,
+        "llm_tokens_out": tokens_out,
+        "llm_tokens_cached_read": tokens_cached_read,
+        "llm_tokens_cached_write": tokens_cached_write,
+        "llm_service": service,
+        "llm_at": llm_at_iso,
+    }
+
+    try:
+        with GraphClient() as gc:
+            gc.query(cypher, **params)
+    except Exception as exc:
+        # Swallow constraint violation (idempotent duplicate) —
+        # the original write already succeeded.
+        from neo4j.exceptions import ConstraintError
+
+        if isinstance(exc, ConstraintError):
+            logger.debug(
+                "record_llm_cost: duplicate id=%s (idempotent), skipping",
+                spend_id,
+            )
+        else:
+            raise
+
+    return spend_id
+
+
+def aggregate_spend_for_run(run_id: str) -> float:
+    """Return total LLM cost for a run by summing ``LLMCost`` nodes."""
+    with GraphClient() as gc:
+        result = gc.query(
+            "MATCH (c:LLMCost {run_id: $run_id}) "
+            "RETURN coalesce(sum(c.llm_cost), 0.0) AS total",
+            run_id=run_id,
+        )
+        return float(result[0]["total"]) if result else 0.0
+
+
+def aggregate_spend_per_phase(run_id: str) -> dict[str, float]:
+    """Return ``{phase: total_cost}`` for a run."""
+    with GraphClient() as gc:
+        rows = gc.query(
+            "MATCH (c:LLMCost {run_id: $run_id}) "
+            "RETURN c.phase AS phase, sum(c.llm_cost) AS total "
+            "ORDER BY phase",
+            run_id=run_id,
+        )
+        return {r["phase"]: float(r["total"]) for r in rows}
+
+
+def aggregate_spend_per_name(run_id: str) -> dict[str, float]:
+    """Return ``{sn_id: apportioned_cost}`` for a run.
+
+    Per-name cost share is ``llm_cost / size(sn_ids)`` — each name
+    in the ``sn_ids`` list gets an equal share.  Rows with an empty
+    ``sn_ids`` list are skipped (e.g. L7 audit calls with no names).
+    """
+    with GraphClient() as gc:
+        rows = gc.query(
+            """
+            MATCH (c:LLMCost {run_id: $run_id})
+            WHERE size(c.sn_ids) > 0
+            UNWIND c.sn_ids AS sn_id
+            RETURN sn_id, sum(c.llm_cost / size(c.sn_ids)) AS apportioned
+            """,
+            run_id=run_id,
+        )
+        return {r["sn_id"]: float(r["apportioned"]) for r in rows}
+
+
+def update_sn_per_phase_costs(run_id: str) -> int:
+    """Push aggregated per-name costs into ``StandardName.llm_cost_*`` fields.
+
+    For each ``LLMCost`` row in the run, apportions ``llm_cost / size(sn_ids)``
+    to each name, grouped by phase.  Then writes the per-phase totals and the
+    overall ``llm_cost`` onto the ``StandardName`` node.
+
+    Returns:
+        Number of ``StandardName`` nodes updated.
+    """
+    # Build per-(name, phase) apportionment
+    with GraphClient() as gc:
+        rows = gc.query(
+            """
+            MATCH (c:LLMCost {run_id: $run_id})
+            WHERE size(c.sn_ids) > 0
+            UNWIND c.sn_ids AS sn_id
+            RETURN sn_id, c.phase AS phase,
+                   sum(c.llm_cost / size(c.sn_ids)) AS apportioned
+            """,
+            run_id=run_id,
+        )
+
+    if not rows:
+        return 0
+
+    # Aggregate: {sn_id: {field: cost, ...}}
+    per_name: dict[str, dict[str, float]] = {}
+    for r in rows:
+        sn_id = r["sn_id"]
+        phase = r["phase"]
+        cost = float(r["apportioned"])
+        if sn_id not in per_name:
+            per_name[sn_id] = {}
+        field = _PHASE_TO_SN_COST_FIELD.get(phase)
+        if field:
+            per_name[sn_id][field] = per_name[sn_id].get(field, 0.0) + cost
+
+    # Write back — batch all names in a single Cypher per phase-field
+    updated_ids: set[str] = set()
+
+    with GraphClient() as gc:
+        for sn_id, fields in per_name.items():
+            total_cost = sum(fields.values())
+            set_parts = ["sn.llm_cost = $total"]
+            params: dict[str, Any] = {
+                "sn_id": sn_id,
+                "total": round(total_cost, 6),
+            }
+            for field_name, field_cost in fields.items():
+                set_parts.append(f"sn.{field_name} = ${field_name}")
+                params[field_name] = round(field_cost, 6)
+
+            result = gc.query(
+                "MATCH (sn:StandardName {id: $sn_id}) "
+                "SET " + ", ".join(set_parts) + " "
+                "RETURN sn.id AS id",
+                **params,
+            )
+            if result:
+                updated_ids.add(sn_id)
+
+    return len(updated_ids)
