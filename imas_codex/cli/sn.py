@@ -169,6 +169,9 @@ def _run_sn_loop_cmd(
         suppress_loggers=[
             "imas_codex.standard_names",
             "imas_codex.graph",
+            "imas_codex.embeddings",
+            "imas_codex.discovery",
+            "imas_codex.llm",
             "litellm",
             "httpx",
             "httpcore",
