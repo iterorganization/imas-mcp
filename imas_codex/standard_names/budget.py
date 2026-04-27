@@ -2,8 +2,8 @@
 
 Provides a shared ``BudgetManager`` that tracks reserved, spent, and
 available budget.  Callers acquire a ``BudgetLease`` via ``reserve()``,
-``charge()`` actual costs against it, and release unused headroom on
-completion.
+charge actual costs against it via ``charge_event()``, and release
+unused headroom on completion.
 
 Invariant: ``pool + sum(active_reserved) + spent == total``
 
@@ -11,20 +11,18 @@ Thread-safe: ``threading.Lock`` protects all mutations.  The lock
 critical sections are pure arithmetic (no I/O), so blocking is
 negligible even in async contexts.
 
-**Graph-backed cost tracking (Phase 3):**
+**Graph-backed cost tracking:**
 
 ``BudgetManager`` delegates spend recording to an async write queue
 that persists ``LLMCost`` rows in Neo4j via ``record_llm_cost``.
 In-memory ``_spent`` / ``_phase_spent`` are maintained as a local
-cache for low-latency lease decisions and backwards-compat property
-access.  The graph is the source of truth; the in-memory counters
-are a write-ahead shadow.
+cache for low-latency lease decisions.  The graph is the source of
+truth; the in-memory counters are a write-ahead shadow.
 
 The ``LLMCostEvent`` dataclass carries per-call metadata (model,
 tokens, sn_ids, phase, etc.).  ``BudgetLease.charge_event()`` is the
 single typed entry point that enqueues a graph write and updates the
-local cache.  Legacy ``charge_soft`` / ``charge_or_extend`` remain as
-thin backwards-compat wrappers (Phase 4 will migrate callers).
+local cache.
 """
 
 from __future__ import annotations
@@ -116,8 +114,7 @@ class BudgetLease:
     for automatic release of unused budget::
 
         with mgr.reserve(0.5) as lease:
-            lease.charge(0.2)
-            lease.charge(0.1)
+            result = lease.charge_event(0.3, LLMCostEvent(...))
         # Remaining 0.2 released to pool
     """
 
@@ -193,91 +190,6 @@ class BudgetLease:
         # Enqueue async graph write
         self._mgr._enqueue_write(cost, event, overspend)
         return ChargeResult(overspend=overspend)
-
-    # ------------------------------------------------------------------
-    # Legacy charge API (backwards-compat — Phase 4 will remove)
-    # ------------------------------------------------------------------
-
-    def charge(self, amount: float) -> None:
-        """Deduct *amount* from lease and record spend in manager.
-
-        Raises ``BudgetExceeded`` if cumulative charges exceed the
-        reserved amount (with floating-point epsilon tolerance).
-        """
-        if amount < 0:
-            raise ValueError("charge must be non-negative")
-        if self._charged + amount > self._reserved + EPSILON:
-            raise BudgetExceeded(
-                f"Lease {self._lease_id}: charge {amount:.4f} would exceed "
-                f"reserved {self._reserved:.4f} "
-                f"(already charged {self._charged:.4f})"
-            )
-        self._charged += amount
-        self._mgr._record_spend(self._lease_id, amount)
-
-    def charge_or_extend(self, amount: float) -> None:
-        """Charge *amount*, extending the reservation from the pool if needed.
-
-        Unlike :meth:`charge`, this method never raises ``BudgetExceeded``
-        due to an estimation mismatch: when the actual cost exceeds the
-        original reservation it atomically borrows the shortfall from the
-        manager's pool before charging.  ``BudgetExceeded`` is only raised
-        if the pool itself is also exhausted (i.e. truly no budget left).
-
-        Use this in callers where the per-batch cost estimate may be
-        imprecise (e.g. LLM compose) so that a slight under-estimate does
-        not discard a completed LLM result.
-
-        Raises:
-            ValueError: if *amount* is negative.
-            BudgetExceeded: if neither reservation nor pool can cover
-                the charge.
-        """
-        if amount < 0:
-            raise ValueError("charge must be non-negative")
-        shortfall = (self._charged + amount) - self._reserved
-        if shortfall > EPSILON:
-            # Borrow shortfall from pool to extend this reservation
-            extended = self._mgr._extend_reservation(self._lease_id, shortfall)
-            self._reserved += extended
-            if self._charged + amount > self._reserved + EPSILON:
-                raise BudgetExceeded(
-                    f"Lease {self._lease_id}: charge {amount:.4f} would exceed "
-                    f"reservation+pool (reserved={self._reserved:.4f}, "
-                    f"already charged={self._charged:.4f})"
-                )
-        self._charged += amount
-        self._mgr._record_spend(self._lease_id, amount)
-
-    def charge_soft(self, amount: float) -> float:
-        """Record *amount* as spend, extending reservation+pool as needed.
-
-        Unlike :meth:`charge` and :meth:`charge_or_extend`, this method
-        NEVER raises ``BudgetExceeded``.  The LLM cost has already been
-        incurred by the caller, so spend is always recorded.
-
-        Behaviour:
-          1. If the charge fits within the current reservation, record it.
-          2. Otherwise, try to extend the reservation from the pool.
-          3. If the pool is insufficient, record the overspend anyway —
-             ``manager.spent`` will exceed ``manager.total_budget``.
-             The caller is expected to log a warning.
-
-        Returns:
-            overspend: amount charged beyond reserved+pool (0.0 if fit).
-        """
-        if amount < 0:
-            raise ValueError("charge must be non-negative")
-        shortfall = (self._charged + amount) - self._reserved
-        if shortfall > EPSILON:
-            extended = self._mgr._extend_reservation(self._lease_id, shortfall)
-            self._reserved += extended
-        # Record spend unconditionally — the LLM has already been paid.
-        self._charged += amount
-        self._mgr._record_spend(self._lease_id, amount)
-        # Report overspend (reservation may now be < charged if pool empty)
-        overspend = max(self._charged - self._reserved, 0.0)
-        return overspend
 
     def release_unused(self) -> float:
         """Return unspent portion to manager pool.  Idempotent."""

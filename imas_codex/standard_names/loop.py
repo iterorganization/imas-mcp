@@ -11,6 +11,7 @@ Entry point: :func:`run_sn_loop`.
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -197,52 +198,18 @@ def select_next_domain(
     return _pick_stalest_domain(candidates)
 
 
-def _write_sn_run(summary: RunSummary) -> None:
-    """Persist an SNRun node using the generated Pydantic model."""
-    import json as _json
-
-    from imas_codex.graph.client import GraphClient
-    from imas_codex.graph.models import SNRun
-
-    # Compute pipeline hash — best-effort, never block the write
-    _pipeline_hash: str | None = None
-    _pipeline_hash_detail: str | None = None
-    try:
-        from imas_codex.standard_names.pipeline_version import compute_pipeline_hash
-
-        ph = compute_pipeline_hash()
-        _pipeline_hash = ph["_composite"]
-        _pipeline_hash_detail = _json.dumps(
-            {k: v for k, v in ph.items() if k != "_composite"}
-        )
-    except Exception:  # noqa: BLE001
-        pass
-
-    rr = SNRun(
-        id=summary.run_id,
-        turn_number=summary.turn_number,
-        started_at=summary.started_at,
-        ended_at=summary.ended_at,
-        cost_spent=round(summary.cost_spent, 6),
-        cost_limit=round(summary.cost_limit, 6),
-        compose_cost=round(summary.compose_cost, 6),
-        review_cost=round(summary.review_cost, 6),
-        min_score=summary.min_score,
-        names_composed=summary.names_composed,
-        names_enriched=summary.names_enriched,
-        names_reviewed=summary.names_reviewed,
-        names_regenerated=summary.names_regenerated,
-        domains_touched=sorted(summary.domains_touched),
-        stop_reason=summary.stop_reason,
-        pipeline_hash=_pipeline_hash,
-        pipeline_hash_detail=_pipeline_hash_detail,
-    )
-    try:
-        props = rr.model_dump(mode="json")
-        with GraphClient() as gc:
-            gc.create_nodes("SNRun", [props])
-    except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("Failed to persist SNRun %s: %s", summary.run_id, exc)
+# ── Status mapping ────────────────────────────────────────────────────
+# Map RunSummary.stop_reason to SNRun.status lifecycle values.
+_STOP_TO_STATUS: dict[str, str] = {
+    "completed": "completed",
+    "budget_exhausted": "completed",
+    "stalled": "completed",
+    "no_work": "completed",
+    "dry_run": "completed",
+    "interrupted": "interrupted",
+    "failed": "failed",
+    "degraded": "degraded",
+}
 
 
 async def run_sn_loop(
@@ -314,7 +281,20 @@ async def run_sn_loop(
     # Single shared BudgetManager for the entire run.  All phases (compose,
     # review_names, review_docs, regen) draw from the same pool so the total
     # spend across every phase is gated by the user-specified cost_limit.
-    shared_mgr = BudgetManager(cost_limit)
+    shared_mgr = BudgetManager(cost_limit, run_id=summary.run_id)
+    await shared_mgr.start()
+
+    # Pre-create the SNRun node so LLMCost → FOR_RUN edges have a target
+    # from the very first LLM call.
+    from imas_codex.standard_names.graph_ops import create_sn_run_open
+
+    create_sn_run_open(
+        summary.run_id,
+        started_at=summary.started_at,
+        cost_limit=cost_limit,
+        turn_number=turn_number,
+        min_score=min_score,
+    )
 
     # Per-domain stall detection: track (last_remaining, stall_count).
     # If a domain is selected with the same `remaining` count as its previous
@@ -323,10 +303,6 @@ async def run_sn_loop(
     # turn loops that burn $0.05/turn in extract/enrich overhead.
     MAX_STALLS = 2
     domain_stalls: dict[str, tuple[int, int]] = {}
-    # Local remaining budget tracker — stays in sync with shared_mgr in
-    # production (where all LLM calls record actual spend) but also decrements
-    # based on phase-result costs so tests that mock run_turn still work.
-    _remaining = cost_limit
 
     # ── Display: signal run start ─────────────────────────────────
     if progress_display is not None:
@@ -341,10 +317,10 @@ async def run_sn_loop(
     try:
         while True:
             # ── Budget gate (soft limit) ──────────────────────────
-            # Use the minimum of the local tracker and the shared manager's
-            # pool so both sources of truth contribute to the gate check.
             # Continue while we can afford at least one more LLM call.
-            remaining_budget = min(_remaining, shared_mgr.remaining)
+            # Use summary.cost_spent (which accumulates via max(mgr.spent,
+            # cost_spent + phase_sum)) so tests that mock run_turn work too.
+            remaining_budget = cost_limit - summary.cost_spent
             if remaining_budget < EST_UNIT_COST:
                 summary.stop_reason = "budget_exhausted"
                 logger.info(
@@ -445,7 +421,6 @@ async def run_sn_loop(
                     summary.links_resolved += phase.count
 
             summary.cost_spent = max(shared_mgr.spent, summary.cost_spent + phase_sum)
-            _remaining -= turn_cost
             summary.domains_touched.add(dom)
 
             # ── Display: update phase results and signal turn end ──
@@ -540,7 +515,62 @@ async def run_sn_loop(
         logger.warning("sn run interrupted by user")
     finally:
         summary.ended_at = datetime.now(UTC)
-        _write_sn_run(summary)
+
+        # Drain pending LLMCost graph writes.
+        cost_is_exact = await shared_mgr.drain_pending()
+        if not cost_is_exact and summary.stop_reason not in (
+            "interrupted",
+            "failed",
+        ):
+            summary.stop_reason = "degraded"
+
+        # Refresh final cost from graph (includes all drained writes).
+        # Use max() to preserve in-loop accumulation for tests that mock
+        # run_turn without calling charge_event (where _spent stays 0).
+        summary.cost_spent = max(
+            summary.cost_spent,
+            await shared_mgr.get_total_spent(force_refresh=True),
+        )
+
+        # Compute pipeline hash — best-effort, never block finalization.
+        _pipeline_hash: str | None = None
+        _pipeline_hash_detail: str | None = None
+        try:
+            from imas_codex.standard_names.pipeline_version import (
+                compute_pipeline_hash,
+            )
+
+            ph = compute_pipeline_hash()
+            _pipeline_hash = ph["_composite"]
+            _pipeline_hash_detail = _json.dumps(
+                {k: v for k, v in ph.items() if k != "_composite"}
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Finalize the SNRun node (MATCH + SET on the pre-created node).
+        from imas_codex.standard_names.graph_ops import finalize_sn_run
+
+        finalize_sn_run(
+            summary.run_id,
+            status=_STOP_TO_STATUS.get(summary.stop_reason, "completed"),
+            cost_spent=summary.cost_spent,
+            cost_is_exact=cost_is_exact,
+            ended_at=summary.ended_at,
+            turn_number=summary.turn_number,
+            cost_limit=round(summary.cost_limit, 6),
+            compose_cost=round(summary.compose_cost, 6),
+            review_cost=round(summary.review_cost, 6),
+            min_score=summary.min_score,
+            names_composed=summary.names_composed,
+            names_enriched=summary.names_enriched,
+            names_reviewed=summary.names_reviewed,
+            names_regenerated=summary.names_regenerated,
+            domains_touched=sorted(summary.domains_touched),
+            stop_reason=summary.stop_reason,
+            pipeline_hash=_pipeline_hash,
+            pipeline_hash_detail=_pipeline_hash_detail,
+        )
 
     return summary
 

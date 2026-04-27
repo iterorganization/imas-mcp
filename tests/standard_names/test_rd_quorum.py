@@ -23,6 +23,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from imas_codex.standard_names.budget import BudgetManager, LLMCostEvent
+
+
+def _ce(lease, amount, phase=None):
+    """Simulate LLM spend via charge_event (soft semantics, never raises)."""
+    evt_phase = phase or lease.phase or "test"
+    return lease.charge_event(
+        amount,
+        LLMCostEvent(model="test-model", tokens_in=0, tokens_out=0, phase=evt_phase),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -771,16 +783,14 @@ class TestLeaseChargedPerCycle:
     """Mock costs, assert lease.charged == sum of cycle costs."""
 
     def test_lease_charged_per_cycle(self):
-        from imas_codex.standard_names.budget import BudgetManager
-
         mgr = BudgetManager(total_budget=10.0)
         lease = mgr.reserve(3.0)
         assert lease is not None
 
         # Simulate 3 cycles
-        lease.charge(0.5)  # cycle 0
-        lease.charge(0.6)  # cycle 1
-        lease.charge(0.4)  # cycle 2
+        _ce(lease, 0.5)  # cycle 0
+        _ce(lease, 0.6)  # cycle 1
+        _ce(lease, 0.4)  # cycle 2
 
         assert lease.charged == pytest.approx(1.5)
         assert lease.remaining == pytest.approx(1.5)
@@ -795,15 +805,13 @@ class TestLen3QuorumReachedReleasesUnused:
     """len=3 configured, cycle 2 skipped → lease releases cycle_2_budget."""
 
     def test_len_3_with_quorum_reached_releases_unused(self):
-        from imas_codex.standard_names.budget import BudgetManager
-
         mgr = BudgetManager(total_budget=10.0)
         # Reserve for 3 cycles but only 2 run
         lease = mgr.reserve(3.0)
         assert lease is not None
 
-        lease.charge(0.5)  # cycle 0
-        lease.charge(0.5)  # cycle 1
+        _ce(lease, 0.5)  # cycle 0
+        _ce(lease, 0.5)  # cycle 1
         # cycle 2 skipped because quorum reached
 
         released = lease.release_unused()

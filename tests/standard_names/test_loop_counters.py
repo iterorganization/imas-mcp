@@ -113,7 +113,10 @@ class TestAllPhaseCountersViaLoop:
                 return_value=[],
             ),
             patch(
-                "imas_codex.standard_names.loop._write_sn_run",
+                "imas_codex.standard_names.graph_ops.finalize_sn_run",
+            ),
+            patch(
+                "imas_codex.standard_names.graph_ops.create_sn_run_open",
             ),
             patch(
                 "imas_codex.standard_names.turn.run_turn",

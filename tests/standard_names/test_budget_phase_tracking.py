@@ -14,7 +14,18 @@ from unittest.mock import patch
 
 import pytest
 
-from imas_codex.standard_names.budget import BudgetManager
+from imas_codex.standard_names.budget import BudgetManager, LLMCostEvent
+
+# ── Test helper ───────────────────────────────────────────────────────
+
+
+def _ce(lease, amount, phase=None):
+    """Simulate LLM spend via charge_event (legacy charge_soft replacement)."""
+    evt_phase = phase or lease.phase or "test"
+    return lease.charge_event(
+        amount,
+        LLMCostEvent(model="test-model", tokens_in=0, tokens_out=0, phase=evt_phase),
+    )
 
 
 class TestPhaseSpentTracking:
@@ -28,7 +39,7 @@ class TestPhaseSpentTracking:
         mgr = BudgetManager(10.0)
         lease = mgr.reserve(2.0, phase="generate")
         assert lease is not None
-        lease.charge_soft(1.5)
+        _ce(lease, 1.5)
         lease.__exit__(None, None, None)
         assert mgr.phase_spent.get("generate", 0.0) == pytest.approx(1.5)
 
@@ -37,7 +48,7 @@ class TestPhaseSpentTracking:
         for _ in range(3):
             lease = mgr.reserve(1.0, phase="review_names")
             assert lease is not None
-            lease.charge_soft(0.4)
+            _ce(lease, 0.4)
             lease.__exit__(None, None, None)
         assert mgr.phase_spent.get("review_names", 0.0) == pytest.approx(1.2)
 
@@ -46,12 +57,12 @@ class TestPhaseSpentTracking:
 
         g = mgr.reserve(3.0, phase="generate")
         assert g is not None
-        g.charge_soft(2.0)
+        _ce(g, 2.0)
         g.__exit__(None, None, None)
 
         r = mgr.reserve(3.0, phase="review_names")
         assert r is not None
-        r.charge_soft(1.5)
+        _ce(r, 1.5)
         r.__exit__(None, None, None)
 
         spent = mgr.phase_spent
@@ -62,7 +73,7 @@ class TestPhaseSpentTracking:
         mgr = BudgetManager(5.0)
         lease = mgr.reserve(1.0, phase="regen")
         assert lease is not None
-        lease.charge_soft(0.7)
+        _ce(lease, 0.7)
         lease.__exit__(None, None, None)
         s = mgr.summary
         assert "phase_spent" in s
@@ -90,7 +101,7 @@ class TestPhaseSpentTracking:
                     lease = mgr.reserve(amount, phase=phase)
                     if lease is None:
                         return
-                    lease.charge_soft(amount * 0.5)
+                    _ce(lease, amount * 0.5)
                     lease.__exit__(None, None, None)
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
@@ -136,12 +147,12 @@ class TestPhaseSpentInLoop:
                 # Simulate generate spend
                 g = mgr.reserve(0.5, phase="generate")
                 if g:
-                    g.charge_soft(0.3)
+                    _ce(g, 0.3)
                     g.__exit__(None, None, None)
                 # Simulate review_names spend
                 r = mgr.reserve(0.5, phase="review_names")
                 if r:
-                    r.charge_soft(0.2)
+                    _ce(r, 0.2)
                     r.__exit__(None, None, None)
             return [
                 PhaseResult(name="generate", count=2, cost=0.3),
@@ -157,7 +168,8 @@ class TestPhaseSpentInLoop:
                 "imas_codex.standard_names.turn.run_turn",
                 side_effect=fake_turn,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
 

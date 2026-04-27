@@ -14,7 +14,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_codex.standard_names.budget import BudgetManager
+from imas_codex.standard_names.budget import BudgetManager, LLMCostEvent
+
+
+def _ce(lease, amount, phase=None):
+    """Simulate LLM spend via charge_event (soft semantics, never raises)."""
+    evt_phase = phase or lease.phase or "test"
+    return lease.charge_event(
+        amount,
+        LLMCostEvent(model="test-model", tokens_in=0, tokens_out=0, phase=evt_phase),
+    )
+
 
 # =====================================================================
 # claim_compose_sources
@@ -242,7 +252,7 @@ class TestPollingWorkerBudgetRetry:
             # Exhaust budget immediately
             lease = mgr.reserve(0.01)
             assert lease is not None
-            lease.charge(0.01)
+            _ce(lease, 0.01)
             lease.release_unused()
 
             queue: asyncio.Queue = asyncio.Queue()
@@ -306,7 +316,7 @@ class TestPollingWorkerBudgetRetry:
                         budget_retries += 1
                         break
 
-                    wl.charge(0.05)
+                    _ce(wl, 0.05)
                     wl.release_unused()
                     processed += 1
                     budget_retries = 0  # Reset

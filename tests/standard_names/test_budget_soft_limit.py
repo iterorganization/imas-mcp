@@ -49,7 +49,8 @@ class TestBudgetSoftLimit:
                 "imas_codex.standard_names.turn.run_turn",
                 side_effect=cheap_turn,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=0.60, dry_run=False)
 
@@ -77,7 +78,8 @@ class TestBudgetSoftLimit:
                 "imas_codex.standard_names.turn.run_turn",
                 side_effect=small_turn,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=budget, dry_run=False)
 
@@ -88,7 +90,8 @@ class TestBudgetSoftLimit:
         """Budget below EST_UNIT_COST → immediate stop, no work scheduled."""
         mock_turn = AsyncMock()
         with (
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
             patch(
                 "imas_codex.standard_names.turn.run_turn",
                 mock_turn,
@@ -125,7 +128,8 @@ class TestBudgetSoftLimit:
                 "imas_codex.standard_names.turn.run_turn",
                 side_effect=moderate_turn,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=1.00, dry_run=False)
 

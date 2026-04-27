@@ -23,7 +23,17 @@ from __future__ import annotations
 
 import pytest
 
-from imas_codex.standard_names.budget import BudgetManager
+from imas_codex.standard_names.budget import BudgetManager, LLMCostEvent
+
+
+def _ce(lease, amount, phase=None):
+    """Simulate LLM spend via charge_event (soft semantics, never raises)."""
+    evt_phase = phase or lease.phase or "test"
+    return lease.charge_event(
+        amount,
+        LLMCostEvent(model="test-model", tokens_in=0, tokens_out=0, phase=evt_phase),
+    )
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Unit test: budget reservation feasibility
@@ -98,7 +108,7 @@ class TestReviewBudgetReservationFeasibility:
                 break
             # Simulate actual review cost (~$0.10/name)
             actual_cost = 15 * 0.10
-            lease.charge_soft(actual_cost)
+            _ce(lease, actual_cost)
             lease.release_unused()
             batches_reserved += 1
 
@@ -228,7 +238,7 @@ class TestReviewPhaseCoverage:
 
             # Simulate actual cost: ~$0.10/name (observed in EMW pilot)
             actual_cost = current_batch_size * 0.10
-            lease.charge_soft(actual_cost)
+            _ce(lease, actual_cost)
             lease.release_unused()
 
             batches_processed += 1
@@ -263,7 +273,7 @@ class TestReviewPhaseCoverage:
                 continue  # Skip this batch (the bug!)
 
             actual_cost = current_batch_size * 0.10
-            lease.charge_soft(actual_cost)
+            _ce(lease, actual_cost)
             lease.release_unused()
             names_reviewed += current_batch_size
 

@@ -14,9 +14,19 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from imas_codex.standard_names.budget import BudgetManager
+from imas_codex.standard_names.budget import BudgetManager, LLMCostEvent
 from imas_codex.standard_names.loop import run_sn_loop
 from imas_codex.standard_names.turn import PhaseResult
+
+
+def _ce(lease, amount, phase=None):
+    """Simulate LLM spend (replaces charge_soft in tests)."""
+    evt_phase = phase or lease.phase or "test"
+    return lease.charge_event(
+        amount,
+        LLMCostEvent(model="test-model", tokens_in=0, tokens_out=0, phase=evt_phase),
+    )
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Shared BudgetManager passed through TurnConfig
@@ -39,7 +49,8 @@ async def test_shared_budget_passed_to_turn_config():
             side_effect=domain_calls,
         ),
         patch("imas_codex.standard_names.turn.run_turn", side_effect=fake_turn),
-        patch("imas_codex.standard_names.loop._write_sn_run"),
+        patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+        patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
     ):
         await run_sn_loop(cost_limit=5.0, dry_run=False)
 
@@ -74,7 +85,8 @@ async def test_same_shared_budget_across_multiple_turns():
             side_effect=rotating_selector,
         ),
         patch("imas_codex.standard_names.turn.run_turn", side_effect=fake_turn),
-        patch("imas_codex.standard_names.loop._write_sn_run"),
+        patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+        patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
     ):
         await run_sn_loop(cost_limit=5.0, dry_run=False)
 
@@ -103,12 +115,12 @@ async def test_total_spend_bounded_by_cost_limit():
             if g:
                 # charge_soft always records; in production LLM already paid
                 actual = min(compose_cost, mgr.remaining + compose_cost)
-                g.charge_soft(actual)
+                _ce(g, actual)
                 g.__exit__(None, None, None)
             r = mgr.reserve(review_cost, phase="review_names")
             if r:
                 g2 = min(review_cost, mgr.remaining + review_cost)
-                r.charge_soft(g2)
+                _ce(r, g2)
                 r.__exit__(None, None, None)
             # Review reservation returns None when pool exhausted — no charge
         return [
@@ -122,7 +134,8 @@ async def test_total_spend_bounded_by_cost_limit():
             side_effect=[{"domain": "equilibrium", "remaining": 10}, None],
         ),
         patch("imas_codex.standard_names.turn.run_turn", side_effect=greedy_turn),
-        patch("imas_codex.standard_names.loop._write_sn_run"),
+        patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+        patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
     ):
         summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
 
@@ -142,7 +155,7 @@ async def test_review_blocked_when_compose_exhausts_pool():
             # Consume entire pool in compose
             g = mgr.reserve(5.0, phase="generate")
             if g:
-                g.charge_soft(5.0)
+                _ce(g, 5.0)
                 g.__exit__(None, None, None)
             # Review reservation should now fail
             r = mgr.reserve(1.0, phase="review_names")
@@ -158,7 +171,8 @@ async def test_review_blocked_when_compose_exhausts_pool():
             side_effect=[{"domain": "equilibrium", "remaining": 10}, None],
         ),
         patch("imas_codex.standard_names.turn.run_turn", side_effect=spend_all_turn),
-        patch("imas_codex.standard_names.loop._write_sn_run"),
+        patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+        patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
     ):
         await run_sn_loop(cost_limit=5.0, dry_run=False)
 

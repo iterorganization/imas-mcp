@@ -139,45 +139,6 @@ class TestBug2SetupLogging:
 # =====================================================================
 
 
-class TestBug3ExtendReservationLogging:
-    """_extend_reservation must log when it borrows from the pool."""
-
-    def test_extend_reservation_logs_on_extension(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """_extend_reservation emits an INFO log when extending."""
-        from imas_codex.standard_names.budget import BudgetManager
-
-        mgr = BudgetManager(total_budget=1.0)
-        lease = mgr.reserve(0.3)
-        assert lease is not None
-
-        with caplog.at_level(logging.INFO, logger="imas_codex.standard_names.budget"):
-            # charge_or_extend triggers extension when amount > reserved
-            lease.charge_or_extend(0.5)
-
-        # Should log the extension
-        extend_logs = [r for r in caplog.records if "extended lease" in r.message]
-        assert len(extend_logs) == 1
-        assert "$" in extend_logs[0].message
-
-    def test_no_log_when_no_extension_needed(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """No log emitted when charge fits within reservation."""
-        from imas_codex.standard_names.budget import BudgetManager
-
-        mgr = BudgetManager(total_budget=1.0)
-        lease = mgr.reserve(0.5)
-        assert lease is not None
-
-        with caplog.at_level(logging.INFO, logger="imas_codex.standard_names.budget"):
-            lease.charge(0.3)
-
-        extend_logs = [r for r in caplog.records if "extended lease" in r.message]
-        assert len(extend_logs) == 0
-
-
 # =====================================================================
 # Bug 4: Per-name cost propagation + skip_cost double-count fix
 # =====================================================================

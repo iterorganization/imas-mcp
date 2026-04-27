@@ -244,7 +244,8 @@ class TestLoopFloor:
     async def test_stops_below_floor(self, caplog):
         """Budget below EST_UNIT_COST → immediate stop with INFO log."""
         with (
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
             patch(
                 "imas_codex.standard_names.turn.run_turn",
                 new_callable=AsyncMock,
@@ -287,7 +288,8 @@ class TestLoopRotation:
                 "imas_codex.standard_names.turn.run_turn",
                 side_effect=capture_turn,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=2.0)  # noqa: F841
 
@@ -323,7 +325,8 @@ class TestLoopRotation:
                 "imas_codex.standard_names.turn.run_turn",
                 side_effect=cheap_turn,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=5.0)
 
@@ -356,7 +359,8 @@ class TestLoopRotation:
                 "imas_codex.standard_names.turn.run_turn",
                 side_effect=cheap_turn,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(
                 cost_limit=5.0,
@@ -382,7 +386,8 @@ class TestLoopRotation:
                     ]
                 ),
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=5.0)
 
@@ -418,7 +423,8 @@ class TestLoopRotation:
                 "imas_codex.standard_names.turn.run_turn",
                 side_effect=track_budget_turn,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=5.0)  # noqa: F841
 
@@ -451,7 +457,8 @@ class TestLoopRotation:
                 "imas_codex.standard_names.turn.run_turn",
                 side_effect=capture_turn,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=2.0)  # noqa: F841
 

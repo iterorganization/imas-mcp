@@ -13,7 +13,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from imas_codex.standard_names.budget import BudgetManager
+from imas_codex.standard_names.budget import BudgetManager, LLMCostEvent
+
+
+def _ce(lease, amount, phase=None):
+    """Simulate LLM spend via charge_event (soft semantics, never raises)."""
+    evt_phase = phase or lease.phase or "test"
+    return lease.charge_event(
+        amount,
+        LLMCostEvent(model="test-model", tokens_in=0, tokens_out=0, phase=evt_phase),
+    )
+
 
 # =====================================================================
 # Minimal state stub
@@ -63,7 +73,7 @@ class TestComposeBudgetGate:
                 break
             with lease:
                 # Simulate LLM call costing exactly $0.08
-                lease.charge(0.08)
+                _ce(lease, 0.08)
             completed += 1
 
         assert completed == 3  # $0.30 / $0.10 = 3 reservations
@@ -80,7 +90,7 @@ class TestComposeBudgetGate:
                 break
             with lease:
                 cost = 0.08
-                lease.charge(cost)
+                _ce(lease, cost)
                 total_spend += cost
 
         # Spend is bounded by what was reserved (3 × $0.08 = $0.24)
@@ -96,7 +106,7 @@ class TestComposeBudgetGate:
             lease = mgr.reserve(0.15)  # Reserve with headroom
             assert lease is not None
             with lease:
-                lease.charge(cost)
+                _ce(lease, cost)
                 assert abs(lease.charged - cost) < 1e-9
 
         assert abs(mgr.spent - sum(costs)) < 1e-9
@@ -127,7 +137,7 @@ class TestComposeBudgetConcurrency:
                     try:
                         # Simulate LLM call
                         await asyncio.sleep(0.001)
-                        lease.charge(batch_cost)
+                        _ce(lease, batch_cost)
                         completed += 1
                     finally:
                         lease.release_unused()
@@ -159,7 +169,7 @@ class TestComposeBudgetConcurrency:
                 try:
                     # Simulate some work
                     await asyncio.sleep(0.001)
-                    lease.charge(0.15)
+                    _ce(lease, 0.15)
                     completed_ids.append(batch_id)
                 finally:
                     lease.release_unused()
@@ -191,7 +201,7 @@ class TestComposeBudgetConcurrency:
                 if lease is None:
                     break
                 # Simulate: actual cost is just 1 attempt (no retries needed)
-                lease.charge(items_per_batch * per_item_cost)
+                _ce(lease, items_per_batch * per_item_cost)
                 leases.append(lease)
 
             # Clean up

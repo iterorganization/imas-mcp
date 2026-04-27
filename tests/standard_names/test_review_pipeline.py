@@ -322,7 +322,13 @@ def test_review_neighborhood_enrichment():
 
 def test_review_budget_manager():
     """BudgetManager (formerly ReviewBudgetManager) tracks leases and exhaustion."""
-    from imas_codex.standard_names.budget import BudgetManager
+    from imas_codex.standard_names.budget import BudgetManager, LLMCostEvent
+
+    def _ce(lease, amount):
+        return lease.charge_event(
+            amount,
+            LLMCostEvent(model="m", tokens_in=0, tokens_out=0, phase="test"),
+        )
 
     mgr = BudgetManager(total_budget=1.0)
 
@@ -335,7 +341,7 @@ def test_review_budget_manager():
     assert mgr.remaining < 1.0
 
     # Charge actual cost, then release unused
-    lease.charge(0.3)
+    _ce(lease, 0.3)
     lease.release_unused()
     # Unused = 0.2 returned to the pool
 

@@ -140,14 +140,20 @@ class TestRunDdCompletion:
                 "imas_codex.standard_names.turn.run_turn",
                 new_callable=AsyncMock,
             ) as mock_run,
-            patch("imas_codex.standard_names.loop._write_sn_run") as mock_write,
+            patch(
+                "imas_codex.standard_names.graph_ops.finalize_sn_run"
+            ) as mock_finalize,
+            patch(
+                "imas_codex.standard_names.graph_ops.create_sn_run_open"
+            ) as mock_create,
         ):
             summary = await run_sn_loop(cost_limit=5.0, dry_run=True)
 
         assert summary.stop_reason == "dry_run"
         assert mock_run.await_count == 0
         # Dry-run must NOT persist a SNRun row.
-        mock_write.assert_not_called()
+        mock_create.assert_not_called()
+        mock_finalize.assert_not_called()
         assert summary.pass_records[0]["eligible_domains"] == [
             {"domain": "equilibrium", "remaining": 42}
         ]
@@ -163,7 +169,8 @@ class TestRunDdCompletion:
                 "imas_codex.standard_names.loop._existing_domain_targets",
                 return_value=[],
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
         assert summary.stop_reason in ("completed", "no_work")
@@ -201,7 +208,8 @@ class TestRunDdCompletion:
                 "imas_codex.standard_names.turn.run_turn",
                 mock_run,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
 
@@ -242,7 +250,8 @@ class TestRunDdCompletion:
                 "imas_codex.standard_names.turn.run_turn",
                 side_effect=fake_run,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
 
@@ -298,7 +307,8 @@ class TestStallDetection:
                 "imas_codex.standard_names.turn.run_turn",
                 mock_run,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=50.0, dry_run=False)
 
@@ -363,7 +373,8 @@ class TestStallDetection:
                 "imas_codex.standard_names.turn.run_turn",
                 mock_run,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=10.34, dry_run=False)
 
@@ -409,7 +420,8 @@ class TestStallDetection:
                 "imas_codex.standard_names.turn.run_turn",
                 mock_run,
             ),
-            patch("imas_codex.standard_names.loop._write_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.finalize_sn_run"),
+            patch("imas_codex.standard_names.graph_ops.create_sn_run_open"),
         ):
             summary = await run_sn_loop(cost_limit=5.0, dry_run=False)
 

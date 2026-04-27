@@ -1,4 +1,4 @@
-"""Tests for graph-backed BudgetManager (Phase 3).
+"""Tests for graph-backed BudgetManager.
 
 All tests are pure unit tests with mocked ``record_llm_cost``.
 No live Neo4j required.
@@ -6,8 +6,7 @@ No live Neo4j required.
 Covers:
 - charge_event enqueues to async writer
 - Lease decision uses pending cache
-- charge_or_extend hard-stops on overspend (rewired through charge_event)
-- charge_soft always succeeds, marks overspend
+- charge_event soft semantics (never raises)
 - drain_pending returns True on success
 - drain_pending returns False on writer failure
 - Writer retries on transient error
@@ -23,7 +22,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from imas_codex.standard_names.budget import (
-    BudgetExceeded,
     BudgetManager,
     ChargeResult,
     LLMCostEvent,
@@ -154,43 +152,12 @@ class TestLeaseDecisionUsesPendingCache:
 
 
 # =====================================================================
-# charge_or_extend hard-stops on overspend
+# charge_event soft semantics
 # =====================================================================
 
 
-class TestChargeOrExtendHardStops:
-    """charge_or_extend must raise BudgetExceeded when budget is exhausted."""
-
-    def test_charge_or_extend_hard_stops_on_overspend(self):
-        """charge_or_extend raises when pool is also exhausted."""
-        mgr = BudgetManager(total_budget=0.5)
-        lease = mgr.reserve(0.5)
-        assert lease is not None
-
-        with pytest.raises(BudgetExceeded):
-            lease.charge_or_extend(0.6)
-
-        assert abs(lease.charged - 0.0) < 1e-9
-        assert mgr.check_invariant()
-
-
-# =====================================================================
-# charge_soft always succeeds, marks overspend
-# =====================================================================
-
-
-class TestChargeSoftAlwaysSucceeds:
-    """charge_soft must never raise, and report overspend correctly."""
-
-    def test_charge_soft_always_succeeds_marks_overspend(self):
-        """Overspend is reported but charge always succeeds."""
-        mgr = BudgetManager(total_budget=0.3)
-        lease = mgr.reserve(0.3)
-        assert lease is not None
-
-        overspend = lease.charge_soft(0.5)
-        assert abs(overspend - 0.2) < 1e-9
-        assert abs(mgr.spent - 0.5) < 1e-9
+class TestChargeEventSoftSemantics:
+    """charge_event uses soft-charge semantics — overspend allowed."""
 
     @pytest.mark.asyncio
     async def test_charge_event_soft_semantics(self):
@@ -392,7 +359,7 @@ class TestGetTotalSpent:
         mgr = BudgetManager(total_budget=10.0)  # no run_id
         lease = mgr.reserve(5.0)
         assert lease is not None
-        lease.charge_soft(1.5)
+        lease.charge_event(1.5, _make_event())
 
         total = await mgr.get_total_spent()
         assert abs(total - 1.5) < 1e-9
@@ -531,44 +498,3 @@ class TestBudgetManagerNewProperties:
         # Clean up
         await mgr._write_queue.put(None)
         await first_task
-
-
-# =====================================================================
-# Backwards compatibility
-# =====================================================================
-
-
-class TestBackwardsCompat:
-    """Legacy charge_soft / charge_or_extend still work unchanged."""
-
-    def test_charge_soft_still_works(self):
-        mgr = BudgetManager(total_budget=1.0)
-        lease = mgr.reserve(0.5)
-        assert lease is not None
-        overspend = lease.charge_soft(0.3)
-        assert overspend == 0.0
-        assert abs(mgr.spent - 0.3) < 1e-9
-
-    def test_charge_or_extend_still_works(self):
-        mgr = BudgetManager(total_budget=1.0)
-        lease = mgr.reserve(0.1)
-        assert lease is not None
-        lease.charge_or_extend(0.15)
-        assert abs(lease.charged - 0.15) < 1e-9
-        assert abs(mgr.spent - 0.15) < 1e-9
-
-    def test_charge_still_works(self):
-        mgr = BudgetManager(total_budget=1.0)
-        lease = mgr.reserve(0.5)
-        assert lease is not None
-        lease.charge(0.3)
-        assert abs(mgr.spent - 0.3) < 1e-9
-
-    def test_check_invariant_still_works(self):
-        mgr = BudgetManager(total_budget=2.0)
-        lease = mgr.reserve(0.5)
-        assert lease is not None
-        lease.charge_event(0.3, _make_event())
-        assert mgr.check_invariant()
-        lease.release_unused()
-        assert mgr.check_invariant()

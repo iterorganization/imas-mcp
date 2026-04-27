@@ -1045,6 +1045,11 @@ If generate exhausts the pool, review and regen are blocked immediately; partial
 is reported per category on the `SNRun` node as `compose_cost` and `review_cost`.
 On `Ctrl-C`. Writes an `SNRun` audit node capturing cost, phase counters, domains touched,
 `turn_number`, `min_score`, and `stop_reason`; `sn status` surfaces the most recent run.
+**Cost is graph-backed via `LLMCost` nodes written by `BudgetManager` (async).** `SNRun.status`
+lifecycle: `started → completed | interrupted | failed | degraded` (degraded when pending
+events can't be flushed). `lease.charge_event(cost, event)` is the only charge API — soft
+semantics, never raises. `BudgetManager` must be started with `await shared_mgr.start()` before
+use. Use `drain_pending()` + `get_total_spent()` in a `finally` block to finalize each run.
 `--physics-domain` bypasses rotation and pins to a single domain.
 `--turn-number N` stamps the current
 iteration number onto the run (user-supplied; does not auto-increment). `--min-score F`
