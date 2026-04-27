@@ -1025,7 +1025,12 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                         disputed_ids.add(nid)
                     else:
                         # Agreement → mean of both
-                        merged = _merge_review_items(item_0, item_1, review_target)
+                        merged = _merge_review_items(
+                            item_0,
+                            item_1,
+                            review_target,
+                            secondary_model=models[1],
+                        )
                         final_items.append(merged)
                         resolution_methods[nid] = "quorum_consensus"
 
@@ -1052,7 +1057,10 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                     # No escalator available → max_cycles_reached
                     for nid in disputed_ids:
                         merged = _merge_review_items(
-                            c0_by_id[nid], c1_by_id[nid], review_target
+                            c0_by_id[nid],
+                            c1_by_id[nid],
+                            review_target,
+                            secondary_model=models[1],
                         )
                         final_items.append(merged)
                         resolution_methods[nid] = "max_cycles_reached"
@@ -1149,7 +1157,10 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                     else:
                         # Escalator failed to score this item → mean fallback
                         merged = _merge_review_items(
-                            c0_by_id[nid], c1_by_id[nid], review_target
+                            c0_by_id[nid],
+                            c1_by_id[nid],
+                            review_target,
+                            secondary_model=models[1],
                         )
                         final_items.append(merged)
                         resolution_methods[nid] = "max_cycles_reached"
@@ -1902,11 +1913,18 @@ def _merge_review_items(
     item_0: dict,
     item_1: dict,
     target: str,
+    *,
+    secondary_model: str | None = None,
 ) -> dict:
     """Produce a merged item with mean scores from two review items.
 
     Uses item_0 as the base (preserving its id, source_id, etc.) and
     averages the per-dimension scores. Comments are merged.
+
+    Secondary-specific fields are preserved on the merged dict so that
+    downstream persistence can write them to the graph:
+    ``reviewer_score_secondary``, ``reviewer_scores_secondary``,
+    ``reviewer_model_secondary``, ``reviewer_disagreement``.
     """
     merged = dict(item_0)
 
@@ -1938,6 +1956,20 @@ def _merge_review_items(
             merged["review_tier"] = "inadequate"
         else:
             merged["review_tier"] = "poor"
+
+    # --- Preserve secondary-specific fields ---
+    secondary_score = item_1.get("reviewer_score")
+    merged["reviewer_score_secondary"] = secondary_score
+    merged["reviewer_scores_secondary"] = item_1.get("reviewer_scores")
+    if secondary_model:
+        merged["reviewer_model_secondary"] = secondary_model
+
+    # Disagreement = abs(primary - secondary) on aggregate 0-1 scores
+    primary_score = item_0.get("reviewer_score")
+    if primary_score is not None and secondary_score is not None:
+        merged["reviewer_disagreement"] = abs(
+            float(primary_score) - float(secondary_score)
+        )
 
     # Merge comments
     c0 = item_0.get("reviewer_comments") or ""

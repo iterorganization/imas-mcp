@@ -541,6 +541,28 @@ classes:
           ``max(Review.score) - min(Review.score) >= disagreement-threshold``.
           Always false for ``review_count <= 1``.
         range: boolean
+      reviewer_score_secondary:
+        description: >-
+          Secondary reviewer's aggregate score (0-1) from the most recent
+          dual-model review pass. Null when only a single model reviewed
+          the name. Axis-agnostic — records the secondary score for
+          whichever axis (name or docs) was last reviewed with dual models.
+        range: float
+      reviewer_scores_secondary:
+        description: >-
+          JSON-encoded per-dimension sub-scores from the secondary reviewer.
+          Same schema as ``reviewer_scores_name`` / ``reviewer_scores_docs``
+          depending on which axis produced the review.
+      reviewer_model_secondary:
+        description: >-
+          LLM model that produced the secondary review. Null when only a
+          single model reviewed the name.
+      reviewer_disagreement:
+        description: >-
+          Absolute difference between the primary and secondary reviewer
+          aggregate scores (0-1 scale). Null when only a single model
+          reviewed the name. Distinct from ``review_disagreement`` (boolean
+          computed from Review node spread).
       validation_issues:
         description: >-
           ISN validation issues from three-layer validation

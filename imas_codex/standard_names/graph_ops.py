@@ -1332,7 +1332,11 @@ def write_name_review_results(
                 sn.reviewer_suggested_name = coalesce(nullIf(b.reviewer_suggested_name, ''), sn.reviewer_suggested_name),
                 sn.reviewer_suggestion_justification_name = coalesce(nullIf(b.reviewer_suggestion_justification_name, ''), sn.reviewer_suggestion_justification_name),
                 sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + coalesce(b.llm_cost_review, 0.0),
-                sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review, 0.0)
+                sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review, 0.0),
+                sn.reviewer_score_secondary = coalesce(b.reviewer_score_secondary, sn.reviewer_score_secondary),
+                sn.reviewer_scores_secondary = coalesce(b.reviewer_scores_secondary, sn.reviewer_scores_secondary),
+                sn.reviewer_model_secondary = coalesce(b.reviewer_model_secondary, sn.reviewer_model_secondary),
+                sn.reviewer_disagreement = coalesce(b.reviewer_disagreement, sn.reviewer_disagreement)
             """,
             batch=[
                 {
@@ -1354,6 +1358,12 @@ def write_name_review_results(
                     )
                     or "",
                     "llm_cost_review": e.get("llm_cost") or 0.0,
+                    "reviewer_score_secondary": e.get("reviewer_score_secondary"),
+                    "reviewer_scores_secondary": _ensure_json(
+                        e.get("reviewer_scores_secondary")
+                    ),
+                    "reviewer_model_secondary": e.get("reviewer_model_secondary"),
+                    "reviewer_disagreement": e.get("reviewer_disagreement"),
                 }
                 for e in entries
             ],
@@ -1451,7 +1461,11 @@ def write_docs_review_results(
                 sn.reviewer_model_docs = coalesce(b.reviewer_model_docs, sn.reviewer_model_docs),
                 sn.review_input_hash = b.review_input_hash,
                 sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + coalesce(b.llm_cost_review, 0.0),
-                sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review, 0.0)
+                sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review, 0.0),
+                sn.reviewer_score_secondary = coalesce(b.reviewer_score_secondary, sn.reviewer_score_secondary),
+                sn.reviewer_scores_secondary = coalesce(b.reviewer_scores_secondary, sn.reviewer_scores_secondary),
+                sn.reviewer_model_secondary = coalesce(b.reviewer_model_secondary, sn.reviewer_model_secondary),
+                sn.reviewer_disagreement = coalesce(b.reviewer_disagreement, sn.reviewer_disagreement)
             """,
             batch=[
                 {
@@ -1467,6 +1481,12 @@ def write_docs_review_results(
                     "reviewer_model_docs": e.get("reviewer_model"),
                     "review_input_hash": e.get("review_input_hash"),
                     "llm_cost_review": e.get("llm_cost") or 0.0,
+                    "reviewer_score_secondary": e.get("reviewer_score_secondary"),
+                    "reviewer_scores_secondary": _ensure_json(
+                        e.get("reviewer_scores_secondary")
+                    ),
+                    "reviewer_model_secondary": e.get("reviewer_model_secondary"),
+                    "reviewer_disagreement": e.get("reviewer_disagreement"),
                 }
                 for e in passed
             ],
