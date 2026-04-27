@@ -130,6 +130,18 @@ _HARDWARE_SUBTREE_SEGMENTS: frozenset[str] = frozenset(
     {"adc", "detector_layout", "detector_image"}
 )
 
+#: Integer identifier leaf names that appear inside ``data_entry_identifier``
+#: structs (IMAS path parent segment ``data_entry``).  These fields pin a
+#: reproducible dataset in the IMAS back-end (run number, shot number, pulse
+#: number) — they are **not** physics quantities and must not enter the
+#: StandardName generation pipeline.
+#:
+#: String siblings (``machine``, ``user``, ``pulse_type``) are already caught
+#: by Rule 4 (STRING_TYPES → metadata), so only integer slots are listed here.
+_DATA_ENTRY_ID_LEAVES: frozenset[str] = frozenset(
+    {"run", "shot", "pulse", "occurrence", "run_index", "version"}
+)
+
 # ──────────────────────────────────────────────────────────────────
 # Fit-artifact constants
 # ──────────────────────────────────────────────────────────────────
@@ -443,6 +455,20 @@ def classify_node_pass1(
     if last_seg.endswith("_3db"):
         return "metadata"
 
+    # Rule M4: data_entry_identifier integer slots → metadata
+    # INT leaves (run, shot, pulse, …) that are direct children of a
+    # ``data_entry`` parent segment are database-access coordinates used to
+    # pin a reproducible dataset.  They are provenance metadata, NOT physics
+    # quantities, and must not enter the StandardName generation pipeline.
+    # String siblings (machine, user, pulse_type) are already caught by
+    # Rule 4 (STRING_TYPES → metadata).
+    if (
+        len(parts) >= 2
+        and parts[-2] == "data_entry"
+        and last_seg in _DATA_ENTRY_ID_LEAVES
+    ):
+        return "metadata"
+
     # Rule 9a: Physics leaf type + spatial unit + geometry ancestor → geometry
     if dt in PHYSICS_LEAF_TYPES and unit_str and unit_str not in _NO_UNIT:
         if _is_geometry_path(path, unit_str):
@@ -591,6 +617,7 @@ __all__ = [
     "STRING_TYPES",
     "STRUCTURAL_KEYWORDS",
     "STRUCTURE_TYPES",
+    "_DATA_ENTRY_ID_LEAVES",
     "classify_node_pass1",
     "classify_node_pass2",
 ]

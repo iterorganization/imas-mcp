@@ -6,6 +6,7 @@ Covers geometry detection, Pass 1 rules (1–15), and Pass 2 rules (R1–R3).
 import pytest
 
 from imas_codex.core.node_classifier import (
+    _DATA_ENTRY_ID_LEAVES,
     COORDINATE_SEGMENTS,
     GEOMETRY_EXCLUSION_PATTERNS,
     GEOMETRY_PATH_PATTERNS,
@@ -1284,4 +1285,85 @@ class TestExtendedStructuralKeywords:
             "beta_pol",
             data_type="FLT_0D",
         )
+        assert result == "quantity"
+
+
+# ──────────────────────────────────────────────────────────────────
+# data_entry_identifier integer slots (Rule M4)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestDataEntryIdentifierPass1:
+    """Tests for Rule M4: data_entry integer identifier slots → metadata.
+
+    INT children of ``data_entry`` structs (run, shot, pulse, …) are
+    dataset-provenance coordinates, not physics quantities.  They must not
+    enter the StandardName generation pipeline.
+
+    Regression: the ``description`` constant and string siblings must
+    remain metadata via earlier rules and must NOT be affected.
+    """
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            # amns_data — run and shot under release/data_entry
+            ("amns_data/release/data_entry/run", "run"),
+            ("amns_data/release/data_entry/shot", "shot"),
+            # dataset_description — run and pulse
+            ("dataset_description/data_entry/run", "run"),
+            ("dataset_description/data_entry/pulse", "pulse"),
+            # langmuir_probes — pulse under equilibrium_id/data_entry
+            ("langmuir_probes/equilibrium_id/data_entry/pulse", "pulse"),
+            ("langmuir_probes/equilibrium_id/data_entry/run", "run"),
+        ],
+    )
+    def test_data_entry_int_leaves_metadata(self, path, name):
+        """INT_0D data_entry identifier slots must be classified metadata (Rule M4)."""
+        result = classify_node_pass1(path, name, data_type="INT_0D")
+        assert result == "metadata"
+
+    def test_data_entry_id_leaves_constant_completeness(self):
+        """_DATA_ENTRY_ID_LEAVES must contain the known integer identifier names."""
+        assert "run" in _DATA_ENTRY_ID_LEAVES
+        assert "shot" in _DATA_ENTRY_ID_LEAVES
+        assert "pulse" in _DATA_ENTRY_ID_LEAVES
+        assert "occurrence" in _DATA_ENTRY_ID_LEAVES
+
+    # ── Regression: string siblings must still be metadata (Rule 4) ──
+
+    @pytest.mark.parametrize(
+        "path,name",
+        [
+            # STR_0D siblings — caught by Rule 4 before M4 fires
+            ("dataset_description/data_entry/user", "user"),
+            ("dataset_description/data_entry/machine", "machine"),
+            ("dataset_description/data_entry/pulse_type", "pulse_type"),
+        ],
+    )
+    def test_data_entry_string_siblings_still_metadata(self, path, name):
+        """STR_0D siblings of INT identifiers must remain metadata (Rule 4 unchanged)."""
+        result = classify_node_pass1(path, name, data_type="STR_0D")
+        assert result == "metadata"
+
+    # ── Regression: genuine quantity paths must NOT be affected ──
+
+    def test_genuine_quantity_unaffected(self):
+        """A physics quantity path far from data_entry must remain quantity."""
+        result = classify_node_pass1(
+            "core_profiles/profiles_1d/electrons/temperature",
+            "temperature",
+            data_type="FLT_1D",
+            unit="eV",
+        )
+        assert result == "quantity"
+
+    def test_int_quantity_outside_data_entry_unaffected(self):
+        """INT_0D whose parent is NOT data_entry must not be caught by Rule M4."""
+        result = classify_node_pass1(
+            "equilibrium/time_slice/profiles_1d/n_r",
+            "n_r",
+            data_type="INT_0D",
+        )
+        # n_r is not under data_entry — Rule 13 gives quantity
         assert result == "quantity"
