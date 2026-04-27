@@ -786,6 +786,37 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
             review_domains or "all",
         )
 
+    # --- L4: Reviewer-theme injection (axis-aware) ---
+    # Mine recurring themes from prior reviewer comments in the same axis
+    # so the reviewer self-corrects domain-level patterns. Cache-stable:
+    # injected into compose_ctx so it lands in the system prompt.
+    from imas_codex.standard_names.review.themes import extract_reviewer_themes
+
+    _theme_axis = "docs" if review_target == "docs" else "name"
+
+    def _load_themes() -> list[str]:
+        seen: set[str] = set()
+        merged: list[str] = []
+        for dom in review_domains:
+            for theme in extract_reviewer_themes(dom, axis=_theme_axis):
+                if theme not in seen:
+                    seen.add(theme)
+                    merged.append(theme)
+                    if len(merged) >= 12:
+                        return merged
+        return merged
+
+    reviewer_themes = await asyncio.to_thread(_load_themes)
+    if reviewer_themes:
+        wlog.info(
+            "L4: Injected %d reviewer themes (axis=%s, domains=%s)",
+            len(reviewer_themes),
+            _theme_axis,
+            review_domains or "all",
+        )
+    compose_ctx = dict(compose_ctx)
+    compose_ctx["reviewer_themes"] = reviewer_themes
+
     total_items = sum(len(b["names"]) for b in batches)
     state.review_stats.total = total_items
 

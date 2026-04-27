@@ -451,36 +451,18 @@ def _search_nearby_names(query: str, k: int = 5) -> list[dict]:
         return []
 
 
-def _normalize_links(links: list[str]) -> list[str]:
-    """Normalize links to ``name:`` prefix, filtering out ``dd:`` links."""
-    result = []
-    for link in links:
-        # Filter out any dd: links that slipped through
-        if link.startswith("dd:"):
-            continue
-        # Drop raw DD paths (contain slash but no known prefix)
-        if "/" in link and not link.startswith(("http://", "https://", "name:")):
-            continue
-        if link.startswith(("http://", "https://", "name:")):
-            result.append(link)
-        else:
-            result.append(f"name:{link}")
-    return result
-
-
 # =============================================================================
 # DD context enrichment — fetch rich graph data before composing
 # =============================================================================
 
 _DD_CONTEXT_QUERY = """
 MATCH (n:IMASNode {id: $path})
-OPTIONAL MATCH (n)-[:HAS_COORDINATE]->(cs:IMASCoordinateSpec)
 OPTIONAL MATCH (n)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
 OPTIONAL MATCH (n)-[:HAS_PARENT]->(parent:IMASNode)
 OPTIONAL MATCH (parent)-[:HAS_CHILD]->(sibling:IMASNode)
 WHERE sibling.id <> $path
   AND NOT (sibling.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
-WITH n, cs, ident, parent,
+WITH n, ident, parent,
      collect(DISTINCT {
          path: sibling.id,
          description: sibling.description,
@@ -493,8 +475,6 @@ RETURN n.coordinate1_same_as AS coordinate1,
        n.cocos_transformation_type AS cocos_label,
        n.cocos_transformation_expression AS cocos_expression,
        n.lifecycle_status AS lifecycle_status,
-       cs.id AS coordinate_spec_id,
-       cs.coordinate_description AS coordinate_spec_description,
        ident.name AS identifier_schema_name,
        ident.documentation AS identifier_schema_doc,
        ident.options AS identifier_options,
@@ -670,6 +650,7 @@ def _hybrid_search_neighbours(
                 "physics_domain": h.physics_domain or "",
                 "doc_short": doc,
                 "cocos_label": h.cocos_transformation_type or "",
+                "score": float(h.score) if h.score is not None else None,
             }
         )
 

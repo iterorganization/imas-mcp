@@ -27,7 +27,7 @@ schema_needs: []
 
 ### DD path documentation
 {% if item.dd_paths %}{% for path in item.dd_paths %}
-- `{{ path.path }}`: {{ path.documentation or path.description or "(no documentation)" }}{% endfor %}
+- `{{ path.path }}`{% if path.ids %} ({{ path.ids }}{% if path.unit %}, unit: {{ path.unit }}{% endif %}){% elif path.unit %} (unit: {{ path.unit }}){% endif %}: {{ path.documentation or path.description or "(no documentation)" }}{% endfor %}
 {% else %}
 _(no linked DD paths)_
 {% endif %}
@@ -70,7 +70,7 @@ scored well.
 Prefer `name:` when the target is already minted. Use `dd:` for paths not
 yet named — the pipeline resolves them after this round.
 
-{% for c in item.link_candidates %}- `{{ c.tag }}` [{{ c.kind_hint }}] — {{ c.doc_short }}
+{% for c in item.link_candidates %}- `{{ c.tag }}` [{{ c.kind_hint }}{% if c.score is defined and c.score is not none %}, score={{ "%.2f"|format(c.score) }}{% endif %}{% if c.unit %}, unit={{ c.unit }}{% endif %}{% if c.cocos_label %}, cocos={{ c.cocos_label }}{% endif %}{% if c.physics_domain %}, domain={{ c.physics_domain }}{% endif %}] — {{ c.doc_short }}
 {% endfor %}{% endif %}
 
 {% if item.related_neighbours %}### Graph-relationship neighbours (explicit cross-IDS peers)

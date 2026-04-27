@@ -123,16 +123,21 @@ def _extract_ngrams(tokens: list[str], n: int) -> list[str]:
 def extract_reviewer_themes(
     domain: str | None,
     limit: int = 50,
+    axis: str = "name",
 ) -> list[str]:
     """Extract top recurring themes from reviewer comments in a domain.
 
-    Queries the graph for StandardName nodes with non-null
-    ``reviewer_comments`` in the specified domain, runs bigram/trigram
-    frequency analysis, and returns the top ~10 concise themes.
+    Queries the graph for StandardName nodes with non-null reviewer
+    comments in the specified domain, runs bigram/trigram frequency
+    analysis, and returns the top ~10 concise themes.
 
     Args:
         domain: Physics domain filter. Returns empty list if None.
         limit: Maximum number of names to sample reviewer comments from.
+        axis: Which review axis to mine — ``"name"`` reads
+            ``sn.reviewer_comments_name`` (grammar/semantic feedback),
+            ``"docs"`` reads ``sn.reviewer_comments_docs`` (description
+            quality feedback). Defaults to ``"name"``.
 
     Returns:
         List of concise theme strings (e.g., "missing sign convention",
@@ -141,16 +146,23 @@ def extract_reviewer_themes(
     if not domain:
         return []
 
+    if axis == "docs":
+        comments_field = "reviewer_comments_docs"
+    elif axis == "name":
+        comments_field = "reviewer_comments_name"
+    else:
+        raise ValueError(f"axis must be 'name' or 'docs', got {axis!r}")
+
     try:
         from imas_codex.graph.client import GraphClient
 
         with GraphClient() as gc:
             rows = gc.query(
-                """
+                f"""
                 MATCH (sn:StandardName)
                 WHERE sn.physics_domain = $domain
-                  AND sn.reviewer_comments_name IS NOT NULL
-                RETURN sn.reviewer_comments_name AS comments
+                  AND sn.{comments_field} IS NOT NULL
+                RETURN sn.{comments_field} AS comments
                 LIMIT $limit
                 """,
                 domain=domain,

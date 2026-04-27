@@ -102,6 +102,18 @@ When revising, fix ONLY grammar and naming issues. Do **not** invent documentati
 
 {% include "sn/_review_scored_examples.md" %}
 
+{% if reviewer_themes and not items %}
+## RECENT REVIEWER FEEDBACK FOR THESE DOMAINS — apply these lessons
+
+Prior reviewers have flagged these recurring issues. Apply the same
+critical lens — score down candidates exhibiting these patterns and
+call them out explicitly in `comments`:
+
+{% for theme in reviewer_themes %}
+- {{ theme }}
+{% endfor %}
+{% endif %}
+
 {% if batch_context %}
 ## Source Context (same as composer received)
 

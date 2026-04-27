@@ -65,6 +65,18 @@ When revising, fix ONLY documentation/description prose and equations. Do **not*
 
 {% include "sn/_review_scored_examples.md" %}
 
+{% if reviewer_themes and not items %}
+## RECENT REVIEWER FEEDBACK FOR THESE DOMAINS — apply these lessons
+
+Prior reviewers have flagged these recurring documentation issues.
+Apply the same critical lens — score down candidates exhibiting these
+patterns and call them out explicitly in `comments`:
+
+{% for theme in reviewer_themes %}
+- {{ theme }}
+{% endfor %}
+{% endif %}
+
 {% if batch_context %}
 ## Source Context (same as composer received)
 
@@ -104,6 +116,8 @@ These names already exist in the catalog. Compare docs for consistency and cross
 **Source DD paths** (compare description clarity against DD definitions):
 {% for p in item.dd_source_docs %}- `{{ p.id }}` [{{ p.unit }}]: {{ p.documentation or p.description }}
 {% endfor %}{% endif %}
+{% if item.parent_path %}**Parent path:** `{{ item.parent_path }}`{% if item.parent_description %} — {{ item.parent_description }}{% endif %}
+{% endif %}
 {% if item.nearest_peers %}
 **DD neighbours** `[hybrid]` (concept-similar paths — compare documentation quality):
 {% for n in item.nearest_peers %}- `{{ n.tag }}` [{{ n.unit }}, {{ n.physics_domain }}]: {{ n.doc_short }}{% if n.cocos_label %} (COCOS {{ n.cocos_label }}){% endif %}
