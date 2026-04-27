@@ -278,6 +278,20 @@ enums:
           Only one review cycle produced a valid score (either len(models)==1,
           or one cycle failed while the other succeeded).
 
+  SNRunStatus:
+    description: SNRun lifecycle. `started` is in-progress; others are terminal.
+    permissible_values:
+      started:
+        description: Run has begun and is currently executing.
+      completed:
+        description: Run finished cleanly.
+      interrupted:
+        description: User interrupted (Ctrl-C or signal).
+      failed:
+        description: Run aborted due to fatal error.
+      degraded:
+        description: Run completed but one or more LLMCost writes could not be drained — cost_spent is a lower bound.
+
 # =============================================================================
 # Classes
 # =============================================================================
@@ -1109,6 +1123,53 @@ classes:
           reporting ("compose_system.md changed") without storing the
           full file contents.
         range: string
+      status:
+        description: Lifecycle status. started=in-progress; final values are past-tense.
+        range: SNRunStatus
+        ifabsent: string(started)
+      cost_is_exact:
+        description: >-
+          False when one or more LLMCost writes failed and could not be drained
+          before run finalization. cost_spent is then a lower bound.
+        range: boolean
+        ifabsent: boolean(true)
+
+  LLMCost:
+    description: >-
+      Atomic LLM cost row. One node per acall_llm_structured() invocation.
+      Append-only and idempotent — created with a deterministic UUID via CREATE
+      (not MERGE). Duplicate writes raise a constraint violation that callers
+      treat as success. Sole source of truth for SN spend totals.
+    class_uri: sn:LLMCost
+    mixins:
+      - LLMOperation
+    attributes:
+      id:
+        identifier: true
+        required: true
+        description: Deterministic UUID generated client-side.
+      run_id:
+        required: true
+        description: Links to SNRun.id via FOR_RUN edge.
+      phase:
+        required: true
+        description: Pipeline phase (generate, regen, enrich, review_names, review_docs).
+      cycle:
+        description: Review cycle (c0, c1, c2) or null for non-review phases.
+      sn_ids:
+        multivalued: true
+        description: StandardName ids touched by this LLM call. Per-name cost share = llm_cost / size(sn_ids).
+      batch_id:
+        description: Groups retries within one logical batch.
+      overspend:
+        description: USD charged beyond the lease reservation. 0.0 when call fits its reservation.
+        range: float
+        ifabsent: float(0.0)
+      for_run:
+        range: SNRun
+        annotations:
+          relationship_type: FOR_RUN
+        description: Edge to the parent SNRun.
 
   Review:
     description: >-
