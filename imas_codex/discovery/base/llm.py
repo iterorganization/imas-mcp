@@ -369,16 +369,15 @@ def get_api_key_for_service(service: str) -> str:
     return get_api_key()
 
 
-_LOCAL_MODEL_PREFIXES = ("ollama/", "hosted_vllm/", "openai/localhost", "cc:")
+_LOCAL_MODEL_PREFIXES = ("ollama/", "hosted_vllm/", "openai/localhost")
 
 
 def ensure_model_prefix(model: str) -> str:
     """Ensure model ID has the correct provider prefix for LiteLLM routing.
 
     OpenRouter models get the ``openrouter/`` prefix to preserve
-    ``cache_control`` blocks. Local models (ollama, vLLM) and proxy-aliased
-    models (``cc:*``) are passed through without modification so that the
-    LiteLLM proxy can resolve them against its own model_list.
+    ``cache_control`` blocks. Local models (ollama, vLLM) are passed
+    through without modification.
     """
     if any(model.startswith(p) for p in _LOCAL_MODEL_PREFIXES):
         return model

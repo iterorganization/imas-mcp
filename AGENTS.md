@@ -420,8 +420,26 @@ For path access (e.g., in tests), import `PROMPTS_DIR` from the same module — 
 
 - Model identifiers require the `openrouter/` prefix to preserve `cache_control` blocks
 - Use `get_model(section)` from `imas_codex.settings` for model selection — never hardcode model names
+- All models live in `pyproject.toml` under `[tool.imas-codex.<section>].model`. **Never hardcode `cc:*`, raw provider IDs, or any other model string in pipeline code or worker prompts.** If you think you need a new model variant, add a section to `pyproject.toml` and reference it via `get_model("section")`.
 - Pydantic schema injection via `get_pydantic_schema_json()` — never hardcode JSON examples in prompts
 - Each prompt declares `schema_needs` in frontmatter to load only required schema context
+
+### Routing: Direct vs Proxy
+
+`call_llm_structured()` chooses between two paths automatically. Understanding both is critical because they have different cost-tracking and caching behavior.
+
+| Path | Trigger | Cost tracking | Prompt caching | Use for |
+|------|---------|---------------|----------------|---------|
+| **Direct (bypass)** | `supports_cache(model)` AND `OPENROUTER_API_KEY_IMAS_CODEX` set | ✅ `response_cost` populated | ✅ `cache_control` preserved | All cache-capable models on the codex billing account |
+| **Proxy** | Otherwise (no IMAS_CODEX key, or non-caching model) | ❌ `response_cost = 0` | ❌ `cache_control` stripped | Air-gapped clusters, models without caching, dev environments |
+
+**Validated empirically (2026-04-27)** with `openrouter/anthropic/claude-haiku-4.5` on the direct path:
+- COLD call: cost = $0.006335, cache_write = 4801 tokens
+- WARM call: cost = $0.000814 (87% cheaper), cache_read = 4801 tokens
+
+The bypass logic lives in `imas_codex/discovery/base/llm.py` lines 794-799. Keep `OPENROUTER_API_KEY_IMAS_CODEX` set and use `openrouter/anthropic/<model>` (or unprefixed `anthropic/<model>` — `ensure_model_prefix()` normalizes) and you get cost + cache for free.
+
+**Anti-pattern: do not invent `cc:*` model strings.** A `cc:opus` / `cc:sonnet` / `cc:haiku` proxy alias exists in `litellm_config.yaml` for billing isolation to a separate OpenRouter account, but it routes via the **proxy path** which silently breaks both `response_cost` and `cache_control`. If you need spend isolation, add a per-service env var (`OPENROUTER_API_KEY_<SERVICE>`) and let the direct path handle routing — it preserves cost + cache.
 
 ### Service Tagging
 
