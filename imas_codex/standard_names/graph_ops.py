@@ -459,6 +459,9 @@ def fetch_review_feedback_for_sources(
                    sn.review_tier AS review_tier,
                    sn.reviewer_comments_name AS reviewer_comments,
                    sn.reviewer_scores_name AS reviewer_scores_json,
+                   sn.reviewer_suggested_name AS reviewer_suggested_name,
+                   sn.reviewer_suggestion_justification_name
+                       AS reviewer_suggestion_justification,
                    sn.validation_status AS validation_status
             """,
             ids=ids,
@@ -486,6 +489,10 @@ def fetch_review_feedback_for_sources(
             "review_tier": row.get("review_tier"),
             "reviewer_comments": row.get("reviewer_comments"),
             "reviewer_scores": scores_dict,
+            "reviewer_suggested_name": row.get("reviewer_suggested_name") or None,
+            "reviewer_suggestion_justification": (
+                row.get("reviewer_suggestion_justification") or None
+            ),
             "validation_status": row.get("validation_status"),
         }
         existing = mapping.get(sid)

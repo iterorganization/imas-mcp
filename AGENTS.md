@@ -1472,6 +1472,17 @@ The following commands are **BANNED** against any file the current agent did not
 
 **Note on auto-generated files:** `uv sync` regenerates model files (models.py, dd_models.py, schema_context_data.py) that are gitignored. Their presence makes the worktree look dirty — never stage them, and never `git restore` them. This is another reason merge (not rebase) is the correct pull policy.
 
+#### Verifying Pre-Existing Test Failures (no-stash protocol)
+
+A common temptation is to `git stash` your in-flight edits to confirm a failing test was already broken on `HEAD`. **Don't.** Use one of these stash-free alternatives instead:
+
+1. **Read git history** — `git log --since="1 day ago" -- tests/path/test.py` and `git show HEAD:tests/path/test.py` reveal whether the failure was introduced in your session or pre-dates it.
+2. **Run the test on a peer commit** — `git show <sha>:tests/path/test.py | uv run python -` or check out a separate worktree (`git worktree add /tmp/verify HEAD~1`) for an isolated probe.
+3. **Trust the failure timestamp** — if a test was failing before you touched any code in that area, your changes did not cause it. Use `git diff --stat HEAD` to confirm your edits don't intersect the failing module.
+4. **File a blocker todo** — record the pre-existing failure, scope your work around it, and surface it in your final report. Do not autonomously triage out-of-scope failures.
+
+`git stash` (any form) remains banned regardless of how convenient it appears. The cost of one stash–pop cycle clobbering a peer agent's uncommitted work is irrecoverable; the cost of using a worktree or a `git show` probe is seconds.
+
 #### Pre-Edit Protocol for High-Risk Files
 
 For files commonly touched by multiple agents (AGENTS.md, pyproject.toml, shared schemas, core modules), always:

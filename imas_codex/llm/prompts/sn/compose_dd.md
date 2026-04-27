@@ -220,6 +220,9 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% for dim, dim_score in item.review_feedback.reviewer_scores.items() %}{% if dim not in ('score', 'tier') and dim_score is number %}    - `{{ dim }}`: {{ dim_score }}
 {% endif %}{% endfor %}{% endif %}{% if item.review_feedback.reviewer_comments %}  - **Reviewer critique:**
     {{ item.review_feedback.reviewer_comments | replace('\n', '\n    ') }}
+{% endif %}{% if item.review_feedback.reviewer_suggested_name %}  - **Reviewer's suggested replacement:** `{{ item.review_feedback.reviewer_suggested_name }}`{% if item.review_feedback.reviewer_suggestion_justification %}
+    - *Justification:* {{ item.review_feedback.reviewer_suggestion_justification | replace('\n', ' ') }}{% endif %}
+    - Use this suggestion as your **starting point**. You may refine it (e.g. fix grammar slot order, swap synonyms) but do not regress to the previous name.
 {% endif %}  - **Instruction:** Produce a name that directly fixes every concrete issue raised above. Do NOT re-emit the previous name unchanged. If the reviewer flagged excessive length, redundant qualifiers, or convention violations, your new name must be shorter / cleaner / more idiomatic. If the reviewer was satisfied with a dimension (score ≥ 15), preserve that aspect.
 {% endif %}
 {% if item.reviewer_history %}

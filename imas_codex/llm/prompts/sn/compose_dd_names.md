@@ -180,6 +180,8 @@ Use them as quality benchmarks for naming style and field usage:
 - **📝 Prior reviewer feedback — your new name MUST address every issue raised:**
   - **Previous name:** `{{ item.review_feedback.previous_name }}`{% if item.review_feedback.reviewer_score is not none %} (score={{ item.review_feedback.reviewer_score | round(2) }}{% if item.review_feedback.review_tier %}, tier={{ item.review_feedback.review_tier }}{% endif %}){% endif %}
 {% if item.review_feedback.reviewer_comments %}  - **Reviewer critique:** {{ item.review_feedback.reviewer_comments | replace('\n', ' ') }}
+{% endif %}{% if item.review_feedback.reviewer_suggested_name %}  - **Reviewer's suggested replacement:** `{{ item.review_feedback.reviewer_suggested_name }}`{% if item.review_feedback.reviewer_suggestion_justification %} — {{ item.review_feedback.reviewer_suggestion_justification | replace('\n', ' ') }}{% endif %}
+  - Start from the suggestion; refine only if it has grammar or convention defects.
 {% endif %}  - Do NOT re-emit the previous name unchanged.
 {% endif %}
 
