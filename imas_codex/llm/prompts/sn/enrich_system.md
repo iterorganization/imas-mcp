@@ -33,8 +33,8 @@ For each name, the documentation field should cover (where applicable):
 2. **Governing physics** — key equations or relations (use LaTeX). Define all variables with units on first use.
 3. **Measurement methods** — how the quantity is typically measured or computed (diagnostics, reconstruction codes).
 4. **Typical values** — representative ranges for fusion-relevant plasmas, with units. Distinguish between plasma regimes where relevant.
-5. **Sign conventions** — for COCOS-dependent quantities, the documentation MUST contain a concrete sign-convention sentence starting literally with `Positive when ...` or `Positive <quantity> ...` (e.g. `Positive when B_phi is in the +φ direction under COCOS-11.`). Never leave bracketed placeholders like `[condition]` or `[quantity]` — write the actual physical condition. Omit the sentence entirely if the quantity is sign-invariant.
-6. **Cross-references** — mention related standard names by their bare IDs and include them in `links`.
+5. **Sign conventions** — for COCOS-dependent quantities, the documentation MUST contain a concrete sign-convention sentence starting literally with `Positive when ...` or `Positive <quantity> ...` (e.g. `Positive when $B_\phi$ points in the direction of increasing toroidal angle $\phi$.`). The sentence MUST be expressed in pure physical / geometric terms relative to the right-handed cylindrical $(R, \phi, Z)$ basis. **NEVER cite a COCOS number** (e.g. "COCOS-11", "COCOS 17", "the COCOS-N convention") — see the Coordinate Conventions section for the prohibition. Never leave bracketed placeholders like `[condition]` or `[quantity]` — write the actual physical condition. Omit the sentence entirely if the quantity is sign-invariant.
+6. **Cross-references** — weave related standard names into the prose using inline `[label](name:bare_id)` links. Do NOT append a `See also:` / `See related:` block at the end of the documentation — see PR-3 below.
 
 ## What You MUST NOT Change
 
@@ -52,7 +52,6 @@ Return a JSON object with an `items` array. Each item conforms to:
   "standard_name": "exact_input_name",
   "description": "≤180 chars, ≤2 sentences, physics-meaningful",
   "documentation": "≥3 sentence rich documentation with $LaTeX$, typical values, cross-refs",
-  "tags": ["secondary-tag-1", "secondary-tag-2"],
   "links": ["name:related_standard_name_1", "name:related_standard_name_2"],
   "validity_domain": "physical region or regime (e.g. core plasma, SOL)",
   "constraints": ["physical constraint 1"],
@@ -66,7 +65,6 @@ Return a JSON object with an `items` array. Each item conforms to:
 - `standard_name` — MUST exactly match the input name (hard requirement for result matching).
 - `description` — **≤180 characters**, ≤2 sentences. Must add information beyond what the name tokens encode. Use American spelling (e.g., "ionization", "behavior").
 - `documentation` — ≥3 sentences. Must cover physical meaning, measurement context, and related quantities. American spelling throughout.
-- `tags` — lowercase, hyphen-separated. **SECONDARY tags only** (see controlled vocabulary below). Physics domain goes in a separate `physics_domain` field handled by the pipeline — never include primary tags like `edge-physics`, `transport`, `mhd` in `tags`.
 - `links` — MUST use the `name:foo_bar` prefix (e.g., `name:electron_temperature`). Each link must name an existing standard name (will be validated; non-existent links cause rejection). URLs (https://…) are permitted for external references.
 - `validity_domain` — optional but encouraged. Physical region or regime where the quantity is meaningful.
 - `constraints` — optional. Physical constraints on the quantity.
@@ -138,10 +136,41 @@ enumerating sub-fields. The grid object is a *container*, not a quantity — do 
 its leaf children.
 
 ### PR-3 Cross-reference inline-link format
-All cross-references to other SNs MUST use the inline link form `[name](name:bare_id)`,
-never plain text.
-- ❌ BAD: `see also electron_temperature`
-- ✅ GOOD: `see also [electron_temperature](name:electron_temperature)`
+All cross-references to other SNs MUST use the inline link form `[label](name:bare_id)`,
+woven into the natural prose flow.
+
+**Inline-only rule.** Do NOT append a trailing `See also:`, `See related:`,
+`Related:`, or `Cross-references:` block at the end of `description` or
+`documentation`. Every cross-reference must appear inline, in a sentence that
+explains *why* the link is relevant.
+
+- ❌ BAD (plain text, no link): `see also electron_temperature`
+- ❌ BAD (trailing block):
+  ```
+  ... governs the heat flux.
+
+  See also: [electron_temperature](name:electron_temperature),
+  [ion_temperature](name:ion_temperature).
+  ```
+- ✅ GOOD (inline, contextual): `The heat flux is dominated by the electron
+  channel when [electron_temperature](name:electron_temperature) exceeds the
+  ion temperature.`
+
+If a related name does not flow naturally into the prose, OMIT it from
+`documentation` and place it in the structured `links` array only.
+
+**No-redundant-units rule.** When you reference *another* standard name via
+an inline link, do NOT inline that other quantity's units. The linked entry
+defines its own units; repeating them is noise.
+
+- ❌ BAD: `The fast neutral perpendicular pressure (in Pa) quantifies ...`
+- ❌ BAD: `[electron_temperature](name:electron_temperature) (in eV) is the kinetic ...`
+- ✅ GOOD: `The fast neutral perpendicular pressure quantifies ...`
+- ✅ GOOD: `[electron_temperature](name:electron_temperature) is the kinetic ...`
+
+Units belong inline ONLY for *the* quantity this entry defines (in
+"Governing physics" equations, "Typical values" ranges, or first introduction
+of the entry's own quantity). Never quote units for a referenced sibling.
 
 ### PR-4 Calibration-parameter anti-speculation rule
 For SNs whose DD path indicates calibration data (e.g. `*/calibration/*`,
@@ -166,5 +195,3 @@ Descriptions must not introduce physical content not encoded in the SN's grammar
 | No normalization segment in grammar | Must NOT mention normalization |
 | `subject=element` | Must NOT use "molecular" or "compound ion" (higher-level concepts) |
 | No handedness/COCOS segment in grammar | Must NOT introduce sign conventions ("counter-clockwise", "viewed from above") |
-
-{% include "sn/_controlled_tags.md" %}

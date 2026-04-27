@@ -873,12 +873,19 @@ inline link syntax when referencing other standard names in documentation.
 **DS-5 Sign conventions.** For COCOS-dependent or sign-ambiguous quantities,
 include a dedicated paragraph of the form:
 `Sign convention: Positive when <concrete physical statement>.`
-For example: `Sign convention: Positive when the current flows counter-clockwise
-viewed from above.` or `Sign convention: Positive when the flux increases
-outward from the magnetic axis.` If you cannot supply a concrete physical
-statement, OMIT the sign-convention paragraph entirely and instead write a
-single sentence: `This quantity has no sign ambiguity.` Use plain text (not
-bold), separate paragraph, not inline.
+The statement MUST be expressed in pure physical / geometric terms relative to
+the right-handed cylindrical $(R, \phi, Z)$ basis. **NEVER cite a COCOS number
+in prose** (e.g. "COCOS-11", "COCOS 17", "the COCOS-N convention") — the
+COCOS dependency is recorded structurally via `cocos_transformation_type`, not
+in prose.
+For example: `Sign convention: Positive when the plasma current $I_p$ flows in
+the direction of increasing toroidal angle $\phi$ (counter-clockwise viewed
+from above $+\hat{Z}$).` or `Sign convention: Positive when $\psi$ decreases
+from the magnetic axis outward to the boundary for positive plasma current.`
+If you cannot supply a concrete physical statement, OMIT the sign-convention
+paragraph entirely and instead write a single sentence:
+`This quantity has no sign ambiguity.` Use plain text (not bold), separate
+paragraph, not inline.
 
 {% if cocos_version is defined and cocos_version %}
 ### COCOS {{ cocos_version }} Reference
@@ -895,14 +902,19 @@ consistent with COCOS {{ cocos_version }}:
 | Poloidal handedness | σ_ρθφ | {{ cocos_sigma_rho_theta_phi | default('?') }} | (ρ, θ, φ) {{ "right" if cocos_sigma_rho_theta_phi is defined and cocos_sigma_rho_theta_phi == 1 else "left" }}-handed |
 
 **Transformation types** classify how quantities change under COCOS:
-- **psi_like**: Multiplied by σ_Bp (flips sign between COCOS 11 and 17)
+- **psi_like**: Multiplied by σ_Bp (flips sign across COCOS variants)
 - **ip_like**: Multiplied by σ_Bp · σ_RφZ (plasma current direction)
 - **b0_like**: Multiplied by σ_RφZ (toroidal field direction)
 - **q_like**: Multiplied by σ_ρθφ (safety factor sign)
 - **dodpsi_like**: Multiplied by 1/σ_Bp (ψ-derivative inversion)
 
 When the batch context marks a path as COCOS-dependent, your sign convention
-paragraph MUST be specific to COCOS {{ cocos_version }} — not generic.
+paragraph MUST be **physically specific** — concretely state the direction
+relative to the right-handed cylindrical $(R, \phi, Z)$ basis, using the
+$\sigma$ values in the table above to determine the correct direction. **DO
+NOT cite the COCOS number** (`COCOS {{ cocos_version }}`, "COCOS-N", etc.)
+anywhere in the output prose; the convention is recorded structurally via the
+`cocos_transformation_type` field that is injected post-LLM.
 {% endif %}
 
 **DS-6 DD aliases.** When the DD path uses abbreviated names (e.g., gm1–gm9),
@@ -1079,7 +1091,6 @@ Each candidate MUST include:
 - `description`: one-sentence summary, **under 120 characters** (e.g., "Electron temperature profile on the poloidal flux grid")
 - `documentation`: rich documentation following the template below (**target: 150-400 words, 800-2500 chars**)
 - `kind`: one of `"scalar"`, `"vector"`, `"metadata"` — see classification rules
-- `tags`: array of 0-3 **secondary** tags ONLY from the controlled vocabulary below (primary classification goes into `physics_domain` automatically — do NOT include primary tags here)
 - `links`: array of 4-8 related standard names from the existing_names list, each prefixed with `name:` (e.g., `"name:electron_temperature"`)
 - `dd_paths`: array of IMAS DD paths this name maps to (include the source_id at minimum)
 - `grammar_fields`: dict of grammar fields used (only non-null fields)
@@ -1148,22 +1159,6 @@ Example documentation (quality standard):
 > The safety factor is central to MHD stability analysis: rational values of $q$ ($m/n$ where $m, n$ are integers) correspond to resonant surfaces susceptible to tearing modes and other instabilities. The minimum value $q_\text{min}$ determines the onset of sawtooth oscillations (typically $q_0 < 1$ at the magnetic axis) and the edge value $q_{95}$ governs edge stability.
 >
 > Typical values range from 0.8-1.2 at the magnetic axis to 3-7 at the 95% flux surface in conventional tokamaks, and 1.5-15 in spherical tokamaks. Values below 1 at the axis indicate sawtooth activity. Related to [poloidal_magnetic_flux](#poloidal_magnetic_flux) via the flux derivative and connected to [plasma_current](#plasma_current) through the edge safety factor scaling $q_{95} \propto B_0 a^2 / (R_0 I_p)$.
-
-### Tags — Controlled Vocabulary
-
-**IMPORTANT:** Tags are ONLY for **secondary** classification. Primary domain classification is
-handled by the `physics_domain` field (injected from DD — you do not need to set it).
-Include **0-3 secondary tags** from the list below. Do NOT include primary tags like
-`fundamental`, `equilibrium`, `core-physics`, `transport`, etc.
-
-{% if tag_descriptions and tag_descriptions.secondary %}
-**Secondary tags** (include 0-3):
-{% for tag, desc in tag_descriptions.secondary.items() %}
-- `{{ tag }}`: {{ desc }}
-{% endfor %}
-{% else %}
-**Secondary tags** (include 0-3): time-dependent, steady-state, spatial-profile, flux-surface-average, volume-average, line-integrated, local-measurement, global-quantity, measured, reconstructed, simulated, derived, validated, equilibrium-reconstruction, transport-modeling, mhd-stability-analysis, heating-deposition, calibrated, real-time, post-shot-analysis, benchmark-quantity, performance-metric
-{% endif %}
 
 {% if kind_definitions %}
 ### Kind Classification Rules

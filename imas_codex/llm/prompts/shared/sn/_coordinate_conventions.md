@@ -47,3 +47,43 @@ explicit basis tuple).
   `validity_domain`, and `constraints`.
 - Do NOT use the word "standard" to qualify a coordinate system unless you
   immediately follow it with the explicit tuple and a brief definition.
+
+## COCOS Convention — Prose Rules
+
+The IMAS Data Dictionary uses a **single COCOS convention** (COCOS-17). The
+COCOS number is structured metadata and is recorded on each standard name via
+`cocos_transformation_type` and the graph `HAS_COCOS` edge — it MUST NEVER
+appear in the natural-language `description` or `documentation` prose.
+
+### Rules
+
+1. **NEVER write a numbered COCOS reference in prose.** Phrases like
+   "COCOS-11", "COCOS 11", "COCOS-17 convention", "under COCOS 13",
+   "in the COCOS-N convention", "between COCOS 11 and 17" are FORBIDDEN in
+   `description`, `documentation`, `validity_domain`, and `constraints`.
+
+2. **Sign convention sentences MUST be expressed in pure physical / geometric
+   terms.** State the direction relative to the right-handed cylindrical
+   $(R, \phi, Z)$ basis or to a physically observable feature of the device.
+
+3. **Do NOT compare COCOS conventions** even if you know they differ.
+   Documentation describes ONE convention only — the IMAS one — and does so
+   without naming it.
+
+### ❌ / ✓ examples
+
+| ❌ Forbidden | ✓ Required |
+|---|---|
+| "Positive when $B_\phi$ is in the $+\phi$ direction under COCOS-11." | "Positive when $B_\phi$ points in the direction of increasing toroidal angle $\phi$." |
+| "Positive when the current flows counter-clockwise viewed from above (COCOS-11 convention)." | "Positive when the plasma current flows in the direction of increasing toroidal angle $\phi$ (counter-clockwise viewed from above $+\hat{Z}$)." |
+| "...sign flips between COCOS 11 and 17." | (delete the comparison entirely; describe only the IMAS sign) |
+| "Under COCOS-17, $\psi$ decreases from axis to boundary for positive $I_p$." | "$\psi$ decreases from the magnetic axis to the boundary for positive plasma current $I_p$." |
+
+### Enforcement
+
+- The validator rejects any `description` or `documentation` field that
+  contains the regex `(?i)cocos[\\s-]?[0-9]` or the word `COCOS` followed by a
+  digit anywhere in the prose.
+- The structured `cocos_transformation_type` field (e.g. `psi_like`, `ip_like`,
+  `b0_like`) is the ONLY place where the COCOS dependency is recorded; the LLM
+  does not produce that field — it is injected post-LLM from the DD.
