@@ -196,7 +196,6 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
                        sn.documentation AS documentation,
                        sn.kind AS kind,
                        coalesce(u.id, sn.unit) AS unit,
-                       sn.tags AS tags,
                        sn.links AS links,
                        sn.source_paths AS source_paths,
                        sn.grammar_physical_base AS physical_base,

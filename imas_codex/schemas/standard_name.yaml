@@ -93,7 +93,7 @@ enums:
     permissible_values:
       named:
         description: >-
-          Post-generate: name, kind, unit, tags assigned but no
+          Post-generate: name, kind, unit assigned but no
           documentation or description yet. Entry point for sn enrich.
       enriched:
         description: >-
@@ -388,10 +388,6 @@ classes:
       kind:
         description: Entry kind — scalar, vector, or metadata
         range: StandardNameKind
-      tags:
-        description: Classification tags from controlled vocabulary
-        multivalued: true
-        range: string
       links:
         description: Internal cross-references to related standard names (name only)
         multivalued: true
@@ -603,7 +599,7 @@ classes:
       review_input_hash:
         description: >-
           SHA-256 hex digest of the inputs used in the most recent LLM
-          review (name, description, documentation, unit, kind, tags).
+          review (name, description, documentation, unit, kind).
           Compared to a freshly computed hash to detect stale reviews
           that should be re-run.  OVERWRITTEN (not coalesced) on every
           write so that stale hashes never persist.

@@ -2,7 +2,7 @@
 
 ### US-English Spelling — hard constraint
 
-All output text (description, documentation, tags, links, validity_domain,
+All output text (description, documentation, links, validity_domain,
 constraints) **MUST** use American (US) English spelling. This is a catalog-wide
 convention enforced by automated validation.
 

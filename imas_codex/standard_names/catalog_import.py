@@ -187,7 +187,6 @@ def _entry_to_graph_dict(
     """
     grammar = _grammar_decomposition(entry.name)
 
-    tags = [str(t) for t in entry.tags] if entry.tags else []
     links = [str(lnk) for lnk in entry.links] if entry.links else []
     constraints = list(entry.constraints) if entry.constraints else []
 
@@ -197,7 +196,6 @@ def _entry_to_graph_dict(
         "documentation": entry.documentation or None,
         "kind": str(entry.kind) if hasattr(entry, "kind") and entry.kind else None,
         "unit": str(entry.unit) if hasattr(entry, "unit") and entry.unit else None,
-        "tags": tags or None,
         "links": links or None,
         "validity_domain": entry.validity_domain or None,
         "constraints": constraints or None,
@@ -383,7 +381,6 @@ def _write_import_entries(
             sn.documentation = b.documentation,
             sn.kind = b.kind,
             sn.unit = b.unit,
-            sn.tags = b.tags,
             sn.links = b.links,
             sn.validity_domain = b.validity_domain,
             sn.constraints = b.constraints,
@@ -716,7 +713,6 @@ _CHECK_FIELDS = (
     "documentation",
     "kind",
     "unit",
-    "tags",
     "validity_domain",
     "constraints",
     "physics_domain",
@@ -729,7 +725,6 @@ _GRAPH_ONLY_FIELDS = {"dd_paths", "physics_domain", "cocos_transformation_type"}
 
 def check_catalog(
     catalog_dir: Path,
-    tag_filter: list[str] | None = None,
 ) -> CheckResult:
     """Compare catalog entries against graph without importing.
 
@@ -741,8 +736,6 @@ def check_catalog(
     ----------
     catalog_dir:
         Path to directory containing YAML catalog entries.
-    tag_filter:
-        If provided, only check entries whose tags overlap with this list.
 
     Returns
     -------
@@ -810,12 +803,6 @@ def check_catalog(
                 }
                 entry = ta.validate_python(model_data)
 
-                # Apply tag filter
-                if tag_filter:
-                    entry_tags = {str(t) for t in entry.tags} if entry.tags else set()
-                    if not entry_tags.intersection(tag_filter):
-                        continue
-
                 graph_dict = _entry_to_graph_dict(entry, physics_domain=path_domain)
                 catalog_entries[graph_dict["id"]] = graph_dict
 
@@ -836,7 +823,6 @@ def check_catalog(
                    sn.documentation AS documentation,
                    sn.kind AS kind,
                    sn.unit AS unit,
-                   sn.tags AS tags,
                    sn.source_paths AS source_paths,
                    sn.validity_domain AS validity_domain,
                    sn.constraints AS constraints,

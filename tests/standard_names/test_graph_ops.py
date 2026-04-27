@@ -55,7 +55,6 @@ class TestWriteStandardNames:
         assert "coalesce(b.description, sn.description)" in cypher
         assert "coalesce(b.documentation, sn.documentation)" in cypher
         assert "coalesce(b.kind, sn.kind)" in cypher
-        assert "coalesce(b.tags, sn.tags)" in cypher
         assert "coalesce(b.links, sn.links)" in cypher
         assert "coalesce(b.source_paths, sn.source_paths)" in cypher
         assert "coalesce(b.validity_domain, sn.validity_domain)" in cypher
@@ -175,10 +174,6 @@ class TestWriteStandardNames:
         assert first["id"] == "electron_temperature"
         assert first["documentation"] is not None
         assert first["kind"] == "scalar"
-        assert (
-            "core_profiles" in (first.get("tags") or [])
-            or first.get("tags") is not None
-        )
         assert first["validity_domain"] == "core plasma"
 
     def test_empty_lists_become_none(self) -> None:
@@ -191,7 +186,6 @@ class TestWriteStandardNames:
                 "id": "test_name",
                 "source_types": ["dd"],
                 "source_id": "some/path",
-                "tags": [],
                 "links": [],
                 "source_paths": [],
                 "constraints": [],
@@ -204,7 +198,6 @@ class TestWriteStandardNames:
         first = batch[0]
 
         # Empty lists should become None so coalesce preserves existing
-        assert first["tags"] is None
         assert first["links"] is None
         assert first["source_paths"] is None
         assert first["constraints"] is None
@@ -876,7 +869,7 @@ class TestWriteSkippedSources:
         cypher, _ = mock_gc.query.call_args[0], mock_gc.query.call_args[1]
         cypher_text = cypher[0]
         assert "MERGE (sns:StandardNameSource" in cypher_text
-        assert "sns.status = 'skipped'" in cypher_text
+        assert "sns.status = src.status" in cypher_text
         assert "sns.skip_reason = src.skip_reason" in cypher_text
         # claim fields cleared on match
         assert "sns.claim_token = null" in cypher_text
@@ -947,7 +940,7 @@ class TestListSkippedSources:
         mock_gc.query = MagicMock(return_value=[])
         self._call(mock_gc)
         cypher = mock_gc.query.call_args[0][0]
-        assert "sns.status = 'skipped'" in cypher
+        assert "sns.status" in cypher
         assert "AND sns.skip_reason = $reason" not in cypher
 
     def test_reason_filter_passes_parameter(self) -> None:

@@ -109,7 +109,7 @@ exemplars use American spelling (NC-17) in every prose field.
 - *Why bad:* standard names are IDS-agnostic. Referring to DD structure couples
   the reader to the source rather than the physics.
 - *Fix:* describe the physics and its measurement; never mention IDS or DD
-  paths anywhere in description, documentation, or tags.
+  paths anywhere in description or documentation.
 
 #### AE3. Undefined LaTeX symbols
 
@@ -168,17 +168,6 @@ exemplars use American spelling (NC-17) in every prose field.
   (with unit `T` per-harmonic) **or** rewrite the documentation to describe
   the scalar field proper without Fourier language.
 
-#### AE8. Tag proliferation / primary-tag leakage
-
-- ❌ `tags: ["core-plasma", "transport", "edge-physics", "magnetic-field",
-  "iter", "thomson-scattering", "measured", "reconstructed"]`
-- *Why bad:* `transport`, `edge-physics`, `core-plasma` are **primary**
-  physics domains managed by the pipeline — never in `tags`. Provenance
-  (`measured`, `reconstructed`) is metadata, not a semantic tag. Device names
-  (`iter`) are not tags.
-- *Fix:* 2–5 lowercase hyphenated **secondary** tags — e.g.
-  `["ece-diagnostic", "kinetic-profile", "flux-surface-average"]`.
-
 #### AE9. Excessive / wrong cross-links
 
 - ❌ `links: ["name:plasma_current", "name:plasma", "name:current",
@@ -211,11 +200,9 @@ exemplars use American spelling (NC-17) in every prose field.
    spelled out with the correct integration variable?
 6. For constraint weights / measurement times: is the generic inverse-problem
    role referenced in one line rather than re-derived?
-7. Do `tags` contain **only** secondary tags (no primary physics domains,
-   no devices, no provenance verbs)?
-8. Are `links` **bare SN ids** of existing names that genuinely enrich
+7. Are `links` **bare SN ids** of existing names that genuinely enrich
    understanding (typically 2–6)?
-9. Is the `description` ≤ 180 characters and the `documentation`
+8. Is the `description` ≤ 180 characters and the `documentation`
    ≥ 3 sentences?
-10. Does the documentation avoid any mention of DD paths, IDS names, or
+9. Does the documentation avoid any mention of DD paths, IDS names, or
     structural database prefixes?

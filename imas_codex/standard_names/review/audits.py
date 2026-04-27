@@ -79,10 +79,7 @@ _HASH_SCALAR_FIELDS = (
     "unit",
 )
 
-_HASH_LIST_FIELDS = (
-    "tags",
-    "links",
-)
+_HASH_LIST_FIELDS = ("links",)
 
 _HASH_GRAMMAR_FIELDS = (
     "physical_base",
@@ -106,7 +103,7 @@ def compute_review_input_hash(name: dict[str, Any]) -> str:
     for field in _HASH_SCALAR_FIELDS:
         parts.append(str(name.get(field) or ""))
 
-    # Sorted list fields (tags, links)
+    # Sorted list fields (links)
     for field in _HASH_LIST_FIELDS:
         val = name.get(field)
         parts.append("|".join(sorted(val)) if val else "")

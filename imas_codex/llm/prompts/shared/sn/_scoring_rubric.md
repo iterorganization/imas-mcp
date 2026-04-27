@@ -48,12 +48,11 @@ Rate each dimension from 0 to 20. The total is normalized to a 0-1 score (sum / 
 ### 5. Entry Completeness (0-20)
 - Is the unit correct for this quantity (or null if dimensionless)?
 - Is the kind (scalar/vector/metadata) appropriate?
-- Are relevant tags assigned from the controlled vocabulary?
 - Are grammar fields properly populated?
 
 **20**: All metadata fields correct and complete.
 **10**: Most fields present but some missing or questionable.
-**0**: Missing critical fields (wrong unit, no tags, wrong kind).
+**0**: Missing critical fields (wrong unit or wrong kind).
 
 ### 6. Prompt Compliance (0-20)
 - Did the composer follow the unit policy? (Unit must come from DD, not be invented)

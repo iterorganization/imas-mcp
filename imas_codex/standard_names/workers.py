@@ -451,19 +451,6 @@ def _search_nearby_names(query: str, k: int = 5) -> list[dict]:
         return []
 
 
-@_cache
-def _get_secondary_tags() -> frozenset[str]:
-    """Return the set of valid secondary tags from ISN grammar context."""
-    try:
-        from imas_standard_names.grammar.context import get_grammar_context
-
-        ctx = get_grammar_context()
-        td = ctx.get("tag_descriptions", {})
-        return frozenset(td.get("secondary", {}).keys())
-    except Exception:
-        return frozenset()
-
-
 def _normalize_links(links: list[str]) -> list[str]:
     """Normalize links to ``name:`` prefix, filtering out ``dd:`` links."""
     result = []
@@ -479,14 +466,6 @@ def _normalize_links(links: list[str]) -> list[str]:
         else:
             result.append(f"name:{link}")
     return result
-
-
-def _filter_secondary_tags(tags: list[str]) -> list[str]:
-    """Keep only valid secondary tags, stripping any primary tags."""
-    secondary = _get_secondary_tags()
-    if not secondary:
-        return tags  # no vocabulary loaded, pass through
-    return [t for t in tags if t in secondary]
 
 
 # =============================================================================

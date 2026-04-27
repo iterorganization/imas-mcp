@@ -512,7 +512,6 @@ Each candidate MUST include:
 - `description`: one-sentence summary, **under 120 characters**
 - `documentation`: rich documentation (target 150-400 words): opening definition, defining equation ($$...$$, all variables defined with units), physical significance, typical values, sign convention if COCOS-dependent, cross-references
 - `kind`: one of `"scalar"`, `"vector"`, `"metadata"`
-- `tags`: array of 0-3 secondary tags from controlled vocabulary (do NOT include primary domain tags)
 - `links`: array of 4-8 related standard names, each prefixed with `name:` (e.g., `"name:electron_temperature"`)
 - `dd_paths`: array of IMAS DD paths this name maps to (include the source_id at minimum)
 - `grammar_fields`: dict of grammar fields used (only non-null fields)

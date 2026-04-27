@@ -23,7 +23,6 @@ PROTECTED_FIELDS: frozenset[str] = frozenset(
         "description",
         "documentation",
         "kind",
-        "tags",
         "links",
         "status",
         "deprecates",

@@ -32,7 +32,6 @@ def _sn_row(name: str = "electron_temperature") -> dict:
         "description": f"Description of {name}",
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["core_profiles"],
         "pipeline_status": "drafted",
         "documentation": "",
         "cocos_transformation_type": "",

@@ -39,7 +39,6 @@ def _search_standard_names(
     query: str,
     *,
     kind: str | None = None,
-    tags: list[str] | None = None,
     pipeline_status: str | None = None,
     cocos_type: str | None = None,
     physical_base: str | None = None,
@@ -121,8 +120,6 @@ def _search_standard_names(
     # Post-filter
     if kind:
         rows = [r for r in rows if (r.get("kind") or "").lower() == kind.lower()]
-    if tags:
-        rows = [r for r in rows if any(t in (r.get("tags") or []) for t in tags)]
     if pipeline_status:
         rows = [
             r
@@ -194,7 +191,7 @@ def _segment_filter_search_sn(
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.description AS description,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
-       sn.tags AS tags, sn.pipeline_status AS pipeline_status,
+       sn.pipeline_status AS pipeline_status,
        sn.documentation AS documentation,
        sn.cocos_transformation_type AS cocos_transformation_type,
        sn.cocos AS cocos,
@@ -214,7 +211,7 @@ WHERE sn.id IS NOT NULL
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.description AS description,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
-       sn.tags AS tags, sn.pipeline_status AS pipeline_status,
+       sn.pipeline_status AS pipeline_status,
        sn.documentation AS documentation,
        sn.cocos_transformation_type AS cocos_transformation_type,
        sn.cocos AS cocos,
@@ -234,7 +231,7 @@ WHERE toLower(sn.id) CONTAINS toLower($keyword)
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.description AS description,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
-       sn.tags AS tags, sn.pipeline_status AS pipeline_status,
+       sn.pipeline_status AS pipeline_status,
        sn.documentation AS documentation,
        sn.cocos_transformation_type AS cocos_transformation_type,
        sn.cocos AS cocos,
@@ -260,7 +257,6 @@ def _format_search_report(query: str, rows: list[dict]) -> str:
         score = row.get("score", 0.0)
         kind = row.get("kind") or ""
         unit = row.get("unit") or ""
-        tags = row.get("tags") or []
         pipeline_status = row.get("pipeline_status") or ""
         description = row.get("description") or ""
         documentation = row.get("documentation") or ""
@@ -272,9 +268,6 @@ def _format_search_report(query: str, rows: list[dict]) -> str:
             lines.append(f"- **Kind:** {kind}")
         if unit:
             lines.append(f"- **Unit:** {unit}")
-        if tags:
-            tag_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
-            lines.append(f"- **Tags:** {tag_str}")
         if pipeline_status:
             lines.append(f"- **Status:** {pipeline_status}")
         if cocos_transformation_type:
@@ -331,7 +324,7 @@ OPTIONAL MATCH (src)-[:IN_IDS]->(ids:IDS)
 RETURN sn.id AS name, sn.description AS description,
        sn.documentation AS documentation,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
-       sn.tags AS tags, sn.links AS links,
+       sn.links AS links,
        sn.source_paths AS source_paths, sn.constraints AS constraints,
        sn.validity_domain AS validity_domain,
        sn.pipeline_status AS pipeline_status,
@@ -373,7 +366,6 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
         documentation = row.get("documentation") or ""
         kind = row.get("kind") or ""
         unit = row.get("unit") or ""
-        tags = row.get("tags") or []
         links = row.get("links") or []
         dd_paths = row.get("source_paths") or []
         constraints = row.get("constraints") or []
@@ -410,9 +402,6 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
         if dd_version:
             lines.append(f"- **DD Version:** {dd_version}")
 
-        if tags:
-            tag_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
-            lines.append(f"- **Tags:** {tag_str}")
         if links:
             link_str = ", ".join(links) if isinstance(links, list) else str(links)
             lines.append(f"- **Links:** {link_str}")
@@ -456,7 +445,6 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
 
 def _list_standard_names(
     *,
-    tag: str | None = None,
     kind: str | None = None,
     pipeline_status: str | None = None,
     cocos_type: str | None = None,
@@ -475,9 +463,6 @@ def _list_standard_names(
     conditions = []
     params: dict = {}
 
-    if tag:
-        conditions.append("$tag IN sn.tags")
-        params["tag"] = tag
     if kind:
         conditions.append("toLower(sn.kind) = toLower($kind)")
         params["kind"] = kind
@@ -511,22 +496,19 @@ ORDER BY sn.id
         return f"List failed: {_neo4j_error_message(e)}"
 
     return _format_list_report(
-        rows, tag=tag, kind=kind, pipeline_status=pipeline_status, cocos_type=cocos_type
+        rows, kind=kind, pipeline_status=pipeline_status, cocos_type=cocos_type
     )
 
 
 def _format_list_report(
     rows: list[dict],
     *,
-    tag: str | None = None,
     kind: str | None = None,
     pipeline_status: str | None = None,
     cocos_type: str | None = None,
 ) -> str:
     """Format list results as a markdown table."""
     filter_parts = []
-    if tag:
-        filter_parts.append(f"tag={tag}")
     if kind:
         filter_parts.append(f"kind={kind}")
     if pipeline_status:

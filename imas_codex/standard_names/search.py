@@ -69,7 +69,7 @@ def search_similar_sns_with_full_docs(
     """Find existing StandardName nodes with full documentation for exemplar use.
 
     Like :func:`search_similar_names`, but returns richer records including
-    ``documentation`` and ``tags`` for use as few-shot exemplars in compose
+    ``documentation`` for use as few-shot exemplars in compose
     prompts.
 
     Args:
@@ -80,7 +80,7 @@ def search_similar_sns_with_full_docs(
 
     Returns:
         List of dicts with keys: ``name``, ``description``, ``documentation``,
-        ``unit``, ``tags``.
+        ``unit``.
     """
     if not description_query or not description_query.strip():
         return []
@@ -112,7 +112,6 @@ def search_similar_sns_with_full_docs(
                        sn.description AS description,
                        sn.documentation AS documentation,
                        coalesce(u.id, sn.unit) AS unit,
-                       sn.tags AS tags,
                        score
                 ORDER BY score DESC
                 """,
@@ -133,7 +132,6 @@ def search_similar_sns_with_full_docs(
                         "description": r.get("description") or "",
                         "documentation": r.get("documentation") or "",
                         "unit": r.get("unit") or "1",
-                        "tags": r.get("tags") or [],
                     }
                 )
                 if len(results) >= k:

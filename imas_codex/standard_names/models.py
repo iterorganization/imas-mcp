@@ -12,7 +12,7 @@ class StandardNameCandidate(BaseModel):
     """A single standard name candidate from LLM composition.
 
     Name-only: compose produces naming and grammar fields only.
-    Documentation (description, tags, links, etc.) is added by ``sn enrich``.
+    Documentation (description, links, etc.) is added by ``sn enrich``.
     """
 
     source_id: str = Field(description="Source entity ID (DD path or signal ID)")
@@ -96,7 +96,6 @@ class StandardNamePublishEntry(BaseModel):
         default="scalar", description="Name kind: scalar, vector, or metadata"
     )
     unit: str | None = Field(default=None, description="SI unit string")
-    tags: list[str] = Field(default_factory=list, description="Classification tags")
     status: str = Field(default="drafted", description="Entry status")
     physics_domain: str | None = Field(
         default=None, description="Physics domain classification"
@@ -493,7 +492,6 @@ class StandardNameEnrichItem(BaseModel):
     documentation: str = Field(
         description="Rich docs with LaTeX, links, typical values"
     )
-    tags: list[str] = Field(default_factory=list, description="Classification tags")
     links: list[str] = Field(
         default_factory=list, description="Related standard names (name:xxx format)"
     )

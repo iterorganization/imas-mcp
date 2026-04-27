@@ -406,7 +406,6 @@ def _graph_node_to_entry_dict(node: dict[str, Any]) -> dict[str, Any]:
         "kind": node.get("kind") or "scalar",
         "unit": node.get("unit") or "",
         "status": node.get("status") or "draft",
-        "tags": list(node.get("tags") or []),
         "links": list(node.get("links") or []),
         "constraints": list(node.get("constraints") or []),
         "validity_domain": node.get("validity_domain") or "",

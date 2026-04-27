@@ -38,9 +38,6 @@ identify the physical quantity — documentation depth can be terse.
   check runs on every candidate, and failures trigger a retry.
 - **Descriptions** should be concise (1–2 sentences) and faithful
   to the DD description. Do not invent detail you don't have.
-- **Tags**: one or two tags per name is sufficient; prefer the
-  physics domain and the quantity family (e.g., `transport`,
-  `particle-flux`).
 - **Documentation**: a single paragraph naming the physical
   observable, its units, and its typical usage context is enough.
   The enrichment pass will expand this later.
@@ -121,7 +118,6 @@ Use them as quality benchmarks for naming style and field usage:
 ### `{{ ex.name }}`
 - **Description:** {{ ex.description }}
 - **Unit:** {{ ex.unit }}
-{% if ex.tags %}- **Tags:** {{ ex.tags | join(', ') if ex.tags is iterable and ex.tags is not string else ex.tags }}{% endif %}
 
 {% endfor %}
 {% endif %}

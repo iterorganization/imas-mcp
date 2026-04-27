@@ -49,7 +49,6 @@ _(none available)_
 {% if item.current and (item.current.description or item.current.documentation) %}### Current enrichment (improve upon this)
 {% if item.current.description %}- **Description:** {{ item.current.description }}{% endif %}
 {% if item.current.documentation %}- **Documentation:** {{ item.current.documentation }}{% endif %}
-{% if item.current.tags %}- **Tags:** {{ item.current.tags | join(", ") }}{% endif %}
 {% if item.current.links %}- **Links:** {{ item.current.links | join(", ") }}{% endif %}
 {% endif %}
 

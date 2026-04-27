@@ -332,7 +332,6 @@ async def score_with_reviewer(
                     "documentation": (c.get("documentation", "") or "")[:500],
                     "unit": c.get("unit", "N/A"),
                     "kind": c.get("kind", "N/A"),
-                    "tags": c.get("tags", []),
                     "grammar_fields": c.get("grammar_fields", {}),
                     "source_paths": c.get("source_paths", []),
                 }

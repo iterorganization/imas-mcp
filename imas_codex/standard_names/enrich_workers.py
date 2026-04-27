@@ -43,55 +43,6 @@ _SN_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _LINK_PREFIXES = ("name:", "http://", "https://")
 
 
-def _valid_secondary_tags() -> set[str]:
-    """Valid SECONDARY tags sourced from ISN grammar context (cached).
-
-    The ISN ``tags`` field accepts **secondary tags only**. Primary tags
-    (physics domains like ``edge-physics``, ``transport``) belong in the
-    ``physics_domain`` field, not ``tags``.
-    """
-    global _VALID_TAGS_CACHE
-    try:
-        return _VALID_TAGS_CACHE  # type: ignore[name-defined]
-    except NameError:
-        pass
-    try:
-        from imas_standard_names.grammar import get_grammar_context
-
-        ctx = get_grammar_context()
-        td = ctx.get("tag_descriptions", {}) or {}
-        _VALID_TAGS_CACHE = frozenset((td.get("secondary") or {}).keys())  # type: ignore[name-defined]
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to load ISN tag vocab: %s — tag filter disabled", exc)
-        _VALID_TAGS_CACHE = frozenset()  # type: ignore[name-defined]
-    return _VALID_TAGS_CACHE  # type: ignore[name-defined]
-
-
-# Back-compat alias (callers may still import _valid_tags)
-_valid_tags = _valid_secondary_tags
-
-
-def _sanitize_tags(raw: list[str] | None) -> list[str]:
-    """Filter tags against the ISN SECONDARY vocabulary.
-
-    Primary tags are silently dropped — they are not valid in the ``tags``
-    field (ISN uses ``physics_domain`` for that role).
-    """
-    if not raw:
-        return []
-    valid = _valid_secondary_tags()
-    if not valid:
-        return [t for t in raw if isinstance(t, str) and t]
-    out: list[str] = []
-    for t in raw:
-        if not isinstance(t, str):
-            continue
-        norm = t.strip().lower()
-        if norm in valid and norm not in out:
-            out.append(norm)
-    return out
-
-
 def _sanitize_links(
     raw: list[str] | None, *, valid_names: set[str] | None = None
 ) -> list[str]:
@@ -286,7 +237,6 @@ def claim_names_for_enrichment(
                    sn.documentation AS documentation,
                    sn.kind AS kind,
                    coalesce(u.id, sn.unit) AS unit,
-                   sn.tags AS tags,
                    sn.links AS links,
                    sn.source_paths AS source_paths,
                    sn.grammar_physical_base AS physical_base,
@@ -911,7 +861,6 @@ async def enrich_contextualise_worker(
                 item["current"] = {
                     "description": item.get("description"),
                     "documentation": item.get("documentation"),
-                    "tags": item.get("tags"),
                     "links": item.get("links"),
                 }
 
@@ -1115,7 +1064,6 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
                 item["enriched_links"] = _sanitize_links(
                     enriched.links, valid_names=valid_names
                 )
-                item["enriched_tags"] = _sanitize_tags(enriched.tags)
 
                 # Per-item cost for graph_ops.persist_enriched_batch
                 item["enrich_cost_usd"] = per_item_cost
@@ -1358,9 +1306,6 @@ def _validate_item_pydantic(item: dict[str, Any]) -> list[str]:
             "documentation": item.get("enriched_documentation") or "",
         }
         # Include optional fields if present
-        if item.get("tags") or item.get("enriched_tags"):
-            tags = list(item.get("enriched_tags") or item.get("tags") or [])
-            data["tags"] = tags
         if item.get("enriched_links"):
             data["links"] = list(item["enriched_links"])
 
@@ -1380,7 +1325,6 @@ def _validate_item_description(item: dict[str, Any]) -> list[str]:
 
         entry = {
             "description": item.get("enriched_description") or "",
-            "tags": list(item.get("enriched_tags") or item.get("tags") or []),
             "kind": item.get("kind") or "scalar",
         }
         issues = validate_description(entry)

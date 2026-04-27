@@ -19,7 +19,6 @@ def test_grammar_context_contract():
         "anti_patterns",
         "exclusive_pairs",
         "field_guidance",
-        "tag_descriptions",
         "applicability",
         "quick_start",
         "common_patterns",
@@ -83,7 +82,6 @@ def test_build_compose_context_has_isn_keys():
     assert "examples" in ctx
     assert "tokamak_ranges" in ctx
     assert "field_guidance" in ctx
-    assert "tag_descriptions" in ctx
     assert "applicability" in ctx
     assert "exclusive_pairs" in ctx
     clear_context_cache()

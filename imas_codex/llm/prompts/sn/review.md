@@ -108,14 +108,13 @@ grammar and convention scores.
 ### 5. Entry Completeness (0-20)
 - Is the unit correct for this quantity (or null if dimensionless)?
 - Is the kind (scalar/vector/metadata) appropriate?
-- Are relevant tags assigned from the controlled vocabulary?
 - Are grammar fields properly populated?
 - **[I4.3]** For position vectors with mixed units (m for R,Z; rad for φ), is the limitation documented?
 - **[I4.4]** For boundary quantities, is the boundary definition noted (LCFS, 99% ψ_norm, or code-dependent)?
 
 **20**: All metadata fields correct and complete, edge cases documented.
 **10**: Most fields present but some missing or questionable.
-**0**: Missing critical fields (wrong unit, no tags, wrong kind).
+**0**: Missing critical fields (wrong unit or wrong kind).
 
 ### 6. Prompt Compliance (0-20)
 - Did the composer follow the unit policy? (Unit must come from DD, not be invented)
@@ -191,7 +190,6 @@ These names already exist in the catalog. Flag candidates that duplicate them:
 - **Documentation**: {{ item.documentation | default('N/A', true) }}
 - **Unit**: {{ item.unit | default('N/A', true) }}
 - **Kind**: {{ item.kind | default('N/A', true) }}
-- **Tags**: {{ item.tags | default([], true) | join(', ') }}
 - **Grammar Fields**: {{ item.grammar_fields or item.fields | default({}, true) }}
 {% if item.source_paths %}
 - **IMAS Paths**: {{ item.source_paths | join(', ') }}

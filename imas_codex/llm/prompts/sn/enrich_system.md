@@ -159,18 +159,33 @@ explains *why* the link is relevant.
 If a related name does not flow naturally into the prose, OMIT it from
 `documentation` and place it in the structured `links` array only.
 
-**No-redundant-units rule.** When you reference *another* standard name via
-an inline link, do NOT inline that other quantity's units. The linked entry
-defines its own units; repeating them is noise.
+**No-inline-units rule.** The unit of *any* standard name is structured
+metadata — recorded as `unit` (DD-authoritative) and rendered as a
+`HAS_UNIT` edge on every entry page. Do NOT restate units in prose. This
+applies to **both** the entry's own quantity AND to any sibling referenced
+via inline link.
 
+- ❌ BAD: `The electron temperature (in eV) is the kinetic temperature ...`
 - ❌ BAD: `The fast neutral perpendicular pressure (in Pa) quantifies ...`
 - ❌ BAD: `[electron_temperature](name:electron_temperature) (in eV) is the kinetic ...`
+- ✅ GOOD: `The electron temperature is the kinetic temperature ...`
 - ✅ GOOD: `The fast neutral perpendicular pressure quantifies ...`
 - ✅ GOOD: `[electron_temperature](name:electron_temperature) is the kinetic ...`
 
-Units belong inline ONLY for *the* quantity this entry defines (in
-"Governing physics" equations, "Typical values" ranges, or first introduction
-of the entry's own quantity). Never quote units for a referenced sibling.
+**Narrow exceptions.** Units MAY appear inline only in these three contexts,
+because they carry numeric meaning the unit field cannot:
+
+1. **Numeric typical-value ranges** — e.g. `Typical values: 1-10 keV in the
+   plasma core, dropping to 10-100 eV in the SOL.`
+2. **Equation variable definitions** — e.g. `where $T_e$ is in eV and
+   $n_e$ is in m$^{-3}$.` (Define units explicitly so the equation is
+   dimensionally unambiguous.)
+3. **Unit-conversion statements** — e.g. `$1\;\text{eV} = 11605\;\text{K}$`
+   (DS-3 unit-conversion rule).
+
+Outside these three contexts, NEVER write `(in <unit>)` or `<value> <unit>`
+in prose. The unit panel renders the canonical unit at the top of each
+catalog page; repeating it is noise.
 
 ### PR-4 Calibration-parameter anti-speculation rule
 For SNs whose DD path indicates calibration data (e.g. `*/calibration/*`,

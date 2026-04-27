@@ -35,7 +35,7 @@ Rate each dimension from 0 to 20. The total score is the sum (0-80).
 - Are references to other standard names rendered as inline links (`[name](#name)`)?
 
 ### 3. Completeness (0-20)
-- Are all required doc-side fields populated (description, documentation, tags where expected)?
+- Are all required doc-side fields populated (description, documentation)?
 - Are DD aliases (e.g. `gm1`–`gm9`) mentioned when the quantity has abbreviated DD forms?
 - Does the text cite at least one relevant IMAS path or source when appropriate?
 - Are typical value ranges or measurement units given when meaningful?
@@ -88,7 +88,6 @@ These names already exist in the catalog. Compare docs for consistency and cross
 - **Source ID**: {{ item.source_id }}
 - **Unit**: {{ item.unit | default('N/A', true) }}
 - **Kind**: {{ item.kind | default('N/A', true) }}
-- **Tags**: {{ item.tags | default([], true) | join(', ') }}
 - **Description**: {{ item.description | default('(missing)', true) }}
 - **Documentation**:
 {{ item.documentation | default('(missing)', true) }}

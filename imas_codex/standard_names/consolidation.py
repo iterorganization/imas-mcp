@@ -80,7 +80,6 @@ def _merge_duplicates(group: list[dict]) -> dict:
     unit and kind, they are merged:
     - Keep the entry with the longest documentation
     - Union the dd_paths from all duplicates
-    - Union the tags
     - Keep highest confidence
     - Resolve physics_domain deterministically across sources
     """
@@ -99,12 +98,6 @@ def _merge_duplicates(group: list[dict]) -> dict:
         if c.get("source_id"):
             all_paths.add(c["source_id"])
     merged["source_paths"] = sorted(all_paths)
-
-    # Union tags
-    all_tags: set[str] = set()
-    for c in group:
-        all_tags.update(c.get("tags") or [])
-    merged["tags"] = sorted(all_tags)
 
     # Keep highest confidence
     merged["confidence"] = max(c.get("confidence", 0) for c in group)
@@ -152,7 +145,7 @@ def consolidate_candidates(
         candidates: All composed candidate dicts from all batches.
             Each dict has at minimum: id (standard_name), source_id,
             source_types, unit (may be None for dimensionless).
-            May also have: kind, tags, description, documentation, etc.
+            May also have: kind, description, documentation, etc.
         source_paths: Set of all source paths that were sent for composition.
             Used for coverage accounting. If None, coverage check is skipped.
         existing_registry: Map of standard_name -> existing StandardName dict

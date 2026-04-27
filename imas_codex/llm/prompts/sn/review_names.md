@@ -130,7 +130,6 @@ real defects, not phantom ones.
 - **Source ID**: {{ item.source_id }}
 - **Unit**: {{ item.unit | default('N/A', true) }} *(authoritative)*
 - **Kind**: {{ item.kind | default('N/A', true) }}
-- **Tags**: {{ item.tags | default([], true) | join(', ') }}
 - **Grammar Fields**: {{ item.grammar_fields or item.fields | default({}, true) }}
 {% if item.source_paths %}- **IMAS Paths**: {{ item.source_paths | join(', ') }}
 {% endif %}

@@ -114,13 +114,21 @@ class TestEnrichSystemSeeAlsoProhibition:
 
     def test_no_redundant_units_rule_present(self) -> None:
         raw = _load(self.PATH)
-        # When linking to another SN, units must NOT be quoted inline. The
-        # linked entry owns its units.
-        assert "No-redundant-units rule" in raw
-        # The rule should cite the canonical bad exemplar surfaced by the user.
+        normalized = re.sub(r"\s+", " ", raw)
+        # Units are structured metadata (HAS_UNIT edge); they MUST NOT appear
+        # in prose for either the entry's own quantity or any linked sibling.
+        assert "No-inline-units rule" in raw
+        # The rule must cite both the user-surfaced exemplar and the entry's
+        # own-quantity case.
         assert "fast neutral perpendicular pressure (in Pa)" in raw
-        # And state the rule clearly.
-        assert "do NOT inline that other quantity's units" in raw
+        assert "electron temperature (in eV)" in raw
+        # State the canonical principle (whitespace-tolerant — phrase may wrap).
+        assert "structured metadata" in normalized
+        assert "HAS_UNIT" in raw
+        # The three narrow exceptions must be spelled out.
+        assert "Numeric typical-value ranges" in raw
+        assert "Equation variable definitions" in raw
+        assert "Unit-conversion statements" in raw
 
 
 # ---------------------------------------------------------------------------

@@ -76,9 +76,6 @@ def build_compose_context() -> dict[str, Any]:
     # Field guidance for documentation generation (from ISN)
     ctx["field_guidance"] = isn["field_guidance"]
 
-    # Tag descriptions — primary + secondary (from ISN)
-    ctx["tag_descriptions"] = isn["tag_descriptions"]
-
     # Applicability rules (from ISN)
     ctx["applicability"] = isn["applicability"]
 

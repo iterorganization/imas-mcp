@@ -81,7 +81,7 @@ def estimate_enrich_batch_tokens(batch: dict[str, Any]) -> int:
     """Estimate total token count for an enrich batch dict.
 
     Enrich batches are plain dicts with an ``items`` list of SN dicts.
-    Each item carries ``description``, ``documentation``, ``tags``,
+    Each item carries ``description``, ``documentation``,
     ``links``, and contextualisation data that all end up in the prompt.
     """
     total = 0
@@ -106,7 +106,7 @@ def estimate_enrich_batch_tokens(batch: dict[str, Any]) -> int:
                 if isinstance(v, str):
                     total += estimate_tokens(v)
         # Tags / links are small but count them
-        for list_key in ("tags", "links", "source_paths"):
+        for list_key in ("links", "source_paths"):
             lst = item.get(list_key)
             if lst:
                 total += estimate_tokens(" ".join(str(x) for x in lst))

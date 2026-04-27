@@ -106,7 +106,6 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 ### `{{ ex.name }}`
 - **Description:** {{ ex.description }}
 - **Unit:** {{ ex.unit }}
-{% if ex.tags %}- **Tags:** {{ ex.tags | join(', ') if ex.tags is iterable and ex.tags is not string else ex.tags }}{% endif %}
 {% if ex.documentation %}- **Documentation (excerpt):** {{ ex.documentation[:500] }}{% endif %}
 
 {% endfor %}
@@ -206,7 +205,6 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 - **⟳ Previous generation:** `{{ item.previous_name.name }}` ({{ item.previous_name.pipeline_status or 'drafted' }}{% if item.previous_name.reviewer_score %}, score={{ item.previous_name.reviewer_score | round(2) }}{% endif %}{% if item.previous_name.review_tier %}, {{ item.previous_name.review_tier }}{% endif %})
 {% if item.previous_name.description %}- **Prior description:** {{ item.previous_name.description }}{% endif %}
 {% if item.previous_name.documentation %}- **Prior documentation:** {{ item.previous_name.documentation }}{% endif %}
-{% if item.previous_name.tags %}- **Prior tags:** {{ item.previous_name.tags | join(', ') if item.previous_name.tags is iterable and item.previous_name.tags is not string else item.previous_name.tags }}{% endif %}
 {% if item.previous_name.links %}- **Prior links:** {{ item.previous_name.links | join(', ') if item.previous_name.links is iterable and item.previous_name.links is not string else item.previous_name.links }}{% endif %}
 {% if item.previous_name.validation_issues %}- **⚠️ Validation issues from prior run:** {{ item.previous_name.validation_issues | join('; ') if item.previous_name.validation_issues is iterable and item.previous_name.validation_issues is not string else item.previous_name.validation_issues }}{% endif %}
 {% if item.previous_name.linked_dd_paths %}- **Other DD paths sharing this name:** These paths were also mapped to `{{ item.previous_name.name }}` — your generated name should be appropriate for all of them:

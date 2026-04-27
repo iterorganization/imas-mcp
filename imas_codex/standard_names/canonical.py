@@ -17,7 +17,7 @@ from typing import Any
 
 #: List-valued fields that should be sorted alphabetically.
 #: ``links`` is excluded — link order is editorial.
-SORTED_LIST_FIELDS: frozenset[str] = frozenset({"tags", "deprecates", "constraints"})
+SORTED_LIST_FIELDS: frozenset[str] = frozenset({"deprecates", "constraints"})
 
 #: Fields that default to ``None`` when absent.
 NULLABLE_SCALAR_FIELDS: frozenset[str] = frozenset(
@@ -31,7 +31,7 @@ NULLABLE_SCALAR_FIELDS: frozenset[str] = frozenset(
 )
 
 #: Fields that default to ``[]`` when absent.
-LIST_FIELDS: frozenset[str] = frozenset({"tags", "links", "constraints"})
+LIST_FIELDS: frozenset[str] = frozenset({"links", "constraints"})
 
 #: Multiline string fields that get whitespace-normalised.
 MULTILINE_FIELDS: frozenset[str] = frozenset({"description", "documentation"})
@@ -51,7 +51,6 @@ CANONICAL_KEY_ORDER: tuple[str, ...] = (
     "cocos_transformation_type",
     "cocos",
     "physics_domain",
-    "tags",
     "links",
     "validity_domain",
     "constraints",
@@ -119,7 +118,7 @@ def canonicalise_entry(entry: dict[str, Any]) -> dict[str, Any]:
     3. Multiline strings (``description``, ``documentation``):
        strip, collapse ``\\r\\n`` → ``\\n``, strip trailing newlines.
     4. All string values: ``.strip()``.
-    5. Sorted list fields (``tags``, ``deprecates``, ``constraints``):
+    5. Sorted list fields (``deprecates``, ``constraints``):
        sorted alphabetically in-place.
     6. Remove keys with ``None`` values for optional fields
        (keeps output YAML clean).

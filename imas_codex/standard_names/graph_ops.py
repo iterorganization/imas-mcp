@@ -199,7 +199,7 @@ def get_source_name_mapping(*, rich: bool = False) -> dict[str, dict]:
 
     Args:
         rich: If True, return full SN metadata including documentation,
-            tags, links, and all linked DD paths. Used by --paths mode.
+            links, and all linked DD paths. Used by --paths mode.
 
     Returns:
         Dict mapping source entity ID to dict with keys:
@@ -245,7 +245,6 @@ def _get_rich_source_name_mapping() -> dict[str, dict]:
                    sn.description AS description,
                    sn.documentation AS documentation,
                    sn.kind AS kind,
-                   sn.tags AS tags,
                    sn.links AS links,
                    sn.pipeline_status AS pipeline_status,
                    sn.reviewer_score_name AS reviewer_score,
@@ -263,7 +262,6 @@ def _get_rich_source_name_mapping() -> dict[str, dict]:
                     "description": r.get("description"),
                     "documentation": r.get("documentation"),
                     "kind": r.get("kind"),
-                    "tags": r.get("tags"),
                     "links": r.get("links"),
                     "pipeline_status": r.get("pipeline_status"),
                     "reviewer_score": r.get("reviewer_score"),
@@ -790,7 +788,7 @@ def write_standard_names(
       - ``source_id``: the originating path / signal ID
 
     Optional fields: ``unit``, ``description``,
-    ``documentation``, ``kind``, ``tags``, ``links``, ``source_paths``,
+    ``documentation``, ``kind``, ``links``, ``source_paths``,
     ``validity_domain``, ``constraints``, ``model``, ``pipeline_status``,
     ``generated_at``, ``confidence``,
     ``review_tier``,
@@ -880,7 +878,6 @@ def write_standard_names(
                 sn.description = coalesce(b.description, sn.description),
                 sn.documentation = coalesce(b.documentation, sn.documentation),
                 sn.kind = coalesce(b.kind, sn.kind),
-                sn.tags = coalesce(b.tags, sn.tags),
                 sn.links = coalesce(b.links, sn.links),
                 sn.source_paths = coalesce(b.source_paths, sn.source_paths),
                 sn.validity_domain = coalesce(b.validity_domain, sn.validity_domain),
@@ -938,7 +935,6 @@ def write_standard_names(
                     "description": n.get("description"),
                     "documentation": n.get("documentation"),
                     "kind": n.get("kind"),
-                    "tags": n.get("tags") or None,
                     "links": n.get("links") or None,
                     "source_paths": n.get("source_paths") or None,
                     "validity_domain": n.get("validity_domain"),
@@ -1807,14 +1803,14 @@ def persist_enriched_batch(
     Called by the enrich pipeline PERSIST worker after validation and
     embedding.  Each item dict must have at minimum ``id`` and
     ``enriched_description``.  Optional: ``enriched_documentation``,
-    ``enriched_links``, ``enriched_tags``, ``embedding``, ``llm_model``,
+    ``enriched_links``, ``embedding``, ``llm_model``,
     ``llm_cost``, ``enrich_tokens``, ``validation_status``,
     ``validation_issues``.
 
     The Cypher MERGE preserves existing values for identity fields
     (``unit``, ``physics_domain``, ``cocos``, ``cocos_transformation_type``,
     ``kind``, ``source_paths``) via ``coalesce(b.field, sn.field)``
-    semantics.  Tags are extended (union, deduplicated).
+    semantics.
 
     After node updates, REFERENCES relationships are created for each
     link in ``enriched_links`` whose target StandardName exists.
@@ -1852,18 +1848,12 @@ def persist_enriched_batch(
     # --- Build UNWIND batch with safe types ---
     batch = []
     for item in items:
-        enriched_tags = list(item.get("enriched_tags") or [])
-        existing_tags = list(item.get("tags") or [])
-        # Union of existing + enriched tags (deduplicated, order-preserved)
-        merged_tags = list(dict.fromkeys(existing_tags + enriched_tags)) or None
-
         batch.append(
             {
                 "id": item["id"],
                 "description": item.get("enriched_description"),
                 "documentation": item.get("enriched_documentation"),
                 "embedding": item.get("embedding"),
-                "tags": merged_tags,
                 "pipeline_status": "enriched",
                 "enriched_at": now,
                 "llm_model": item.get("llm_model") or item.get("enrich_model"),
@@ -1888,7 +1878,6 @@ def persist_enriched_batch(
                 sn.embedding = coalesce(b.embedding, sn.embedding),
                 sn.embedded_at = CASE WHEN b.embedding IS NOT NULL
                                       THEN datetime() ELSE sn.embedded_at END,
-                sn.tags = coalesce(b.tags, sn.tags),
                 sn.pipeline_status = b.pipeline_status,
                 sn.enriched_at = datetime(b.enriched_at),
                 sn.llm_model = coalesce(b.llm_model, sn.llm_model),
@@ -2104,7 +2093,7 @@ def claim_names_for_validation(limit: int = 50) -> tuple[str, list[dict[str, Any
             OPTIONAL MATCH (sn)<-[:HAS_STANDARD_NAME]-(src)
             RETURN sn.id AS id, sn.description AS description,
                    sn.documentation AS documentation, sn.kind AS kind,
-                   sn.unit AS unit, sn.tags AS tags, sn.links AS links,
+                   sn.unit AS unit, sn.links AS links,
                    sn.source_paths AS source_paths,
                    sn.object AS object,
                    sn.confidence AS confidence,
@@ -2287,7 +2276,7 @@ def get_validated_names(
             WITH sn, collect(DISTINCT src.id) AS source_ids
             RETURN sn.id AS id, sn.description AS description,
                    sn.documentation AS documentation, sn.kind AS kind,
-                   sn.unit AS unit, sn.tags AS tags, sn.links AS links,
+                   sn.unit AS unit, sn.links AS links,
                    sn.source_paths AS source_paths, sn.confidence AS confidence,
                    source_ids
             LIMIT $limit
@@ -2346,7 +2335,7 @@ def get_validated_standard_names(
     Returns
     -------
     list of dicts with keys: name, description, documentation, kind,
-    unit, tags, links, dd_paths, constraints, validity_domain,
+    unit, links, dd_paths, constraints, validity_domain,
     confidence, model, source, source_path, ids_name, source_ids_names.
     """
     with GraphClient() as gc:
@@ -2385,7 +2374,6 @@ def get_validated_standard_names(
                    sn.documentation AS documentation,
                    sn.kind AS kind,
                    coalesce(u.id, sn.unit) AS unit,
-                   sn.tags AS tags,
                    sn.links AS links,
                    sn.source_paths AS source_paths,
                    sn.constraints AS constraints,
@@ -3057,7 +3045,7 @@ def get_enrichment_candidates(
 ) -> list[dict[str, Any]]:
     """Get StandardName nodes that need documentation enrichment.
 
-    Returns dicts with: id, description, documentation, kind, unit, tags,
+    Returns dicts with: id, description, documentation, kind, unit,
     physics_domain, pipeline_status, plus all linked DD paths aggregated with
     their documentation.
     """
@@ -3103,7 +3091,6 @@ def get_enrichment_candidates(
                    sn.documentation AS documentation,
                    sn.kind AS kind,
                    coalesce(u.id, sn.unit) AS unit,
-                   sn.tags AS tags,
                    sn.links AS links,
                    sn.validity_domain AS validity_domain,
                    sn.constraints AS constraints,
@@ -3135,7 +3122,7 @@ def write_enrichment_results(
 ) -> int:
     """Write enrichment results back to graph.
 
-    Only updates doc fields: description, documentation, tags, links,
+    Only updates doc fields: description, documentation, links,
     validity_domain, constraints. Clears review_input_hash to invalidate
     stale reviews.
 
@@ -3171,7 +3158,6 @@ def write_enrichment_results(
             MATCH (sn:StandardName {id: b.id})
             SET sn.description = b.description,
                 sn.documentation = b.documentation,
-                sn.tags = b.tags,
                 sn.links = b.links,
                 sn.validity_domain = b.validity_domain,
                 sn.constraints = b.constraints,
@@ -3184,7 +3170,6 @@ def write_enrichment_results(
                     "id": r["id"],
                     "description": r.get("description") or "",
                     "documentation": r.get("documentation") or "",
-                    "tags": r.get("tags") or None,
                     "links": r.get("links") or None,
                     "validity_domain": r.get("validity_domain"),
                     "constraints": r.get("constraints") or None,
