@@ -1195,6 +1195,35 @@ _BRITISH_RE = re.compile(
 # Statuses that indicate an existing valid link target.
 _VALID_LINK_STATUSES = frozenset({"named", "enriched", "published", "accepted"})
 
+# Markdown link to a standard-name: [anchor text](name:target_name)
+_PROSE_NAME_LINK_RE = re.compile(r"\[([^\]]+)\]\(name:([a-z][a-z0-9_]*)\)")
+
+
+def _extract_prose_link_targets(text: str | None) -> list[str]:
+    """Return the list of ``name:foo`` link targets found in markdown prose."""
+    if not text:
+        return []
+    return [m.group(2) for m in _PROSE_NAME_LINK_RE.finditer(text)]
+
+
+def _strip_broken_prose_links(text: str | None, valid: set[str]) -> str | None:
+    """Rewrite ``[anchor](name:foo)`` → ``anchor`` when ``foo`` is not in *valid*.
+
+    Preserves anchor text so the prose stays grammatical; only the broken
+    hyperlink is removed.  Idempotent: clean text is returned unchanged.
+    Returns ``None`` if input is ``None``.
+    """
+    if not text:
+        return text
+
+    def _sub(m: re.Match[str]) -> str:
+        anchor, target = m.group(1), m.group(2)
+        if target in valid:
+            return m.group(0)
+        return anchor
+
+    return _PROSE_NAME_LINK_RE.sub(_sub, text)
+
 
 def _check_british_spelling(text: str | None) -> list[str]:
     """Return warning strings for British spellings found in *text*."""
@@ -1239,17 +1268,37 @@ def _check_links_batch(
     StandardName nodes with valid pipeline_status are also valid.
     Everything else gets a ``link_not_found`` warning.
 
+    Inspects BOTH the structured ``enriched_links`` array AND any
+    inline ``[text](name:foo)`` markdown links present in the prose
+    (description / documentation).  Broken prose links are also
+    stripped from the prose in-place so the persisted text never
+    renders with dead hyperlinks (anchor text is preserved).
+
+    As a side-effect, for each item in *items* attaches:
+        item["_valid_prose_link_targets"]: set[str] of targets that
+            were validated and kept in the prose.
+
     Returns ``{item_id: [issue_strings]}``.
     """
-    # Collect all unique link targets across the batch
+    # Collect all unique link targets (structured + prose) across the batch
     all_links: set[str] = set()
-    per_item: dict[str, list[str]] = {}
+    structured_per_item: dict[str, list[str]] = {}
+    prose_per_item: dict[str, set[str]] = {}
     for item in items:
-        links = item.get("enriched_links") or []
-        per_item[item["id"]] = list(links)
-        for link in links:
+        sid = item["id"]
+        struct_links = item.get("enriched_links") or []
+        structured_per_item[sid] = list(struct_links)
+        for link in struct_links:
             if link not in batch_ids:
                 all_links.add(link)
+        # Walk both prose fields
+        prose_targets: set[str] = set()
+        for field in ("enriched_description", "enriched_documentation"):
+            for tgt in _extract_prose_link_targets(item.get(field)):
+                prose_targets.add(tgt)
+                if tgt not in batch_ids:
+                    all_links.add(f"name:{tgt}")
+        prose_per_item[sid] = prose_targets
 
     # Query graph for existing targets (single batch query)
     existing_links: set[str] = set()
@@ -1274,15 +1323,35 @@ def _check_links_batch(
                 "Graph query for link targets failed — all unknown links will warn"
             )
 
-    # Build per-item issues
+    # Build per-item issues + sanitize prose
     result: dict[str, list[str]] = {}
     for item in items:
         item_id = item["id"]
         issues: list[str] = []
-        for link in per_item.get(item_id, []):
+
+        # Structured links (existing behaviour)
+        for link in structured_per_item.get(item_id, []):
             if link in batch_ids or link in existing_links:
                 continue
             issues.append(f"link_not_found:{link}")
+
+        # Prose links: build valid set then strip broken ones from prose.
+        prose_targets = prose_per_item.get(item_id, set())
+        valid_prose: set[str] = set()
+        for tgt in prose_targets:
+            if tgt in batch_ids or f"name:{tgt}" in existing_links:
+                valid_prose.add(tgt)
+            else:
+                issues.append(f"link_not_found:name:{tgt}")
+        item["_valid_prose_link_targets"] = valid_prose
+
+        # Rewrite prose in-place to drop broken hyperlinks (preserve anchor).
+        if prose_targets and len(valid_prose) != len(prose_targets):
+            for field in ("enriched_description", "enriched_documentation"):
+                cleaned = _strip_broken_prose_links(item.get(field), valid_prose)
+                if cleaned is not None:
+                    item[field] = cleaned
+
         result[item_id] = issues
 
     return result
