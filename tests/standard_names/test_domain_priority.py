@@ -124,3 +124,74 @@ def test_tied_importance_breaks_alphabetical():
         domain_priority.pick_primary_domain(["magnetics", "equilibrium"])
         == "equilibrium"
     )
+
+
+# ---------------------------------------------------------------------------
+# domain_key / domain_list helpers (multivalued physics_domain coercion)
+# ---------------------------------------------------------------------------
+
+
+def test_domain_key_none_returns_fallback():
+    assert domain_priority.domain_key(None) == "unknown"
+    assert domain_priority.domain_key(None, fallback="x") == "x"
+
+
+def test_domain_key_empty_string_returns_fallback():
+    assert domain_priority.domain_key("") == "unknown"
+    assert domain_priority.domain_key("   ") == "unknown"
+
+
+def test_domain_key_string_returns_trimmed():
+    assert domain_priority.domain_key("equilibrium") == "equilibrium"
+    assert domain_priority.domain_key("  transport  ") == "transport"
+
+
+def test_domain_key_list_picks_priority(_reset_cache=None):
+    rows = [
+        {"domain": "equilibrium", "importance": 100},
+        {"domain": "transport", "importance": 10},
+    ]
+    with patch.object(
+        domain_priority, "GraphClient", return_value=_mock_graph_client(rows)
+    ):
+        # Higher-priority domain wins regardless of input order.
+        assert domain_priority.domain_key(["transport", "equilibrium"]) == "equilibrium"
+
+
+def test_domain_key_list_unranked_alphabetical_fallback():
+    """When priority index is empty, lists fall back to alphabetical-first."""
+    with patch.object(
+        domain_priority, "GraphClient", return_value=_mock_graph_client([])
+    ):
+        assert (
+            domain_priority.domain_key(["transport", "equilibrium", "magnetics"])
+            == "equilibrium"
+        )
+
+
+def test_domain_key_list_with_blanks_returns_fallback():
+    assert domain_priority.domain_key(["", None, "  "]) == "unknown"
+
+
+def test_domain_key_unexpected_type_returns_fallback():
+    assert domain_priority.domain_key(42) == "unknown"
+    assert domain_priority.domain_key({"x": 1}) == "unknown"
+
+
+def test_domain_list_none_empty():
+    assert domain_priority.domain_list(None) == []
+    assert domain_priority.domain_list("") == []
+    assert domain_priority.domain_list("   ") == []
+
+
+def test_domain_list_string_promoted_to_list():
+    assert domain_priority.domain_list("transport") == ["transport"]
+    assert domain_priority.domain_list("  equilibrium  ") == ["equilibrium"]
+
+
+def test_domain_list_filters_blanks():
+    assert domain_priority.domain_list(["a", "", "b", None, " ", "c"]) == [
+        "a",
+        "b",
+        "c",
+    ]

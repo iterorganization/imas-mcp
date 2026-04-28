@@ -331,10 +331,13 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
         if ids_eligible is not None and nid not in ids_eligible:
             continue
 
-        # --domain filter
+        # --domain filter (physics_domain is multivalued: list[str])
         if state.domain_filter:
-            domain = name.get("physics_domain") or ""
-            if domain.lower() != state.domain_filter.lower():
+            domains = name.get("physics_domain") or []
+            if isinstance(domains, str):
+                domains = [domains]
+            target = state.domain_filter.lower()
+            if not any(d.lower() == target for d in domains if d):
                 continue
 
         # --target docs gate: skip names without prior name review

@@ -13,6 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from imas_codex.standard_names.domain_priority import domain_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -295,7 +297,7 @@ def run_lexical_lint(names: list[dict[str, Any]]) -> list[LintFinding]:
                 )
 
         # 2. Collect position forms per physics_domain for cross-name analysis
-        physics_domain = name.get("physics_domain") or ""
+        physics_domain = domain_key(name.get("physics_domain"), fallback="")
         position = name.get("position") or ""
         if physics_domain and position:
             domain_positions[physics_domain].add(position)
@@ -485,7 +487,7 @@ def run_duplicate_detection(names: list[dict[str, Any]]) -> list[DuplicateCompon
         kind = name.get("kind") or ""
 
         # Pass 1: (unit, kind, physics_domain)
-        physics_domain = name.get("physics_domain") or ""
+        physics_domain = domain_key(name.get("physics_domain"), fallback="")
         if unit or kind or physics_domain:
             key1 = f"ukd:{unit}|{kind}|{physics_domain}"
             blocks[key1].append(name)

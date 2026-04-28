@@ -15,6 +15,8 @@ import logging
 from collections import defaultdict
 from typing import Any
 
+from imas_codex.standard_names.domain_priority import domain_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -191,7 +193,7 @@ def group_into_review_batches(
         if cluster:
             group_key = f"{cluster['cluster_id']}/{unit}"
         else:
-            domain = name.get("physics_domain") or "unknown"
+            domain = domain_key(name.get("physics_domain"))
             group_key = f"unclustered/{domain}/{unit}"
 
         groups[group_key].append(name)

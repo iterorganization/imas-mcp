@@ -84,3 +84,43 @@ def pick_primary_domain(domains: list[str]) -> str:
 def reset_cache() -> None:
     """Clear the cached priority index. Used by tests."""
     get_domain_priority_index.cache_clear()
+
+
+def domain_key(value, fallback: str = "unknown") -> str:
+    """Coerce a possibly-list ``physics_domain`` value to a single grouping key.
+
+    Used by consolidation/audit/grouping code that pre-dates the
+    multivalued ``physics_domain`` schema. Returns ``fallback`` for
+    None/empty inputs. For lists, picks the highest-priority domain via
+    :func:`pick_primary_domain`, falling back to alphabetical-first
+    when the priority index is unavailable.
+    """
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        s = value.strip()
+        return s if s else fallback
+    if isinstance(value, list | tuple):
+        valid = [d.strip() for d in value if isinstance(d, str) and d.strip()]
+        if not valid:
+            return fallback
+        try:
+            return pick_primary_domain(valid)
+        except Exception:  # pragma: no cover — defensive
+            return sorted(valid)[0]
+    return fallback
+
+
+def domain_list(value) -> list[str]:
+    """Coerce a possibly-scalar ``physics_domain`` value to a list of strings.
+
+    Returns ``[]`` for None/empty. Trims whitespace and drops empty items.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        s = value.strip()
+        return [s] if s else []
+    if isinstance(value, list | tuple):
+        return [d.strip() for d in value if isinstance(d, str) and d.strip()]
+    return []

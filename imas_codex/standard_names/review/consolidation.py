@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from imas_codex.standard_names.domain_priority import domain_key
+
 if TYPE_CHECKING:
     from imas_codex.standard_names.review.audits import DuplicateComponent
     from imas_codex.standard_names.review.state import StandardNameReviewState
@@ -187,7 +189,7 @@ def detect_convention_drift(reviewed_names: list[dict]) -> list[DriftWarning]:
     # Group by physics_domain
     by_domain: dict[str, list[dict]] = {}
     for name in reviewed_names:
-        domain: str = (name.get("physics_domain") or "unknown").strip()
+        domain: str = domain_key(name.get("physics_domain"))
         by_domain.setdefault(domain, []).append(name)
 
     warnings: list[DriftWarning] = []
@@ -318,9 +320,8 @@ def detect_score_outliers(reviewed_names: list[dict]) -> list[OutlierReport]:
     # Group by physics_domain (or cluster as fallback)
     by_group: dict[str, list[dict]] = {}
     for name in reviewed_names:
-        group_key: str = (
-            name.get("physics_domain") or name.get("cluster") or "unknown"
-        ).strip()
+        pd_key = domain_key(name.get("physics_domain"), fallback="")
+        group_key: str = pd_key or (name.get("cluster") or "unknown").strip()
         by_group.setdefault(group_key, []).append(name)
 
     outliers: list[OutlierReport] = []
