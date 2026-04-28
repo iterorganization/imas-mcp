@@ -4990,6 +4990,9 @@ def claim_compose_seed_and_expand(
                 )
                 expanded = True
             elif physics_domain is not None and unit is not None:
+                # IMASNode.physics_domain is stored as a scalar String (not a
+                # list), so use = rather than the Cypher IN operator (which
+                # requires a list and throws a head()-TypeError on a String).
                 gc.query(
                     f"""
                     MATCH (sns:StandardNameSource)
@@ -4997,7 +5000,7 @@ def claim_compose_seed_and_expand(
                       AND sns.claimed_at IS NULL
                       {facility_where}
                     MATCH (sns)-[:FROM_DD_PATH]->(imas:IMASNode)
-                    WHERE $fallback_domain IN imas.physics_domain
+                    WHERE imas.physics_domain = $fallback_domain
                     MATCH (imas)-[:HAS_UNIT]->(:Unit {{id: $unit}})
                     WITH sns LIMIT $expand_limit
                     SET sns.claimed_at = datetime(), sns.claim_token = $token

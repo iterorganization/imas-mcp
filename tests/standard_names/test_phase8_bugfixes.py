@@ -248,6 +248,48 @@ class TestClaimReturnScalarPhysicsDomain:
             "Seed Cypher still contains head(coalesce — BUG-1 not fixed"
         )
 
+    def test_claim_compose_expand_uses_equality_not_in(self) -> None:
+        """Fallback expand path uses `=` not `IN` for IMASNode.physics_domain.
+
+        IMASNode.physics_domain is stored as a scalar String in the graph.
+        Cypher's IN operator requires a list and calls head() internally,
+        raising: 'Expected String("equilibrium") to be a list'.
+        The fix changes `$fallback_domain IN imas.physics_domain`
+        to `imas.physics_domain = $fallback_domain`.
+        """
+        from imas_codex.standard_names.graph_ops import claim_compose_seed_and_expand
+
+        gc = _mock_gc()
+        gc.query = MagicMock(
+            side_effect=[
+                # seed — cluster_id=None triggers the fallback expand path
+                [
+                    {
+                        "_cluster_id": None,
+                        "_unit": "eV",
+                        "_physics_domain": "equilibrium",
+                        "_batch_key": "equilibrium",
+                    }
+                ],
+                # expand query result (empty, but the query must be issued)
+                [],
+                # read-back by token
+                [],
+            ]
+        )
+        with _patch_gc(gc):
+            claim_compose_seed_and_expand(batch_size=2)
+
+        # Find the expand Cypher call (2nd query call)
+        assert gc.query.call_count >= 2, "expand query was never issued"
+        expand_call = gc.query.call_args_list[1].args[0]
+        assert "IN imas.physics_domain" not in expand_call, (
+            "Expand Cypher still uses IN operator on scalar IMASNode.physics_domain"
+        )
+        assert "imas.physics_domain = $fallback_domain" in expand_call, (
+            "Expand Cypher does not use scalar = comparison for physics_domain"
+        )
+
 
 # ---------------------------------------------------------------------------
 # BUG-2: _scalar_domain normalizer handles mixed types
