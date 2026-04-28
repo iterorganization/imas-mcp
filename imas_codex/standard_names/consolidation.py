@@ -46,31 +46,29 @@ class ConsolidationResult:
 # =============================================================================
 
 
-def _resolve_physics_domain(domains: list[str | None]) -> str | None:
-    """Deterministically resolve physics_domain when sources disagree.
+def _resolve_physics_domains(domain_lists: list[list[str] | str | None]) -> list[str]:
+    """Merge physics_domain lists from all candidates in a merge group.
 
-    Resolution rules:
-    - All sources agree → use that domain
-    - Sources disagree → most specific wins (``general`` < any specific domain)
-    - Tie between equally specific → alphabetically first
+    Collects all unique non-empty domains across all sources.
+    Returns a sorted list (deterministic order).
 
     Args:
-        domains: physics_domain values from all candidates in a merge group.
+        domain_lists: physics_domain values from all candidates in a merge group.
+            Each may be a list, a scalar string, or None.
 
     Returns:
-        Resolved domain string or None if all are empty.
+        Sorted list of unique domains (may be empty).
     """
-    # Filter out None / empty
-    valid = sorted({d for d in domains if d})
-    if not valid:
-        return None
-    if len(valid) == 1:
-        return valid[0]
-    # "general" is least specific — prefer any specific domain over it
-    specific = [d for d in valid if d != "general"]
-    if specific:
-        return sorted(specific)[0]
-    return "general"
+    all_domains: set[str] = set()
+    for item in domain_lists:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            if item:
+                all_domains.add(item)
+        else:
+            all_domains.update(d for d in item if d)
+    return sorted(all_domains)
 
 
 def _merge_duplicates(group: list[dict]) -> dict:
@@ -99,11 +97,23 @@ def _merge_duplicates(group: list[dict]) -> dict:
             all_paths.add(c["source_id"])
     merged["source_paths"] = sorted(all_paths)
 
+    # Union tags
+    all_tags: set[str] = set()
+    for c in group:
+        all_tags.update(c.get("tags") or [])
+    merged["tags"] = sorted(all_tags)
+
+    # Union source_types
+    all_source_types: set[str] = set()
+    for c in group:
+        all_source_types.update(c.get("source_types") or [])
+    merged["source_types"] = sorted(all_source_types)
+
     # Keep highest confidence
     merged["confidence"] = max(c.get("confidence", 0) for c in group)
 
-    # Resolve physics_domain across sources
-    merged["physics_domain"] = _resolve_physics_domain(
+    # Resolve physics_domain across sources (merge all domains)
+    merged["physics_domain"] = _resolve_physics_domains(
         [c.get("physics_domain") for c in group]
     )
 

@@ -148,7 +148,11 @@ def mine_promotion_candidates(
         WITH sn.`{prop}` AS token,
              sn.id AS name,
              sn.review_mean_score AS score,
-             coalesce(sn.physics_domain, 'unknown') AS domain
+             CASE WHEN sn.physics_domain IS NOT NULL AND size(sn.physics_domain) > 0
+                  THEN sn.physics_domain
+                  ELSE ['unknown'] END AS pd_list
+        UNWIND pd_list AS domain
+        WITH token, name, score, domain
         WITH token,
              collect(DISTINCT name) AS names,
              min(score) AS min_score,

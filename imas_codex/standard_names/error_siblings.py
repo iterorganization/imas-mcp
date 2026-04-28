@@ -145,7 +145,7 @@ def mint_error_siblings(
     *,
     error_node_ids: list[str],
     unit: str | None,
-    physics_domain: str | None,
+    physics_domain: list[str] | None,
     cocos_type: str | None,
     cocos_version: int | None,
     dd_version: str | None,

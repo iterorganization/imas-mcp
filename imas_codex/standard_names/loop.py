@@ -97,7 +97,8 @@ def _existing_domain_targets(
                sn.pipeline_status IN ['named', 'drafted']
             OR sn.reviewer_score_name IS NULL
           )
-        RETURN sn.physics_domain AS domain, count(*) AS remaining
+        UNWIND sn.physics_domain AS domain
+        RETURN domain, count(*) AS remaining
         ORDER BY remaining DESC
     """
     with GraphClient() as gc:

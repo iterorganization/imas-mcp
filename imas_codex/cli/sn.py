@@ -966,7 +966,7 @@ def sn_run(
             ]
             params: dict[str, Any] = {}
             if domain_filter:
-                where_clauses.append("sn.physics_domain = $domain")
+                where_clauses.append("$domain IN sn.physics_domain")
                 params["domain"] = domain_filter
             if source == "dd":
                 where_clauses.append(
@@ -3184,7 +3184,7 @@ def sn_themes(
             where_clauses: list[str] = ["r.comments IS NOT NULL"]
             params: dict[str, Any] = {"limit": limit}
             if domain:
-                where_clauses.append("sn.physics_domain = $domain")
+                where_clauses.append("$domain IN sn.physics_domain")
                 params["domain"] = domain
             if since:
                 where_clauses.append("r.reviewed_at >= $since")

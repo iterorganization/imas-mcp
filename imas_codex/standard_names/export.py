@@ -145,7 +145,7 @@ def _fetch_candidates(
     params: dict[str, Any] = {}
 
     if domain:
-        cypher += " AND sn.physics_domain = $domain"
+        cypher += " AND $domain IN sn.physics_domain"
         params["domain"] = domain
 
     cypher += """
@@ -606,7 +606,7 @@ def _fetch_ordering_edges_for_domain(
     arg_rows = gc.query(
         """
         MATCH (s:StandardName)-[e:HAS_ARGUMENT]->(t:StandardName)
-        WHERE s.physics_domain = $domain AND t.physics_domain = $domain
+        WHERE $domain IN s.physics_domain AND $domain IN t.physics_domain
         RETURN s.name AS src, t.name AS tgt
         """,
         domain=domain,
@@ -615,7 +615,7 @@ def _fetch_ordering_edges_for_domain(
     err_rows = gc.query(
         """
         MATCH (s:StandardName)-[e:HAS_ERROR]->(t:StandardName)
-        WHERE s.physics_domain = $domain AND t.physics_domain = $domain
+        WHERE $domain IN s.physics_domain AND $domain IN t.physics_domain
         RETURN s.name AS src, t.name AS tgt
         """,
         domain=domain,
@@ -633,8 +633,8 @@ def _fetch_ordering_edges_for_domain(
     # Nodes whose HAS_ARGUMENT target is outside the domain
     cross_arg_rows = gc.query(
         """
-        MATCH (s:StandardName {physics_domain: $domain})-[:HAS_ARGUMENT]->(t:StandardName)
-        WHERE t.physics_domain <> $domain
+        MATCH (s:StandardName)-[:HAS_ARGUMENT]->(t:StandardName)
+        WHERE $domain IN s.physics_domain AND NOT ($domain IN t.physics_domain)
         RETURN DISTINCT s.name AS name
         """,
         domain=domain,
@@ -642,8 +642,8 @@ def _fetch_ordering_edges_for_domain(
     # Nodes that are HAS_ERROR targets from a node outside the domain
     cross_err_rows = gc.query(
         """
-        MATCH (s:StandardName)-[:HAS_ERROR]->(t:StandardName {physics_domain: $domain})
-        WHERE s.physics_domain <> $domain
+        MATCH (s:StandardName)-[:HAS_ERROR]->(t:StandardName)
+        WHERE $domain IN t.physics_domain AND NOT ($domain IN s.physics_domain)
         RETURN DISTINCT t.name AS name
         """,
         domain=domain,
@@ -946,10 +946,18 @@ def run_export(
             for pf in _PROVENANCE_FIELDS:
                 entry_dict.pop(pf, None)
 
-            # Determine domain
-            entry_domain = cand.get("physics_domain") or "unscoped"
-            if not entry_domain:
-                entry_domain = "unscoped"
+            # Determine domain (multi-valued list → primary = alphabetically first)
+            physics_domain_list = cand.get("physics_domain") or []
+            if isinstance(physics_domain_list, str):
+                physics_domain_list = [physics_domain_list]
+            primary = (
+                sorted(physics_domain_list)[0] if physics_domain_list else "unscoped"
+            )
+
+            # Write the full list into the YAML body
+            entry_dict["physics_domain"] = (
+                sorted(physics_domain_list) if physics_domain_list else []
+            )
 
             # Validate against ISN model (best-effort)
             validated = _validate_entry(entry_dict)
@@ -971,7 +979,7 @@ def run_export(
                 if sources:
                     entry_dict["sources"] = sources
 
-            domain_entries[entry_domain].append(entry_dict)
+            domain_entries[primary].append(entry_dict)
             exported_names.append(cand["id"])
 
         # ── 5b. Order entries per domain and write files ────────

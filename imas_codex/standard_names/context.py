@@ -234,7 +234,7 @@ def build_domain_vocabulary_preseed(domain: str | None) -> str:
             rows = gc.query(
                 """
                 MATCH (sn:StandardName)
-                WHERE sn.physics_domain = $domain
+                WHERE $domain IN sn.physics_domain
                   AND sn.pipeline_status IN ['drafted', 'published', 'accepted']
                   AND sn.validation_status = 'valid'
                 RETURN sn.id AS name,

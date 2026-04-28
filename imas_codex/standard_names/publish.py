@@ -389,7 +389,8 @@ def _fetch_expected_domains() -> set[str] | None:
                 """
                 MATCH (sn:StandardName)
                 WHERE sn.pipeline_status IN ['published', 'accepted', 'reviewed', 'enriched']
-                RETURN DISTINCT sn.physics_domain AS domain
+                UNWIND sn.physics_domain AS domain
+                RETURN DISTINCT domain
                 """
             )
             return {r["domain"] for r in (rows or []) if r.get("domain")}

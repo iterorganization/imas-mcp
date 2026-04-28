@@ -160,7 +160,7 @@ def extract_reviewer_themes(
             rows = gc.query(
                 f"""
                 MATCH (sn:StandardName)
-                WHERE sn.physics_domain = $domain
+                WHERE $domain IN sn.physics_domain
                   AND sn.{comments_field} IS NOT NULL
                 RETURN sn.{comments_field} AS comments
                 LIMIT $limit

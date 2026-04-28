@@ -31,6 +31,20 @@ def _ensure_json(value: Any) -> str | None:
     return json.dumps(value)
 
 
+def _ensure_list(value: Any) -> list[str]:
+    """Coerce *value* to a list of strings (for multi-valued fields like physics_domain).
+
+    - ``None`` / empty string → ``[]``
+    - scalar string → ``[value]``
+    - list → passed through
+    """
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
 def _parse_grammar_vnext(name: str) -> dict[str, str | None]:
     """Parse ``name`` with the vNext ISN grammar API.
 
@@ -332,7 +346,7 @@ def fetch_low_score_sources(
     params: dict[str, Any] = {"min_score": float(min_score)}
 
     if domain:
-        where_clauses.append("sn.physics_domain = $domain")
+        where_clauses.append("$domain IN sn.physics_domain")
         params["domain"] = domain
 
     if ids and source_type == "dd":
@@ -845,12 +859,14 @@ def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
             batch=cluster_batch,
         )
 
-    # --- HAS_PHYSICS_DOMAIN ---
-    domain_batch = [
-        {"sn_id": n["id"], "domain_id": n["physics_domain"]}
-        for n in names
-        if n.get("id") and n.get("physics_domain")
-    ]
+    # --- HAS_PHYSICS_DOMAIN (multi-valued) ---
+    domain_batch = []
+    for n in names:
+        if not n.get("id"):
+            continue
+        domains = _ensure_list(n.get("physics_domain"))
+        for d in domains:
+            domain_batch.append({"sn_id": n["id"], "domain_id": d})
     if domain_batch:
         gc.query(
             """
@@ -975,7 +991,6 @@ def write_standard_names(
                 sn.validity_domain = coalesce(b.validity_domain, sn.validity_domain),
                 sn.constraints = coalesce(b.constraints, sn.constraints),
                 sn.unit = coalesce(b.unit, sn.unit),
-                sn.physics_domain = coalesce(nullIf(b.physics_domain, ''), sn.physics_domain),
                 sn.cocos_transformation_type = coalesce(b.cocos_transformation_type, sn.cocos_transformation_type),
                 sn.cocos = coalesce(b.cocos, sn.cocos),
                 sn.dd_version = coalesce(b.dd_version, sn.dd_version),
@@ -1032,7 +1047,7 @@ def write_standard_names(
                     "validity_domain": n.get("validity_domain"),
                     "constraints": n.get("constraints") or None,
                     "unit": n.get("unit"),
-                    "physics_domain": n.get("physics_domain") or None,
+                    "physics_domain": _ensure_list(n.get("physics_domain")),
                     "cocos_transformation_type": n.get("cocos_transformation_type"),
                     "cocos": n.get("cocos"),
                     "dd_version": n.get("dd_version"),
@@ -1066,6 +1081,28 @@ def write_standard_names(
                 for n in names
             ],
         )
+
+        # Append-with-dedupe physics_domain (list property, never overwrite)
+        pd_batch = [
+            {"id": n["id"], "physics_domain": _ensure_list(n.get("physics_domain"))}
+            for n in names
+            if _ensure_list(n.get("physics_domain"))
+        ]
+        if pd_batch:
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MERGE (sn:StandardName {id: b.id})
+                WITH sn, b,
+                     coalesce(sn.physics_domain, []) AS existing,
+                     coalesce(b.physics_domain, []) AS incoming
+                WITH sn, existing,
+                     [d IN incoming WHERE d IS NOT NULL
+                      AND NOT (d IN existing) | d] AS new_domains
+                SET sn.physics_domain = existing + new_domains
+                """,
+                batch=pd_batch,
+            )
 
         # Create HAS_STANDARD_NAME relationships: entity → concept
         dd_names = [n for n in names if "dd" in (n.get("source_types") or [])]
@@ -3161,7 +3198,7 @@ def get_enrichment_candidates(
             )
             params["ids_filter"] = ids_filter
         if domain_filter:
-            where_clauses.append("sn.physics_domain = $domain_filter")
+            where_clauses.append("$domain_filter IN sn.physics_domain")
             params["domain_filter"] = domain_filter
         if status_filter:
             where_clauses.append("sn.pipeline_status = $status_filter")
@@ -4261,7 +4298,7 @@ def export_review_comments(
     params: dict[str, Any] = {}
     where_clauses: list[str] = []
     if domain:
-        where_clauses.append("sn.physics_domain = $domain")
+        where_clauses.append("$domain IN sn.physics_domain")
         params["domain"] = domain
 
     where = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""

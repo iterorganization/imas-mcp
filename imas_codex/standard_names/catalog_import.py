@@ -178,7 +178,7 @@ _GRAPH_ONLY_PRESERVE = frozenset(
 def _entry_to_graph_dict(
     entry: Any,
     *,
-    physics_domain: str,
+    physics_domain: list[str],
 ) -> dict[str, Any]:
     """Convert a validated ISN entry to a graph-write dict.
 
@@ -593,11 +593,24 @@ def run_import(
                 # Validate against ISN model
                 entry = ta.validate_python(entry_data)
 
+                # Parse physics_domain — must be a list (no bare-string fallback)
+                raw_pd = entry_data.get("physics_domain")
+                if raw_pd is not None and not isinstance(raw_pd, list):
+                    report.errors.append(
+                        f"{relative}/{entry_data.get('name', '?')}: "
+                        f"physics_domain must be a list, got {type(raw_pd).__name__}. "
+                        f"Catalog will be rebuilt fresh with list form."
+                    )
+                    continue
+                physics_domain_list = raw_pd if raw_pd else [path_domain]
+
                 # Grammar decomposition — hard fail on parse error
                 grammar = _grammar_decomposition(entry.name)
 
                 # Convert to graph dict
-                graph_dict = _entry_to_graph_dict(entry, physics_domain=path_domain)
+                graph_dict = _entry_to_graph_dict(
+                    entry, physics_domain=physics_domain_list
+                )
                 graph_dict.update(grammar)
                 prepared.append(graph_dict)
                 report.entries.append(graph_dict)
@@ -803,7 +816,9 @@ def check_catalog(
                 }
                 entry = ta.validate_python(model_data)
 
-                graph_dict = _entry_to_graph_dict(entry, physics_domain=path_domain)
+                raw_pd = entry_data.get("physics_domain")
+                pd_list = raw_pd if isinstance(raw_pd, list) else [path_domain]
+                graph_dict = _entry_to_graph_dict(entry, physics_domain=pd_list)
                 catalog_entries[graph_dict["id"]] = graph_dict
 
         except Exception:

@@ -421,7 +421,16 @@ classes:
         multivalued: true
         range: string
       physics_domain:
-        description: Physics domain classification (equilibrium, transport, etc.)
+        description: >-
+          Physics domain classifications. A StandardName may belong to
+          multiple domains when its source DD paths span domains
+          (e.g. plasma_current appears in equilibrium, transport, magnetics).
+          Append-only at write time — a domain seen once is recorded
+          forever, never overwritten.
+        multivalued: true
+        range: PhysicsDomain
+        annotations:
+          relationship_type: HAS_PHYSICS_DOMAIN
       cocos_transformation_type:
         description: >-
           COCOS transformation type from the source DD path. Identifies which
@@ -870,14 +879,6 @@ classes:
         inlined: false
         annotations:
           relationship_type: IN_CLUSTER
-      physics_domain_ref:
-        description: >-
-          Physics domain singleton node for this standard name. Derived from
-          the physics_domain scalar at write time. Mirrors the HAS_COCOS pattern.
-        range: PhysicsDomain
-        inlined: false
-        annotations:
-          relationship_type: HAS_PHYSICS_DOMAIN
       reviews:
         description: >-
           StandardNameReview nodes attached to this StandardName via HAS_REVIEW.

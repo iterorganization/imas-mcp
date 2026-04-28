@@ -201,7 +201,7 @@ def claim_names_for_enrichment(
 
     if domain:
         domains = [domain] if isinstance(domain, str) else domain
-        where_parts.append("sn.physics_domain IN $domains")
+        where_parts.append("ANY(d IN sn.physics_domain WHERE d IN $domains)")
         params["domains"] = domains
 
     if ids:

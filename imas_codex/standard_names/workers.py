@@ -1786,9 +1786,9 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 unit = raw_unit
 
             # Inject physics_domain from DD (authoritative, like unit)
-            # Normalize empty string to None so coalesce works correctly
+            # Wrap scalar to list for multi-valued field
             raw_domain = source_item.get("physics_domain") if source_item else None
-            physics_domain = raw_domain if raw_domain else None
+            physics_domain = [raw_domain] if raw_domain else []
 
             # Inject COCOS metadata from DD (authoritative, like unit)
             cocos_type = source_item.get("cocos_label") if source_item else None
