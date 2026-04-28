@@ -1,12 +1,13 @@
 """Integration tests for SN loop DataDrivenProgressDisplay wiring.
 
-Verifies that SNLoopState exposes WorkerStats for the three rolled-up
-worker groups (GENERATE / ENRICH / REVIEW), that workers can update
-them, and that the DataDrivenProgressDisplay reads them correctly.
-Subphases (compose/regen, names/docs) are surfaced via stream items
-and ``WorkerStats.status_text``, not via additional rows.
+The SN loop display has 5 rows, each tracked by an independent ``WorkerStats``
+field on ``SNLoopState``. Each row has its own ``StageDisplaySpec.group`` so
+the display framework's running/completion/worker-count aggregates remain
+truthful per row.
 
-Does NOT test Rich rendering (covered by discover display tests).
+Visual cohesion (DRAFT/REVISE share the magenta family; REVIEW NAMES/REVIEW
+DOCS share yellow) is achieved through colour palette and adjacent placement
+only — not through shared groups.
 """
 
 from __future__ import annotations
@@ -22,27 +23,45 @@ from imas_codex.standard_names.progress import (
     build_sn_loop_stages,
 )
 
+EXPECTED_STATS_FIELDS = {
+    "draft_stats",
+    "revise_stats",
+    "describe_stats",
+    "review_names_stats",
+    "review_docs_stats",
+}
+
+EXPECTED_GROUPS = {
+    "draft",
+    "revise",
+    "describe",
+    "review_names",
+    "review_docs",
+}
+
+EXPECTED_ROW_NAMES = ["DRAFT", "REVISE", "DESCRIBE", "REVIEW NAMES", "REVIEW DOCS"]
+
 
 class TestSNLoopStateHasWorkerStats:
-    """SNLoopState exposes one WorkerStats per worker group."""
-
-    def test_three_stats_fields(self):
+    def test_five_stats_fields(self):
         state = SNLoopState()
-        for attr in ("generate_stats", "enrich_stats", "review_stats"):
+        for attr in EXPECTED_STATS_FIELDS:
             val = getattr(state, attr)
             assert isinstance(val, WorkerStats), f"{attr} is not WorkerStats"
 
-    def test_only_three_stats_fields(self):
+    def test_only_five_stats_fields(self):
         state = SNLoopState()
         names = set(state.__dataclass_fields__)
-        assert names == {"generate_stats", "enrich_stats", "review_stats"}
+        assert names == EXPECTED_STATS_FIELDS
 
     def test_dropped_fields_absent(self):
+        """Old 3-row field names must not exist."""
         state = SNLoopState()
         for dropped in (
+            "generate_stats",
+            "enrich_stats",
+            "review_stats",
             "regen_stats",
-            "review_names_stats",
-            "review_docs_stats",
             "total_domains",
             "done_domains",
             "current_domain",
@@ -53,23 +72,21 @@ class TestSNLoopStateHasWorkerStats:
 
 
 class TestWorkerStatsUpdates:
-    """Workers update processed/cost/stream_queue directly."""
-
     def test_processed_increment(self):
         state = SNLoopState()
-        state.generate_stats.processed += 1
-        state.generate_stats.processed += 1
-        assert state.generate_stats.processed == 2
+        state.draft_stats.processed += 1
+        state.draft_stats.processed += 1
+        assert state.draft_stats.processed == 2
 
     def test_cost_accumulation(self):
         state = SNLoopState()
-        state.enrich_stats.cost += 0.10
-        state.enrich_stats.cost += 0.15
-        assert abs(state.enrich_stats.cost - 0.25) < 1e-6
+        state.describe_stats.cost += 0.10
+        state.describe_stats.cost += 0.15
+        assert abs(state.describe_stats.cost - 0.25) < 1e-6
 
-    def test_stream_queue_push_review(self):
+    def test_stream_queue_push_review_names(self):
         state = SNLoopState()
-        state.review_stats.stream_queue.add(
+        state.review_names_stats.stream_queue.add(
             [
                 {
                     "primary_text": "sn=electron_temperature",
@@ -78,33 +95,20 @@ class TestWorkerStatsUpdates:
                 }
             ]
         )
-        state.review_stats.stream_queue.last_pop = 0
-        item = state.review_stats.stream_queue.pop()
+        state.review_names_stats.stream_queue.last_pop = 0
+        item = state.review_names_stats.stream_queue.pop()
         assert item is not None
         assert item["primary_text"] == "sn=electron_temperature"
 
-
-class TestSubphaseVisibility:
-    """Subphases ride on top of the shared WorkerStats row."""
-
-    def test_status_text_carries_compose_regen(self):
+    def test_revise_stats_independent_of_draft(self):
         state = SNLoopState()
-        state.generate_stats.status_text = "compose"
-        assert state.generate_stats.status_text == "compose"
-        state.generate_stats.status_text = "regen"
-        assert state.generate_stats.status_text == "regen"
-
-    def test_status_text_carries_names_docs(self):
-        state = SNLoopState()
-        state.review_stats.status_text = "names"
-        assert state.review_stats.status_text == "names"
-        state.review_stats.status_text = "docs"
-        assert state.review_stats.status_text == "docs"
+        state.draft_stats.processed = 10
+        state.revise_stats.processed = 3
+        assert state.draft_stats.processed == 10
+        assert state.revise_stats.processed == 3
 
 
 class TestDisplayReadsFromState:
-    """DataDrivenProgressDisplay reads WorkerStats from SNLoopState."""
-
     def test_display_tick_drains_queue(self):
         state = SNLoopState()
         stages = build_sn_loop_stages()
@@ -116,7 +120,7 @@ class TestDisplayReadsFromState:
         )
         display.set_engine_state(state)
 
-        state.generate_stats.stream_queue.add(
+        state.draft_stats.stream_queue.add(
             [
                 {
                     "primary_text": "sn=plasma_current",
@@ -125,18 +129,18 @@ class TestDisplayReadsFromState:
                 }
             ]
         )
-        state.generate_stats.stream_queue.last_pop = 0
+        state.draft_stats.stream_queue.last_pop = 0
 
         display.tick()
-        assert state.generate_stats._current_stream_item is not None
+        assert state.draft_stats._current_stream_item is not None
         assert (
-            state.generate_stats._current_stream_item["primary_text"]
+            state.draft_stats._current_stream_item["primary_text"]
             == "sn=plasma_current"
         )
 
     def test_display_renders_without_crash(self):
         state = SNLoopState()
-        console = Console(record=True, width=100, force_terminal=True)
+        console = Console(record=True, width=120, force_terminal=True)
         stages = build_sn_loop_stages()
         display = DataDrivenProgressDisplay(
             facility="sn",
@@ -154,11 +158,11 @@ class TestDisplayReadsFromState:
 
     def test_display_shows_progress(self):
         state = SNLoopState()
-        state.generate_stats.processed = 42
-        state.generate_stats.total = 100
-        state.generate_stats.cost = 0.50
+        state.draft_stats.processed = 42
+        state.draft_stats.total = 100
+        state.draft_stats.cost = 0.50
 
-        console = Console(record=True, width=100, force_terminal=True)
+        console = Console(record=True, width=120, force_terminal=True)
         stages = build_sn_loop_stages()
         display = DataDrivenProgressDisplay(
             facility="sn",
@@ -177,22 +181,40 @@ class TestDisplayReadsFromState:
 
 
 class TestBuildSNLoopStages:
-    """Stage spec builder produces 3 rows and respects skip flags."""
-
-    def test_default_all_enabled(self):
+    def test_default_all_enabled_except_revise(self):
+        """REVISE is disabled by default because min_score defaults to None."""
         stages = build_sn_loop_stages()
-        assert len(stages) == 3
-        assert [s.name for s in stages] == ["GENERATE", "ENRICH", "REVIEW"]
-        assert all(not s.disabled for s in stages)
+        assert len(stages) == 5
+        assert [s.name for s in stages] == EXPECTED_ROW_NAMES
 
-    def test_skip_flags(self):
-        stages = build_sn_loop_stages(
-            skip_generate=True,
-            skip_enrich=True,
-            skip_review=True,
-        )
-        for s in stages:
-            assert s.disabled, f"{s.name} should be disabled"
+        by_name = {s.name: s for s in stages}
+        assert not by_name["DRAFT"].disabled
+        assert by_name["REVISE"].disabled, "REVISE disabled when min_score is None"
+        assert not by_name["DESCRIBE"].disabled
+        assert not by_name["REVIEW NAMES"].disabled
+        assert not by_name["REVIEW DOCS"].disabled
+
+    def test_revise_enabled_when_min_score_set(self):
+        stages = build_sn_loop_stages(min_score=0.65)
+        by_name = {s.name: s for s in stages}
+        assert not by_name["REVISE"].disabled
+
+    def test_skip_generate_disables_draft_and_revise(self):
+        stages = build_sn_loop_stages(skip_generate=True, min_score=0.65)
+        by_name = {s.name: s for s in stages}
+        assert by_name["DRAFT"].disabled
+        assert by_name["REVISE"].disabled
+
+    def test_skip_enrich_disables_describe(self):
+        stages = build_sn_loop_stages(skip_enrich=True)
+        by_name = {s.name: s for s in stages}
+        assert by_name["DESCRIBE"].disabled
+
+    def test_skip_review_disables_both_review_rows(self):
+        stages = build_sn_loop_stages(skip_review=True)
+        by_name = {s.name: s for s in stages}
+        assert by_name["REVIEW NAMES"].disabled
+        assert by_name["REVIEW DOCS"].disabled
 
     def test_skip_regen_arg_removed(self):
         """build_sn_loop_stages no longer accepts skip_regen."""
@@ -201,9 +223,16 @@ class TestBuildSNLoopStages:
         sig = inspect.signature(build_sn_loop_stages)
         assert "skip_regen" not in sig.parameters
 
+    def test_unique_groups_per_row(self):
+        """Each row gets a unique group so framework state stays per-row."""
+        stages = build_sn_loop_stages(min_score=0.65)
+        groups = {s.group for s in stages}
+        assert groups == EXPECTED_GROUPS
+        assert len(groups) == len(stages), "groups must be unique per row"
+
     def test_stage_attrs_match_state(self):
         state = SNLoopState()
-        stages = build_sn_loop_stages()
+        stages = build_sn_loop_stages(min_score=0.65)
         for stage in stages:
             assert hasattr(state, stage.stats_attr), (
                 f"SNLoopState missing {stage.stats_attr}"
@@ -211,8 +240,6 @@ class TestBuildSNLoopStages:
 
 
 class TestSNLoopProgressDisplayDeleted:
-    """The old SNLoopProgressDisplay must no longer be importable."""
-
     def test_import_raises(self):
         import importlib
 
@@ -229,20 +256,20 @@ class TestSNLoopProgressDisplayDeleted:
 
 
 class TestPendingFnContract:
-    """Pending counts are graph-derived row badges, one per worker group."""
+    """Pending counts: 5 short-labelled (label, count) tuples for the resource band."""
 
-    def test_pending_fn_returns_three_groups(self):
-        # Static contract: pending_fn is expected to return 3 (group, count)
-        # tuples in this fixed order.
+    def test_pending_fn_returns_five_entries_in_order(self):
         def pending_fn():
             return [
-                ("generate", 5),
+                ("draft", 5),
+                ("revise", 1),
                 ("enrich", 2),
-                ("review", 3),
+                ("rev-n", 3),
+                ("rev-d", 4),
             ]
 
         result = pending_fn()
-        assert [g for g, _ in result] == ["generate", "enrich", "review"]
+        assert [g for g, _ in result] == ["draft", "revise", "enrich", "rev-n", "rev-d"]
         assert all(isinstance(c, int) for _, c in result)
 
 
@@ -250,14 +277,12 @@ class TestPhaseRoutingDocumented:
     """Phase → stats_attr mapping is the documented contract for turn.py."""
 
     def test_phase_to_stats_mapping(self):
-        # turn.py routes phases to the shared WorkerStats fields below.
-        # If this map changes, update turn.py and the rollup display.
         mapping = {
-            "compose": "generate_stats",  # initial compose
-            "regen": "generate_stats",  # regen with reviewer feedback
-            "enrich": "enrich_stats",
-            "review_names": "review_stats",
-            "review_docs": "review_stats",
+            "compose": "draft_stats",
+            "regen": "revise_stats",
+            "enrich": "describe_stats",
+            "review_names": "review_names_stats",
+            "review_docs": "review_docs_stats",
         }
         state = SNLoopState()
         for phase, attr in mapping.items():

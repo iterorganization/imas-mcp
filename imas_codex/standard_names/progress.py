@@ -121,22 +121,25 @@ class StandardNameProgressDisplay(DataDrivenProgressDisplay):
 class SNLoopState:
     """Observable state for the SN loop ``DataDrivenProgressDisplay``.
 
-    Three rolled-up worker groups feed the display:
+    Five independent worker stats feed the display (one per phase function):
 
-    - ``generate_stats`` — initial compose AND regen (subphase via stream label)
-    - ``enrich_stats``   — descriptions + documentation
-    - ``review_stats``   — names AND docs review (subphase via stream label)
+    - ``draft_stats``         — initial compose (Source extracted → composed)
+    - ``revise_stats``        — regen with reviewer feedback (low-score names)
+    - ``describe_stats``      — enrichment (named → enriched)
+    - ``review_names_stats``  — name-side review (reviewed_name_at)
+    - ``review_docs_stats``   — docs-side review (reviewed_docs_at)
 
-    Workers update stats directly (``processed``, ``cost``,
-    ``stream_queue.add([...])``); no custom push_event API required.
-    Live cost split between compose vs regen and names vs docs is recovered
-    post-hoc from ``LLMCost`` graph nodes that retain the precise phase tag.
+    Each spec gets a unique ``StageDisplaySpec.group`` so the display framework
+    tracks running/completion/worker-counts per row independently. Visual
+    cohesion comes from adjacent placement and shared color families, not
+    shared groups.
     """
 
-    # Per-group WorkerStats (observed by display)
-    generate_stats: WorkerStats = field(default_factory=WorkerStats)
-    enrich_stats: WorkerStats = field(default_factory=WorkerStats)
-    review_stats: WorkerStats = field(default_factory=WorkerStats)
+    draft_stats: WorkerStats = field(default_factory=WorkerStats)
+    revise_stats: WorkerStats = field(default_factory=WorkerStats)
+    describe_stats: WorkerStats = field(default_factory=WorkerStats)
+    review_names_stats: WorkerStats = field(default_factory=WorkerStats)
+    review_docs_stats: WorkerStats = field(default_factory=WorkerStats)
 
 
 def build_sn_loop_stages(
@@ -144,34 +147,55 @@ def build_sn_loop_stages(
     skip_generate: bool = False,
     skip_enrich: bool = False,
     skip_review: bool = False,
+    min_score: float | None = None,
 ) -> list[StageDisplaySpec]:
     """Build the stage specs for the SN loop progress display.
 
-    3 rows: GENERATE → ENRICH → REVIEW.
+    Five rows, one per phase function. Each row has a unique ``group`` so the
+    framework tracks per-row state independently:
 
-    Subphases (compose/regen, names/docs) surface inside each row via stream
-    item descriptions and ``WorkerStats.status_text`` — they do not split rows.
+    - **DRAFT**         — initial compose
+    - **REVISE**        — regen with reviewer feedback (disabled when
+      ``min_score is None`` since the loop forces ``skip_regen``)
+    - **DESCRIBE**      — enrichment
+    - **REVIEW NAMES**  — name-side review
+    - **REVIEW DOCS**   — docs-side review
     """
+    revise_disabled = skip_generate or min_score is None
     return [
         StageDisplaySpec(
-            name="GENERATE",
+            name="DRAFT",
             style="bold magenta",
-            group="generate",
-            stats_attr="generate_stats",
+            group="draft",
+            stats_attr="draft_stats",
             disabled=skip_generate,
         ),
         StageDisplaySpec(
-            name="ENRICH",
+            name="REVISE",
+            style="magenta",
+            group="revise",
+            stats_attr="revise_stats",
+            disabled=revise_disabled,
+        ),
+        StageDisplaySpec(
+            name="DESCRIBE",
             style="bold cyan",
-            group="enrich",
-            stats_attr="enrich_stats",
+            group="describe",
+            stats_attr="describe_stats",
             disabled=skip_enrich,
         ),
         StageDisplaySpec(
-            name="REVIEW",
+            name="REVIEW NAMES",
             style="bold yellow",
-            group="review",
-            stats_attr="review_stats",
+            group="review_names",
+            stats_attr="review_names_stats",
+            disabled=skip_review,
+        ),
+        StageDisplaySpec(
+            name="REVIEW DOCS",
+            style="yellow",
+            group="review_docs",
+            stats_attr="review_docs_stats",
             disabled=skip_review,
         ),
     ]

@@ -151,7 +151,15 @@ def _run_sn_loop_cmd(
                             """
                             CALL {
                               MATCH (s:StandardNameSource {status: 'extracted'})
-                              RETURN count(s) AS generate
+                              RETURN count(s) AS draft
+                            }
+                            CALL {
+                              MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+                              WHERE $min_score IS NOT NULL
+                                AND sn.reviewer_score_name IS NOT NULL
+                                AND sn.reviewer_score_name < $min_score
+                                AND coalesce(sn.regen_count, 0) < 1
+                              RETURN count(DISTINCT src) AS revise
                             }
                             CALL {
                               MATCH (sn:StandardName)
@@ -176,20 +184,35 @@ def _run_sn_loop_cmd(
                                 AND size(sn.documentation) >= 50
                               RETURN count(sn) AS review_docs
                             }
-                            RETURN generate, enrich, review_names + review_docs AS review
-                            """
+                            RETURN draft, revise, enrich, review_names, review_docs
+                            """,
+                            min_score=min_score,
                         )
                     )
                 if not rows:
-                    return {"generate": 0, "enrich": 0, "review": 0}
+                    return {
+                        "draft": 0,
+                        "revise": 0,
+                        "enrich": 0,
+                        "review_names": 0,
+                        "review_docs": 0,
+                    }
                 r = rows[0]
                 return {
-                    "generate": int(r.get("generate", 0)),
+                    "draft": int(r.get("draft", 0)),
+                    "revise": int(r.get("revise", 0)),
                     "enrich": int(r.get("enrich", 0)),
-                    "review": int(r.get("review", 0)),
+                    "review_names": int(r.get("review_names", 0)),
+                    "review_docs": int(r.get("review_docs", 0)),
                 }
             except Exception:
-                return {"generate": 0, "enrich": 0, "review": 0}
+                return {
+                    "draft": 0,
+                    "revise": 0,
+                    "enrich": 0,
+                    "review_names": 0,
+                    "review_docs": 0,
+                }
 
         _pending_cache: dict[str, tuple[float, dict[str, int]]] = {"v": (0.0, {})}
 
@@ -202,9 +225,11 @@ def _run_sn_loop_cmd(
                 val = _count_pending()
                 _pending_cache["v"] = (now, val)
             return [
-                ("generate", val.get("generate", 0)),
+                ("draft", val.get("draft", 0)),
+                ("revise", val.get("revise", 0)),
                 ("enrich", val.get("enrich", 0)),
-                ("review", val.get("review", 0)),
+                ("rev-n", val.get("review_names", 0)),
+                ("rev-d", val.get("review_docs", 0)),
             ]
 
         display = DataDrivenProgressDisplay(
@@ -214,6 +239,7 @@ def _run_sn_loop_cmd(
                 skip_generate=skip_generate,
                 skip_enrich=skip_enrich,
                 skip_review=skip_review,
+                min_score=min_score,
             ),
             console=cli_console,
             title_suffix="Standard Name Loop",
