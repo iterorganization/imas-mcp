@@ -229,6 +229,7 @@ def _build_review_record(
 
 
 if TYPE_CHECKING:
+    from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.review.state import StandardNameReviewState
 
 logger = logging.getLogger(__name__)
@@ -2223,3 +2224,264 @@ def _update_batch_stats(
     # progress in the names/documentation rows.
     if getattr(state, "loop_stats", None) is not None:
         state.loop_stats.stream_queue.add(stream_items)
+
+
+# =============================================================================
+# Pool-mode batch processors (Phase 8)
+# =============================================================================
+
+
+async def _review_batch_core(
+    batch: list[dict],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+    *,
+    target: str,
+) -> int:
+    """Shared implementation for review_names and review_docs pool processors.
+
+    Takes a list of pre-claimed StandardName dicts (from the graph claim
+    query) and runs the single-model review pipeline (cycle 0 only in pool
+    mode — RD-quorum multi-model is handled at orchestrator level via
+    repeated calls with different model configs).
+
+    **H6 — soft drain on stop_event:**
+    Checks ``stop_event.is_set()`` before the LLM call and returns early
+    if the event fires.
+
+    Args:
+        batch: Pre-claimed StandardName items.
+        mgr: Shared :class:`BudgetManager`.
+        stop_event: Cooperative shutdown signal.
+        target: ``"names"`` or ``"docs"`` — selects rubric and prompt.
+
+    Returns:
+        Count of items successfully reviewed and persisted.
+    """
+    import copy as _copy
+    import uuid as _uuid
+
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.settings import (
+        get_sn_review_docs_models,
+        get_sn_review_names_models,
+    )
+    from imas_codex.standard_names.graph_ops import (
+        update_review_aggregates,
+        write_docs_review_results,
+        write_name_review_results,
+    )
+
+    if not batch:
+        return 0
+
+    # ── Resolve models ─────────────────────────────────────────────────
+    if target == "docs":
+        models = get_sn_review_docs_models()
+        review_axis = "docs"
+    else:
+        models = get_sn_review_names_models()
+        review_axis = "names"
+
+    if not models:
+        logger.warning("Pool review_%s: no models configured", target)
+        return 0
+
+    # ── Shared context ─────────────────────────────────────────────────
+    grammar_enums = _get_grammar_enums()
+    compose_ctx = _get_compose_context_for_review()
+
+    # K3: scored examples
+    from imas_codex.standard_names.example_loader import load_review_examples
+
+    review_domains = sorted(
+        {item.get("physics_domain") for item in batch if item.get("physics_domain")}
+    )
+    _review_axis_example: Literal["name", "docs", "full"] = (
+        "docs" if target == "docs" else "name"
+    )
+
+    def _load_scored() -> list[dict]:
+        with GraphClient() as gc:
+            return load_review_examples(
+                gc, physics_domains=list(review_domains), axis=_review_axis_example
+            )
+
+    review_scored = await asyncio.to_thread(_load_scored)
+
+    # L4: reviewer themes
+    from imas_codex.standard_names.review.themes import extract_reviewer_themes
+
+    _theme_axis = "docs" if target == "docs" else "name"
+
+    def _load_themes() -> list[str]:
+        seen: set[str] = set()
+        merged: list[str] = []
+        for dom in review_domains:
+            for theme in extract_reviewer_themes(dom, axis=_theme_axis):
+                if theme not in seen:
+                    seen.add(theme)
+                    merged.append(theme)
+                    if len(merged) >= 12:
+                        return merged
+        return merged
+
+    reviewer_themes = await asyncio.to_thread(_load_themes)
+    compose_ctx = dict(compose_ctx)
+    compose_ctx["reviewer_themes"] = reviewer_themes
+
+    # ── H6: pre-LLM stop check ────────────────────────────────────────
+    if stop_event.is_set():
+        return 0
+
+    # ── Budget reservation ─────────────────────────────────────────────
+    review_phase = f"review_{target}"
+    estimated = len(batch) * 0.05
+    worst_case = estimated * len(models) * 1.5
+    lease = mgr.reserve(worst_case, phase=review_phase)
+    # Soft-stop: proceed even without lease
+
+    review_group_id = str(_uuid.uuid4())
+
+    try:
+        # ── Cycle 0 — primary review ───────────────────────────────────
+        result_0 = await _review_single_batch(
+            names=_copy.deepcopy(batch),
+            model=models[0],
+            grammar_enums=grammar_enums,
+            compose_ctx=compose_ctx,
+            batch_context="",
+            neighborhood=[],
+            audit_findings=[],
+            wlog=logging.LoggerAdapter(logger, {}),
+            name_only=(target == "names"),
+            target=target,
+            review_scored_examples=review_scored,
+            prior_reviews=None,
+        )
+        c0_cost = result_0.get("_cost", 0.0)
+        c0_items = result_0.get("_items", [])
+        c0_input = result_0.get("_input_tokens", 0)
+        c0_output = result_0.get("_output_tokens", 0)
+
+        # ── Charge cost ────────────────────────────────────────────────
+        if lease:
+            _charge_review_cycle(
+                lease,
+                c0_cost,
+                result_0,
+                models[0],
+                c0_items,
+                "",
+                "c0",
+                review_phase,
+            )
+
+        # ── Build review records ───────────────────────────────────────
+        c0_ts = datetime.now(UTC).isoformat()
+        n_c0 = max(len(c0_items), 1)
+        review_records: list[dict] = []
+        for item in c0_items:
+            sn_id = item.get("id", "")
+            rec = _build_review_record(
+                item,
+                model=models[0],
+                is_canonical=True,
+                reviewed_at=c0_ts,
+                cost_usd=c0_cost / n_c0,
+                tokens_in=c0_input // n_c0 if c0_input else 0,
+                tokens_out=c0_output // n_c0 if c0_output else 0,
+            )
+            if rec:
+                rec["id"] = f"{sn_id}:{review_axis}:{review_group_id}:0"
+                rec["review_axis"] = review_axis
+                rec["cycle_index"] = 0
+                rec["review_group_id"] = review_group_id
+                rec["resolution_role"] = "primary"
+                rec["resolution_method"] = "single_review"
+                review_records.append(rec)
+
+        # ── Persist review results ─────────────────────────────────────
+        if c0_items:
+            # Stamp provenance
+            reviewed_at = datetime.now(UTC).isoformat()
+            _compute_hash = _get_hash_fn()
+            model_name = models[0]
+            for entry in c0_items:
+                entry["reviewer_model"] = model_name
+                entry["reviewed_at"] = reviewed_at
+                if _compute_hash is not None:
+                    entry["review_input_hash"] = _compute_hash(entry)
+
+            # Distribute cost equally
+            if c0_cost and c0_items:
+                cost_share = c0_cost / len(c0_items)
+                for entry in c0_items:
+                    entry.setdefault("llm_cost", cost_share)
+
+            # Write scores
+            def _write() -> int:
+                if target == "docs":
+                    return write_docs_review_results(c0_items)
+                return write_name_review_results(c0_items)
+
+            written = await asyncio.to_thread(_write)
+
+            # Write Review nodes
+            if review_records:
+                await asyncio.to_thread(_persist_review_records_sync, review_records)
+
+            # Update aggregates
+            reviewed_ids = [r["id"] for r in c0_items if r.get("id")]
+            if reviewed_ids:
+
+                def _update_agg() -> None:
+                    update_review_aggregates(reviewed_ids, threshold=0.15)
+
+                await asyncio.to_thread(_update_agg)
+
+            logger.debug("Pool review_%s: persisted %d review results", target, written)
+            return written
+
+        return 0
+
+    except Exception:
+        logger.exception("Pool review_%s: batch failed", target)
+        raise
+    finally:
+        if lease:
+            lease.release_unused()
+
+
+async def process_review_names_batch(
+    batch: list[dict],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+) -> int:
+    """Pool-mode review-names batch processor.
+
+    Takes pre-claimed StandardName items and runs name+grammar review
+    (axis ``"names"``).  Independently claimable from docs review per M9.
+
+    Returns count of items successfully reviewed.
+    """
+    return await _review_batch_core(batch, mgr, stop_event, target="names")
+
+
+async def process_review_docs_batch(
+    batch: list[dict],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+) -> int:
+    """Pool-mode review-docs batch processor.
+
+    Takes pre-claimed StandardName items and runs documentation review
+    (axis ``"docs"``).  Independently claimable from names review per M9.
+
+    Does NOT require ``process_review_names_batch`` to have run first —
+    the docs pool has its own eligibility gate in the claim query
+    (``reviewed_name_at IS NOT NULL``).
+
+    Returns count of items successfully reviewed.
+    """
+    return await _review_batch_core(batch, mgr, stop_event, target="docs")

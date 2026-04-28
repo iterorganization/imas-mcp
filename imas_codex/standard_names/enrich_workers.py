@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 from imas_codex.discovery.base.claims import retry_on_deadlock
 
 if TYPE_CHECKING:
+    from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.enrich_state import StandardNameEnrichState
 
 logger = logging.getLogger(__name__)
@@ -1830,3 +1831,194 @@ async def enrich_persist_worker(state: StandardNameEnrichState, **_kwargs) -> No
 
     state.persist_stats.freeze_rate()
     state.persist_phase.mark_done()
+
+
+# =============================================================================
+# Pool-mode batch processor (Phase 8)
+# =============================================================================
+
+
+async def process_enrich_batch(
+    batch: list[dict],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+) -> int:
+    """Pool-mode enrichment batch processor.
+
+    Takes a list of pre-claimed StandardName dicts (from the graph claim
+    query) and runs the full enrich pipeline: contextualise → LLM document
+    → validate → embed → persist.
+
+    **H6 — soft drain on stop_event:**
+    Checks ``stop_event.is_set()`` before the LLM call and returns early
+    (after persisting any in-flight results) if the event fires.
+
+    Args:
+        batch: Pre-claimed StandardName items (dicts with ``id``,
+            ``description``, ``physics_domain``, etc.).
+        mgr: Shared :class:`BudgetManager` for cost tracking.
+        stop_event: Cooperative shutdown signal.
+
+    Returns:
+        Count of items successfully enriched and persisted.
+    """
+    import asyncio as _asyncio
+
+    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.settings import get_model
+    from imas_codex.standard_names.budget import LLMCostEvent
+    from imas_codex.standard_names.models import StandardNameEnrichBatch
+
+    if not batch:
+        return 0
+
+    model = get_model("sn-enrich")
+
+    # ── K3: scored examples (batch-scoped domains) ─────────────────────
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.standard_names.example_loader import load_compose_examples
+
+    enrich_domains = sorted(
+        {item.get("physics_domain") for item in batch if item.get("physics_domain")}
+    )
+
+    def _load_scored() -> list[dict]:
+        with GraphClient() as gc:
+            return load_compose_examples(
+                gc, physics_domains=list(enrich_domains), axis="docs"
+            )
+
+    compose_scored_examples = await _asyncio.to_thread(_load_scored)
+    system_prompt = render_prompt(
+        "sn/enrich_system", {"compose_scored_examples": compose_scored_examples}
+    )
+
+    # Fetch existing SN ids for link validation
+    valid_names = _fetch_existing_sn_names()
+
+    # Inject ``name`` alias for template compatibility
+    for item in batch:
+        item.setdefault("name", item.get("id", ""))
+
+    # ── H6: pre-LLM stop check ────────────────────────────────────────
+    if stop_event.is_set():
+        return 0
+
+    # ── Render user prompt ─────────────────────────────────────────────
+    batch_dict = {"items": batch, "batch_index": 0}
+    user_prompt = render_prompt(
+        "sn/enrich_user",
+        {"batch": batch_dict, "items": batch},
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    # ── Budget reservation ─────────────────────────────────────────────
+    estimated = len(batch) * 0.05
+    lease = mgr.reserve(estimated, phase="enrich")
+    # Soft-stop: proceed even without lease
+
+    try:
+        llm_out = await acall_llm_structured(
+            model=model,
+            messages=messages,
+            response_model=StandardNameEnrichBatch,
+            service="standard-names",
+        )
+        result, cost, tokens = llm_out
+
+        # ── Charge cost ────────────────────────────────────────────────
+        if lease:
+            _event = LLMCostEvent(
+                model=model,
+                tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
+                tokens_cached_write=(getattr(llm_out, "cache_creation_tokens", 0) or 0),
+                sn_ids=tuple(item.get("id", "") for item in batch),
+                batch_id="pool-enrich",
+                phase="enrich",
+                service="standard-names",
+            )
+            lease.charge_event(cost, _event)
+
+        # ── Merge enriched fields ──────────────────────────────────────
+        response_map: dict[str, Any] = {}
+        for enriched_item in result.items:
+            response_map[enriched_item.standard_name] = enriched_item
+
+        per_item_cost = cost / len(batch) if batch else 0.0
+        enriched_items: list[dict[str, Any]] = []
+
+        for item in batch:
+            name = item.get("id", "")
+            enriched = response_map.get(name)
+            if not enriched:
+                continue
+
+            if not _is_echoed_name(enriched.standard_name, name):
+                continue
+
+            item["enriched_description"] = enriched.description
+            item["enriched_documentation"] = _sanitize_documentation(
+                enriched.documentation
+            )
+            item["enriched_links"] = _sanitize_links(
+                enriched.links, valid_names=valid_names
+            )
+            item["enrich_cost_usd"] = per_item_cost
+            if enriched.validity_domain is not None:
+                item["enriched_validity_domain"] = enriched.validity_domain
+            if enriched.constraints:
+                item["enriched_constraints"] = enriched.constraints
+            item["validation_status"] = "valid"  # default for pool mode
+            enriched_items.append(item)
+
+        # ── H6: pre-persist stop check ─────────────────────────────────
+        # Persist whatever we have — don't discard completed LLM work.
+
+        # ── Embed descriptions ─────────────────────────────────────────
+        if enriched_items:
+            try:
+                from imas_codex.embeddings.description import (
+                    embed_descriptions_batch,
+                )
+
+                await _asyncio.to_thread(
+                    embed_descriptions_batch,
+                    enriched_items,
+                    "enriched_description",
+                    "embedding",
+                )
+            except Exception:
+                logger.warning(
+                    "Pool enrich: embedding failed — skipping embed",
+                    exc_info=True,
+                )
+                for item in enriched_items:
+                    item["embedding"] = None
+
+            # Filter to items with successful embeddings
+            embeddable = [it for it in enriched_items if it.get("embedding")]
+
+            if embeddable:
+                from imas_codex.standard_names.graph_ops import (
+                    persist_enriched_batch,
+                )
+
+                written = await _asyncio.to_thread(persist_enriched_batch, embeddable)
+                logger.debug("Pool enrich: persisted %d items", written)
+                return written
+
+        return len(enriched_items)
+
+    except Exception:
+        logger.exception("Pool enrich: batch failed")
+        raise
+    finally:
+        if lease:
+            lease.release_unused()

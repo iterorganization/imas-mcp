@@ -30,7 +30,7 @@ from imas_codex.standard_names.source_paths import (
 )
 
 if TYPE_CHECKING:
-    from imas_codex.standard_names.budget import BudgetLease
+    from imas_codex.standard_names.budget import BudgetLease, BudgetManager
     from imas_codex.standard_names.sources.base import ExtractionBatch
     from imas_codex.standard_names.state import StandardNameBuildState
 
@@ -2949,3 +2949,290 @@ async def persist_worker(state: StandardNameBuildState, **_kwargs) -> None:
         ]
     )
     state.finalize_stats.freeze_rate()
+
+
+# =============================================================================
+# Pool-mode batch processors (Phase 8)
+# =============================================================================
+
+
+async def _compose_batch_core(
+    batch: list[dict],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+    *,
+    regen: bool = False,
+) -> int:
+    """Shared implementation for compose and regen pool batch processors.
+
+    Takes a list of pre-claimed items (dicts with ``path``, ``description``,
+    ``physics_domain``, etc.) and runs the compose pipeline:
+    prompt → LLM → grammar validate → persist.
+
+    **H5 — batch-scope domain context:**
+    Domain vocabulary is derived from the *batch items* rather than a
+    run-scoped ``state.domain_filter``, so pooled-mode batches get domain
+    context even without ``--physics-domain``.
+
+    **H6 — soft drain on stop_event:**
+    Checks ``stop_event.is_set()`` before the LLM call and returns early
+    (after persisting any in-flight results) if the event fires.
+
+    Args:
+        batch: Pre-claimed source items from the graph claim query.
+        mgr: Shared :class:`BudgetManager` for cost tracking.
+        stop_event: Cooperative shutdown signal.
+        regen: If True, set ``regen_increment`` on persisted candidates.
+
+    Returns:
+        Count of successfully composed/regenerated candidates.
+    """
+    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.settings import get_compose_lean, get_model
+    from imas_codex.standard_names.budget import LLMCostEvent
+    from imas_codex.standard_names.context import build_compose_context
+    from imas_codex.standard_names.models import StandardNameComposeBatch
+
+    if not batch:
+        return 0
+
+    model = get_model("sn-run")
+    context = build_compose_context()
+    compose_lean = get_compose_lean()
+
+    # ── H5: batch-scope domain context ─────────────────────────────────
+    domains_in_batch = sorted(
+        {item.get("physics_domain") for item in batch if item.get("physics_domain")}
+    )
+
+    from imas_codex.standard_names.context import build_domain_vocabulary_preseed
+
+    domain_vocab_parts: list[str] = []
+    for dom in domains_in_batch:
+        vocab = await asyncio.to_thread(build_domain_vocabulary_preseed, dom)
+        if vocab:
+            domain_vocab_parts.append(vocab)
+    context["domain_vocabulary"] = "\n".join(domain_vocab_parts)
+
+    # ── L4: Reviewer-theme extraction (batch-scoped) ───────────────────
+    from imas_codex.standard_names.review.themes import extract_reviewer_themes
+
+    reviewer_themes: list[str] = []
+    for dom in domains_in_batch:
+        themes = await asyncio.to_thread(extract_reviewer_themes, dom)
+        reviewer_themes.extend(themes)
+    context["reviewer_themes"] = reviewer_themes[:12]
+
+    # ── K3: Scored-example injection ───────────────────────────────────
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.standard_names.example_loader import load_compose_examples
+
+    def _load_scored_examples() -> list[dict]:
+        with GraphClient() as gc:
+            return load_compose_examples(
+                gc, physics_domains=domains_in_batch, axis="name"
+            )
+
+    compose_scored_examples = await asyncio.to_thread(_load_scored_examples)
+    context["compose_scored_examples"] = compose_scored_examples
+
+    # ── System prompt (cached per pool lifetime) ───────────────────────
+    _compose_system_template = (
+        "sn/compose_system_lean" if compose_lean else "sn/compose_system"
+    )
+    system_prompt = render_prompt(_compose_system_template, context)
+
+    # ── Enrich items with DD context ───────────────────────────────────
+    def _enrich():
+        _enrich_batch_items(batch)
+
+    await asyncio.to_thread(_enrich)
+
+    # ── Search nearby existing names ───────────────────────────────────
+    group_key = batch[0].get("path", "").split("/")[0] if batch else ""
+    nearby = _search_nearby_names(group_key)
+
+    # ── IDS context ────────────────────────────────────────────────────
+    ids_names = sorted(
+        {
+            item["path"].split("/")[0]
+            for item in batch
+            if item.get("path") and "/" in item["path"]
+        }
+    )
+    ids_contexts: list[dict] = []
+    for iname in ids_names:
+        info = _enrich_ids_context(iname)
+        if info:
+            ids_contexts.append({"ids_name": iname, **info})
+
+    # ── H6: pre-LLM stop check ────────────────────────────────────────
+    if stop_event.is_set():
+        return 0
+
+    # ── Render user prompt ─────────────────────────────────────────────
+    user_context = {
+        "items": batch,
+        "ids_name": group_key,
+        "ids_contexts": ids_contexts,
+        "existing_names": sorted(
+            {item.get("existing_name") for item in batch if item.get("existing_name")}
+        )[: 50 if compose_lean else 200],
+        "cluster_context": "",
+        "nearby_existing_names": nearby,
+        "reference_exemplars": [],
+        "cocos_version": batch[0].get("cocos_version") if batch else None,
+        "dd_version": batch[0].get("dd_version") if batch else None,
+    }
+    user_prompt = render_prompt("sn/compose_dd", {**context, **user_context})
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    # ── Budget reservation ─────────────────────────────────────────────
+    estimated = len(batch) * 0.20
+    phase_tag = "regen" if regen else "generate"
+    lease = mgr.reserve(estimated, phase=phase_tag)
+    # Soft-stop: proceed even without lease (untracked)
+
+    try:
+        llm_out = await acall_llm_structured(
+            model=model,
+            messages=messages,
+            response_model=StandardNameComposeBatch,
+            service="standard-names",
+        )
+        result, cost, tokens = llm_out
+
+        # ── Charge cost ────────────────────────────────────────────────
+        if lease:
+            _event = LLMCostEvent(
+                model=model,
+                tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
+                tokens_cached_write=(getattr(llm_out, "cache_creation_tokens", 0) or 0),
+                sn_ids=tuple(
+                    c.standard_name for c in (result.candidates if result else [])
+                ),
+                batch_id=group_key,
+                phase=phase_tag,
+                service="standard-names",
+            )
+            lease.charge_event(cost, _event)
+
+        # ── Build candidates ───────────────────────────────────────────
+        candidates: list[dict] = []
+        for c in result.candidates:
+            source_item = next(
+                (item for item in batch if item.get("path") == c.source_id),
+                None,
+            )
+            raw_unit = source_item.get("unit") if source_item else None
+            unit = "1" if raw_unit in ("-", "mixed", None, "") else raw_unit
+
+            raw_domain = source_item.get("physics_domain") if source_item else None
+            physics_domain = [raw_domain] if raw_domain else []
+
+            cocos_type = source_item.get("cocos_label") if source_item else None
+
+            # Grammar normalization
+            name_id = c.standard_name
+            try:
+                from imas_standard_names.grammar import (
+                    compose_standard_name,
+                    parse_standard_name,
+                )
+
+                parsed = parse_standard_name(name_id)
+                normalized = compose_standard_name(parsed)
+                if normalized != name_id:
+                    name_id = normalized
+                name_id = _dedup_adjacent_tokens(name_id)
+            except Exception:
+                pass  # grammar failures kept as-is
+
+            cand = {
+                "id": name_id,
+                "source_types": ["dd"],
+                "source_id": c.source_id,
+                "kind": c.kind,
+                "source_paths": [
+                    encode_source_path("dd", p) for p in (c.dd_paths or [])
+                ],
+                "fields": c.grammar_fields,
+                "confidence": c.confidence,
+                "reason": c.reason,
+                "unit": unit,
+                "physics_domain": physics_domain,
+                "cocos_transformation_type": cocos_type,
+                "cocos": batch[0].get("cocos_version") if batch else None,
+                "dd_version": batch[0].get("dd_version") if batch else None,
+            }
+
+            if regen:
+                cand["regen_increment"] = True
+
+            # Per-candidate cost attribution
+            n_cands = max(len(result.candidates), 1)
+            cand["llm_cost"] = cost / n_cands
+            cand["llm_model"] = model
+            cand["llm_service"] = "standard-names"
+
+            candidates.append(cand)
+
+        # ── Persist ────────────────────────────────────────────────────
+        if candidates:
+            from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+            written = await asyncio.to_thread(
+                persist_composed_batch,
+                candidates,
+                compose_model=model,
+                dd_version=batch[0].get("dd_version"),
+                cocos_version=batch[0].get("cocos_version"),
+            )
+            logger.debug("Pool %s: persisted %d candidates", phase_tag, written)
+
+        return len(candidates)
+
+    except Exception:
+        logger.exception("Pool %s: compose batch failed", phase_tag)
+        raise
+    finally:
+        if lease:
+            lease.release_unused()
+
+
+async def process_compose_batch(
+    batch: list[dict],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+) -> int:
+    """Pool-mode compose batch processor.
+
+    Takes pre-claimed source items (dicts from the graph claim query),
+    composes standard names via LLM, and persists results.
+
+    Returns count of items successfully processed.
+    """
+    return await _compose_batch_core(batch, mgr, stop_event, regen=False)
+
+
+async def process_regen_batch(
+    batch: list[dict],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+) -> int:
+    """Pool-mode regen batch processor.
+
+    Same as :func:`process_compose_batch` but sets ``regen_increment``
+    on each candidate so :func:`persist_composed_batch` increments
+    ``regen_count`` on the :class:`StandardName` node.
+
+    Returns count of items successfully processed.
+    """
+    return await _compose_batch_core(batch, mgr, stop_event, regen=True)
