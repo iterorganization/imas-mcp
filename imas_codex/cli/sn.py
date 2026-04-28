@@ -77,8 +77,8 @@ def _run_sn_loop_cmd(
         summary_table,
     )
     from imas_codex.standard_names.progress import (
-        SNLoopState,
-        build_sn_loop_stages,
+        SNPoolState,
+        build_sn_pool_stages,
     )
 
     run_id = str(_uuid.uuid4())
@@ -109,7 +109,7 @@ def _run_sn_loop_cmd(
 
     # Build Rich display or fall back to plain logging
     display = None
-    loop_state: SNLoopState | None = None
+    loop_state: SNPoolState | None = None
     cli_console: Console | None = None
     if use_rich:
         cli_console = Console()
@@ -134,7 +134,7 @@ def _run_sn_loop_cmd(
         )
 
         target_label = (target or "full").lower()
-        loop_state = SNLoopState()
+        loop_state = SNPoolState()
 
         # Per-group pending counters from the graph (row-level badges).
         # Cypher mirrors enrich_workers.claim_names_for_enrichment() and
@@ -276,21 +276,26 @@ def _run_sn_loop_cmd(
             # total      = baseline + pending (stable across restarts)
             # %          = processed / total
             try:
+                # Map 3-row pool display stats → graph pending/done keys.
+                # GENERATE aggregates compose (draft) + regen (revise).
+                # ENRICH maps to enrich.
+                # REVIEW aggregates review_names + review_docs.
                 _pairs = (
-                    # (stats_attr, pending_key, done_key)
-                    ("extract_stats", "extract", "draft_done"),
-                    ("draft_stats", "draft", "draft_done"),
-                    ("revise_stats", "revise", None),
-                    ("describe_stats", "enrich", "enrich_done"),
-                    ("review_names_stats", "review_names", "review_names_done"),
-                    ("review_docs_stats", "review_docs", "review_docs_done"),
+                    # (stats_attr, pending_keys, done_key)
+                    ("generate_stats", ["draft", "revise"], "draft_done"),
+                    ("enrich_stats", ["enrich"], "enrich_done"),
+                    (
+                        "review_stats",
+                        ["review_names", "review_docs"],
+                        "review_names_done",
+                    ),
                 )
                 seed_now = not _baseline_seeded["v"]
-                for _attr, _key, _done_key in _pairs:
+                for _attr, _pending_keys, _done_key in _pairs:
                     _stats = getattr(loop_state, _attr, None)
                     if _stats is None:
                         continue
-                    _pending_n = int(val.get(_key, 0))
+                    _pending_n = sum(int(val.get(k, 0)) for k in _pending_keys)
                     _done_n = int(val.get(_done_key, 0)) if _done_key else 0
                     if seed_now:
                         # One-shot seed: surface prior-run completed work.
@@ -300,25 +305,37 @@ def _run_sn_loop_cmd(
                     if _new_total > int(_stats.total):
                         _stats.total = _new_total
                 _baseline_seeded["v"] = True
+
+                # Update PoolHealth.pending_count for per-subpool display.
+                _pool_pending_map = {
+                    "generate": int(val.get("draft", 0)),
+                    "regen": int(val.get("revise", 0)),
+                    "enrich": int(val.get("enrich", 0)),
+                    "review_names": int(val.get("review_names", 0)),
+                    "review_docs": int(val.get("review_docs", 0)),
+                }
+                if loop_state is not None:
+                    for _pname, _pcount in _pool_pending_map.items():
+                        _ph = loop_state._pool_health.get(_pname)
+                        if _ph is not None:
+                            _ph.pending_count = _pcount
+                    # Refresh status_text from PoolHealth data.
+                    loop_state.refresh_pool_health()
             except Exception:
                 pass
             return [
-                ("extract", val.get("extract", 0)),
-                ("draft", val.get("draft", 0)),
-                ("revise", val.get("revise", 0)),
+                ("generate", val.get("draft", 0) + val.get("revise", 0)),
                 ("enrich", val.get("enrich", 0)),
-                ("names", val.get("review_names", 0)),
-                ("documentation", val.get("review_docs", 0)),
+                ("review", val.get("review_names", 0) + val.get("review_docs", 0)),
             ]
 
         display = DataDrivenProgressDisplay(
             facility="sn",
             cost_limit=cost_limit,
-            stages=build_sn_loop_stages(
+            stages=build_sn_pool_stages(
                 skip_generate=skip_generate,
                 skip_enrich=skip_enrich,
                 skip_review=skip_review,
-                min_score=min_score,
             ),
             console=cli_console,
             title_suffix="Standard Name",

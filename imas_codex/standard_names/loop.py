@@ -795,6 +795,11 @@ async def run_sn_pools(
         # ── Build pool specs ──────────────────────────────────────
         specs = _build_pool_specs(shared_mgr, stop_event, min_score=min_score)
 
+        # ── Wire pool health into display state ───────────────────
+        if loop_state is not None and hasattr(loop_state, "set_pool_health"):
+            for spec in specs:
+                loop_state.set_pool_health(spec.name, spec.health)
+
         # ── Run pools ─────────────────────────────────────────────
         health_map = await run_pools(specs, shared_mgr, stop_event)
         logger.info("run_sn_pools: all pools exited — %s", health_map)

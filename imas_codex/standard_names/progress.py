@@ -7,13 +7,17 @@ Contains:
 - :class:`SNLoopState` — observable state for loop-mode ``sn run``, consumed
   by :class:`DataDrivenProgressDisplay` via ``StageDisplaySpec`` declarations.
 - :func:`build_sn_loop_stages` — stage specs for the 5 loop-mode phases.
+- :class:`SNPoolState` — observable state for pool-mode ``sn run`` (Phase 8),
+  aggregating 5 pools into 3 display rows with per-subpool health.
+- :func:`build_sn_pool_stages` — stage specs for the 3 pool-mode rows.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.progress import (
     DataDrivenProgressDisplay,
@@ -21,6 +25,9 @@ from imas_codex.discovery.base.progress import (
     WorkerStats,
 )
 from imas_codex.discovery.base.supervision import SupervisedWorkerGroup
+
+if TYPE_CHECKING:
+    from imas_codex.standard_names.pools import PoolHealth
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +218,225 @@ def build_sn_loop_stages(
             style="yellow",
             group="review_docs",
             stats_attr="review_docs_stats",
+            disabled=skip_review,
+        ),
+    ]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Pool-mode state + stage specs (Phase 8 concurrent pools)
+# ═══════════════════════════════════════════════════════════════════════
+
+# Default wedge threshold: a subpool is wedged when
+# ``(now - last_progress_at) > WEDGE_THRESHOLD`` AND pending > 0.
+# 2 × backoff cap (3s base) ≈ 6s is a reasonable default.
+WEDGE_THRESHOLD: float = 6.0
+
+# Mapping from display row → (subpool label, pool name) pairs.
+# Used by :func:`format_pool_health_text` and :class:`SNPoolState`.
+_GENERATE_SUBPOOLS: tuple[tuple[str, str], ...] = (
+    ("compose", "generate"),
+    ("regen", "regen"),
+)
+_REVIEW_SUBPOOLS: tuple[tuple[str, str], ...] = (
+    ("names", "review_names"),
+    ("docs", "review_docs"),
+)
+_ENRICH_SUBPOOLS: tuple[tuple[str, str], ...] = (("pending", "enrich"),)
+
+
+def _format_elapsed(seconds: float) -> str:
+    """Format elapsed seconds as a human-readable string (e.g. '5m ago')."""
+    if seconds < 60:
+        return f"{seconds:.0f}s ago"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{minutes:.0f}m ago"
+    hours = minutes / 60
+    return f"{hours:.1f}h ago"
+
+
+def format_pool_health_text(
+    subpools: tuple[tuple[str, str], ...],
+    health_map: dict[str, PoolHealth],
+    *,
+    wedge_threshold: float = WEDGE_THRESHOLD,
+    now: float | None = None,
+) -> str:
+    """Compose per-subpool status text with wedge detection.
+
+    Args:
+        subpools: ``(display_label, pool_name)`` pairs for this row.
+        health_map: Mapping of pool name → :class:`PoolHealth`.
+        wedge_threshold: Seconds since last progress before a subpool
+            is considered wedged (provided ``pending_count > 0``).
+        now: Current time (``time.time()``); defaults to ``time.time()``.
+
+    Returns:
+        Status text string with optional Rich markup.  Examples::
+
+            "names=42 docs=8"
+            "compose=15 regen=3"
+            "pending=27"
+            "names=42 [red]docs[/red]=8 — wedged docs (5m ago)"
+    """
+    ts = now if now is not None else time.time()
+
+    # Single subpool → simple "pending=N" form.
+    if len(subpools) == 1:
+        label, pool_name = subpools[0]
+        ph = health_map.get(pool_name)
+        if ph is None:
+            return ""
+        pending = ph.pending_count
+        if pending <= 0:
+            return ""
+        wedged = ph.is_wedged(poll_interval=wedge_threshold / 2.0, now=ts)
+        if wedged:
+            elapsed = _format_elapsed(ts - ph.last_progress_at)
+            return f"[red]{label}[/red]={pending} — wedged {label} ({elapsed})"
+        return f"{label}={pending}"
+
+    # Multi-subpool → "label1=N label2=M" with per-subpool wedge.
+    parts: list[str] = []
+    wedged_labels: list[str] = []
+    wedged_elapsed: list[str] = []
+
+    for label, pool_name in subpools:
+        ph = health_map.get(pool_name)
+        if ph is None:
+            continue
+        pending = ph.pending_count
+        if pending <= 0:
+            continue
+        wedged = ph.is_wedged(poll_interval=wedge_threshold / 2.0, now=ts)
+        if wedged:
+            parts.append(f"[red]{label}[/red]={pending}")
+            wedged_labels.append(label)
+            elapsed = _format_elapsed(ts - ph.last_progress_at)
+            wedged_elapsed.append(f"{label} ({elapsed})")
+        else:
+            parts.append(f"{label}={pending}")
+
+    if not parts:
+        return ""
+
+    text = " ".join(parts)
+    if wedged_labels:
+        detail = ", ".join(wedged_elapsed)
+        text += f" — wedged {detail}"
+    return text
+
+
+@dataclass
+class SNPoolState:
+    """Observable state for the Phase 8 concurrent pool display.
+
+    Three display rows, each backed by a :class:`WorkerStats`:
+
+    - **GENERATE** — aggregates ``generate`` (compose) + ``regen`` pools.
+    - **ENRICH** — single ``enrich`` pool.
+    - **REVIEW** — aggregates ``review_names`` + ``review_docs`` pools.
+
+    :class:`PoolHealth` references are injected after pool construction
+    via :meth:`set_pool_health`.  :meth:`refresh_pool_health` reads live
+    health data and composes ``status_text`` (with Rich markup for wedge
+    indicators) on each ``WorkerStats``.
+    """
+
+    generate_stats: WorkerStats = field(default_factory=WorkerStats)
+    enrich_stats: WorkerStats = field(default_factory=WorkerStats)
+    review_stats: WorkerStats = field(default_factory=WorkerStats)
+
+    # Injected after pool construction — maps pool name → PoolHealth.
+    _pool_health: dict[str, PoolHealth] = field(default_factory=dict)
+
+    def set_pool_health(self, pool_name: str, health: PoolHealth) -> None:
+        """Register a pool's health reference for display consumption."""
+        self._pool_health[pool_name] = health
+
+    def is_wedged(self, pool_name: str) -> bool:
+        """Check whether a specific subpool is wedged.
+
+        A pool is wedged when ``(now - last_progress_at) > WEDGE_THRESHOLD``
+        AND ``pending_count > 0``.
+        """
+        ph = self._pool_health.get(pool_name)
+        if ph is None:
+            return False
+        return ph.is_wedged(poll_interval=WEDGE_THRESHOLD / 2.0)
+
+    def refresh_pool_health(self, *, now: float | None = None) -> None:
+        """Update ``status_text`` on each WorkerStats from live PoolHealth.
+
+        Called on each display tick (e.g. from the ``pending_fn`` callback).
+        Composes per-subpool pending counts and wedge indicators with Rich
+        markup (``[red]...[/red]``).
+        """
+        ts = now if now is not None else time.time()
+
+        # GENERATE row: compose + regen
+        gen_text = format_pool_health_text(
+            _GENERATE_SUBPOOLS,
+            self._pool_health,
+            now=ts,
+        )
+        self.generate_stats.status_text = gen_text
+        self.generate_stats.status_markup = "[red]" in gen_text
+
+        # ENRICH row: single pool
+        enrich_text = format_pool_health_text(
+            _ENRICH_SUBPOOLS,
+            self._pool_health,
+            now=ts,
+        )
+        self.enrich_stats.status_text = enrich_text
+        self.enrich_stats.status_markup = "[red]" in enrich_text
+
+        # REVIEW row: review_names + review_docs
+        review_text = format_pool_health_text(
+            _REVIEW_SUBPOOLS,
+            self._pool_health,
+            now=ts,
+        )
+        self.review_stats.status_text = review_text
+        self.review_stats.status_markup = "[red]" in review_text
+
+
+def build_sn_pool_stages(
+    *,
+    skip_generate: bool = False,
+    skip_enrich: bool = False,
+    skip_review: bool = False,
+) -> list[StageDisplaySpec]:
+    """Build the 3 stage specs for the Phase 8 pool display.
+
+    Three rows mapping to the 5 concurrent pools:
+
+    - **GENERATE** — compose + regen pools.
+    - **ENRICH** — enrich pool.
+    - **REVIEW** — review_names + review_docs pools.
+    """
+    return [
+        StageDisplaySpec(
+            name="GENERATE",
+            style="bold magenta",
+            group="generate",
+            stats_attr="generate_stats",
+            disabled=skip_generate,
+        ),
+        StageDisplaySpec(
+            name="ENRICH",
+            style="bold cyan",
+            group="enrich",
+            stats_attr="enrich_stats",
+            disabled=skip_enrich,
+        ),
+        StageDisplaySpec(
+            name="REVIEW",
+            style="bold yellow",
+            group="review",
+            stats_attr="review_stats",
             disabled=skip_review,
         ),
     ]

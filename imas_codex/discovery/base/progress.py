@@ -656,6 +656,10 @@ class WorkerStats:
     # Current activity description (for display)
     status_text: str = ""
 
+    # Rich markup flag: when True, ``status_text`` is parsed as Rich markup
+    # by ``build_pipeline_row`` (e.g. pool-health wedge indicators).
+    status_markup: bool = False
+
     # Streaming display queue for per-item display in pipeline rows.
     # Items should be dicts with keys matching PipelineRowConfig fields
     # (e.g. ``primary_text``, ``description``, ``physics_domain``).
@@ -1085,6 +1089,10 @@ class PipelineRowConfig:
     description: str = ""  # LLM/VLM description (shown on line 3, after score)
     description_fallback: str = ""  # Shown on line 3 when description is empty
 
+    # Rich markup support: when True, primary_text is parsed as Rich markup
+    # (e.g. ``"names=42 [red]docs[/red]=8"``) instead of plain text.
+    primary_markup: bool = False
+
     # Activity state (used when no primary_text)
     is_processing: bool = False
     processing_label: str = "processing..."
@@ -1165,21 +1173,26 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
 
     if config.has_content:
         line2.append("  ", style="dim")
-        # Order: name → domain → terminal
-        # Pre-compute suffix widths to clip name appropriately
-        # Reserve space for rate text + gap so the line never overflows
-        suffix_width = 0
-        if config.physics_domain:
-            suffix_width += cell_len(config.physics_domain) + 2
-        if config.terminal_label:
-            suffix_width += cell_len(config.terminal_label) + 2
-        if rate_s:
-            suffix_width += len(rate_s) + 2
-        max_name = max(10, row_width - 2 - suffix_width)
-        line2.append(
-            clip_text(config.primary_text, max_name),
-            style=config.primary_text_style,
-        )
+        if config.primary_markup:
+            # Rich markup mode: parse markup tags (e.g. [red]...[/red])
+            # used by pool-health wedge indicators.
+            line2.append_text(Text.from_markup(config.primary_text))
+        else:
+            # Order: name → domain → terminal
+            # Pre-compute suffix widths to clip name appropriately
+            # Reserve space for rate text + gap so the line never overflows
+            suffix_width = 0
+            if config.physics_domain:
+                suffix_width += cell_len(config.physics_domain) + 2
+            if config.terminal_label:
+                suffix_width += cell_len(config.terminal_label) + 2
+            if rate_s:
+                suffix_width += len(rate_s) + 2
+            max_name = max(10, row_width - 2 - suffix_width)
+            line2.append(
+                clip_text(config.primary_text, max_name),
+                style=config.primary_text_style,
+            )
         if config.physics_domain:
             line2.append("  ", style="dim")
             line2.append(config.physics_domain, style="green")
@@ -2137,6 +2150,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
 
             # Stream item display — use current popped item from queue
             primary_text = stats.status_text if stats else ""
+            primary_markup = stats.status_markup if stats else False
             primary_text_style = "white"
             description = ""
             physics_domain = ""
@@ -2144,6 +2158,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
             if stats and stats._current_stream_item:
                 si = stats._current_stream_item
                 primary_text = si.get("primary_text", primary_text)
+                primary_markup = False  # stream items are plain text
                 primary_text_style = si.get("primary_text_style", "white")
                 description = si.get("description", "")
                 physics_domain = si.get("physics_domain", "")
@@ -2164,6 +2179,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
                     worker_count=count,
                     worker_annotation=ann,
                     primary_text=primary_text,
+                    primary_markup=primary_markup,
                     primary_text_style=primary_text_style,
                     description=description,
                     physics_domain=physics_domain,
