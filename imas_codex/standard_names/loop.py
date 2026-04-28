@@ -1,16 +1,14 @@
-"""SN loop — drives ``sn run`` with one-domain-per-turn rotation.
+"""SN loop — drives ``sn run`` via concurrent worker pools or legacy
+domain rotation.
 
-Picks the stalest extract-eligible physics domain via stale-first
-rotation (oldest ``SNRun.ended_at`` wins, with eligible-source count as
-tiebreak), runs one :func:`run_turn` on it with the full remaining
-budget, and repeats until the remaining budget can no longer fund a
-single unit of work or no domain has eligible work.
-
-Entry point: :func:`run_sn_loop`.
+Primary entry point: :func:`run_sn_pools` (Phase 8 pool-based
+orchestrator).  Legacy :func:`run_sn_loop` is retained for backward
+compatibility and existing tests.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import logging
 import uuid
@@ -578,3 +576,305 @@ def summary_table(summary: RunSummary) -> dict[str, Any]:
         "domains_touched": sorted(summary.domains_touched),
         "stop_reason": summary.stop_reason,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 8 — Pool-based orchestrator (replaces domain rotation)
+# ═══════════════════════════════════════════════════════════════════════
+
+# Default regen threshold when min_score is not explicitly provided.
+_DEFAULT_POOL_MIN_SCORE: float = 0.5
+
+
+def _build_pool_specs(
+    mgr: Any,
+    stop_event: asyncio.Event,
+    *,
+    min_score: float | None = None,
+) -> list[Any]:
+    """Construct 5 :class:`PoolSpec` objects wiring claims → batch processors.
+
+    Each pool gets two adapter closures:
+
+    * **claim adapter** — runs the synchronous ``claim_*_seed_and_expand``
+      graph function in a worker thread and returns the result wrapped in
+      a dict (``{"items": [...]}``), or ``None`` on empty.
+    * **process adapter** — unpacks the claimed batch and delegates to the
+      corresponding ``process_*_batch`` async function, forwarding the
+      shared :class:`BudgetManager` and ``stop_event``.
+    """
+    from collections.abc import Awaitable, Callable
+
+    from imas_codex.standard_names.enrich_workers import process_enrich_batch
+    from imas_codex.standard_names.graph_ops import (
+        claim_compose_seed_and_expand,
+        claim_enrich_seed_and_expand,
+        claim_regen_seed_and_expand,
+        claim_review_docs_seed_and_expand,
+        claim_review_names_seed_and_expand,
+    )
+    from imas_codex.standard_names.pools import PoolSpec
+    from imas_codex.standard_names.review.pipeline import (
+        process_review_docs_batch,
+        process_review_names_batch,
+    )
+    from imas_codex.standard_names.workers import (
+        process_compose_batch,
+        process_regen_batch,
+    )
+
+    regen_score = min_score if min_score is not None else _DEFAULT_POOL_MIN_SCORE
+
+    # ── Adapter factories ─────────────────────────────────────────────
+
+    def _make_claim_adapter(
+        claim_fn: Callable[..., list[dict[str, Any]]],
+        **kwargs: Any,
+    ) -> Callable[[], Awaitable[dict[str, Any] | None]]:
+        """Wrap a sync claim function as an async ``ClaimFn``."""
+
+        async def _adapter() -> dict[str, Any] | None:
+            items = await asyncio.to_thread(claim_fn, **kwargs)
+            if not items:
+                return None
+            return {"items": items}
+
+        return _adapter
+
+    def _make_process_adapter(
+        process_fn: Callable[
+            [list[dict[str, Any]], Any, asyncio.Event],
+            Awaitable[int],
+        ],
+    ) -> Callable[[dict[str, Any]], Awaitable[int]]:
+        """Wrap a batch processor as a ``ProcessFn``."""
+
+        async def _adapter(batch: dict[str, Any]) -> int:
+            return await process_fn(batch["items"], mgr, stop_event)
+
+        return _adapter
+
+    # ── PoolSpec construction ─────────────────────────────────────────
+
+    return [
+        PoolSpec(
+            name="generate",
+            claim=_make_claim_adapter(claim_compose_seed_and_expand),
+            process=_make_process_adapter(process_compose_batch),
+            weight=0.30,
+        ),
+        PoolSpec(
+            name="enrich",
+            claim=_make_claim_adapter(
+                claim_enrich_seed_and_expand,
+                min_score_threshold=regen_score,
+            ),
+            process=_make_process_adapter(process_enrich_batch),
+            weight=0.25,
+        ),
+        PoolSpec(
+            name="review_names",
+            claim=_make_claim_adapter(
+                claim_review_names_seed_and_expand,
+                min_score=regen_score,
+            ),
+            process=_make_process_adapter(process_review_names_batch),
+            weight=0.20,
+        ),
+        PoolSpec(
+            name="review_docs",
+            claim=_make_claim_adapter(
+                claim_review_docs_seed_and_expand,
+                min_score=regen_score,
+            ),
+            process=_make_process_adapter(process_review_docs_batch),
+            weight=0.15,
+        ),
+        PoolSpec(
+            name="regen",
+            claim=_make_claim_adapter(
+                claim_regen_seed_and_expand,
+                min_score=regen_score,
+            ),
+            process=_make_process_adapter(process_regen_batch),
+            weight=0.10,
+        ),
+    ]
+
+
+async def run_sn_pools(
+    cost_limit: float,
+    *,
+    min_score: float | None = None,
+    source: str = "dd",
+    only_domain: str | None = None,
+    stop_event: asyncio.Event | None = None,
+    loop_state: Any | None = None,
+) -> RunSummary:
+    """Run the pool-based ``sn run`` orchestrator (Phase 8).
+
+    Replaces the per-domain serial :func:`run_sn_loop` with five
+    concurrent worker pools that pull work from the graph
+    independently and share a single :class:`BudgetManager`.
+
+    Startup sequence:
+
+    1. Create ``SNRun`` node and ``BudgetManager``.
+    2. **Reconcile-once (B2)** — ``reconcile_standard_name_sources()``
+       runs in a worker thread, completing before any pool issues its
+       first claim.  This clears stale claims and revives sources
+       whose upstream entities reappeared.
+    3. Build 5 :class:`PoolSpec` objects (generate, enrich,
+       review_names, review_docs, regen) with adapter closures.
+    4. Delegate to :func:`~imas_codex.standard_names.pools.run_pools`
+       which runs all pools concurrently with cooperative shutdown.
+    5. Finalize ``SNRun`` with the actual stop reason and graph-derived
+       cost.
+
+    Args:
+        cost_limit: Maximum LLM spend in USD.
+        min_score: Regen/review threshold.  Names with
+            ``reviewer_score_name < min_score`` are routed to the regen
+            pool; those above are eligible for review.
+        source: ``"dd"`` or ``"signals"`` — scopes reconciliation.
+        only_domain: When set, restricts the *extract_phase* seeding of
+            ``StandardNameSource`` nodes to this physics domain.  The
+            pools themselves are domain-agnostic.
+        stop_event: Cooperative shutdown signal (set by the CLI harness).
+        loop_state: Optional :class:`SNLoopState` for Rich progress.
+    """
+    from imas_codex.standard_names.budget import BudgetManager
+    from imas_codex.standard_names.pools import run_pools
+
+    started = datetime.now(UTC)
+    run_id = str(uuid.uuid4())
+    summary = RunSummary(
+        run_id=run_id,
+        turn_number=1,
+        started_at=started,
+        cost_limit=cost_limit,
+        min_score=min_score,
+    )
+
+    if stop_event is None:
+        stop_event = asyncio.Event()
+
+    # Shared BudgetManager — all five pools draw from the same pot.
+    shared_mgr = BudgetManager(cost_limit, run_id=run_id)
+    await shared_mgr.start()
+
+    # Pre-create the SNRun node so LLMCost → FOR_RUN edges have a target.
+    from imas_codex.standard_names.graph_ops import create_sn_run_open
+
+    create_sn_run_open(
+        run_id,
+        started_at=started,
+        cost_limit=cost_limit,
+        min_score=min_score,
+    )
+
+    cost_is_exact = True
+
+    try:
+        # ── B2: Reconcile-once-at-startup ─────────────────────────
+        # Must complete BEFORE any pool issues its first claim.
+        from imas_codex.standard_names.graph_ops import (
+            reconcile_standard_name_sources,
+        )
+
+        logger.info("run_sn_pools: reconciling sources (source=%s)…", source)
+        recon_result = await asyncio.to_thread(reconcile_standard_name_sources, source)
+        recon_total = sum(recon_result.values()) if recon_result else 0
+        summary.sources_reconciled = recon_total
+        logger.info(
+            "run_sn_pools: reconcile complete — %d actions (%s)",
+            recon_total,
+            recon_result,
+        )
+
+        # ── Build pool specs ──────────────────────────────────────
+        specs = _build_pool_specs(shared_mgr, stop_event, min_score=min_score)
+
+        # ── Run pools ─────────────────────────────────────────────
+        health_map = await run_pools(specs, shared_mgr, stop_event)
+        logger.info("run_sn_pools: all pools exited — %s", health_map)
+
+        # ── Determine stop reason ─────────────────────────────────
+        if stop_event.is_set():
+            summary.stop_reason = "interrupted"
+        elif shared_mgr.exhausted():
+            summary.stop_reason = "budget_exhausted"
+        else:
+            summary.stop_reason = "completed"
+
+    except KeyboardInterrupt:
+        summary.stop_reason = "interrupted"
+        logger.warning("run_sn_pools interrupted by user")
+    except Exception as exc:
+        summary.stop_reason = "failed"
+        logger.error("run_sn_pools failed: %s", exc, exc_info=True)
+    finally:
+        summary.ended_at = datetime.now(UTC)
+
+        # Drain pending LLMCost graph writes.
+        cost_is_exact = await shared_mgr.drain_pending()
+        if not cost_is_exact and summary.stop_reason not in (
+            "interrupted",
+            "failed",
+        ):
+            summary.stop_reason = "degraded"
+
+        # Refresh final cost from graph.
+        summary.cost_spent = max(
+            summary.cost_spent,
+            await shared_mgr.get_total_spent(force_refresh=True),
+        )
+
+        # Phase-level cost breakdowns.
+        phase_spent = shared_mgr.phase_spent
+        summary.compose_cost = phase_spent.get("generate", 0.0) + phase_spent.get(
+            "regen", 0.0
+        )
+        summary.review_cost = phase_spent.get("review_names", 0.0) + phase_spent.get(
+            "review_docs", 0.0
+        )
+
+        # Compute pipeline hash — best-effort.
+        _pipeline_hash: str | None = None
+        _pipeline_hash_detail: str | None = None
+        try:
+            from imas_codex.standard_names.pipeline_version import (
+                compute_pipeline_hash,
+            )
+
+            ph = compute_pipeline_hash()
+            _pipeline_hash = ph["_composite"]
+            _pipeline_hash_detail = _json.dumps(
+                {k: v for k, v in ph.items() if k != "_composite"}
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Finalize the SNRun node.
+        from imas_codex.standard_names.graph_ops import finalize_sn_run
+
+        finalize_sn_run(
+            run_id,
+            status=_STOP_TO_STATUS.get(summary.stop_reason, "completed"),
+            cost_spent=summary.cost_spent,
+            cost_is_exact=cost_is_exact,
+            ended_at=summary.ended_at,
+            cost_limit=round(summary.cost_limit, 6),
+            compose_cost=round(summary.compose_cost, 6),
+            review_cost=round(summary.review_cost, 6),
+            min_score=summary.min_score,
+            names_composed=summary.names_composed,
+            names_enriched=summary.names_enriched,
+            names_reviewed=summary.names_reviewed,
+            names_regenerated=summary.names_regenerated,
+            stop_reason=summary.stop_reason,
+            pipeline_hash=_pipeline_hash,
+            pipeline_hash_detail=_pipeline_hash_detail,
+        )
+
+    return summary

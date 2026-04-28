@@ -73,7 +73,7 @@ def _run_sn_loop_cmd(
         use_rich_output,
     )
     from imas_codex.standard_names.loop import (
-        run_sn_loop,
+        run_sn_pools,
         summary_table,
     )
     from imas_codex.standard_names.progress import (
@@ -370,22 +370,13 @@ def _run_sn_loop_cmd(
     )
 
     async def async_main(stop_event, service_monitor):
-        summary = await run_sn_loop(
+        summary = await run_sn_pools(
             cost_limit=cost_limit,
-            per_domain_limit=per_domain_limit,
-            dry_run=dry_run,
-            only_domain=only_domain,
-            turn_number=turn_number,
             min_score=min_score,
-            skip_generate=skip_generate,
-            skip_enrich=skip_enrich,
-            skip_review=skip_review,
-            skip_regen=skip_regen,
             source=source,
-            override_edits=override_edits,
-            only=only,
-            loop_state=loop_state,
+            only_domain=only_domain,
             stop_event=stop_event,
+            loop_state=loop_state,
         )
         return {"summary": summary}
 
