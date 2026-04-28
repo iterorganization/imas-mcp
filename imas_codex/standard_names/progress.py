@@ -121,8 +121,9 @@ class StandardNameProgressDisplay(DataDrivenProgressDisplay):
 class SNLoopState:
     """Observable state for the SN loop ``DataDrivenProgressDisplay``.
 
-    Five independent worker stats feed the display (one per phase function):
+    Six independent worker stats feed the display (one per phase function):
 
+    - ``extract_stats``       — DD/signal source extraction (graph queries)
     - ``draft_stats``         — initial compose (Source extracted → composed)
     - ``revise_stats``        — regen with reviewer feedback (low-score names)
     - ``describe_stats``      — enrichment (named → enriched)
@@ -135,6 +136,7 @@ class SNLoopState:
     shared groups.
     """
 
+    extract_stats: WorkerStats = field(default_factory=WorkerStats)
     draft_stats: WorkerStats = field(default_factory=WorkerStats)
     revise_stats: WorkerStats = field(default_factory=WorkerStats)
     describe_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -151,18 +153,31 @@ def build_sn_loop_stages(
 ) -> list[StageDisplaySpec]:
     """Build the stage specs for the SN loop progress display.
 
-    Five rows, one per phase function. Each row has a unique ``group`` so the
+    Six rows, one per phase function. Each row has a unique ``group`` so the
     framework tracks per-row state independently:
 
+    - **EXTRACT**       — graph-side extraction (DD/signal source nodes)
     - **DRAFT**         — initial compose
-    - **REVISE**        — regen with reviewer feedback (disabled when
-      ``min_score is None`` since the loop forces ``skip_regen``)
+    - **REVISE**        — regen with reviewer feedback (always visible when
+      generate is enabled; pending=0 when ``min_score`` is unset)
     - **DESCRIBE**      — enrichment
     - **REVIEW NAMES**  — name-side review
     - **REVIEW DOCS**   — docs-side review
+
+    The ``min_score`` parameter is accepted for backwards compatibility but no
+    longer affects whether REVISE is visible — it always shows when the
+    generate group is enabled.
     """
-    revise_disabled = skip_generate or min_score is None
+    del min_score  # accepted for compatibility; revise visibility no longer gated on it
+    revise_disabled = skip_generate
     return [
+        StageDisplaySpec(
+            name="EXTRACT",
+            style="bold blue",
+            group="extract",
+            stats_attr="extract_stats",
+            disabled=skip_generate,
+        ),
         StageDisplaySpec(
             name="DRAFT",
             style="bold magenta",

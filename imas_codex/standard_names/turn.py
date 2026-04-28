@@ -293,6 +293,11 @@ async def _run_generate_phase(
         )
         if cfg.loop_state is not None
         else None,
+        loop_extract_stats=(
+            getattr(cfg.loop_state, "extract_stats", None)
+            if cfg.loop_state is not None
+            else None
+        ),
     )
 
     t0 = time.monotonic()

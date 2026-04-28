@@ -95,6 +95,8 @@ def _run_sn_loop_cmd(
             "imas_codex.embeddings",
             "imas_codex.discovery",
             "imas_codex.llm",
+            "imas_codex.remote",
+            "imas_codex.cli",
             "litellm",
             "httpx",
             "httpcore",
@@ -151,6 +153,11 @@ def _run_sn_loop_cmd(
                             """
                             CALL {
                               MATCH (s:StandardNameSource {status: 'extracted'})
+                              RETURN count(s) AS extract
+                            }
+                            CALL {
+                              MATCH (s:StandardNameSource {status: 'extracted'})
+                              WHERE NOT (s)-[:PRODUCED_NAME]->(:StandardName)
                               RETURN count(s) AS draft
                             }
                             CALL {
@@ -184,13 +191,14 @@ def _run_sn_loop_cmd(
                                 AND size(sn.documentation) >= 50
                               RETURN count(sn) AS review_docs
                             }
-                            RETURN draft, revise, enrich, review_names, review_docs
+                            RETURN extract, draft, revise, enrich, review_names, review_docs
                             """,
                             min_score=min_score,
                         )
                     )
                 if not rows:
                     return {
+                        "extract": 0,
                         "draft": 0,
                         "revise": 0,
                         "enrich": 0,
@@ -199,6 +207,7 @@ def _run_sn_loop_cmd(
                     }
                 r = rows[0]
                 return {
+                    "extract": int(r.get("extract", 0)),
                     "draft": int(r.get("draft", 0)),
                     "revise": int(r.get("revise", 0)),
                     "enrich": int(r.get("enrich", 0)),
@@ -207,6 +216,7 @@ def _run_sn_loop_cmd(
                 }
             except Exception:
                 return {
+                    "extract": 0,
                     "draft": 0,
                     "revise": 0,
                     "enrich": 0,
@@ -225,6 +235,7 @@ def _run_sn_loop_cmd(
                 val = _count_pending()
                 _pending_cache["v"] = (now, val)
             return [
+                ("extract", val.get("extract", 0)),
                 ("draft", val.get("draft", 0)),
                 ("revise", val.get("revise", 0)),
                 ("enrich", val.get("enrich", 0)),
@@ -242,8 +253,8 @@ def _run_sn_loop_cmd(
                 min_score=min_score,
             ),
             console=cli_console,
-            title_suffix="Standard Name Loop",
-            mode_label=f"target={target}",
+            title_suffix="Standard Name",
+            mode_label=(f"target={target}" if target != "full" else None),
             accumulated_cost_fn=_cost_fn,
             pending_fn=_pending_fn,
         )
@@ -277,6 +288,8 @@ def _run_sn_loop_cmd(
             "imas_codex.embeddings",
             "imas_codex.discovery",
             "imas_codex.llm",
+            "imas_codex.remote",
+            "imas_codex.cli",
             "litellm",
             "httpx",
             "httpcore",

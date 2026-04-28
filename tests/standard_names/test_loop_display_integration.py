@@ -24,6 +24,7 @@ from imas_codex.standard_names.progress import (
 )
 
 EXPECTED_STATS_FIELDS = {
+    "extract_stats",
     "draft_stats",
     "revise_stats",
     "describe_stats",
@@ -32,6 +33,7 @@ EXPECTED_STATS_FIELDS = {
 }
 
 EXPECTED_GROUPS = {
+    "extract",
     "draft",
     "revise",
     "describe",
@@ -39,17 +41,24 @@ EXPECTED_GROUPS = {
     "review_docs",
 }
 
-EXPECTED_ROW_NAMES = ["DRAFT", "REVISE", "DESCRIBE", "REVIEW NAMES", "REVIEW DOCS"]
+EXPECTED_ROW_NAMES = [
+    "EXTRACT",
+    "DRAFT",
+    "REVISE",
+    "DESCRIBE",
+    "REVIEW NAMES",
+    "REVIEW DOCS",
+]
 
 
 class TestSNLoopStateHasWorkerStats:
-    def test_five_stats_fields(self):
+    def test_six_stats_fields(self):
         state = SNLoopState()
         for attr in EXPECTED_STATS_FIELDS:
             val = getattr(state, attr)
             assert isinstance(val, WorkerStats), f"{attr} is not WorkerStats"
 
-    def test_only_five_stats_fields(self):
+    def test_only_six_stats_fields(self):
         state = SNLoopState()
         names = set(state.__dataclass_fields__)
         assert names == EXPECTED_STATS_FIELDS
@@ -181,15 +190,18 @@ class TestDisplayReadsFromState:
 
 
 class TestBuildSNLoopStages:
-    def test_default_all_enabled_except_revise(self):
-        """REVISE is disabled by default because min_score defaults to None."""
+    def test_default_all_enabled(self):
+        """All six rows enabled by default; REVISE always visible when generate active."""
         stages = build_sn_loop_stages()
-        assert len(stages) == 5
+        assert len(stages) == 6
         assert [s.name for s in stages] == EXPECTED_ROW_NAMES
 
         by_name = {s.name: s for s in stages}
+        assert not by_name["EXTRACT"].disabled
         assert not by_name["DRAFT"].disabled
-        assert by_name["REVISE"].disabled, "REVISE disabled when min_score is None"
+        assert not by_name["REVISE"].disabled, (
+            "REVISE always visible when generate enabled"
+        )
         assert not by_name["DESCRIBE"].disabled
         assert not by_name["REVIEW NAMES"].disabled
         assert not by_name["REVIEW DOCS"].disabled
@@ -199,9 +211,16 @@ class TestBuildSNLoopStages:
         by_name = {s.name: s for s in stages}
         assert not by_name["REVISE"].disabled
 
+    def test_revise_enabled_when_min_score_none(self):
+        """REVISE no longer auto-disables when min_score is None."""
+        stages = build_sn_loop_stages(min_score=None)
+        by_name = {s.name: s for s in stages}
+        assert not by_name["REVISE"].disabled
+
     def test_skip_generate_disables_draft_and_revise(self):
         stages = build_sn_loop_stages(skip_generate=True, min_score=0.65)
         by_name = {s.name: s for s in stages}
+        assert by_name["EXTRACT"].disabled
         assert by_name["DRAFT"].disabled
         assert by_name["REVISE"].disabled
 

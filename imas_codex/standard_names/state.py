@@ -70,6 +70,10 @@ class StandardNameBuildState(DiscoveryStateBase):
     # Workers increment ``loop_stats.processed`` and push to
     # ``loop_stats.stream_queue`` after each LLM charge.
     loop_stats: WorkerStats | None = None
+    # Optional loop-level WorkerStats specifically for the EXTRACT phase so
+    # the loop display can show extraction progress in real time. The
+    # extract_worker mirrors progress updates here when set.
+    loop_extract_stats: WorkerStats | None = None
 
     # Model overrides (None = use defaults from pyproject.toml)
     compose_model: str | None = None  # Override for compose step (default: reasoning)

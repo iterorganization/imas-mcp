@@ -178,6 +178,8 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
 
     def _on_status(text: str) -> None:
         state.extract_stats.status_text = text
+        if state.loop_extract_stats is not None:
+            state.loop_extract_stats.status_text = text
 
     def _run() -> list:
         from imas_codex.standard_names.graph_ops import (
@@ -410,6 +412,10 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
     state.extract_stats.total = total_items
     state.extract_stats.processed = total_items
     state.extract_stats.record_batch(total_items)
+    if state.loop_extract_stats is not None:
+        state.loop_extract_stats.total = total_items
+        state.loop_extract_stats.processed = total_items
+        state.loop_extract_stats.record_batch(total_items)
 
     wlog.info(
         "Extraction complete: %d batches, %d items",
@@ -429,6 +435,16 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
             }
         ]
     )
+    if state.loop_extract_stats is not None:
+        state.loop_extract_stats.freeze_rate()
+        state.loop_extract_stats.stream_queue.add(
+            [
+                {
+                    "primary_text": "extract",
+                    "description": f"{total_items} paths in {len(batches)} batches",
+                }
+            ]
+        )
 
 
 # =============================================================================
