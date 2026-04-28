@@ -567,6 +567,16 @@ class BudgetManager:
         """Original total budget."""
         return self._total
 
+    def pool_spent_total(self, pool: str) -> float:
+        """Return cumulative spend attributed to *pool* (via phase tag).
+
+        Reads directly from ``_phase_spent`` — the same dict that
+        :meth:`pool_admit` consults for fairness decisions.  Returns 0.0
+        when the pool has never been charged.
+        """
+        with self._lock:
+            return self._phase_spent.get(pool, 0.0)
+
     # ------------------------------------------------------------------
     # Pool admission control (Phase 8)
     # ------------------------------------------------------------------
