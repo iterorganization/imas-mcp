@@ -302,7 +302,7 @@ async def _run_generate_phase(
 
     t0 = time.monotonic()
     try:
-        await run_sn_pipeline(state)
+        await run_sn_pipeline(state, stop_event=cfg.stop_event)
     except Exception as exc:
         logger.error("Phase %s failed: %s", phase_name, exc, exc_info=True)
         return PhaseResult(
@@ -368,7 +368,7 @@ async def _run_enrich_phase(cfg: TurnConfig) -> PhaseResult:
 
     t0 = time.monotonic()
     try:
-        await run_sn_enrich_engine(state)
+        await run_sn_enrich_engine(state, stop_event=cfg.stop_event)
     except Exception as exc:
         logger.error("Phase enrich failed: %s", exc, exc_info=True)
         return PhaseResult(

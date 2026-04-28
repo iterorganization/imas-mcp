@@ -187,7 +187,31 @@ def _run_sn_loop_cmd(
                                 AND size(sn.documentation) >= 50
                               RETURN count(sn) AS review_docs
                             }
-                            RETURN extract, draft, revise, enrich, review_names, review_docs
+                            // ── Completed counts (graph baseline for restart) ──
+                            CALL {
+                              MATCH (s:StandardNameSource)
+                              WHERE s.status IN ['composed','attached','vocab_gap','skipped','failed']
+                              RETURN count(s) AS draft_done
+                            }
+                            CALL {
+                              MATCH (sn:StandardName)
+                              WHERE sn.enriched_at IS NOT NULL
+                              RETURN count(sn) AS enrich_done
+                            }
+                            CALL {
+                              MATCH (sn:StandardName)
+                              WHERE sn.reviewed_name_at IS NOT NULL
+                              RETURN count(sn) AS review_names_done
+                            }
+                            CALL {
+                              MATCH (sn:StandardName)
+                              WHERE sn.reviewed_docs_at IS NOT NULL
+                              RETURN count(sn) AS review_docs_done
+                            }
+                            RETURN extract, draft, revise, enrich,
+                                   review_names, review_docs,
+                                   draft_done, enrich_done,
+                                   review_names_done, review_docs_done
                             """,
                             min_score=min_score,
                         )
@@ -200,6 +224,10 @@ def _run_sn_loop_cmd(
                         "enrich": 0,
                         "review_names": 0,
                         "review_docs": 0,
+                        "draft_done": 0,
+                        "enrich_done": 0,
+                        "review_names_done": 0,
+                        "review_docs_done": 0,
                     }
                 r = rows[0]
                 return {
@@ -209,6 +237,10 @@ def _run_sn_loop_cmd(
                     "enrich": int(r.get("enrich", 0)),
                     "review_names": int(r.get("review_names", 0)),
                     "review_docs": int(r.get("review_docs", 0)),
+                    "draft_done": int(r.get("draft_done", 0)),
+                    "enrich_done": int(r.get("enrich_done", 0)),
+                    "review_names_done": int(r.get("review_names_done", 0)),
+                    "review_docs_done": int(r.get("review_docs_done", 0)),
                 }
             except Exception:
                 return {
@@ -218,9 +250,14 @@ def _run_sn_loop_cmd(
                     "enrich": 0,
                     "review_names": 0,
                     "review_docs": 0,
+                    "draft_done": 0,
+                    "enrich_done": 0,
+                    "review_names_done": 0,
+                    "review_docs_done": 0,
                 }
 
         _pending_cache: dict[str, tuple[float, dict[str, int]]] = {"v": (0.0, {})}
+        _baseline_seeded: dict[str, bool] = {"v": False}
 
         def _pending_fn() -> list[tuple[str, int]]:
             import time as _t
@@ -230,28 +267,39 @@ def _run_sn_loop_cmd(
             if not val or (now - ts) > 1.0:
                 val = _count_pending()
                 _pending_cache["v"] = (now, val)
-            # Side-effect: keep per-stage stats.total in sync with graph pending
-            # counts so the framework can compute per-row gauges and ETA.
-            # total = processed_in_session + remaining_pending. As workers
-            # consume work, processed climbs while pending shrinks; total
-            # remains stable until new work appears.
+            # Side-effect: seed each stage's processed/total from the graph
+            # baseline on first call so a restarted `sn run` shows
+            # previously-completed work as already-progressed (not 0%).
+            #
+            # baseline   = work done in prior runs (graph-derived)
+            # processed  = baseline + in-session done (advances as workers run)
+            # total      = baseline + pending (stable across restarts)
+            # %          = processed / total
             try:
                 _pairs = (
-                    ("extract_stats", "extract"),
-                    ("draft_stats", "draft"),
-                    ("revise_stats", "revise"),
-                    ("describe_stats", "enrich"),
-                    ("review_names_stats", "review_names"),
-                    ("review_docs_stats", "review_docs"),
+                    # (stats_attr, pending_key, done_key)
+                    ("extract_stats", "extract", "draft_done"),
+                    ("draft_stats", "draft", "draft_done"),
+                    ("revise_stats", "revise", None),
+                    ("describe_stats", "enrich", "enrich_done"),
+                    ("review_names_stats", "review_names", "review_names_done"),
+                    ("review_docs_stats", "review_docs", "review_docs_done"),
                 )
-                for _attr, _key in _pairs:
+                seed_now = not _baseline_seeded["v"]
+                for _attr, _key, _done_key in _pairs:
                     _stats = getattr(loop_state, _attr, None)
                     if _stats is None:
                         continue
                     _pending_n = int(val.get(_key, 0))
+                    _done_n = int(val.get(_done_key, 0)) if _done_key else 0
+                    if seed_now:
+                        # One-shot seed: surface prior-run completed work.
+                        if _done_n > int(_stats.processed):
+                            _stats.processed = _done_n
                     _new_total = int(_stats.processed) + _pending_n
                     if _new_total > int(_stats.total):
                         _stats.total = _new_total
+                _baseline_seeded["v"] = True
             except Exception:
                 pass
             return [
