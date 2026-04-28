@@ -161,8 +161,8 @@ def build_sn_loop_stages(
     - **REVISE**        — regen with reviewer feedback (always visible when
       generate is enabled; pending=0 when ``min_score`` is unset)
     - **DESCRIBE**      — enrichment
-    - **REVIEW NAMES**  — name-side review
-    - **REVIEW DOCS**   — docs-side review
+    - **NAMES**         — name-side review (was REVIEW NAMES)
+    - **DOCUMENTATION** — docs-side review (was REVIEW DOCS)
 
     The ``min_score`` parameter is accepted for backwards compatibility but no
     longer affects whether REVISE is visible — it always shows when the
@@ -200,14 +200,14 @@ def build_sn_loop_stages(
             disabled=skip_enrich,
         ),
         StageDisplaySpec(
-            name="REVIEW NAMES",
+            name="NAMES",
             style="bold yellow",
             group="review_names",
             stats_attr="review_names_stats",
             disabled=skip_review,
         ),
         StageDisplaySpec(
-            name="REVIEW DOCS",
+            name="DOCUMENTATION",
             style="yellow",
             group="review_docs",
             stats_attr="review_docs_stats",

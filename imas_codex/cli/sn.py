@@ -53,6 +53,7 @@ def _run_sn_loop_cmd(
     source: str = "dd",
     override_edits: list[str] | None = None,
     only: str | None = None,
+    target: str = "full",
 ) -> None:
     """Execute the DD completion loop with Rich progress display.
 
@@ -132,12 +133,7 @@ def _run_sn_loop_cmd(
             DataDrivenProgressDisplay,
         )
 
-        target = "full"
-        if skip_enrich:
-            target = "names"
-        elif skip_review:
-            target = "compose+enrich"
-
+        target_label = (target or "full").lower()
         loop_state = SNLoopState()
 
         # Per-group pending counters from the graph (row-level badges).
@@ -234,13 +230,37 @@ def _run_sn_loop_cmd(
             if not val or (now - ts) > 1.0:
                 val = _count_pending()
                 _pending_cache["v"] = (now, val)
+            # Side-effect: keep per-stage stats.total in sync with graph pending
+            # counts so the framework can compute per-row gauges and ETA.
+            # total = processed_in_session + remaining_pending. As workers
+            # consume work, processed climbs while pending shrinks; total
+            # remains stable until new work appears.
+            try:
+                _pairs = (
+                    ("extract_stats", "extract"),
+                    ("draft_stats", "draft"),
+                    ("revise_stats", "revise"),
+                    ("describe_stats", "enrich"),
+                    ("review_names_stats", "review_names"),
+                    ("review_docs_stats", "review_docs"),
+                )
+                for _attr, _key in _pairs:
+                    _stats = getattr(loop_state, _attr, None)
+                    if _stats is None:
+                        continue
+                    _pending_n = int(val.get(_key, 0))
+                    _new_total = int(_stats.processed) + _pending_n
+                    if _new_total > int(_stats.total):
+                        _stats.total = _new_total
+            except Exception:
+                pass
             return [
                 ("extract", val.get("extract", 0)),
                 ("draft", val.get("draft", 0)),
                 ("revise", val.get("revise", 0)),
                 ("enrich", val.get("enrich", 0)),
-                ("rev-n", val.get("review_names", 0)),
-                ("rev-d", val.get("review_docs", 0)),
+                ("names", val.get("review_names", 0)),
+                ("documentation", val.get("review_docs", 0)),
             ]
 
         display = DataDrivenProgressDisplay(
@@ -254,7 +274,7 @@ def _run_sn_loop_cmd(
             ),
             console=cli_console,
             title_suffix="Standard Name",
-            mode_label=(f"target={target}" if target != "full" else None),
+            mode_label=(f"target={target_label}" if target_label != "full" else None),
             accumulated_cost_fn=_cost_fn,
             pending_fn=_pending_fn,
         )
@@ -622,13 +642,14 @@ def _check_pipeline_clear_gate() -> None:
     "--min-score",
     "min_score",
     type=float,
-    default=None,
+    default=0.75,
+    show_default=True,
     help=(
         "Reviewer-score threshold for regen phase. Names with "
         "``reviewer_score_name < min_score`` (that haven't already been "
         "regenerated) are re-composed with prior reviewer critique "
-        "injected into the compose prompt. When None (default), the "
-        "regen phase is skipped. Typical value: 0.6."
+        "injected into the compose prompt. Pass ``--skip-regen`` (or "
+        "``--min-score 0``) to disable the regen phase entirely."
     ),
 )
 @click.option(
@@ -655,16 +676,17 @@ def _check_pipeline_clear_gate() -> None:
 )
 @click.option(
     "--target",
-    type=click.Choice(["names", "docs"], case_sensitive=False),
-    default="names",
+    type=click.Choice(["names", "docs", "full"], case_sensitive=False),
+    default="full",
     show_default=True,
     help=(
-        "Which generation pass to run. 'names' runs the name-only compose "
-        "pass (grammar + unit only, wide batches: group paths by "
-        "physics_domain × unit with a lean user prompt). 'docs' routes "
-        "through the five-phase enrich pipeline to fill description/"
-        "documentation on already-named entries (EXTRACT→CONTEXTUALISE→"
-        "DOCUMENT→VALIDATE→PERSIST)."
+        "Which generation pass to run. 'full' (default) runs the full "
+        "pipeline (extract→compose→enrich→review→regen). 'names' runs "
+        "the name-only compose pass (grammar + unit only, wide batches: "
+        "group paths by physics_domain × unit with a lean user prompt) "
+        "and skips enrichment. 'docs' routes through the five-phase "
+        "enrich pipeline to fill description/documentation on already-"
+        "named entries (EXTRACT→CONTEXTUALISE→DOCUMENT→VALIDATE→PERSIST)."
     ),
 )
 @click.option(
@@ -922,6 +944,7 @@ def sn_run(
             source=source,
             override_edits=_override_edits,
             only=only_phase,
+            target=target_normalized,
         )
         return
 

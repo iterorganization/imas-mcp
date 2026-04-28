@@ -5,7 +5,7 @@ field on ``SNLoopState``. Each row has its own ``StageDisplaySpec.group`` so
 the display framework's running/completion/worker-count aggregates remain
 truthful per row.
 
-Visual cohesion (DRAFT/REVISE share the magenta family; REVIEW NAMES/REVIEW
+Visual cohesion (DRAFT/REVISE share the magenta family; NAMES/DOCUMENTATION (REVIEW
 DOCS share yellow) is achieved through colour palette and adjacent placement
 only — not through shared groups.
 """
@@ -46,8 +46,8 @@ EXPECTED_ROW_NAMES = [
     "DRAFT",
     "REVISE",
     "DESCRIBE",
-    "REVIEW NAMES",
-    "REVIEW DOCS",
+    "NAMES",
+    "DOCUMENTATION",
 ]
 
 
@@ -203,8 +203,8 @@ class TestBuildSNLoopStages:
             "REVISE always visible when generate enabled"
         )
         assert not by_name["DESCRIBE"].disabled
-        assert not by_name["REVIEW NAMES"].disabled
-        assert not by_name["REVIEW DOCS"].disabled
+        assert not by_name["NAMES"].disabled
+        assert not by_name["DOCUMENTATION"].disabled
 
     def test_revise_enabled_when_min_score_set(self):
         stages = build_sn_loop_stages(min_score=0.65)
@@ -232,8 +232,8 @@ class TestBuildSNLoopStages:
     def test_skip_review_disables_both_review_rows(self):
         stages = build_sn_loop_stages(skip_review=True)
         by_name = {s.name: s for s in stages}
-        assert by_name["REVIEW NAMES"].disabled
-        assert by_name["REVIEW DOCS"].disabled
+        assert by_name["NAMES"].disabled
+        assert by_name["DOCUMENTATION"].disabled
 
     def test_skip_regen_arg_removed(self):
         """build_sn_loop_stages no longer accepts skip_regen."""
