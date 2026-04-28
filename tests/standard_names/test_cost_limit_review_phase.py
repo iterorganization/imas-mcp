@@ -205,7 +205,7 @@ async def test_l7_cost_returned_from_revise_candidate():
     async def fake_acall(*, model, messages, response_model, service):
         return FakeRevision(), 0.042, {"prompt_tokens": 100, "completion_tokens": 50}
 
-    revised, cost = await _opus_revise_candidate(
+    revised, cost, _ti, _to = await _opus_revise_candidate(
         candidate,
         domain_vocabulary="",
         reviewer_themes=[],
@@ -236,7 +236,7 @@ async def test_l7_cost_returned_even_when_revision_rejected():
     async def fake_acall(*, model, messages, response_model, service):
         return LowConfidenceRevision(), 0.025, {}
 
-    revised, cost = await _opus_revise_candidate(
+    revised, cost, _ti, _to = await _opus_revise_candidate(
         candidate,
         domain_vocabulary="",
         reviewer_themes=[],
@@ -257,7 +257,7 @@ async def test_l7_cost_returned_on_exception():
     async def broken_acall(**_kwargs):
         raise RuntimeError("LLM timeout")
 
-    revised, cost = await _opus_revise_candidate(
+    revised, cost, _ti, _to = await _opus_revise_candidate(
         candidate,
         domain_vocabulary="",
         reviewer_themes=[],

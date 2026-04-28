@@ -87,6 +87,12 @@ _NAME_WITH_NAME_REVIEW_ONLY = {
     "pipeline_status": "enriched",
     "validation_status": "valid",
     "physics_domain": "equilibrium",
+    "description": "Temperature of the thermal electron population.",
+    "documentation": (
+        "Local temperature of the thermal electron population. Defined as "
+        "(2/3) * <kinetic energy>/k_B in the local frame. Used in transport "
+        "and equilibrium reconstruction."
+    ),
     "reviewer_score_name": 0.85,
     "reviewer_score_docs": None,
     "reviewer_scores_name": None,
@@ -101,6 +107,11 @@ _NAME_WITH_BOTH_REVIEWS = {
     "pipeline_status": "enriched",
     "validation_status": "valid",
     "physics_domain": "equilibrium",
+    "description": "Temperature of the thermal ion population.",
+    "documentation": (
+        "Local temperature of the thermal ion population. Defined as "
+        "(2/3) * <kinetic energy>/k_B in the local frame."
+    ),
     "reviewer_score_name": 0.85,
     "reviewer_score_docs": 0.80,
     "reviewer_scores_name": None,

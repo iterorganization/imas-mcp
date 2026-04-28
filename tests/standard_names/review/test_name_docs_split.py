@@ -270,7 +270,7 @@ async def test_turn_runs_names_before_docs(monkeypatch):
         phase_order.append("reconcile")
         return PhaseResult(name="reconcile", count=0)
 
-    async def track_generate(cfg, *, regen=False, force=False):
+    async def track_generate(cfg, *, regen=False, force=False, budget_override=None):
         from imas_codex.standard_names.turn import PhaseResult
 
         name = "regen" if regen else "generate"
@@ -289,13 +289,13 @@ async def test_turn_runs_names_before_docs(monkeypatch):
         phase_order.append("link")
         return PhaseResult(name="link", count=0)
 
-    async def track_review_names(cfg):
+    async def track_review_names(cfg, **kwargs):
         from imas_codex.standard_names.turn import PhaseResult
 
         phase_order.append("review_names")
         return PhaseResult(name="review_names", count=0)
 
-    async def track_review_docs(cfg):
+    async def track_review_docs(cfg, **kwargs):
         from imas_codex.standard_names.turn import PhaseResult
 
         phase_order.append("review_docs")

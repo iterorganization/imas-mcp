@@ -95,9 +95,11 @@ class TestSystemPromptW38Placement:
 
     def test_compose_system_after_includes(self) -> None:
         raw = _load("compose_system.md")
-        last_include = raw.rindex("{% include")
+        # W38 must appear after the prelude includes; trailing tail includes
+        # (e.g. _coordinate_conventions.md) may legitimately appear later.
+        prelude_end = raw.index('{% include "sn/_compose_scored_examples.md" %}')
         w38_pos = raw.index("W38 ANTI-PATTERN GALLERY")
-        assert w38_pos > last_include
+        assert w38_pos > prelude_end
 
     def test_compose_system_after_emw_gallery(self) -> None:
         # W38 extends the EMW pilot gallery — must appear AFTER it so the

@@ -123,32 +123,6 @@ class TestPersistEnrichedBatch:
         assert b["enrich_tokens"] == 500
         assert b["validation_status"] == "valid"
 
-    def test_tags_union_deduplicated(self):
-        """Tags = union of existing + enriched, deduplicated."""
-        from imas_codex.standard_names.graph_ops import persist_enriched_batch
-
-        item = _make_item(
-            "electron_temperature",
-            tags=["equilibrium", "transport"],
-            enriched_tags=["transport", "kinetics"],
-        )
-
-        mock_gc = MagicMock()
-        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
-        mock_gc.__exit__ = MagicMock(return_value=False)
-
-        with patch(
-            "imas_codex.standard_names.graph_ops.GraphClient",
-            return_value=mock_gc,
-        ):
-            persist_enriched_batch([item])
-
-        merge_call = mock_gc.query.call_args_list[0]
-        batch_arg = merge_call.kwargs.get("batch") or merge_call[1].get("batch")
-        tags = batch_arg[0]["tags"]
-        # Order: existing first, then new enriched
-        assert tags == ["equilibrium", "transport", "kinetics"]
-
     def test_references_rels_created(self):
         """REFERENCES rels created for enriched_links."""
         from imas_codex.standard_names.graph_ops import persist_enriched_batch

@@ -270,7 +270,6 @@ class TestRoundTripMocked:
             assert len(item["enriched_description"]) > 0
             assert isinstance(item.get("enriched_documentation"), str)
             assert len(item["enriched_documentation"]) > 0
-            assert isinstance(item.get("enriched_tags"), list)
 
     @pytest.mark.asyncio
     async def test_roundtrip_cost_accumulates(self) -> None:

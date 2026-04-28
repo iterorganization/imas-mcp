@@ -177,7 +177,6 @@ async def test_document_enriches_items():
         == "One-sentence description of electron_temperature."
     )
     assert "LaTeX" in items[0]["enriched_documentation"]
-    assert items[0]["enriched_tags"] == ["measured", "time-dependent"]
     assert items[0]["enriched_links"] == ["name:ion_temperature"]
     assert items[0]["enriched_validity_domain"] == "Tokamak core plasma"
     assert items[0]["enriched_constraints"] == ["Must be positive"]

@@ -157,9 +157,12 @@ class TestHardChecksPlacement:
         assert hard_pos < examples_pos
 
     def test_hard_checks_after_includes(self) -> None:
-        last_include = self.raw.rindex("{% include")
+        # HARD CHECKS must appear after the prelude includes (vocabulary,
+        # exemplars, scored examples). A trailing include such as
+        # _coordinate_conventions.md may legitimately appear later in the file.
+        prelude_end = self.raw.index('{% include "sn/_compose_scored_examples.md" %}')
         hard_pos = self.raw.index("HARD PRE-EMIT CHECKS")
-        assert hard_pos > last_include
+        assert hard_pos > prelude_end
 
 
 class TestNoConflictWithConstraintRole:
