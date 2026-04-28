@@ -284,14 +284,18 @@ async def _run_generate_phase(
         limit=cfg.limit,
         budget_manager=budget_mgr,
         budget_phase_tag=phase_tag,
-        loop_stats=(
-            getattr(cfg.loop_state, "regen_stats", None)
-            if regen
-            else getattr(cfg.loop_state, "generate_stats", None)
-        )
+        loop_stats=(getattr(cfg.loop_state, "generate_stats", None))
         if cfg.loop_state is not None
         else None,
     )
+
+    # Subphase visibility: tag the shared generate_stats row with the active
+    # subphase ("compose" cold or "regen" with feedback).  Stream items emitted
+    # by the compose worker also include this label in their description.
+    if cfg.loop_state is not None:
+        gs = getattr(cfg.loop_state, "generate_stats", None)
+        if gs is not None:
+            gs.status_text = "regen" if regen else "compose"
 
     t0 = time.monotonic()
     try:
@@ -493,10 +497,16 @@ async def _run_review_names_phase(
         target="names",
         budget_manager=budget_mgr,
         budget_phase_tag="review_names",
-        loop_stats=(getattr(cfg.loop_state, "review_names_stats", None))
+        loop_stats=(getattr(cfg.loop_state, "review_stats", None))
         if cfg.loop_state is not None
         else None,
     )
+
+    # Subphase tag for shared review_stats row.
+    if cfg.loop_state is not None:
+        rs = getattr(cfg.loop_state, "review_stats", None)
+        if rs is not None:
+            rs.status_text = "names"
 
     t0 = time.monotonic()
     try:
@@ -590,10 +600,15 @@ async def _run_review_docs_phase(
         target="docs",
         budget_manager=budget_mgr,
         budget_phase_tag="review_docs",
-        loop_stats=(getattr(cfg.loop_state, "review_docs_stats", None))
+        loop_stats=(getattr(cfg.loop_state, "review_stats", None))
         if cfg.loop_state is not None
         else None,
     )
+
+    if cfg.loop_state is not None:
+        rs = getattr(cfg.loop_state, "review_stats", None)
+        if rs is not None:
+            rs.status_text = "docs"
 
     t0 = time.monotonic()
     try:

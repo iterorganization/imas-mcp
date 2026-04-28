@@ -121,23 +121,22 @@ class StandardNameProgressDisplay(DataDrivenProgressDisplay):
 class SNLoopState:
     """Observable state for the SN loop ``DataDrivenProgressDisplay``.
 
-    Each LLM phase has its own :class:`WorkerStats`, observed by
-    ``DataDrivenProgressDisplay`` via ``StageDisplaySpec.stats_attr``.
+    Three rolled-up worker groups feed the display:
+
+    - ``generate_stats`` — initial compose AND regen (subphase via stream label)
+    - ``enrich_stats``   — descriptions + documentation
+    - ``review_stats``   — names AND docs review (subphase via stream label)
+
     Workers update stats directly (``processed``, ``cost``,
     ``stream_queue.add([...])``); no custom push_event API required.
+    Live cost split between compose vs regen and names vs docs is recovered
+    post-hoc from ``LLMCost`` graph nodes that retain the precise phase tag.
     """
 
-    # Per-phase WorkerStats (observed by display)
+    # Per-group WorkerStats (observed by display)
     generate_stats: WorkerStats = field(default_factory=WorkerStats)
-    regen_stats: WorkerStats = field(default_factory=WorkerStats)
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
-    review_names_stats: WorkerStats = field(default_factory=WorkerStats)
-    review_docs_stats: WorkerStats = field(default_factory=WorkerStats)
-
-    # Domain tracking (surfaced via stats_fn / pending_fn callbacks)
-    total_domains: int = 0
-    done_domains: int = 0
-    current_domain: str = ""
+    review_stats: WorkerStats = field(default_factory=WorkerStats)
 
 
 def build_sn_loop_stages(
@@ -145,11 +144,13 @@ def build_sn_loop_stages(
     skip_generate: bool = False,
     skip_enrich: bool = False,
     skip_review: bool = False,
-    skip_regen: bool = False,
 ) -> list[StageDisplaySpec]:
     """Build the stage specs for the SN loop progress display.
 
-    5 rows: GENERATE → REGEN → ENRICH → REVIEW NAMES → REVIEW DOCS
+    3 rows: GENERATE → ENRICH → REVIEW.
+
+    Subphases (compose/regen, names/docs) surface inside each row via stream
+    item descriptions and ``WorkerStats.status_text`` — they do not split rows.
     """
     return [
         StageDisplaySpec(
@@ -160,13 +161,6 @@ def build_sn_loop_stages(
             disabled=skip_generate,
         ),
         StageDisplaySpec(
-            name="REGEN",
-            style="bold red",
-            group="regen",
-            stats_attr="regen_stats",
-            disabled=skip_regen,
-        ),
-        StageDisplaySpec(
             name="ENRICH",
             style="bold cyan",
             group="enrich",
@@ -174,17 +168,10 @@ def build_sn_loop_stages(
             disabled=skip_enrich,
         ),
         StageDisplaySpec(
-            name="REVIEW NAMES",
+            name="REVIEW",
             style="bold yellow",
-            group="review_names",
-            stats_attr="review_names_stats",
-            disabled=skip_review,
-        ),
-        StageDisplaySpec(
-            name="REVIEW DOCS",
-            style="bold yellow",
-            group="review_docs",
-            stats_attr="review_docs_stats",
+            group="review",
+            stats_attr="review_stats",
             disabled=skip_review,
         ),
     ]

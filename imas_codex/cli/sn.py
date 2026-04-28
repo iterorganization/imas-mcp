@@ -130,8 +130,6 @@ def _run_sn_loop_cmd(
             DataDrivenProgressDisplay,
         )
 
-        _skip_regen = skip_regen or min_score is None
-
         target = "full"
         if skip_enrich:
             target = "names"
@@ -140,6 +138,75 @@ def _run_sn_loop_cmd(
 
         loop_state = SNLoopState()
 
+        # Per-group pending counters from the graph (row-level badges).
+        # Cypher mirrors enrich_workers.claim_names_for_enrichment() and
+        # review/pipeline.py docs-content gate (≥50 chars).
+        from imas_codex.graph.client import GraphClient as _GC
+
+        def _count_pending() -> dict[str, int]:
+            try:
+                with _GC() as gc:
+                    rows = list(
+                        gc.query(
+                            """
+                            CALL {
+                              MATCH (s:StandardNameSource {status: 'extracted'})
+                              RETURN count(s) AS generate
+                            }
+                            CALL {
+                              MATCH (sn:StandardName)
+                              WHERE sn.pipeline_status IN ['named']
+                                AND sn.enriched_at IS NULL
+                                AND (sn.enrich_claimed_at IS NULL
+                                     OR sn.enrich_claimed_at < datetime() - duration({minutes: 30}))
+                              RETURN count(sn) AS enrich
+                            }
+                            CALL {
+                              MATCH (sn:StandardName)
+                              WHERE sn.validation_status = 'valid'
+                                AND sn.reviewed_name_at IS NULL
+                              RETURN count(sn) AS review_names
+                            }
+                            CALL {
+                              MATCH (sn:StandardName)
+                              WHERE sn.validation_status = 'valid'
+                                AND sn.reviewed_name_at IS NOT NULL
+                                AND sn.reviewed_docs_at IS NULL
+                                AND sn.documentation IS NOT NULL
+                                AND size(sn.documentation) >= 50
+                              RETURN count(sn) AS review_docs
+                            }
+                            RETURN generate, enrich, review_names + review_docs AS review
+                            """
+                        )
+                    )
+                if not rows:
+                    return {"generate": 0, "enrich": 0, "review": 0}
+                r = rows[0]
+                return {
+                    "generate": int(r.get("generate", 0)),
+                    "enrich": int(r.get("enrich", 0)),
+                    "review": int(r.get("review", 0)),
+                }
+            except Exception:
+                return {"generate": 0, "enrich": 0, "review": 0}
+
+        _pending_cache: dict[str, tuple[float, dict[str, int]]] = {"v": (0.0, {})}
+
+        def _pending_fn() -> list[tuple[str, int]]:
+            import time as _t
+
+            now = _t.monotonic()
+            ts, val = _pending_cache["v"]
+            if not val or (now - ts) > 1.0:
+                val = _count_pending()
+                _pending_cache["v"] = (now, val)
+            return [
+                ("generate", val.get("generate", 0)),
+                ("enrich", val.get("enrich", 0)),
+                ("review", val.get("review", 0)),
+            ]
+
         display = DataDrivenProgressDisplay(
             facility="sn",
             cost_limit=cost_limit,
@@ -147,21 +214,12 @@ def _run_sn_loop_cmd(
                 skip_generate=skip_generate,
                 skip_enrich=skip_enrich,
                 skip_review=skip_review,
-                skip_regen=_skip_regen,
             ),
             console=cli_console,
             title_suffix="Standard Name Loop",
             mode_label=f"target={target}",
             accumulated_cost_fn=_cost_fn,
-            stats_fn=lambda: [
-                ("done", str(loop_state.done_domains), "green"),
-                ("current", loop_state.current_domain or "—", "cyan"),
-                (
-                    "pending",
-                    str(max(0, loop_state.total_domains - loop_state.done_domains)),
-                    "dim",
-                ),
-            ],
+            pending_fn=_pending_fn,
         )
         display.set_engine_state(loop_state)
     else:

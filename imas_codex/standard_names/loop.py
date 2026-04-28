@@ -309,15 +309,8 @@ async def run_sn_loop(
     MAX_STALLS = 2
     domain_stalls: dict[str, tuple[int, int]] = {}
 
-    # ── Display: signal run start ─────────────────────────────────
-    if loop_state is not None:
-        # Count eligible domains for the domain tracker.
-        # Best-effort: don't let display setup block the pipeline.
-        try:
-            _eligible = _count_eligible_domains(only_domain=only_domain)
-            loop_state.total_domains = len(_eligible)
-        except Exception:
-            loop_state.total_domains = 0
+    # Domain rotation tracking removed from SNLoopState — pending counts
+    # now come from graph queries via pending_fn (see cli/sn.py).
 
     try:
         while True:
@@ -360,9 +353,7 @@ async def run_sn_loop(
                 remaining_budget,
             )
 
-            # ── Display: signal turn start ────────────────────────
-            if loop_state is not None:
-                loop_state.current_domain = dom
+            # Domain breadcrumb removed; row pending counts come from graph.
 
             # Snapshot forward-progress counters before the turn so we can
             # detect whether the turn actually advanced anything.
@@ -423,9 +414,7 @@ async def run_sn_loop(
             summary.cost_spent = max(shared_mgr.spent, summary.cost_spent + phase_sum)
             summary.domains_touched.add(dom)
 
-            # ── Display: signal turn end ──────────────────────────
-            if loop_state is not None:
-                loop_state.done_domains += 1
+            # done_domains counter removed — graph pending counts replace it.
 
             # Update phase-level cost breakdowns from shared manager.
             phase_spent = shared_mgr.phase_spent
