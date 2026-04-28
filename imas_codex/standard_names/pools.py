@@ -1,0 +1,326 @@
+"""Concurrent worker-pool orchestrator for ``sn run`` (Phase 8).
+
+Replaces the per-domain serial ``run_sn_loop`` with N persistent async
+tasks that pull work from the graph independently and share a single
+:class:`BudgetManager` for cost coordination.
+
+Five pools run under a single ``asyncio.gather``:
+
+* ``generate``       — composes new ``StandardName`` rows from
+                       ``StandardNameSource(status='extracted')``.
+* ``enrich``         — adds description+documentation to
+                       ``StandardName(enriched_at IS NULL)``.
+* ``review_names``   — scores name+grammar.
+* ``review_docs``    — scores description+documentation (gated on
+                       ``reviewed_name_at IS NOT NULL``).
+* ``regen``          — recomposes names below the regen threshold.
+
+Each pool follows a cooperative shutdown contract:
+
+    while not stop_event.is_set():
+        wait for admission via mgr.pool_admit(...)
+        claim a coherent batch (seed-and-expand)
+        if no work: sleep with exponential backoff
+        process_batch(...)  # checks stop_event between LLM and persist
+        release_claim     (always, in finally)
+
+After ``stop_event``, the outer harness gives pools a 60s grace window
+to complete in-flight batches before issuing ``task.cancel()``.  The
+budget writer queue is drained before the SNRun is finalized so cost
+accounting remains exact.
+
+This module deliberately contains only the orchestration scaffolding.
+The five claim queries live in ``graph_ops.py`` and the per-pool
+batch-processor functions live in their respective worker modules
+(``workers.py`` for compose+regen, ``enrich_workers.py``,
+``review/pipeline.py``).  This separation keeps the orchestrator
+agnostic of prompt/persist details — its only job is to schedule.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import random
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from imas_codex.standard_names.budget import BudgetManager
+
+logger = logging.getLogger(__name__)
+
+
+# Default per-pool weights for soft-fairness admission control.
+# Sum to 1.0.  Mirror the rationale in plan.md Phase 8.
+POOL_WEIGHTS: dict[str, float] = {
+    "generate": 0.30,
+    "enrich": 0.25,
+    "review_names": 0.20,
+    "review_docs": 0.15,
+    "regen": 0.10,
+}
+
+POOL_NAMES: tuple[str, ...] = tuple(POOL_WEIGHTS.keys())
+
+
+@dataclass
+class _PoolBackoff:
+    """Exponential backoff for empty-claim spins.
+
+    Each pool maintains its own backoff state.  On an empty claim
+    result, ``next_sleep`` returns the next interval; on a successful
+    claim, ``reset()`` returns the pool to the base interval.
+
+    Schedule: 3s → 6s → 12s → 24s → 30s (capped).
+    """
+
+    base: float = 3.0
+    cap: float = 30.0
+    _current: float = 3.0
+
+    def reset(self) -> None:
+        self._current = self.base
+
+    def next_sleep(self) -> float:
+        # Add ±10% jitter to avoid lock-step polling across pools.
+        jitter = random.uniform(0.9, 1.1)
+        sleep_for = self._current * jitter
+        self._current = min(self._current * 2.0, self.cap)
+        return sleep_for
+
+
+@dataclass
+class PoolHealth:
+    """Liveness telemetry for a single pool.
+
+    Mirrors the per-subpool wedge detection rules from plan.md Phase 8
+    finding M7.  ``last_progress_at`` is updated on each successful
+    batch persist.  ``pending_count`` is refreshed by the orchestrator
+    via the pending-fn callback.  ``in_flight`` tracks claimed but
+    not-yet-persisted batches for restart-safety reasoning.
+    """
+
+    pool: str
+    last_progress_at: float = field(default_factory=time.time)
+    pending_count: int = 0
+    in_flight: int = 0
+    error_count: int = 0
+    last_error: str | None = None
+
+    def mark_progress(self) -> None:
+        self.last_progress_at = time.time()
+
+    def is_wedged(self, *, poll_interval: float, now: float | None = None) -> bool:
+        """A pool is wedged when it has pending work but hasn't progressed
+        for at least 2× the poll interval.
+        """
+        if self.pending_count <= 0:
+            return False
+        ts = now if now is not None else time.time()
+        return (ts - self.last_progress_at) > 2.0 * poll_interval
+
+
+# Public type aliases for pool callables.  ``ClaimFn`` returns either a
+# claimed batch (opaque dict; pool-specific shape) or ``None`` when no
+# eligible work is available.  ``ProcessFn`` consumes the batch and
+# performs LLM + persist work; it is responsible for releasing the
+# claim (typically in a try/finally) and returning the count of items
+# successfully processed.
+ClaimFn = Callable[[], Awaitable[dict[str, Any] | None]]
+ProcessFn = Callable[[dict[str, Any]], Awaitable[int]]
+
+
+@dataclass
+class PoolSpec:
+    """Configuration for a single pool's worker loop.
+
+    Each pool wraps a graph-side claim query and a batch processor.
+    The orchestrator only needs these two callables plus the pool name
+    to drive the loop — all pipeline-specific logic stays inside the
+    callables themselves.
+    """
+
+    name: str
+    claim: ClaimFn
+    process: ProcessFn
+    weight: float = 0.0
+    health: PoolHealth = field(init=False)
+    backoff: _PoolBackoff = field(default_factory=_PoolBackoff)
+
+    def __post_init__(self) -> None:
+        if self.weight == 0.0:
+            self.weight = POOL_WEIGHTS.get(self.name, 0.0)
+        self.health = PoolHealth(pool=self.name)
+
+
+async def pool_loop(
+    spec: PoolSpec,
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+    *,
+    active_pools_fn: Callable[[], set[str]],
+    weights: dict[str, float] = POOL_WEIGHTS,
+    admission_poll: float = 0.5,
+) -> None:
+    """Cooperative pool worker.
+
+    Loop semantics (per plan.md Phase 8 finding H6):
+
+    * On each iteration, check ``stop_event``.  If set, exit cleanly
+      without claiming new work.
+    * Wait for admission via ``mgr.pool_admit(spec.name, weights,
+      active_pools_fn())`` — this enforces weighted fairness across
+      live pools.  Sleep ``admission_poll`` seconds and retry while
+      not admitted.
+    * Claim a batch.  If ``None``, increment backoff and sleep.
+    * Process the batch; mark progress on success; reset backoff.
+    * Errors are logged and counted but do not crash the pool — the
+      next iteration will retry (the claim infrastructure handles
+      orphan recovery via ``claimed_at`` timeout).
+    """
+    logger.info("pool[%s] starting", spec.name)
+    while not stop_event.is_set():
+        # ── Admission gate ────────────────────────────────────────
+        if not mgr.pool_admit(spec.name, weights, active_pools_fn()):
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=admission_poll)
+                break  # stop_event triggered during wait
+            except TimeoutError:
+                continue
+
+        # ── Claim ────────────────────────────────────────────────
+        try:
+            batch = await spec.claim()
+        except Exception as exc:  # noqa: BLE001 — log and continue
+            spec.health.error_count += 1
+            spec.health.last_error = f"claim: {exc!r}"
+            logger.exception("pool[%s] claim failed: %s", spec.name, exc)
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(), timeout=spec.backoff.next_sleep()
+                )
+                break
+            except TimeoutError:
+                continue
+
+        if batch is None:
+            sleep_for = spec.backoff.next_sleep()
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=sleep_for)
+                break
+            except TimeoutError:
+                continue
+
+        # Reset backoff after a successful claim.
+        spec.backoff.reset()
+        spec.health.in_flight += 1
+
+        # ── Process ───────────────────────────────────────────────
+        try:
+            count = await spec.process(batch)
+            spec.health.mark_progress()
+            logger.debug("pool[%s] processed %d items", spec.name, count)
+        except asyncio.CancelledError:
+            logger.info("pool[%s] cancelled mid-batch", spec.name)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            spec.health.error_count += 1
+            spec.health.last_error = f"process: {exc!r}"
+            logger.exception("pool[%s] process failed: %s", spec.name, exc)
+        finally:
+            spec.health.in_flight = max(0, spec.health.in_flight - 1)
+    logger.info("pool[%s] exiting cleanly", spec.name)
+
+
+async def run_pools(
+    pools: list[PoolSpec],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+    *,
+    grace_period: float = 60.0,
+    weights: dict[str, float] = POOL_WEIGHTS,
+) -> dict[str, PoolHealth]:
+    """Run all pool loops concurrently and orchestrate cooperative shutdown.
+
+    Returns a mapping of pool name → final ``PoolHealth`` snapshot.
+
+    Shutdown sequence (plan.md Phase 8 finding H6):
+
+    1. ``stop_event.set()`` (set by caller, e.g. via ``run_discovery``
+       3-press shutdown).
+    2. Each pool exits its claim loop and returns; pools currently
+       processing a batch finish that batch normally.
+    3. The harness waits up to ``grace_period`` seconds for all pool
+       tasks to complete naturally.
+    4. Any pool still running after grace is hard-cancelled.
+    5. ``mgr.drain_pending()`` flushes the LLMCost write queue.
+
+    The caller is responsible for finalizing the SNRun row after this
+    function returns.
+    """
+
+    def active_pools_fn() -> set[str]:
+        # A pool is "active" if its claim queue has pending work.
+        # PoolHealth.pending_count is updated externally (e.g. by the
+        # display's pending-fn callback that queries the graph).
+        # Pools with pending=0 forfeit their weight share to active pools.
+        return {p.name for p in pools if p.health.pending_count > 0}
+
+    tasks = [
+        asyncio.create_task(
+            pool_loop(
+                p,
+                mgr,
+                stop_event,
+                active_pools_fn=active_pools_fn,
+                weights=weights,
+            ),
+            name=f"pool[{p.name}]",
+        )
+        for p in pools
+    ]
+
+    # Wait until stop_event is set OR all pools complete naturally.
+    stop_waiter = asyncio.create_task(stop_event.wait(), name="stop_waiter")
+    done, pending = await asyncio.wait(
+        tasks + [stop_waiter],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    # If only stop_waiter completed, give pools a grace period.
+    if stop_waiter in done:
+        logger.info(
+            "stop signal received — granting %.0fs grace for in-flight batches",
+            grace_period,
+        )
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=grace_period)
+        except TimeoutError:
+            logger.warning("grace period expired — cancelling stragglers")
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+    else:
+        stop_waiter.cancel()
+        await asyncio.gather(stop_waiter, return_exceptions=True)
+        # If a pool exited with an exception, surface it after others finish.
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Drain LLMCost queue before final accounting.
+    await mgr.drain_pending()
+
+    return {p.name: p.health for p in pools}
+
+
+__all__ = [
+    "POOL_NAMES",
+    "POOL_WEIGHTS",
+    "PoolHealth",
+    "PoolSpec",
+    "pool_loop",
+    "run_pools",
+]

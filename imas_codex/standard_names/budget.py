@@ -567,6 +567,53 @@ class BudgetManager:
         """Original total budget."""
         return self._total
 
+    # ------------------------------------------------------------------
+    # Pool admission control (Phase 8)
+    # ------------------------------------------------------------------
+
+    def pool_admit(
+        self,
+        pool: str,
+        weights: dict[str, float],
+        active_pools: set[str],
+    ) -> bool:
+        """Soft-fairness admission gate for a pool requesting a new batch.
+
+        Implements the weighted-share rule described in plan.md Phase 8:
+
+            share = pool_spent[p] / sum(pool_spent.values() or epsilon)
+            effective_weight = weights[p] / sum(weights[q] for q in active_pools)
+            admit iff share < effective_weight  OR  no other pool is active
+
+        Idle pools (queue empty → not in ``active_pools``) immediately
+        forfeit their weight share so active pools can borrow it.
+
+        ``pool`` here is a logical pool name matching the keys in
+        ``weights`` (e.g. "generate", "enrich", "review_names",
+        "review_docs", "regen").  These map 1:1 to ``_phase_spent`` keys.
+
+        Returns True if the pool is permitted to claim its next batch.
+        """
+        if pool not in active_pools or pool not in weights:
+            return False
+        # Sole active pool always admitted — the "no other pool is
+        # active" branch from plan.md Phase 8.
+        if len(active_pools) == 1:
+            return True
+        with self._lock:
+            spent = dict(self._phase_spent)
+        total_spent = sum(spent.values())
+        if total_spent < EPSILON:
+            return True  # nothing spent yet; everyone gets a turn
+        share = spent.get(pool, 0.0) / total_spent
+        active_weight_sum = sum(
+            weights.get(q, 0.0) for q in active_pools if q in weights
+        )
+        if active_weight_sum < EPSILON:
+            return True
+        effective = weights[pool] / active_weight_sum
+        return share < effective
+
     @property
     def write_failed(self) -> bool:
         """True if any graph write failed terminally (cost_is_exact → False)."""
