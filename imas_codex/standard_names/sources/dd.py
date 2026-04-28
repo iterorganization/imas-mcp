@@ -280,12 +280,12 @@ def _apply_extract_deny(
 # LIMIT is applied on DISTINCT (n, ids) pairs first, then clusters/coords
 # are joined.  This guarantees $limit unique paths regardless of how many
 # cluster memberships each path has.
-_ENRICHED_QUERY = """
+_ENRICHED_QUERY_TPL = """
 MATCH (n:IMASNode)-[:IN_IDS]->(ids:IDS)
 WHERE {where_clause}
 WITH DISTINCT n, ids
 ORDER BY ids.id, n.id
-LIMIT $limit
+{limit_clause}
 WITH n, ids
 OPTIONAL MATCH (n)-[:HAS_UNIT]->(u:Unit)
 OPTIONAL MATCH (n)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
@@ -322,6 +322,9 @@ RETURN n.id AS path,
        error_node_ids
 ORDER BY ids.id, n.id
 """
+
+# Backwards-compat alias for older callers — uses LIMIT clause, no formatting hole.
+_ENRICHED_QUERY = _ENRICHED_QUERY_TPL.replace("{limit_clause}", "LIMIT $limit")
 
 # Cluster siblings query — paths sharing the same cluster
 _SIBLINGS_QUERY = """
@@ -457,7 +460,7 @@ def extract_dd_candidates(
     *,
     ids_filter: str | None = None,
     domain_filter: str | None = None,
-    limit: int = 500,
+    limit: int | None = 5000,
     existing_names: set[str] | None = None,
     on_status: Callable[[str], None] | None = None,
     from_model: str | None = None,
@@ -477,7 +480,7 @@ def extract_dd_candidates(
     Args:
         ids_filter: Restrict to specific IDS (e.g., "equilibrium")
         domain_filter: Restrict to physics domain
-        limit: Max paths to extract
+        limit: Max paths to extract (None = unlimited; default 5000)
         existing_names: Known standard names for dedup awareness
         on_status: Optional callback ``(text: str) -> None`` for progress updates
         from_model: Only return paths whose existing StandardName was generated
@@ -546,7 +549,9 @@ def extract_dd_candidates(
         cocos_version = dv_row["cocos_version"] if dv_row else None
         cocos_params = dv_row["cocos_params"] if dv_row else None
 
-        params: dict = {"limit": limit, "sn_categories": list(SN_SOURCE_CATEGORIES)}
+        params: dict = {"sn_categories": list(SN_SOURCE_CATEGORIES)}
+        if limit is not None:
+            params["limit"] = limit
         where_parts = [
             # node_category is the authoritative namability taxonomy; node_type
             # (dynamic/static/constant) is orthogonal and must NOT gate extraction.
@@ -584,8 +589,12 @@ def extract_dd_candidates(
             )
 
         where_clause = " AND ".join(where_parts)
-        query = _ENRICHED_QUERY.format(where_clause=where_clause)
+        limit_clause = "LIMIT $limit" if limit is not None else ""
+        query = _ENRICHED_QUERY_TPL.format(
+            where_clause=where_clause, limit_clause=limit_clause
+        )
 
+        _status(f"running enriched query (limit={'∞' if limit is None else limit})…")
         results = list(gc.query(query, **params))
 
         if not results:

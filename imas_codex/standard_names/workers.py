@@ -180,6 +180,21 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
         state.extract_stats.status_text = text
         if state.loop_extract_stats is not None:
             state.loop_extract_stats.status_text = text
+            # Stream sub-stage events so the user sees a timeline rather than
+            # a single status string that can appear stuck during long
+            # downstream phases (compose, enrich, review).
+            try:
+                state.loop_extract_stats.stream_queue.add(
+                    [
+                        {
+                            "primary_text": "extract",
+                            "primary_text_style": "dim cyan",
+                            "description": text,
+                        }
+                    ]
+                )
+            except Exception:
+                pass
 
     def _run() -> list:
         from imas_codex.standard_names.graph_ops import (
@@ -265,7 +280,7 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 batches = extract_dd_candidates(
                     ids_filter=state.ids_filter,
                     domain_filter=state.domain_filter,
-                    limit=state.limit or 500,
+                    limit=state.limit,
                     existing_names=existing,
                     on_status=_on_status,
                     from_model=state.from_model,
@@ -426,6 +441,7 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
     state.stats["extract_count"] = total_items
 
     state.extract_stats.freeze_rate()
+    state.extract_stats.status_text = ""
     state.extract_phase.mark_done()
     state.extract_stats.stream_queue.add(
         [
@@ -437,6 +453,7 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
     )
     if state.loop_extract_stats is not None:
         state.loop_extract_stats.freeze_rate()
+        state.loop_extract_stats.status_text = ""
         state.loop_extract_stats.stream_queue.add(
             [
                 {
