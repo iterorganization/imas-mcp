@@ -1,8 +1,10 @@
-"""Tests for the three Phase 8 smoke-test blockers.
+"""Tests for Phase 8 smoke-test blockers.
 
 BUG-1 — Cypher head(coalesce(x.physics_domain, [])) fails for scalar fields.
 BUG-2 — Python set comprehension over physics_domain fails when value is a list.
 BUG-3 — pool_loop does not release claims when process() raises.
+BUG-4 — write_standard_names() calls gc.query() after the surrounding
+         ``with GraphClient()`` block closes (use-after-close).
 
 All tests are mock-based; no live Neo4j required.
 """
@@ -490,3 +492,119 @@ class TestPoolLoopReleaseOnFailure:
         await asyncio.sleep(0.3)
         stop.set()
         await asyncio.wait_for(task, timeout=2.0)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# BUG-4: skeleton sweep use-after-close
+# ---------------------------------------------------------------------------
+
+
+class TestSkeletonSweepNoUseAfterClose:
+    """write_standard_names() must not call gc.query() outside the `with` block.
+
+    Before the fix, the skeleton sweep ran after the surrounding
+    ``with GraphClient() as gc:`` closed, raising
+    ``RuntimeError: GraphClient is closed`` on every persist.
+    """
+
+    def _make_minimal_name(self) -> dict:
+        return {
+            "id": "test_quantity",
+            "description": "A test quantity",
+            "documentation": None,
+            "kind": "scalar",
+            "unit": None,
+            "source_types": ["dd"],
+            "source_id": None,
+            "physics_domain": None,
+        }
+
+    def _make_gc_sequence(self) -> tuple[MagicMock, MagicMock]:
+        """Return (gc_main, gc_sweep) — two separate mock GraphClient instances
+        to represent the two ``with GraphClient()`` blocks in write_standard_names().
+        """
+        gc_main = MagicMock()
+        gc_main.__enter__ = MagicMock(return_value=gc_main)
+        gc_main.__exit__ = MagicMock(return_value=False)
+        gc_main.query = MagicMock(return_value=[])
+
+        gc_sweep = MagicMock()
+        gc_sweep.__enter__ = MagicMock(return_value=gc_sweep)
+        gc_sweep.__exit__ = MagicMock(return_value=False)
+        gc_sweep.query = MagicMock(return_value=[{"swept": 3}])
+
+        return gc_main, gc_sweep
+
+    def test_sweep_does_not_raise_after_close(self) -> None:
+        """The sweep must execute inside its own GraphClient context."""
+        from imas_codex.standard_names.graph_ops import write_standard_names
+
+        gc_main, gc_sweep = self._make_gc_sequence()
+        call_count = 0
+
+        def gc_factory():
+            nonlocal call_count
+            call_count += 1
+            return gc_main if call_count == 1 else gc_sweep
+
+        with patch(
+            "imas_codex.standard_names.graph_ops.GraphClient",
+            side_effect=gc_factory,
+        ):
+            # Must not raise RuntimeError: GraphClient is closed
+            result = write_standard_names([self._make_minimal_name()])
+
+        assert isinstance(result, int)
+
+    def test_sweep_returns_count(self) -> None:
+        """The function returns the number of names written (not swept)."""
+        from imas_codex.standard_names.graph_ops import write_standard_names
+
+        gc_main, gc_sweep = self._make_gc_sequence()
+        call_count = 0
+
+        def gc_factory():
+            nonlocal call_count
+            call_count += 1
+            return gc_main if call_count == 1 else gc_sweep
+
+        with patch(
+            "imas_codex.standard_names.graph_ops.GraphClient",
+            side_effect=gc_factory,
+        ):
+            result = write_standard_names([self._make_minimal_name()])
+
+        # write_standard_names returns the count of names written, not swept
+        assert result == 1
+
+    def test_sweep_query_called_on_open_client(self) -> None:
+        """The sweep gc.query() must be called while the sweep client is open."""
+        from imas_codex.standard_names.graph_ops import write_standard_names
+
+        gc_main, gc_sweep = self._make_gc_sequence()
+        sweep_query_called_while_open: list[bool] = []
+
+        def tracking_query(*args, **kwargs):
+            # If __exit__ has already been called, the client is closed
+            sweep_query_called_while_open.append(gc_sweep.__exit__.call_count == 0)
+            return [{"swept": 0}]
+
+        gc_sweep.query = MagicMock(side_effect=tracking_query)
+
+        call_count = 0
+
+        def gc_factory():
+            nonlocal call_count
+            call_count += 1
+            return gc_main if call_count == 1 else gc_sweep
+
+        with patch(
+            "imas_codex.standard_names.graph_ops.GraphClient",
+            side_effect=gc_factory,
+        ):
+            write_standard_names([self._make_minimal_name()])
+
+        assert sweep_query_called_while_open, "sweep query was never called"
+        assert all(sweep_query_called_while_open), (
+            "sweep query was called on a closed client"
+        )

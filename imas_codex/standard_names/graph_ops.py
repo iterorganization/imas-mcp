@@ -1220,18 +1220,21 @@ def write_standard_names(
     # HAS_SUCCESSOR, IN_CLUSTER, HAS_PHYSICS_DOMAIN). A real StandardName
     # always has at least a created_at OR generated_at timestamp; pure
     # skeletons (id-only) are detached and deleted.
-    swept = gc.query(
-        """
-        MATCH (sn:StandardName)
-        WHERE sn.created_at IS NULL
-          AND sn.generated_at IS NULL
-          AND sn.validation_status IS NULL
-          AND sn.unit IS NULL
-          AND sn.kind IS NULL
-        DETACH DELETE sn
-        RETURN count(sn) AS swept
-        """
-    )
+    # Opens its own GraphClient — the surrounding `with` block has already
+    # closed; write_vocab_gaps above follows the same pattern.
+    with GraphClient() as gc:
+        swept = gc.query(
+            """
+            MATCH (sn:StandardName)
+            WHERE sn.created_at IS NULL
+              AND sn.generated_at IS NULL
+              AND sn.validation_status IS NULL
+              AND sn.unit IS NULL
+              AND sn.kind IS NULL
+            DETACH DELETE sn
+            RETURN count(sn) AS swept
+            """
+        )
     swept_count = (swept[0]["swept"] if swept else 0) if swept else 0
     if swept_count:
         logger.info("Swept %d skeleton StandardName placeholder(s)", swept_count)
