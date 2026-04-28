@@ -652,56 +652,66 @@ def _fetch_link_candidates(
     ``HAS_STANDARD_NAME`` to tag candidates as ``name:`` or ``dd:``.
     Deduplicates and caps per SN at *max_per_sn*.
 
+    Uses :func:`_hybrid_search_neighbours_batch` for a single embed
+    round-trip across all (SN × DD-path) combinations.
+
     Returns ``{sn_id: [{tag, path, ids, kind_hint, doc_short, ...}, ...]}``.
     """
-    from imas_codex.standard_names.workers import _hybrid_search_neighbours
+    from imas_codex.standard_names.workers import _hybrid_search_neighbours_batch
 
-    result: dict[str, list[dict]] = {}
+    # Flatten all (path, desc, domain) across items and their DD paths
+    batch_tuples: list[tuple[str, str | None, str | None]] = []
+    # Track which (item_idx_in_items, sid) each batch entry belongs to
+    batch_owners: list[str] = []  # sid for each batch entry
+
     for item in items:
         sid = item["id"]
         dd_info = dd_data.get(sid, {})
         dd_paths = dd_info.get("dd_paths", [])
-
         if not dd_paths:
-            result[sid] = []
             continue
-
-        # Merge hybrid search results across all DD paths for this SN
-        seen: dict[str, dict] = {}  # path → best candidate dict
         for dp in dd_paths:
             path = dp.get("path", "")
             if not path:
                 continue
-            try:
-                neighbours = _hybrid_search_neighbours(
-                    gc,
-                    path,
-                    description=dp.get("description"),
-                    physics_domain=item.get("physics_domain"),
-                    max_results=10,
-                )
-            except Exception:
-                logger.debug(
-                    "Hybrid search failed for %s (DD %s)",
-                    sid,
-                    path,
-                    exc_info=True,
-                )
-                continue
+            batch_tuples.append(
+                (path, dp.get("description"), item.get("physics_domain"))
+            )
+            batch_owners.append(sid)
 
-            for n in neighbours:
-                npath = n["path"]
-                if npath not in seen:
-                    # Add kind_hint: "name" if already minted, "dd" otherwise
-                    n["kind_hint"] = "name" if n["tag"].startswith("name:") else "dd"
-                    seen[npath] = n
+    # Single batch call
+    if batch_tuples:
+        all_neighbours = _hybrid_search_neighbours_batch(
+            gc, batch_tuples, max_results=10
+        )
+    else:
+        all_neighbours = []
 
-        # Sort by pre-existing tag priority (name: first) then truncate
+    # Re-group results per SN, dedup and annotate
+    result: dict[str, list[dict]] = {}
+    seen_per_sn: dict[str, dict[str, dict]] = {}  # sid → {path → dict}
+
+    for idx, neighbours in enumerate(all_neighbours):
+        sid = batch_owners[idx]
+        if sid not in seen_per_sn:
+            seen_per_sn[sid] = {}
+        seen = seen_per_sn[sid]
+        for n in neighbours:
+            npath = n["path"]
+            if npath not in seen:
+                n["kind_hint"] = "name" if n["tag"].startswith("name:") else "dd"
+                seen[npath] = n
+
+    for item in items:
+        sid = item["id"]
+        seen = seen_per_sn.get(sid, {})
+        if not seen:
+            result[sid] = []
+            continue
         candidates = sorted(
             seen.values(),
             key=lambda c: 0 if c["tag"].startswith("name:") else 1,
         )[:max_per_sn]
-
         result[sid] = candidates
 
     return result

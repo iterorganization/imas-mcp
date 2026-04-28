@@ -129,4 +129,40 @@ def embed_description(text: str | None) -> list[float] | None:
         return None
 
 
-__all__ = ["embed_descriptions_batch", "embed_description"]
+def embed_query_texts(texts: list[str]) -> list[list[float]]:
+    """Batch-embed texts with ``prompt_name="query"`` for retrieval search.
+
+    Unlike :func:`embed_descriptions_batch` (document-side embedding),
+    this function uses the **query** prompt — matching the asymmetric
+    embedding convention used by ``hybrid_dd_search._embed``.
+
+    A single remote round-trip embeds all *texts* at once, eliminating the
+    N+1 sequential pattern in ``_hybrid_search_neighbours``.
+
+    Args:
+        texts: Non-empty query strings to embed.  Caller is responsible
+            for filtering empty/``None`` entries before calling.
+
+    Returns:
+        List of embedding vectors (as plain ``list[float]``), one per
+        input text, in the same order.  Returns ``[]`` for empty input.
+
+    Raises:
+        RuntimeError: If the embedding backend is unavailable.
+    """
+    if not texts:
+        return []
+
+    encoder = _get_encoder()
+    embeddings = encoder.embed_texts(texts, prompt_name="query")
+
+    result: list[list[float]] = []
+    for emb in embeddings:
+        if isinstance(emb, np.ndarray):
+            result.append(emb.tolist())
+        else:
+            result.append(list(emb))
+    return result
+
+
+__all__ = ["embed_descriptions_batch", "embed_description", "embed_query_texts"]

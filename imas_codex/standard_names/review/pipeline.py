@@ -578,7 +578,7 @@ def _fetch_review_dd_context(names: list[dict]) -> None:
     from imas_codex.graph.client import GraphClient
     from imas_codex.standard_names.workers import (
         _enrich_batch_items,
-        _hybrid_search_neighbours,
+        _hybrid_search_neighbours_batch,
         _related_path_neighbours,
     )
 
@@ -652,8 +652,12 @@ def _fetch_review_dd_context(names: list[dict]) -> None:
         except Exception:
             logger.debug("Review version history fetch failed", exc_info=True)
 
-        # Enrich each item
-        for item in names:
+        # Enrich each item — first pass: non-hybrid enrichment
+        # Collect data for batch hybrid search
+        _hybrid_batch_tuples: list[tuple[str, str | None, str | None]] = []
+        _hybrid_batch_item_indices: list[int] = []
+
+        for item_idx, item in enumerate(names):
             sp = item.get("source_paths")
             if sp:
                 if isinstance(sp, str):
@@ -673,23 +677,11 @@ def _fetch_review_dd_context(names: list[dict]) -> None:
                     if vnotes:
                         item["version_notes"] = vnotes
 
-                    # Hybrid-search nearest peers [hybrid]
-                    try:
-                        peers = _hybrid_search_neighbours(
-                            gc,
-                            sp[0],
-                            description=item.get("description"),
-                            physics_domain=item.get("physics_domain"),
-                            max_results=5,
-                        )
-                        if peers:
-                            item["nearest_peers"] = peers
-                    except Exception:
-                        logger.debug(
-                            "Review hybrid search failed for %s",
-                            item.get("id"),
-                            exc_info=True,
-                        )
+                    # Queue for batch hybrid search
+                    _hybrid_batch_tuples.append(
+                        (sp[0], item.get("description"), item.get("physics_domain"))
+                    )
+                    _hybrid_batch_item_indices.append(item_idx)
 
                     # Related-path neighbours [related]
                     try:
@@ -702,6 +694,20 @@ def _fetch_review_dd_context(names: list[dict]) -> None:
                             item.get("id"),
                             exc_info=True,
                         )
+
+        # Batch hybrid-search nearest peers (single embed round-trip)
+        if _hybrid_batch_tuples:
+            try:
+                _hybrid_results = _hybrid_search_neighbours_batch(
+                    gc, _hybrid_batch_tuples, max_results=5
+                )
+                for bi, hr in zip(
+                    _hybrid_batch_item_indices, _hybrid_results, strict=True
+                ):
+                    if hr:
+                        names[bi]["nearest_peers"] = hr
+            except Exception:
+                logger.debug("Review batch hybrid search failed", exc_info=True)
 
     # Reuse compose's per-item enrichment so the reviewer sees the SAME 11
     # context channels the composer received: identifier_schema/values,

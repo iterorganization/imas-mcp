@@ -92,6 +92,7 @@ def hybrid_dd_search(
     cocos_transformation_type: str | None = None,
     dd_version: int | None = None,
     k: int = 20,
+    embedding: list[float] | None = None,
     encoder: Encoder | None = None,
 ) -> list[SearchHit]:
     """Return structured DD path hits with hybrid search + enrichment.
@@ -119,6 +120,12 @@ def hybrid_dd_search(
         cocos_transformation_type: Post-filter by COCOS type.
         dd_version: Filter by DD major version (e.g. 3 or 4).
         k: Maximum number of results to return.
+        embedding: Pre-computed query embedding vector.  When provided,
+            skips the internal ``_embed()`` call — use this to batch
+            multiple searches with a single remote round-trip via
+            :func:`imas_codex.embeddings.description.embed_query_texts`.
+            ``None`` (default) falls back to the original per-call
+            embedding strategy.
         encoder: Optional pre-created encoder; if ``None``, uses the
             module-level singleton from ``graph_search``.
 
@@ -149,17 +156,18 @@ def hybrid_dd_search(
     summary_clause = "AND path.ids <> 'summary'" if _exclude_summary_ids else ""
 
     # ── Determine embedding strategy ────────────────────────────────
-    is_path_query = "/" in query and " " not in query
-    is_short_physics_term = " " not in query.strip() and (
-        len(query.strip()) <= 3 or query.strip().lower() in _PHYSICS_SHORT_TERMS
-    )
-    if is_path_query:
-        embedding = None
-    elif is_short_physics_term:
-        expansion = _PHYSICS_SHORT_TERMS.get(query.strip().lower())
-        embedding = _embed(expansion, encoder) if expansion else None
-    else:
-        embedding = _embed(query, encoder)
+    if embedding is None:
+        is_path_query = "/" in query and " " not in query
+        is_short_physics_term = " " not in query.strip() and (
+            len(query.strip()) <= 3 or query.strip().lower() in _PHYSICS_SHORT_TERMS
+        )
+        if is_path_query:
+            pass  # embedding stays None → text_only_mode
+        elif is_short_physics_term:
+            expansion = _PHYSICS_SHORT_TERMS.get(query.strip().lower())
+            embedding = _embed(expansion, encoder) if expansion else None
+        else:
+            embedding = _embed(query, encoder)
 
     # ── Vector search ───────────────────────────────────────────────
     vec_scores: dict[str, float] = {}

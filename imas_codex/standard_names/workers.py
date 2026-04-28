@@ -554,6 +554,167 @@ def _enrich_ids_context(ids_name: str) -> dict | None:
         }
 
 
+def _hybrid_search_neighbours_batch(
+    gc: Any,
+    items: list[tuple[str, str | None, str | None]],
+    *,
+    max_results: int = 15,
+    search_k: int = 10,
+) -> list[list[dict]]:
+    """Batch-embed then search neighbours for multiple (path, desc, domain) items.
+
+    Replaces the per-item N+1 embed pattern: collects all unique
+    description-query texts, embeds them in **one** remote round-trip
+    via :func:`embed_query_texts`, then fans out ``hybrid_dd_search``
+    calls with pre-computed embeddings.
+
+    Path-text queries (``"equilibrium/time_slice/..."``-style) don't
+    need embedding — ``hybrid_dd_search`` detects them and uses
+    text-only mode automatically.
+
+    Args:
+        gc: Active graph client.
+        items: List of ``(path, description, physics_domain)`` tuples.
+        max_results: Cap per-item neighbour count.
+        search_k: ``k`` passed to ``hybrid_dd_search``.
+
+    Returns:
+        List of neighbour-lists in the same order as *items*.
+    """
+    from imas_codex.embeddings.description import embed_query_texts
+    from imas_codex.graph.dd_search import hybrid_dd_search
+
+    if not items:
+        return []
+
+    # ── 1. Collect unique description queries needing embedding ─────
+    text_set: dict[str, None] = {}  # ordered-set via dict
+    item_desc_queries: list[str] = []  # per-item desc query text
+    for _path, description, _domain in items:
+        desc_query = (description or "")[:200].strip()
+        item_desc_queries.append(desc_query)
+        if desc_query:
+            text_set.setdefault(desc_query, None)
+
+    unique_texts = list(text_set)
+
+    # ── 2. Single batch embed call ──────────────────────────────────
+    embed_cache: dict[str, list[float]] = {}
+    if unique_texts:
+        try:
+            embeddings = embed_query_texts(unique_texts)
+            for text, emb in zip(unique_texts, embeddings, strict=True):
+                embed_cache[text] = emb
+        except Exception:
+            logger.warning(
+                "Batch query embedding failed; falling back to text-only search",
+                exc_info=True,
+            )
+
+    # ── 3. Per-item hybrid search (with pre-computed embeddings) ────
+    all_results: list[list[dict]] = []
+    # Collect all hit paths across items for a single batch SN resolution
+    per_item_hits: list[dict[str, Any]] = []  # path → SearchHit per item
+
+    for idx, (path, _desc, physics_domain) in enumerate(items):
+        item_hits: dict[str, Any] = {}  # path → SearchHit (dedup)
+
+        # Query 1: description-based
+        desc_query = item_desc_queries[idx]
+        if desc_query:
+            pre_emb = embed_cache.get(desc_query)
+            try:
+                hits = hybrid_dd_search(
+                    gc,
+                    desc_query,
+                    node_category="quantity",
+                    physics_domain=physics_domain,
+                    k=search_k,
+                    embedding=pre_emb,
+                )
+                for h in hits:
+                    if h.path != path:
+                        item_hits[h.path] = h
+            except Exception:
+                logger.debug(
+                    "Hybrid search (description) failed for %s",
+                    path,
+                    exc_info=True,
+                )
+
+        # Query 2: path-text (no embedding needed — text-only inside)
+        try:
+            hits = hybrid_dd_search(
+                gc,
+                path,
+                node_category="quantity",
+                k=search_k,
+            )
+            for h in hits:
+                if h.path != path and h.path not in item_hits:
+                    item_hits[h.path] = h
+        except Exception:
+            logger.debug("Hybrid search (path) failed for %s", path, exc_info=True)
+
+        per_item_hits.append(item_hits)
+
+    # ── 4. Single batch HAS_STANDARD_NAME resolution ───────────────
+    # Gather all unique hit paths across all items
+    all_hit_paths: set[str] = set()
+    for item_hits in per_item_hits:
+        all_hit_paths.update(item_hits)
+
+    sn_map: dict[str, str | None] = {}
+    if all_hit_paths:
+        try:
+            rows = gc.query(
+                """
+                UNWIND $paths AS pid
+                MATCH (n:IMASNode {id: pid})
+                OPTIONAL MATCH (n)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+                RETURN n.id AS path, sn.id AS sn_id
+                """,
+                paths=list(all_hit_paths),
+            )
+            for r in rows or []:
+                sn_map[r["path"]] = r.get("sn_id")
+        except Exception:
+            logger.debug("HAS_STANDARD_NAME batch pre-resolution failed", exc_info=True)
+
+    # ── 5. Build per-item result dicts ──────────────────────────────
+    for idx, (_path, _desc, _domain) in enumerate(items):
+        item_hits = per_item_hits[idx]
+
+        if not item_hits:
+            all_results.append([])
+            continue
+
+        sorted_hits = sorted(item_hits.values(), key=lambda h: h.score, reverse=True)[
+            :max_results
+        ]
+
+        neighbours: list[dict] = []
+        for h in sorted_hits:
+            sn_id = sn_map.get(h.path)
+            tag = f"name:{sn_id}" if sn_id else f"dd:{h.path}"
+            doc = (h.documentation or h.description or "")[:120]
+            neighbours.append(
+                {
+                    "tag": tag,
+                    "path": h.path,
+                    "ids": h.ids_name,
+                    "unit": h.units or "",
+                    "physics_domain": h.physics_domain or "",
+                    "doc_short": doc,
+                    "cocos_label": h.cocos_transformation_type or "",
+                    "score": float(h.score) if h.score is not None else None,
+                }
+            )
+        all_results.append(neighbours)
+
+    return all_results
+
+
 def _hybrid_search_neighbours(
     gc: Any,
     path: str,
@@ -562,99 +723,19 @@ def _hybrid_search_neighbours(
     max_results: int = 15,
     search_k: int = 10,
 ) -> list[dict]:
-    """Run parallel hybrid DD searches and pre-resolve HAS_STANDARD_NAME.
+    """Single-item shim around :func:`_hybrid_search_neighbours_batch`.
 
-    Issues two hybrid queries per source path — one by description
-    (physics-concept neighbours) and one by path text (structural cousins).
-    Results are deduplicated, capped at *max_results*, and enriched with
-    any already-minted standard name via a single batch Cypher query.
-
-    Returns a list of dicts with keys: ``tag``, ``path``, ``ids``,
-    ``unit``, ``physics_domain``, ``doc_short``, ``cocos_label``.
+    .. deprecated::
+        Prefer :func:`_hybrid_search_neighbours_batch` for multi-item
+        workloads.  This shim exists for any un-migrated callers.
     """
-    from imas_codex.graph.dd_search import hybrid_dd_search
-
-    all_hits: dict[str, Any] = {}  # path → SearchHit (dedup by path)
-
-    # Query 1: description-based (physics concept)
-    desc_query = (description or "")[:200].strip()
-    if desc_query:
-        try:
-            hits = hybrid_dd_search(
-                gc,
-                desc_query,
-                node_category="quantity",
-                physics_domain=physics_domain,
-                k=search_k,
-            )
-            for h in hits:
-                if h.path != path:
-                    all_hits[h.path] = h
-        except Exception:
-            logger.debug(
-                "Hybrid search (description) failed for %s", path, exc_info=True
-            )
-
-    # Query 2: path-text based (structural cousins)
-    try:
-        hits = hybrid_dd_search(
-            gc,
-            path,
-            node_category="quantity",
-            k=search_k,
-        )
-        for h in hits:
-            if h.path != path and h.path not in all_hits:
-                all_hits[h.path] = h
-    except Exception:
-        logger.debug("Hybrid search (path) failed for %s", path, exc_info=True)
-
-    if not all_hits:
-        return []
-
-    # Cap to max_results (keep highest scored)
-    sorted_hits = sorted(all_hits.values(), key=lambda h: h.score, reverse=True)[
-        :max_results
-    ]
-
-    # Pre-resolve HAS_STANDARD_NAME in one batch query
-    hit_paths = [h.path for h in sorted_hits]
-    sn_map: dict[str, str | None] = {}
-    try:
-        rows = gc.query(
-            """
-            UNWIND $paths AS pid
-            MATCH (n:IMASNode {id: pid})
-            OPTIONAL MATCH (n)-[:HAS_STANDARD_NAME]->(sn:StandardName)
-            RETURN n.id AS path, sn.id AS sn_id
-            """,
-            paths=hit_paths,
-        )
-        for r in rows or []:
-            sn_map[r["path"]] = r.get("sn_id")
-    except Exception:
-        logger.debug("HAS_STANDARD_NAME pre-resolution failed", exc_info=True)
-
-    # Build compact dicts for prompt injection
-    neighbours: list[dict] = []
-    for h in sorted_hits:
-        sn_id = sn_map.get(h.path)
-        tag = f"name:{sn_id}" if sn_id else f"dd:{h.path}"
-        doc = (h.documentation or h.description or "")[:120]
-        neighbours.append(
-            {
-                "tag": tag,
-                "path": h.path,
-                "ids": h.ids_name,
-                "unit": h.units or "",
-                "physics_domain": h.physics_domain or "",
-                "doc_short": doc,
-                "cocos_label": h.cocos_transformation_type or "",
-                "score": float(h.score) if h.score is not None else None,
-            }
-        )
-
-    return neighbours
+    results = _hybrid_search_neighbours_batch(
+        gc,
+        [(path, description, physics_domain)],
+        max_results=max_results,
+        search_k=search_k,
+    )
+    return results[0] if results else []
 
 
 # Cap for graph-relationship neighbour injection (per path).
@@ -850,17 +931,8 @@ def _enrich_batch_items(items: list[dict]) -> None:
                 if valid_changes:
                     item["version_history"] = valid_changes
 
-            # Hybrid-search neighbours (physics-concept + structural)
-            # Parallel injection: both description-based and path-based
-            # queries run, results deduplicated and pre-resolved for SN.
-            hybrid = _hybrid_search_neighbours(
-                gc,
-                path,
-                description=item.get("description"),
-                physics_domain=item.get("physics_domain"),
-            )
-            if hybrid:
-                item["hybrid_neighbours"] = hybrid
+            # Hybrid-search neighbours are batched outside the per-item loop
+            # (see below). Skip per-item call here.
 
             # Graph-relationship neighbours (cluster, coordinate, unit,
             # identifier, COCOS — explicit graph edges, not vector search).
@@ -876,6 +948,24 @@ def _enrich_batch_items(items: list[dict]) -> None:
                 ]
                 if error_fields:
                     item["error_fields"] = error_fields
+
+        # ── Batch hybrid-search neighbours (single embed round-trip) ───
+        batch_tuples: list[tuple[str, str | None, str | None]] = []
+        batch_indices: list[int] = []  # index into items
+        for idx, item in enumerate(items):
+            path = item.get("path")
+            if not path:
+                continue
+            batch_tuples.append(
+                (path, item.get("description"), item.get("physics_domain"))
+            )
+            batch_indices.append(idx)
+
+        if batch_tuples:
+            hybrid_results = _hybrid_search_neighbours_batch(gc, batch_tuples)
+            for bi, hr in zip(batch_indices, hybrid_results, strict=True):
+                if hr:
+                    items[bi]["hybrid_neighbours"] = hr
 
 
 def _is_attachment_consistent(source_id: str, sn_name: str) -> tuple[bool, str]:
@@ -1635,19 +1725,28 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 from imas_codex.graph.client import GraphClient
 
                 with GraphClient() as gc:
-                    for item in batch.items:
-                        path = item.get("path")
-                        if not path:
-                            continue
-                        hybrid = _hybrid_search_neighbours(
+                    batch_tuples = [
+                        (
+                            item.get("path"),
+                            item.get("description"),
+                            item.get("physics_domain"),
+                        )
+                        for item in batch.items
+                        if item.get("path")
+                    ]
+                    if batch_tuples:
+                        hybrid_results = _hybrid_search_neighbours_batch(
                             gc,
-                            path,
-                            description=item.get("description"),
-                            physics_domain=item.get("physics_domain"),
+                            batch_tuples,
                             search_k=_retry_k_expansion(),
                         )
-                        if hybrid:
-                            item["hybrid_neighbours"] = hybrid
+                        item_idx = 0
+                        for item in batch.items:
+                            if not item.get("path"):
+                                continue
+                            if hybrid_results[item_idx]:
+                                item["hybrid_neighbours"] = hybrid_results[item_idx]
+                            item_idx += 1
 
             await asyncio.to_thread(_re_enrich_expanded)
 

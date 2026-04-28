@@ -119,8 +119,8 @@ def test_enrich_batch_items_populates_all_wave2_keys():
     with (
         patch("imas_codex.graph.client.GraphClient") as MockGC,
         patch(
-            "imas_codex.standard_names.workers._hybrid_search_neighbours",
-            return_value=mock_hybrid,
+            "imas_codex.standard_names.workers._hybrid_search_neighbours_batch",
+            return_value=[mock_hybrid],
         ),
         patch(
             "imas_codex.standard_names.workers._related_path_neighbours",
@@ -249,8 +249,8 @@ def test_review_dd_context_injects_neighbours():
     with (
         patch("imas_codex.graph.client.GraphClient") as MockGC,
         patch(
-            "imas_codex.standard_names.workers._hybrid_search_neighbours",
-            return_value=mock_hybrid,
+            "imas_codex.standard_names.workers._hybrid_search_neighbours_batch",
+            return_value=[mock_hybrid],
         ),
         patch(
             "imas_codex.standard_names.workers._related_path_neighbours",
