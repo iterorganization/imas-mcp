@@ -128,9 +128,12 @@ class PoolHealth:
 # eligible work is available.  ``ProcessFn`` consumes the batch and
 # performs LLM + persist work; it is responsible for releasing the
 # claim (typically in a try/finally) and returning the count of items
-# successfully processed.
+# successfully processed.  ``ReleaseFn`` is an optional error-recovery
+# hook called when ``ProcessFn`` raises — it should unlock the claimed
+# items so other workers can pick them up.
 ClaimFn = Callable[[], Awaitable[dict[str, Any] | None]]
 ProcessFn = Callable[[dict[str, Any]], Awaitable[int]]
+ReleaseFn = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 @dataclass
@@ -147,6 +150,7 @@ class PoolSpec:
     claim: ClaimFn
     process: ProcessFn
     weight: float = 0.0
+    release: ReleaseFn | None = None
     health: PoolHealth = field(init=False)
     backoff: _PoolBackoff = field(default_factory=_PoolBackoff)
 
@@ -230,6 +234,15 @@ async def pool_loop(
             spec.health.error_count += 1
             spec.health.last_error = f"process: {exc!r}"
             logger.exception("pool[%s] process failed: %s", spec.name, exc)
+            if spec.release is not None:
+                try:
+                    await spec.release(batch)
+                except Exception as rel_exc:  # noqa: BLE001
+                    logger.exception(
+                        "pool[%s] release failed (continuing): %s",
+                        spec.name,
+                        rel_exc,
+                    )
         finally:
             spec.health.in_flight = max(0, spec.health.in_flight - 1)
     logger.info("pool[%s] exiting cleanly", spec.name)

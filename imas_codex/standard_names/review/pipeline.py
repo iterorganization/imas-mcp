@@ -2294,8 +2294,19 @@ async def _review_batch_core(
     # K3: scored examples
     from imas_codex.standard_names.example_loader import load_review_examples
 
+    def _scalar_domain(d: object) -> str | None:
+        """Normalise physics_domain to a scalar string (handles list or str)."""
+        if isinstance(d, list):
+            return d[0] if d else None
+        return d  # type: ignore[return-value]
+
     review_domains = sorted(
-        {item.get("physics_domain") for item in batch if item.get("physics_domain")}
+        {
+            _scalar_domain(item.get("physics_domain"))
+            for item in batch
+            if item.get("physics_domain")
+        }
+        - {None}
     )
     _review_axis_example: Literal["name", "docs", "full"] = (
         "docs" if target == "docs" else "name"

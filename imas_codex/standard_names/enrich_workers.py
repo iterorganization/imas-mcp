@@ -1879,8 +1879,19 @@ async def process_enrich_batch(
     from imas_codex.graph.client import GraphClient
     from imas_codex.standard_names.example_loader import load_compose_examples
 
+    def _scalar_domain(d: object) -> str | None:
+        """Normalise physics_domain to a scalar string (handles list or str)."""
+        if isinstance(d, list):
+            return d[0] if d else None
+        return d  # type: ignore[return-value]
+
     enrich_domains = sorted(
-        {item.get("physics_domain") for item in batch if item.get("physics_domain")}
+        {
+            _scalar_domain(item.get("physics_domain"))
+            for item in batch
+            if item.get("physics_domain")
+        }
+        - {None}
     )
 
     def _load_scored() -> list[dict]:

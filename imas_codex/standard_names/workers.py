@@ -3002,8 +3002,19 @@ async def _compose_batch_core(
     compose_lean = get_compose_lean()
 
     # ── H5: batch-scope domain context ─────────────────────────────────
+    def _scalar_domain(d: object) -> str | None:
+        """Normalise physics_domain to a scalar string (handles list or str)."""
+        if isinstance(d, list):
+            return d[0] if d else None
+        return d  # type: ignore[return-value]
+
     domains_in_batch = sorted(
-        {item.get("physics_domain") for item in batch if item.get("physics_domain")}
+        {
+            _scalar_domain(item.get("physics_domain"))
+            for item in batch
+            if item.get("physics_domain")
+        }
+        - {None}
     )
 
     from imas_codex.standard_names.context import build_domain_vocabulary_preseed

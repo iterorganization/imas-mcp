@@ -612,6 +612,11 @@ def _build_pool_specs(
         claim_regen_seed_and_expand,
         claim_review_docs_seed_and_expand,
         claim_review_names_seed_and_expand,
+        release_compose_claims,
+        release_enrich_claims,
+        release_regen_claims,
+        release_review_docs_claims,
+        release_review_names_claims,
     )
     from imas_codex.standard_names.pools import PoolSpec
     from imas_codex.standard_names.review.pipeline import (
@@ -654,6 +659,17 @@ def _build_pool_specs(
 
         return _adapter
 
+    def _make_release_adapter(
+        release_fn: Callable[[list[str]], int],
+    ) -> Callable[[dict[str, Any]], Awaitable[None]]:
+        """Wrap a sync id-list release function as an async ``ReleaseFn``."""
+
+        async def _adapter(batch: dict[str, Any]) -> None:
+            ids = [item["id"] for item in batch.get("items", [])]
+            await asyncio.to_thread(release_fn, ids)
+
+        return _adapter
+
     # ── PoolSpec construction ─────────────────────────────────────────
 
     return [
@@ -661,6 +677,7 @@ def _build_pool_specs(
             name="generate",
             claim=_make_claim_adapter(claim_compose_seed_and_expand),
             process=_make_process_adapter(process_compose_batch),
+            release=_make_release_adapter(release_compose_claims),
             weight=0.30,
         ),
         PoolSpec(
@@ -670,6 +687,7 @@ def _build_pool_specs(
                 min_score_threshold=regen_score,
             ),
             process=_make_process_adapter(process_enrich_batch),
+            release=_make_release_adapter(release_enrich_claims),
             weight=0.25,
         ),
         PoolSpec(
@@ -679,6 +697,7 @@ def _build_pool_specs(
                 min_score=regen_score,
             ),
             process=_make_process_adapter(process_review_names_batch),
+            release=_make_release_adapter(release_review_names_claims),
             weight=0.20,
         ),
         PoolSpec(
@@ -688,6 +707,7 @@ def _build_pool_specs(
                 min_score=regen_score,
             ),
             process=_make_process_adapter(process_review_docs_batch),
+            release=_make_release_adapter(release_review_docs_claims),
             weight=0.15,
         ),
         PoolSpec(
@@ -697,6 +717,7 @@ def _build_pool_specs(
                 min_score=regen_score,
             ),
             process=_make_process_adapter(process_regen_batch),
+            release=_make_release_adapter(release_regen_claims),
             weight=0.10,
         ),
     ]

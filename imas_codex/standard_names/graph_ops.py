@@ -4769,7 +4769,7 @@ def _seed_and_expand_sn(
             OPTIONAL MATCH (sn)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
             OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
             RETURN c.id AS _cluster_id, u.id AS _unit,
-                   head(coalesce(sn.physics_domain, [])) AS _physics_domain
+                   sn.physics_domain AS _physics_domain
             """,
             **params,
         )
@@ -4943,7 +4943,7 @@ def claim_compose_seed_and_expand(
                         WHEN sig IS NOT NULL THEN sig.unit
                         ELSE null END AS _unit,
                    CASE WHEN imas IS NOT NULL
-                        THEN head(coalesce(imas.physics_domain, []))
+                        THEN imas.physics_domain
                         WHEN sig IS NOT NULL THEN sig.physics_domain
                         ELSE null END AS _physics_domain,
                    sns.batch_key AS _batch_key
@@ -5186,3 +5186,103 @@ def claim_regen_seed_and_expand(
             ", sn.regen_count AS regen_count"
         ),
     )
+
+
+# =============================================================================
+# Release helpers — seed-and-expand pools
+# =============================================================================
+#
+# These are called by pool_loop when process() raises an exception so that
+# claimed items are unlocked and become eligible for other workers.  Each
+# helper clears claimed_at/claim_token by node id list rather than by token,
+# because the token is not preserved in the PoolSpec batch dict.
+#
+
+
+@retry_on_deadlock()
+def release_compose_claims(ids: list[str]) -> int:
+    """Release StandardNameSource claims by id list.
+
+    Clears ``claimed_at`` and ``claim_token`` so items become eligible for
+    re-claim.  Used by the generate pool's error-recovery path.
+    """
+    if not ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (n:StandardNameSource) WHERE n.id IN $ids
+            SET n.claimed_at = null, n.claim_token = null
+            RETURN count(n) AS released
+            """,
+            ids=ids,
+        )
+        return result[0]["released"] if result else 0
+
+
+@retry_on_deadlock()
+def release_enrich_claims(ids: list[str]) -> int:
+    """Release StandardName enrichment claims by id list."""
+    if not ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (n:StandardName) WHERE n.id IN $ids
+            SET n.claimed_at = null, n.claim_token = null
+            RETURN count(n) AS released
+            """,
+            ids=ids,
+        )
+        return result[0]["released"] if result else 0
+
+
+@retry_on_deadlock()
+def release_review_names_claims(ids: list[str]) -> int:
+    """Release StandardName review-names claims by id list."""
+    if not ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (n:StandardName) WHERE n.id IN $ids
+            SET n.claimed_at = null, n.claim_token = null
+            RETURN count(n) AS released
+            """,
+            ids=ids,
+        )
+        return result[0]["released"] if result else 0
+
+
+@retry_on_deadlock()
+def release_review_docs_claims(ids: list[str]) -> int:
+    """Release StandardName review-docs claims by id list."""
+    if not ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (n:StandardName) WHERE n.id IN $ids
+            SET n.claimed_at = null, n.claim_token = null
+            RETURN count(n) AS released
+            """,
+            ids=ids,
+        )
+        return result[0]["released"] if result else 0
+
+
+@retry_on_deadlock()
+def release_regen_claims(ids: list[str]) -> int:
+    """Release StandardName regen claims by id list."""
+    if not ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (n:StandardName) WHERE n.id IN $ids
+            SET n.claimed_at = null, n.claim_token = null
+            RETURN count(n) AS released
+            """,
+            ids=ids,
+        )
+        return result[0]["released"] if result else 0
