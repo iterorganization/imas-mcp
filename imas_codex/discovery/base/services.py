@@ -489,12 +489,19 @@ def _probe_litellm_readiness(location: str) -> tuple[bool, str]:
             req.add_header("Authorization", f"Bearer {api_key}")
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
-            status = data.get("status", "")
-            db_status = data.get("db", "")
+            status = (data.get("status") or "").lower()
+            db_status = (data.get("db") or "").lower()
 
-            if status == "connected" and db_status == "connected":
+            # LiteLLM 1.83+ returns status="healthy"; older releases used
+            # "connected". Accept either.
+            healthy_states = {"healthy", "connected"}
+            # db="Not connected" is expected when LITELLM_DATABASE_URL is unset
+            # (we don't run a LiteLLM DB). Only fail on explicit DB failure.
+            db_ok = db_status in {"", "connected", "not connected", "disabled"}
+
+            if status in healthy_states and db_ok:
                 return True, _format_load_detail(location)
-            if status == "connected":
+            if status in healthy_states:
                 return False, f"proxy ready but db {db_status}"
             return False, f"proxy not ready ({status})"
     except urllib.error.HTTPError as e:

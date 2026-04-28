@@ -44,6 +44,34 @@ class TestProbeLitellmReadiness:
         "imas_codex.settings.get_llm_proxy_url", return_value="http://localhost:18400"
     )
     @patch("urllib.request.urlopen")
+    def test_healthy_when_status_is_healthy(self, mock_urlopen, mock_url):
+        """LiteLLM 1.83+ returns status='healthy' instead of 'connected'."""
+        from imas_codex.discovery.base.services import _probe_litellm_readiness
+
+        mock_urlopen.return_value = self._mock_readiness(
+            {"status": "healthy", "db": "connected"}
+        )
+        healthy, detail = _probe_litellm_readiness("iter")
+        assert healthy is True
+
+    @patch(
+        "imas_codex.settings.get_llm_proxy_url", return_value="http://localhost:18400"
+    )
+    @patch("urllib.request.urlopen")
+    def test_healthy_when_db_not_connected(self, mock_urlopen, mock_url):
+        """db='Not connected' is the steady state when LITELLM_DATABASE_URL unset."""
+        from imas_codex.discovery.base.services import _probe_litellm_readiness
+
+        mock_urlopen.return_value = self._mock_readiness(
+            {"status": "healthy", "db": "Not connected"}
+        )
+        healthy, detail = _probe_litellm_readiness("iter")
+        assert healthy is True
+
+    @patch(
+        "imas_codex.settings.get_llm_proxy_url", return_value="http://localhost:18400"
+    )
+    @patch("urllib.request.urlopen")
     def test_unhealthy_when_not_connected(self, mock_urlopen, mock_url):
         from imas_codex.discovery.base.services import _probe_litellm_readiness
 
@@ -53,20 +81,6 @@ class TestProbeLitellmReadiness:
         healthy, detail = _probe_litellm_readiness("iter")
         assert healthy is False
         assert "not ready" in detail.lower()
-
-    @patch(
-        "imas_codex.settings.get_llm_proxy_url", return_value="http://localhost:18400"
-    )
-    @patch("urllib.request.urlopen")
-    def test_unhealthy_when_db_disconnected(self, mock_urlopen, mock_url):
-        from imas_codex.discovery.base.services import _probe_litellm_readiness
-
-        mock_urlopen.return_value = self._mock_readiness(
-            {"status": "connected", "db": "Not connected"}
-        )
-        healthy, detail = _probe_litellm_readiness("iter")
-        assert healthy is False
-        assert "db" in detail.lower()
 
     @patch(
         "imas_codex.settings.get_llm_proxy_url", return_value="http://localhost:18400"
