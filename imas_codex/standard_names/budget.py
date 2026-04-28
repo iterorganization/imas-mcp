@@ -604,7 +604,17 @@ class BudgetManager:
 
         Returns True if the pool is permitted to claim its next batch.
         """
-        if pool not in active_pools or pool not in weights:
+        if pool not in weights:
+            return False
+        # When active_pools is empty (e.g. headless/non-TTY mode where the
+        # Rich display never updates pending_count, or at startup before the
+        # first display refresh), admit all known pools unconditionally so
+        # they can discover their own work via claim() and self-regulate via
+        # backoff when claim() returns None.
+        if not active_pools:
+            return True
+        if pool not in active_pools:
+            # This pool has no pending work — forfeit its share.
             return False
         # Sole active pool always admitted — the "no other pool is
         # active" branch from plan.md Phase 8.

@@ -464,3 +464,29 @@ class TestPoolAdmitExtension:
         # Other pools unaffected.
         assert mgr.pool_spent_total("enrich") == 0.0
         assert mgr.pool_spent_total("regen") == 0.0
+
+    def test_headless_mode_empty_active_pools_admits_all(self) -> None:
+        """When active_pools is empty, pool_admit admits all known pools.
+
+        In headless (non-TTY) mode the Rich display never fires so
+        PoolHealth.pending_count stays 0 for every pool.  active_pools_fn()
+        returns {} (empty set).  Before this fix, pool_admit returned False
+        for every pool → all 5 pools permanently blocked in the admission gate.
+
+        Fix: treat active_pools={} as "no pending-count data" and admit all
+        pools that appear in the weights dict.
+        """
+        mgr = self._mgr()
+        active: set[str] = set()
+        for pool in POOL_WEIGHTS:
+            assert mgr.pool_admit(pool, POOL_WEIGHTS, active), (
+                f"pool '{pool}' must be admitted when active_pools is empty "
+                "(headless/startup mode)"
+            )
+
+    def test_unknown_pool_still_denied_when_active_pools_empty(self) -> None:
+        """A pool not in weights dict is always denied, even with empty active_pools."""
+        mgr = self._mgr()
+        assert not mgr.pool_admit("ghost_pool", POOL_WEIGHTS, set()), (
+            "unknown pool (not in weights) must be denied even when active_pools is empty"
+        )
