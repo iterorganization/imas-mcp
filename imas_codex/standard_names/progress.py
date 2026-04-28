@@ -149,7 +149,7 @@ def build_sn_loop_stages(
 ) -> list[StageDisplaySpec]:
     """Build the stage specs for the SN loop progress display.
 
-    5 rows: GENERATE → REGEN → ENRICH → REVIEW-N → REVIEW-D
+    5 rows: GENERATE → REGEN → ENRICH → REVIEW NAMES → REVIEW DOCS
     """
     return [
         StageDisplaySpec(
@@ -174,14 +174,14 @@ def build_sn_loop_stages(
             disabled=skip_enrich,
         ),
         StageDisplaySpec(
-            name="REVIEW-N",
+            name="REVIEW NAMES",
             style="bold yellow",
             group="review_names",
             stats_attr="review_names_stats",
             disabled=skip_review,
         ),
         StageDisplaySpec(
-            name="REVIEW-D",
+            name="REVIEW DOCS",
             style="bold yellow",
             group="review_docs",
             stats_attr="review_docs_stats",

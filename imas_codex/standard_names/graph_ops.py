@@ -1215,6 +1215,27 @@ def write_standard_names(
         if signal_gap_dicts:
             write_vocab_gaps(signal_gap_dicts, source_type="signals")
 
+    # Sweep skeleton placeholders created by relationship-side MERGE on
+    # uncomposed targets (HAS_ARGUMENT, HAS_ERROR, HAS_PREDECESSOR,
+    # HAS_SUCCESSOR, IN_CLUSTER, HAS_PHYSICS_DOMAIN). A real StandardName
+    # always has at least a created_at OR generated_at timestamp; pure
+    # skeletons (id-only) are detached and deleted.
+    swept = gc.query(
+        """
+        MATCH (sn:StandardName)
+        WHERE sn.created_at IS NULL
+          AND sn.generated_at IS NULL
+          AND sn.validation_status IS NULL
+          AND sn.unit IS NULL
+          AND sn.kind IS NULL
+        DETACH DELETE sn
+        RETURN count(sn) AS swept
+        """
+    )
+    swept_count = (swept[0]["swept"] if swept else 0) if swept else 0
+    if swept_count:
+        logger.info("Swept %d skeleton StandardName placeholder(s)", swept_count)
+
     written = len(names)
     logger.info("Wrote %d StandardName nodes", written)
     return written

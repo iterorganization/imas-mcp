@@ -83,6 +83,27 @@ def _run_sn_loop_cmd(
     run_id = str(_uuid.uuid4())
     use_rich = not quiet and not dry_run and use_rich_output()
 
+    # Pre-suppress noisy SN loggers BEFORE any heavy imports/inits so
+    # rich-mode startup is silent. Repeated by run_discovery() after
+    # display attach (defense in depth).
+    if use_rich:
+        import logging as _logging
+
+        for mod in (
+            "imas_codex.standard_names",
+            "imas_codex.graph",
+            "imas_codex.embeddings",
+            "imas_codex.discovery",
+            "imas_codex.llm",
+            "litellm",
+            "httpx",
+            "httpcore",
+            "openai",
+            "urllib3",
+            "neo4j",
+        ):
+            _logging.getLogger(mod).setLevel(_logging.ERROR)
+
     # Build Rich display or fall back to plain logging
     display = None
     loop_state: SNLoopState | None = None
@@ -154,7 +175,7 @@ def _run_sn_loop_cmd(
                 f"{', dry-run' if dry_run else ''})"
             )
 
-    # Build harness config — SN loop doesn't need SSH/embed/auth checks
+    # Build harness config — SN loop wants graph + model status at top
     disc_config = DiscoveryConfig(
         domain="standard-names",
         facility="sn",
@@ -164,7 +185,7 @@ def _run_sn_loop_cmd(
         check_embed=False,
         check_ssh=False,
         check_auth=False,
-        check_model=False,
+        check_model=not dry_run,
         verbose=verbose,
         suppress_loggers=[
             "imas_codex.standard_names",
