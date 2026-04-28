@@ -30,6 +30,7 @@ from imas_codex.standard_names.canonical import (
     reorder_entry_dict,
 )
 from imas_codex.standard_names.catalog_ordering import order_entries_by_hierarchy
+from imas_codex.standard_names.domain_priority import pick_primary_domain
 from imas_codex.standard_names.protection import PROTECTED_FIELDS
 
 logger = logging.getLogger(__name__)
@@ -946,12 +947,16 @@ def run_export(
             for pf in _PROVENANCE_FIELDS:
                 entry_dict.pop(pf, None)
 
-            # Determine domain (multi-valued list → primary = alphabetically first)
+            # Determine domain (multi-valued list → primary by domain
+            # priority, with alphabetical tie-break). Priority is derived
+            # from Cluster.mapping_relevance — see domain_priority.py.
             physics_domain_list = cand.get("physics_domain") or []
             if isinstance(physics_domain_list, str):
                 physics_domain_list = [physics_domain_list]
             primary = (
-                sorted(physics_domain_list)[0] if physics_domain_list else "unscoped"
+                pick_primary_domain(physics_domain_list)
+                if physics_domain_list
+                else "unscoped"
             )
 
             # Write the full list into the YAML body
