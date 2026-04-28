@@ -1703,22 +1703,52 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 )
                 _charge = lease.charge_event(cost, _event)
                 if state.loop_stats is not None:
-                    state.loop_stats.processed += 1
+                    state.loop_stats.processed += max(1, len(result.candidates))
                     state.loop_stats.cost += cost
-                    _plabel = (
-                        f"sn={_event.sn_ids[0]}"
-                        if _event.sn_ids
-                        else f"batch={_event.batch_id}"
-                    )
-                    state.loop_stats.stream_queue.add(
-                        [
+                    # Stream one item per candidate so the user sees names
+                    # rotate through with grammar composition.
+                    _items: list[dict[str, Any]] = []
+                    for _cand in result.candidates[:50]:
+                        _gf = _cand.grammar_fields or {}
+                        _segs = []
+                        for _k in (
+                            "physical_base",
+                            "subject",
+                            "component",
+                            "position",
+                            "process",
+                            "geometry",
+                            "transformation",
+                        ):
+                            _v = _gf.get(_k)
+                            if _v:
+                                _segs.append(f"{_k}={_v}")
+                        _desc = (
+                            "  ".join(_segs) if _segs else ((_cand.reason or "")[:80])
+                        )
+                        _items.append(
                             {
-                                "primary_text": _plabel,
+                                "primary_text": _cand.standard_name,
+                                "primary_text_style": "white",
+                                "description": _desc,
+                                "score_value": float(_cand.confidence)
+                                if _cand.confidence is not None
+                                else None,
+                            }
+                        )
+                    if not _items:
+                        _items.append(
+                            {
+                                "primary_text": (
+                                    f"sn={_event.sn_ids[0]}"
+                                    if _event.sn_ids
+                                    else f"batch={_event.batch_id}"
+                                ),
                                 "primary_text_style": "white",
                                 "description": batch.group_key,
                             }
-                        ]
-                    )
+                        )
+                    state.loop_stats.stream_queue.add(_items)
                 if _charge.overspend > 0:
                     wlog.warning(
                         "Compose batch %s overspent reservation by $%.4f "

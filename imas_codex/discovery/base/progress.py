@@ -1665,7 +1665,12 @@ class BaseProgressDisplay(ABC):
         """Build centered header with facility and focus."""
         header = Text()
 
-        title = f"{self.facility.upper()} {self._title_suffix}"
+        # Skip facility prefix for non-facility pseudo-domains (sn, dd) where
+        # the facility token is a placeholder rather than a real installation.
+        if self.facility.lower() in ("sn", "dd", ""):
+            title = self._title_suffix
+        else:
+            title = f"{self.facility.upper()} {self._title_suffix}"
         mode = self._header_mode_label()
         if mode:
             title += f" ({mode})"
@@ -2135,12 +2140,16 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
             primary_text_style = "white"
             description = ""
             physics_domain = ""
+            score_value: float | None = None
             if stats and stats._current_stream_item:
                 si = stats._current_stream_item
                 primary_text = si.get("primary_text", primary_text)
                 primary_text_style = si.get("primary_text_style", "white")
                 description = si.get("description", "")
                 physics_domain = si.get("physics_domain", "")
+                _sv = si.get("score_value")
+                if isinstance(_sv, int | float):
+                    score_value = float(_sv)
 
             rows.append(
                 PipelineRowConfig(
@@ -2158,6 +2167,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
                     primary_text_style=primary_text_style,
                     description=description,
                     physics_domain=physics_domain,
+                    score_value=score_value,
                     is_complete=complete,
                     is_processing=running and not complete,
                     processing_label="waiting..." if waiting else "processing...",

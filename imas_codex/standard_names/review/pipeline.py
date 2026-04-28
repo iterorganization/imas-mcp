@@ -2176,15 +2176,50 @@ def _update_batch_stats(
     cost: float,
     _result: Any,
 ) -> None:
-    """Update review_stats after a batch completes."""
+    """Update review_stats after a batch completes.
+
+    Pushes per-item stream entries (name + reviewer score + clipped
+    comment) so the rich display rotates through reviewed names rather
+    than showing only batch-level summaries.
+    """
     actually_scored = len(items)
     state.review_stats.processed += actually_scored
     state.review_stats.record_batch(actually_scored)
-    state.review_stats.stream_queue.add(
-        [
+
+    stream_items: list[dict[str, Any]] = []
+    for it in items[:50]:
+        _name = it.get("id") or it.get("standard_name") or ""
+        _score = it.get("reviewer_score")
+        _comment = (
+            it.get("reviewer_comments")
+            or it.get("reviewer_comment")
+            or it.get("review_comment")
+            or ""
+        )
+        if isinstance(_comment, list):
+            _comment = "  ".join(str(c) for c in _comment)
+        _comment = str(_comment).strip().replace("\n", " ")
+        if len(_comment) > 120:
+            _comment = _comment[:117] + "…"
+        stream_items.append(
+            {
+                "primary_text": str(_name),
+                "primary_text_style": "white",
+                "description": _comment or f"batch {batch_idx + 1}",
+                "score_value": float(_score)
+                if isinstance(_score, int | float)
+                else None,
+            }
+        )
+    if not stream_items:
+        stream_items.append(
             {
                 "primary_text": f"batch {batch_idx + 1}",
                 "description": f"{actually_scored} scored  ${cost:.3f}",
             }
-        ]
-    )
+        )
+    state.review_stats.stream_queue.add(stream_items)
+    # Mirror to loop_stats so the loop-mode display surfaces per-item
+    # progress in the names/documentation rows.
+    if getattr(state, "loop_stats", None) is not None:
+        state.loop_stats.stream_queue.add(stream_items)

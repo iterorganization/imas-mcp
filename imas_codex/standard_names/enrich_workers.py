@@ -1082,22 +1082,36 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
                 )
                 lease.charge_event(cost, _event)
                 if state.loop_stats is not None:
-                    state.loop_stats.processed += 1
+                    state.loop_stats.processed += max(1, len(result.items))
                     state.loop_stats.cost += cost
-                    _plabel = (
-                        f"sn={_event.sn_ids[0]}"
-                        if _event.sn_ids
-                        else f"batch={_event.batch_id}"
-                    )
-                    state.loop_stats.stream_queue.add(
-                        [
+                    # Stream one item per enriched name (clipped description
+                    # preview) so the rich display rotates through enriched
+                    # names rather than showing a static batch label.
+                    _stream_items: list[dict[str, Any]] = []
+                    for _enr in result.items[:50]:
+                        _desc = (_enr.description or "").strip().replace("\n", " ")
+                        if len(_desc) > 120:
+                            _desc = _desc[:117] + "…"
+                        _stream_items.append(
                             {
-                                "primary_text": _plabel,
+                                "primary_text": _enr.standard_name,
+                                "primary_text_style": "white",
+                                "description": _desc or "(enriched)",
+                            }
+                        )
+                    if not _stream_items:
+                        _stream_items.append(
+                            {
+                                "primary_text": (
+                                    f"sn={_event.sn_ids[0]}"
+                                    if _event.sn_ids
+                                    else f"batch={_event.batch_id}"
+                                ),
                                 "primary_text_style": "white",
                                 "description": str(batch.get("batch_index", 0)),
                             }
-                        ]
-                    )
+                        )
+                    state.loop_stats.stream_queue.add(_stream_items)
                 # Soft-stop: ignore result.hard_stop — never drop in-flight
 
             # Distribute per-item cost so persist_enriched_batch can write
