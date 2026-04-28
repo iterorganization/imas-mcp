@@ -86,7 +86,7 @@ def _call_write_reviews(records: list[dict]) -> tuple[int, list]:
 
 
 def _extract_batch(call_args_list: list) -> list[dict]:
-    """Pull the ``batch`` kwarg from the first MERGE Review query call."""
+    """Pull the ``batch`` kwarg from the first MERGE StandardNameReview query call."""
     for c in call_args_list:
         kwargs = c.kwargs
         if "batch" in kwargs:
@@ -100,7 +100,7 @@ def _extract_batch(call_args_list: list) -> list[dict]:
 
 
 class TestWriteReviewsReviewerModel:
-    """reviewer_model must be persisted on the Review node."""
+    """reviewer_model must be persisted on the StandardNameReview node."""
 
     def test_reviewer_model_populated_from_model(self) -> None:
         """reviewer_model is set to the same value as model."""
@@ -135,15 +135,15 @@ class TestWriteReviewsReviewerModel:
         record = _make_record()
         _, calls = _call_write_reviews([record])
 
-        # The first call with a non-empty string arg is the MERGE Review query
+        # The first call with a non-empty string arg is the MERGE StandardNameReview query
         merge_cypher = None
         for c in calls:
             args = c.args
-            if args and "MERGE (r:Review" in args[0]:
+            if args and "MERGE (r:StandardNameReview" in args[0]:
                 merge_cypher = args[0]
                 break
 
-        assert merge_cypher is not None, "No MERGE Review query found"
+        assert merge_cypher is not None, "No MERGE StandardNameReview query found"
         assert "r.reviewer_model = b.reviewer_model" in merge_cypher, (
             "Cypher is missing SET r.reviewer_model = b.reviewer_model"
         )
@@ -167,7 +167,7 @@ class TestWriteReviewsReviewerModel:
 
 
 class TestWriteReviewsVerdict:
-    """verdict must be persisted on the Review node."""
+    """verdict must be persisted on the StandardNameReview node."""
 
     def test_verdict_populated_from_record(self) -> None:
         """verdict is forwarded from the record into the Cypher batch."""
@@ -200,11 +200,11 @@ class TestWriteReviewsVerdict:
         merge_cypher = None
         for c in calls:
             args = c.args
-            if args and "MERGE (r:Review" in args[0]:
+            if args and "MERGE (r:StandardNameReview" in args[0]:
                 merge_cypher = args[0]
                 break
 
-        assert merge_cypher is not None, "No MERGE Review query found"
+        assert merge_cypher is not None, "No MERGE StandardNameReview query found"
         assert "r.verdict = b.verdict" in merge_cypher, (
             "Cypher is missing SET r.verdict = b.verdict"
         )

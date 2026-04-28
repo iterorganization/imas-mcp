@@ -509,18 +509,18 @@ def fetch_review_feedback_for_sources(
 def fetch_reviewer_history_for_sources(
     source_ids: list[str] | set[str] | None,
 ) -> dict[str, dict[str, Any]]:
-    """Fetch full Review-node history per source for compose prompt enrichment.
+    """Fetch full StandardNameReview-node history per source for compose prompt enrichment.
 
-    For each source that currently links to a StandardName with ≥1 Review
-    node, returns:
+    For each source that currently links to a StandardName with ≥1
+    StandardNameReview node, returns:
 
-    - ``latest``: the most recent Review (score, comment ≤800 chars, model).
-    - ``prior_themes``: n-gram theme extraction from older Review comments,
+    - ``latest``: the most recent StandardNameReview (score, comment ≤800 chars, model).
+    - ``prior_themes``: n-gram theme extraction from older StandardNameReview comments,
       rendered as ``[{theme, count, example}]``.
 
     This complements :func:`fetch_review_feedback_for_sources` which injects
     only the denormalised aggregates from the StandardName node itself.  The
-    history variant drills into *all* Review nodes for richer compose context.
+    history variant drills into *all* StandardNameReview nodes for richer compose context.
 
     Args:
         source_ids: Iterable of source-node ids (e.g. ``dd:equilibrium/...``).
@@ -1326,7 +1326,7 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
                     ],
                 )
 
-    logger.info("Wrote %d Review nodes", len(valid))
+    logger.info("Wrote %d StandardNameReview nodes", len(valid))
     return len(valid)
 
 
@@ -1335,7 +1335,7 @@ def update_review_aggregates(
     *,
     threshold: float = 0.2,
 ) -> int:
-    """Recompute per-StandardName aggregates from attached Review nodes.
+    """Recompute per-StandardName aggregates from attached StandardNameReview nodes.
 
     **Winning-group selection**: identifies the most recent review group
     whose ``resolution_method`` is one of ``quorum_consensus``,
@@ -2847,12 +2847,12 @@ def clear_standard_names(
                 **params,
             )
 
-        # Step C: sweep up any fully-orphaned Review nodes left by prior clears
-        # (pre-p39 runs detached StandardName without deleting Review).
+        # Step C: sweep up any fully-orphaned StandardNameReview nodes left by prior clears
+        # (pre-p39 runs detached StandardName without deleting StandardNameReview).
         orphan_result = gc.query(
             """
-            MATCH (r:Review)
-            WHERE NOT EXISTS { MATCH (r)-[:REVIEWS]->(:StandardName) }
+            MATCH (r:StandardNameReview)
+            WHERE NOT EXISTS { MATCH (:StandardName)-[:HAS_REVIEW]->(r) }
             WITH r LIMIT 10000
             DETACH DELETE r
             RETURN count(r) AS n
@@ -2860,7 +2860,7 @@ def clear_standard_names(
         )
         orphan_count = orphan_result[0]["n"] if orphan_result else 0
         if orphan_count:
-            logger.info("Swept %d orphaned Review nodes", orphan_count)
+            logger.info("Swept %d orphaned StandardNameReview nodes", orphan_count)
 
         # Step D: delete all LLMCost rows — they represent cost for pipeline
         # runs whose StandardName output is now being cleared. Leaving them
@@ -2880,7 +2880,7 @@ def clear_sn_subsystem(
     Deletes the six labels owned by the SN pipeline output:
 
     * ``StandardName`` — the generated names
-    * ``Review`` — RD-quorum review records
+    * ``StandardNameReview`` — RD-quorum review records
     * ``StandardNameSource`` — per-path extraction tracking
     * ``VocabGap`` — grammar vocabulary gap reports
     * ``SNRun`` — run audit / rotation memory
@@ -2905,7 +2905,7 @@ def clear_sn_subsystem(
     counts: dict[str, int] = {}
     labels = (
         "StandardName",
-        "Review",
+        "StandardNameReview",
         "StandardNameSource",
         "VocabGap",
         "SNRun",
@@ -2924,12 +2924,12 @@ def clear_sn_subsystem(
         if dry_run:
             return counts
 
-        # Delete order is significant: Review BEFORE StandardName so
-        # orphan Review nodes can't linger if HAS_STANDARD_NAME edges
+        # Delete order is significant: StandardNameReview BEFORE StandardName so
+        # orphan StandardNameReview nodes can't linger if HAS_STANDARD_NAME edges
         # are missing (pre-p39 bug). DETACH DELETE handles remaining
         # edges on each pass. At SN-pipeline scale (~thousands of
         # nodes total) a single DETACH DELETE per label is sub-second.
-        gc.query("MATCH (r:Review) DETACH DELETE r")
+        gc.query("MATCH (r:StandardNameReview) DETACH DELETE r")
         gc.query("MATCH (sn:StandardName) DETACH DELETE sn")
         gc.query("MATCH (s:StandardNameSource) DETACH DELETE s")
         gc.query("MATCH (v:VocabGap) DETACH DELETE v")
@@ -4226,9 +4226,9 @@ def export_review_comments(
     *,
     domain: str | None = None,
 ) -> int:
-    """Dump Review node comment data to a JSONL file before ``sn clear``.
+    """Dump StandardNameReview node comment data to a JSONL file before ``sn clear``.
 
-    Queries all ``Review`` nodes (optionally filtered by the parent
+    Queries all ``StandardNameReview`` nodes (optionally filtered by the parent
     ``StandardName.physics_domain``) and writes one JSON record per
     line to *output_path*.  Each record contains:
 
@@ -4241,7 +4241,7 @@ def export_review_comments(
     * ``comments`` — full free-text comment string
     * ``review_axis`` — "names" or "docs"
     * ``generated_at`` — ``StandardName.generated_at`` ISO string
-    * ``reviewed_at`` — ``Review.reviewed_at`` ISO string
+    * ``reviewed_at`` — ``StandardNameReview.reviewed_at`` ISO string
 
     Parameters
     ----------
@@ -4253,7 +4253,7 @@ def export_review_comments(
 
     Returns
     -------
-    Number of Review records written (0 if none found).
+    Number of StandardNameReview records written (0 if none found).
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4267,7 +4267,7 @@ def export_review_comments(
     where = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
     cypher = f"""
-        MATCH (r:Review)-[:REVIEWS]->(sn:StandardName)
+        MATCH (sn:StandardName)-[:HAS_REVIEW]->(r:StandardNameReview)
         {where}
         RETURN sn.id AS name,
                sn.physics_domain AS domain,
@@ -4286,7 +4286,10 @@ def export_review_comments(
         rows = gc.query(cypher, **params)
 
     if not rows:
-        logger.info("export_review_comments: no Review nodes found (domain=%s)", domain)
+        logger.info(
+            "export_review_comments: no StandardNameReview nodes found (domain=%s)",
+            domain,
+        )
         return 0
 
     count = 0

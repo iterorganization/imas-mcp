@@ -184,14 +184,14 @@ class TestExportReviewComments:
 
 _PREVIEW = {
     "StandardName": 2,
-    "Review": 3,
+    "StandardNameReview": 3,
     "StandardNameSource": 0,
     "VocabGap": 0,
     "SNRun": 0,
 }
 _DELETED = {
     "StandardName": 2,
-    "Review": 3,
+    "StandardNameReview": 3,
     "StandardNameSource": 0,
     "VocabGap": 0,
     "SNRun": 0,
@@ -206,7 +206,7 @@ class TestSnClearCommentExport:
         return CliRunner()
 
     def test_export_triggered_on_clear(self, runner: CliRunner, tmp_path: Path) -> None:
-        """sn clear with Review nodes exports JSONL before deleting."""
+        """sn clear with StandardNameReview nodes exports JSONL before deleting."""
         with (
             patch(
                 "imas_codex.standard_names.graph_ops.clear_sn_subsystem",
@@ -249,11 +249,11 @@ class TestSnClearCommentExport:
     def test_export_skipped_when_no_reviews(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """When Review count is 0 the export function is not called."""
+        """When StandardNameReview count is 0 the export function is not called."""
         preview_no_reviews = dict(_PREVIEW)
-        preview_no_reviews["Review"] = 0
+        preview_no_reviews["StandardNameReview"] = 0
         deleted_no_reviews = dict(_DELETED)
-        deleted_no_reviews["Review"] = 0
+        deleted_no_reviews["StandardNameReview"] = 0
 
         with (
             patch(

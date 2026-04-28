@@ -1699,7 +1699,7 @@ def sn_status() -> None:
                 iter(
                     gc.query(
                         """
-                        MATCH (r:Review)
+                        MATCH (r:StandardNameReview)
                         RETURN count(r) AS total_reviews,
                                count(r.cost_usd) AS reviews_with_cost,
                                coalesce(sum(r.cost_usd), 0.0) AS total_cost,
@@ -1713,7 +1713,7 @@ def sn_status() -> None:
             cost_by_model = list(
                 gc.query(
                     """
-                    MATCH (r:Review)
+                    MATCH (r:StandardNameReview)
                     WHERE r.cost_usd IS NOT NULL
                     RETURN r.model AS model,
                            count(r) AS n,
@@ -2491,7 +2491,7 @@ def sn_import(
 def sn_clear(dry_run: bool, force: bool, no_comment_export: bool) -> None:
     """Wipe every Standard Name the pipeline has produced.
 
-    Deletes the six pipeline-output labels: StandardName, Review,
+    Deletes the six pipeline-output labels: StandardName, StandardNameReview,
     StandardNameSource, VocabGap, SNRun, LLMCost. ISN grammar nodes
     (GrammarToken, GrammarSegment, GrammarTemplate, ISNGrammarVersion)
     are ISN-authoritative reference data and stay in the graph — use
@@ -2500,7 +2500,7 @@ def sn_clear(dry_run: bool, force: bool, no_comment_export: bool) -> None:
     For scoped deletes (by status, source, IDS, score tier, …) use
     ``sn prune`` instead.
 
-    Before deleting, any existing Review nodes are exported to a JSONL
+    Before deleting, any existing StandardNameReview nodes are exported to a JSONL
     file in ``research/`` so reviewer feedback survives across clear
     cycles.  Pass ``--no-comment-export`` to skip the dump (e.g. in
     automated tests).
@@ -2537,7 +2537,7 @@ def sn_clear(dry_run: bool, force: bool, no_comment_export: bool) -> None:
             )
 
         # Pre-clear comment export (Phase F)
-        if not no_comment_export and preview.get("Review", 0) > 0:
+        if not no_comment_export and preview.get("StandardNameReview", 0) > 0:
             import pathlib
 
             from imas_codex.standard_names.graph_ops import export_review_comments
@@ -2549,7 +2549,7 @@ def sn_clear(dry_run: bool, force: bool, no_comment_export: bool) -> None:
                 n_exported = export_review_comments(export_path)
                 if n_exported:
                     console.print(
-                        f"[dim]Exported {n_exported} Review records → {export_path}[/dim]"
+                        f"[dim]Exported {n_exported} StandardNameReview records → {export_path}[/dim]"
                     )
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[yellow]Comment export skipped: {exc}[/yellow]")
@@ -3002,7 +3002,7 @@ def sn_prune(
     Relationship-first safety model: HAS_STANDARD_NAME edges are removed
     before deleting nodes; scoped deletes only remove orphaned nodes.
     Review nodes attached to pruned StandardNames are deleted alongside
-    them; a final sweep removes any orphan Review nodes left by prior
+    them; a final sweep removes any orphan StandardNameReview nodes left by prior
     runs.
 
     Use this for targeted cleanup while iterating on generation. For a
@@ -3147,7 +3147,7 @@ def _run_sync_grammar(*, dry_run: bool, verbose: bool) -> None:
     show_default=True,
     help=(
         "Theme source. 'graph' queries StandardName reviewer comments, "
-        "'reviews' queries Review nodes directly."
+        "'reviews' queries StandardNameReview nodes directly."
     ),
 )
 @click.option("--limit", type=int, default=50, help="Max comments to sample.")
@@ -3192,7 +3192,7 @@ def sn_themes(
 
             where = " AND ".join(where_clauses)
             cypher = f"""
-                MATCH (sn:StandardName)<-[:REVIEWS]-(r:Review)
+                MATCH (sn:StandardName)-[:HAS_REVIEW]->(r:StandardNameReview)
                 WHERE {where}
                 RETURN r.comments AS comments
                 ORDER BY r.reviewed_at DESC

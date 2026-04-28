@@ -205,10 +205,10 @@ class TestWriteReviewsPerDim:
             ],
             mock_gc,
         )
-        cypher = _find_merge_cypher(mock_gc, "MERGE (r:Review")
-        assert cypher is not None, "MERGE Review query not found"
+        cypher = _find_merge_cypher(mock_gc, "MERGE (r:StandardNameReview")
+        assert cypher is not None, "MERGE StandardNameReview query not found"
         assert "r.comments_per_dim_json" in cypher
-        batch = _find_merge_batch(mock_gc, "MERGE (r:Review")
+        batch = _find_merge_batch(mock_gc, "MERGE (r:StandardNameReview")
         assert batch is not None and len(batch) == 1
         assert json.loads(batch[0]["comments_per_dim_json"]) == per_dim
 

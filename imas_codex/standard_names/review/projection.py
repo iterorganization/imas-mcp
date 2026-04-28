@@ -2,14 +2,14 @@
 
 Given a StandardName ID and review axis (``"names"`` or ``"docs"``),
 derives the single authoritative :class:`CanonicalReview` record from the
-``Review`` nodes attached to that SN in the graph — regardless of how many
+``StandardNameReview`` nodes attached to that SN in the graph — regardless of how many
 review cycles ran or how many review groups exist.
 
 This module **defines** the canonical projection semantics that the rest of
 the W40 migration converges toward.  It is a read-only helper: it never
 modifies the graph.  Future consumers (e.g. ``sn status --deep``, reviewer-
 disagreement audits) should call :func:`project_canonical_review` rather
-than querying Review nodes directly.
+than querying StandardNameReview nodes directly.
 
 Precedence (from most-authoritative to least)
 ---------------------------------------------
@@ -73,7 +73,7 @@ class CanonicalReview:
         * ``"escalator"`` — cycle-2 authoritative escalation
         * ``"quorum_mean"`` — mean of cycle-0 and cycle-1 quorum
         * ``"single"`` — only cycle-0 available
-        * ``"none"`` — no Review nodes found
+        * ``"none"`` — no StandardNameReview nodes found
     """
 
     score: float | None
@@ -149,7 +149,7 @@ def _row_to_canonical(
 # ---------------------------------------------------------------------------
 
 _CYPHER = """
-MATCH (sn:StandardName {id: $sn_id})<-[:REVIEWS]-(r:Review {review_axis: $axis})
+MATCH (sn:StandardName {id: $sn_id})-[:HAS_REVIEW]->(r:StandardNameReview {review_axis: $axis})
 RETURN r.review_group_id       AS review_group_id,
        r.cycle_index            AS cycle_index,
        r.resolution_method      AS resolution_method,
@@ -184,7 +184,7 @@ def project_canonical_review(
     CanonicalReview
         The projected canonical review result.
     None
-        When no ``Review`` nodes exist for this SN+axis combination.
+        When no ``StandardNameReview`` nodes exist for this SN+axis combination.
     """
     rows = list(gc.query(_CYPHER, sn_id=sn_id, axis=axis))
 

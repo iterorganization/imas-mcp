@@ -2,7 +2,7 @@
 
 All tests are offline — the ``GraphClient`` is fully mocked via
 ``gc.query`` returning pre-canned rows that mimic the shape returned
-by the ``MATCH (sn)<-[:REVIEWS]-(r:Review) RETURN ...`` Cypher.
+by the ``MATCH (sn)-[:HAS_REVIEW]->(r:StandardNameReview) RETURN ...`` Cypher.
 
 Test inventory (≥9 cases, covers all 4 source branches + edge cases)
 ----------------------------------------------------------------------

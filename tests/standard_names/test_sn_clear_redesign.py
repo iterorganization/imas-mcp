@@ -110,7 +110,7 @@ class TestClearSnSubsystemLabels:
 
     _EXPECTED_LABELS = {
         "StandardName",
-        "Review",
+        "StandardNameReview",
         "StandardNameSource",
         "VocabGap",
         "SNRun",
@@ -202,11 +202,11 @@ class TestClearSnSubsystemLabels:
         mock_sync.assert_not_called()
 
     def test_review_deleted_before_standardname(self):
-        """Pre-p39 bug: deleting StandardName first left orphan Review nodes.
+        """Pre-p39 bug: deleting StandardName first left orphan StandardNameReview nodes.
 
-        The order in `clear_sn_subsystem` must be Review → StandardName so
+        The order in `clear_sn_subsystem` must be StandardNameReview → StandardName so
         even in the absence of HAS_STANDARD_NAME edges (pathological data)
-        no orphan Reviews are left behind.
+        no orphan StandardNameReviews are left behind.
         """
         from imas_codex.standard_names import graph_ops
 
@@ -220,11 +220,16 @@ class TestClearSnSubsystemLabels:
 
         queries = [call.args[0] for call in fake_gc.query.call_args_list]
         review_idx = next(
-            i for i, q in enumerate(queries) if "Review" in q and "DELETE" in q
+            i
+            for i, q in enumerate(queries)
+            if "StandardNameReview" in q and "DELETE" in q
         )
         sn_idx = next(
             i
             for i, q in enumerate(queries)
-            if "StandardName" in q and "DELETE" in q and "Source" not in q
+            if "StandardName" in q
+            and "DELETE" in q
+            and "Source" not in q
+            and "Review" not in q
         )
         assert review_idx < sn_idx

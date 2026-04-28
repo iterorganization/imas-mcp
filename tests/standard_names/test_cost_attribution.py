@@ -294,15 +294,15 @@ class TestReviewCostPropagation:
 
         queries = _capture_queries(mock_gc)
 
-        # Find the MERGE Review Cypher
-        review_cypher = [c for c, _ in queries if "MERGE (r:Review" in c]
-        assert review_cypher, "No MERGE Review Cypher found"
+        # Find the MERGE StandardNameReview Cypher
+        review_cypher = [c for c, _ in queries if "MERGE (r:StandardNameReview" in c]
+        assert review_cypher, "No MERGE StandardNameReview Cypher found"
         cypher = review_cypher[0]
         assert "r.llm_tokens_cached_read" in cypher
         assert "r.llm_tokens_cached_write" in cypher
 
         # Verify batch data includes cached token values
-        merge_call = [k for c, k in queries if "MERGE (r:Review" in c][0]
+        merge_call = [k for c, k in queries if "MERGE (r:StandardNameReview" in c][0]
         batch = merge_call.get("batch", [])
         assert batch[0]["llm_tokens_cached_read"] == 1500
         assert batch[0]["llm_tokens_cached_write"] == 500
@@ -318,7 +318,7 @@ class TestClearWipesCosts:
 
     Since clear uses DETACH DELETE (not SET null), all fields including
     cost fields are wiped. This test verifies that clear_sn_subsystem
-    issues DETACH DELETE on StandardName and Review nodes.
+    issues DETACH DELETE on StandardName and StandardNameReview nodes.
     """
 
     def test_clear_detach_deletes_standard_names(self):
@@ -344,9 +344,9 @@ class TestClearWipesCosts:
         sn_deletes = [q for q in delete_queries if "StandardName" in q]
         assert sn_deletes, "Expected DETACH DELETE on StandardName"
 
-        # Must have DETACH DELETE for Review
-        review_deletes = [q for q in delete_queries if "Review" in q]
-        assert review_deletes, "Expected DETACH DELETE on Review"
+        # Must have DETACH DELETE for StandardNameReview
+        review_deletes = [q for q in delete_queries if "StandardNameReview" in q]
+        assert review_deletes, "Expected DETACH DELETE on StandardNameReview"
 
 
 # ---------------------------------------------------------------------------

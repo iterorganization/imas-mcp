@@ -223,10 +223,10 @@ class TestBug4PerNameCost:
         with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
             write_reviews(records, skip_cost=True)
 
-        # Only 1 query call (MERGE Review nodes), not 2 (no cost accumulation)
+        # Only 1 query call (MERGE StandardNameReview nodes), not 2 (no cost accumulation)
         assert mock_gc.query.call_count == 1
         cypher = mock_gc.query.call_args[0][0]
-        assert "MERGE (r:Review" in cypher
+        assert "MERGE (r:StandardNameReview" in cypher
         # Should NOT contain the cost accumulation query
         assert "llm_cost_review" not in cypher
 
@@ -253,7 +253,7 @@ class TestBug4PerNameCost:
         with patch("imas_codex.standard_names.graph_ops.GraphClient", return_value=cm):
             write_reviews(records, skip_cost=False)
 
-        # Should be 2 calls: MERGE Review + cost accumulation
+        # Should be 2 calls: MERGE StandardNameReview + cost accumulation
         assert mock_gc.query.call_count == 2
         cost_cypher = mock_gc.query.call_args_list[1][0][0]
         assert "llm_cost_review" in cost_cypher

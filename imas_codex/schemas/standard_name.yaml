@@ -305,6 +305,7 @@ classes:
       Relationships:
         - HAS_UNIT -> Unit (canonical units for this quantity)
         - HAS_COCOS -> COCOS (COCOS convention this quantity follows)
+        - HAS_REVIEW -> StandardNameReview (quality review records)
 
       Inbound relationships:
         - (IMASNode)-[:HAS_STANDARD_NAME]->(StandardName)
@@ -536,19 +537,19 @@ classes:
           (``reviewer_score_name`` or ``reviewer_score_docs``).
       review_count:
         description: >-
-          Number of Review nodes attached to this StandardName via
-          REVIEWS. 0 when no reviewers have scored it, 1 for single
+          Number of StandardNameReview nodes attached to this StandardName via
+          HAS_REVIEW. 0 when no reviewers have scored it, 1 for single
           canonical review, N >= 2 for multi-reviewer setups.
         range: integer
       review_mean_score:
         description: >-
-          Arithmetic mean of ``Review.score`` across all attached Review
-          nodes. ``null`` when ``review_count == 0``.
+          Arithmetic mean of ``StandardNameReview.score`` across all attached
+          StandardNameReview nodes. ``null`` when ``review_count == 0``.
         range: float
       review_disagreement:
         description: >-
           True iff ``review_count >= 2`` and
-          ``max(Review.score) - min(Review.score) >= disagreement-threshold``.
+          ``max(StandardNameReview.score) - min(StandardNameReview.score) >= disagreement-threshold``.
           Always false for ``review_count <= 1``.
         range: boolean
       reviewer_score_secondary:
@@ -877,6 +878,16 @@ classes:
         inlined: false
         annotations:
           relationship_type: HAS_PHYSICS_DOMAIN
+      reviews:
+        description: >-
+          StandardNameReview nodes attached to this StandardName via HAS_REVIEW.
+          Direction: (StandardName)-[:HAS_REVIEW]->(StandardNameReview).
+          Matches the HAS_* ownership convention (HAS_UNIT, HAS_COCOS, etc.).
+        multivalued: true
+        range: StandardNameReview
+        inlined: false
+        annotations:
+          relationship_type: HAS_REVIEW
 
   VocabGap:
     description: >-
@@ -1171,18 +1182,18 @@ classes:
           relationship_type: FOR_RUN
         description: Edge to the parent SNRun.
 
-  Review:
+  StandardNameReview:
     description: >-
       Quality review of a StandardName produced by an LLM reviewer model.
       A StandardName may have one (canonical) or many (multi-reviewer)
-      Review nodes attached via REVIEWS. Each Review belongs to an
-      RD-quorum review group identified by ``review_group_id``.
+      StandardNameReview nodes attached via HAS_REVIEW. Each StandardNameReview
+      belongs to an RD-quorum review group identified by ``review_group_id``.
 
       Example Cypher:
-        MATCH (sn:StandardName {id: 'electron_temperature'})<-[:REVIEWS]-(r:Review)
+        MATCH (sn:StandardName {id: 'electron_temperature'})-[:HAS_REVIEW]->(r:StandardNameReview)
         RETURN r.llm_model, r.score, r.tier, r.review_axis, r.cycle_index,
                r.review_group_id, r.resolution_role, r.resolution_method
-    class_uri: sn:Review
+    class_uri: sn:StandardNameReview
     mixins:
       - LLMOperation
     attributes:
@@ -1194,16 +1205,12 @@ classes:
           rerun of the same review pass.
         required: true
       standard_name_id:
-        description: ID of the reviewed StandardName (parent of REVIEWS edge)
-        range: StandardName
-        inlined: false
+        description: ID of the reviewed StandardName (back-reference; edge owned by StandardName via HAS_REVIEW)
         required: true
-        annotations:
-          relationship_type: REVIEWS
       review_axis:
         description: >-
-          Which review rubric produced this Review — ``names`` (4-dim name
-          scoring) or ``docs`` (4-dim documentation scoring).
+          Which review rubric produced this StandardNameReview — ``names``
+          (4-dim name scoring) or ``docs`` (4-dim documentation scoring).
         range: StandardNameReviewMode
         required: true
       cycle_index:

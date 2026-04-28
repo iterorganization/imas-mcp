@@ -79,7 +79,7 @@ class TestClearSnSubsystemDeletesLLMCost:
         fake_gc = _make_fake_gc(
             {
                 "StandardName": 5,
-                "Review": 2,
+                "StandardNameReview": 2,
                 "StandardNameSource": 3,
                 "VocabGap": 1,
                 "SNRun": 1,
@@ -102,7 +102,7 @@ class TestClearSnSubsystemDeletesLLMCost:
 
         expected = {
             "StandardName",
-            "Review",
+            "StandardNameReview",
             "StandardNameSource",
             "VocabGap",
             "SNRun",

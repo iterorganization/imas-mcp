@@ -844,9 +844,9 @@ class TestSchemaEnums:
         assert hasattr(ReviewResolutionMethod, "single_review")
 
     def test_review_model_has_new_fields(self):
-        from imas_codex.graph.models import Review
+        from imas_codex.graph.models import StandardNameReview
 
-        fields = Review.model_fields
+        fields = StandardNameReview.model_fields
         assert "review_axis" in fields
         assert "cycle_index" in fields
         assert "review_group_id" in fields
