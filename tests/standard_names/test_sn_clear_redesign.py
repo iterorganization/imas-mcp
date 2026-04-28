@@ -114,6 +114,7 @@ class TestClearSnSubsystemLabels:
         "StandardNameSource",
         "VocabGap",
         "SNRun",
+        "LLMCost",
     }
 
     _GRAMMAR_LABELS = {

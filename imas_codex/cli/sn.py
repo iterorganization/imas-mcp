@@ -2491,8 +2491,8 @@ def sn_import(
 def sn_clear(dry_run: bool, force: bool, no_comment_export: bool) -> None:
     """Wipe every Standard Name the pipeline has produced.
 
-    Deletes the five pipeline-output labels: StandardName, Review,
-    StandardNameSource, VocabGap, SNRun. ISN grammar nodes
+    Deletes the six pipeline-output labels: StandardName, Review,
+    StandardNameSource, VocabGap, SNRun, LLMCost. ISN grammar nodes
     (GrammarToken, GrammarSegment, GrammarTemplate, ISNGrammarVersion)
     are ISN-authoritative reference data and stay in the graph — use
     ``sn sync-grammar`` to refresh them after an ISN release.

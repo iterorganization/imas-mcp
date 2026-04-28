@@ -545,7 +545,7 @@ def fetch_reviewer_history_for_sources(
             """
             UNWIND $ids AS source_id
             MATCH (src {id: source_id})-[:HAS_STANDARD_NAME]->(sn:StandardName)
-                  <-[:REVIEWS]-(r:Review)
+                  -[:HAS_REVIEW]->(r:StandardNameReview)
             RETURN source_id,
                    sn.id AS sn_id,
                    r.score AS score,
@@ -1184,7 +1184,7 @@ def write_standard_names(
 
 
 def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> int:
-    """MERGE ``Review`` nodes and their ``REVIEWS`` edges to StandardName.
+    """MERGE ``StandardNameReview`` nodes and ``HAS_REVIEW`` edges from StandardName.
 
     Each record must contain:
 
@@ -1215,10 +1215,11 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
         Review record dicts.
     skip_cost:
         When ``True``, skip accumulating ``llm_cost_review`` on
-        StandardName nodes.  Use when Review records were already
-        persisted inline (crash-safety path) to avoid double-counting.
+        StandardName nodes.  Use when StandardNameReview records were
+        already persisted inline (crash-safety path) to avoid
+        double-counting.
 
-    Returns the number of Review records written.
+    Returns the number of StandardNameReview records written.
     """
     if not records:
         return 0
@@ -1230,7 +1231,7 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
         gc.query(
             """
             UNWIND $batch AS b
-            MERGE (r:Review {id: b.id})
+            MERGE (r:StandardNameReview {id: b.id})
             SET r.standard_name_id = b.standard_name_id,
                 r.model = b.model,
                 r.reviewer_model = b.reviewer_model,
@@ -1260,7 +1261,7 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
                 r.llm_service = b.llm_service
             WITH r, b
             MATCH (sn:StandardName {id: b.standard_name_id})
-            MERGE (r)-[:REVIEWS]->(sn)
+            MERGE (sn)-[:HAS_REVIEW]->(r)
             """,
             batch=[
                 {
@@ -1343,7 +1344,7 @@ def update_review_aggregates(
     final scores onto the SN aggregates.
 
     Also sets ``review_count``, ``review_mean_score``, and
-    ``review_disagreement`` across all attached Review nodes.
+    ``review_disagreement`` across all attached StandardNameReview nodes.
 
     Returns the number of StandardName nodes updated.
     """
@@ -1354,7 +1355,7 @@ def update_review_aggregates(
             """
             UNWIND $ids AS sid
             MATCH (sn:StandardName {id: sid})
-            OPTIONAL MATCH (sn)<-[:REVIEWS]-(r:Review)
+            OPTIONAL MATCH (sn)-[:HAS_REVIEW]->(r:StandardNameReview)
             WITH sn, count(r) AS n, avg(r.score) AS mean,
                  CASE WHEN count(r) > 1 THEN max(r.score) - min(r.score) ELSE 0.0 END AS spread
             SET sn.review_count = n,
@@ -2793,13 +2794,13 @@ def clear_standard_names(
         if dry_run or count == 0:
             return count
 
-        # Step A: delete Review nodes attached to in-scope StandardName nodes
-        # (REVIEWS edge goes Review -> StandardName). DETACH DELETE on the
-        # StandardName alone orphans the Review node; we must delete it explicitly.
+        # Step A: delete StandardNameReview nodes attached to in-scope StandardName nodes
+        # (HAS_REVIEW edge goes StandardName -> StandardNameReview). DETACH DELETE on the
+        # StandardName alone orphans the StandardNameReview node; we must delete it explicitly.
         if ids_filter:
             gc.query(
                 f"""
-                MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)<-[:REVIEWS]-(r:Review)
+                MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)-[:HAS_REVIEW]->(r:StandardNameReview)
                 WHERE {sn_where}
                 AND src.id STARTS WITH $ids_prefix
                 DETACH DELETE r
@@ -2809,7 +2810,7 @@ def clear_standard_names(
         else:
             gc.query(
                 f"""
-                MATCH (sn:StandardName)<-[:REVIEWS]-(r:Review)
+                MATCH (sn:StandardName)-[:HAS_REVIEW]->(r:StandardNameReview)
                 WHERE {sn_where}
                 DETACH DELETE r
                 """,
@@ -2861,6 +2862,11 @@ def clear_standard_names(
         if orphan_count:
             logger.info("Swept %d orphaned Review nodes", orphan_count)
 
+        # Step D: delete all LLMCost rows — they represent cost for pipeline
+        # runs whose StandardName output is now being cleared. Leaving them
+        # behind would accumulate stale cost-ledger rows across reset cycles.
+        gc.query("MATCH (c:LLMCost) DETACH DELETE c")
+
     logger.info("Deleted %d StandardName nodes", count)
     return count
 
@@ -2871,13 +2877,14 @@ def clear_sn_subsystem(
 ) -> dict[str, int]:
     """Wipe every Standard Name the pipeline has produced.
 
-    Deletes the five labels owned by the SN pipeline output:
+    Deletes the six labels owned by the SN pipeline output:
 
     * ``StandardName`` — the generated names
     * ``Review`` — RD-quorum review records
     * ``StandardNameSource`` — per-path extraction tracking
     * ``VocabGap`` — grammar vocabulary gap reports
     * ``SNRun`` — run audit / rotation memory
+    * ``LLMCost`` — LLM call cost ledger rows
 
     **Grammar nodes** (``GrammarToken``, ``GrammarSegment``,
     ``GrammarTemplate``, ``ISNGrammarVersion``) are ISN-authoritative
@@ -2902,6 +2909,7 @@ def clear_sn_subsystem(
         "StandardNameSource",
         "VocabGap",
         "SNRun",
+        "LLMCost",
     )
 
     with GraphClient() as gc:
@@ -2926,6 +2934,7 @@ def clear_sn_subsystem(
         gc.query("MATCH (s:StandardNameSource) DETACH DELETE s")
         gc.query("MATCH (v:VocabGap) DETACH DELETE v")
         gc.query("MATCH (rr:SNRun) DETACH DELETE rr")
+        gc.query("MATCH (c:LLMCost) DETACH DELETE c")
 
     total = sum(counts.values())
     logger.info("clear_sn_subsystem: deleted %d nodes (%s)", total, counts)
