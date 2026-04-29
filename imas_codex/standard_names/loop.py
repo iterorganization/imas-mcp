@@ -404,7 +404,7 @@ async def run_sn_loop(
                     summary.names_enriched += phase.count
                 elif phase.name in ("review_names", "review_docs"):
                     summary.names_reviewed += phase.count
-                elif phase.name == "regen":
+                elif phase.name == "refine_name":
                     summary.names_regenerated += phase.count
                 elif phase.name == "reconcile":
                     summary.sources_reconciled += phase.count
@@ -419,7 +419,7 @@ async def run_sn_loop(
             # Update phase-level cost breakdowns from shared manager.
             phase_spent = shared_mgr.phase_spent
             summary.compose_cost = phase_spent.get("generate", 0.0) + phase_spent.get(
-                "regen", 0.0
+                "refine_name", 0.0
             )
             summary.review_cost = phase_spent.get(
                 "review_names", 0.0
@@ -611,12 +611,12 @@ def _build_pool_specs(
     from imas_codex.standard_names.graph_ops import (
         claim_enrich_seed_and_expand,
         claim_generate_name_seed_and_expand,
-        claim_regen_seed_and_expand,
+        claim_refine_name_seed_and_expand,
         claim_review_docs_seed_and_expand,
         claim_review_names_seed_and_expand,
         release_enrich_claims,
         release_generate_name_claims,
-        release_regen_claims,
+        release_refine_name_claims,
         release_review_docs_claims,
         release_review_names_claims,
     )
@@ -627,7 +627,7 @@ def _build_pool_specs(
     )
     from imas_codex.standard_names.workers import (
         process_generate_name_batch,
-        process_regen_batch,
+        process_refine_name_batch,
     )
 
     regen_score = min_score if min_score is not None else DEFAULT_MIN_SCORE
@@ -742,13 +742,15 @@ def _build_pool_specs(
             weight=0.15,
         ),
         PoolSpec(
-            name="regen",
+            name="refine_name",
             claim=_make_claim_adapter(
-                claim_regen_seed_and_expand,
+                claim_refine_name_seed_and_expand,
                 min_score=regen_score,
             ),
-            process=_make_process_adapter(process_regen_batch),
-            release=_make_release_adapter(release_regen_claims, ids_kwarg="sn_ids"),
+            process=_make_process_adapter(process_refine_name_batch),
+            release=_make_release_adapter(
+                release_refine_name_claims, ids_kwarg="sn_ids"
+            ),
             weight=0.10,
         ),
     ]
@@ -891,7 +893,7 @@ async def run_sn_pools(
         summary.names_composed = _total("generate")
         summary.names_enriched = _total("enrich")
         summary.names_reviewed = _total("review_names") + _total("review_docs")
-        summary.names_regenerated = _total("regen")
+        summary.names_regenerated = _total("refine_name")
 
         # ── Determine stop reason ─────────────────────────────────
         # Check exhaustion before stop_event: the budget watchdog sets
@@ -946,7 +948,7 @@ async def run_sn_pools(
         # Phase-level cost breakdowns.
         phase_spent = shared_mgr.phase_spent
         summary.compose_cost = phase_spent.get("generate", 0.0) + phase_spent.get(
-            "regen", 0.0
+            "refine_name", 0.0
         )
         summary.review_cost = phase_spent.get("review_names", 0.0) + phase_spent.get(
             "review_docs", 0.0
