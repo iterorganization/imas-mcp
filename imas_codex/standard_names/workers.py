@@ -3260,11 +3260,7 @@ async def process_refine_name_batch(
             )
 
             # acall_llm_structured returns (result, cost, tokens) tuple
-            if isinstance(llm_out, tuple):
-                result_obj, cost, _tokens = llm_out
-            else:
-                result_obj = llm_out
-                cost = 0.0
+            result_obj, cost, _tokens = llm_out
 
             # Charge cost to lease
             if lease:
@@ -3430,11 +3426,7 @@ async def process_review_name_batch(
                 service="standard-names",
             )
 
-            if isinstance(llm_out, tuple):
-                result_obj, cost, _tokens = llm_out
-            else:
-                result_obj = llm_out
-                cost = 0.0
+            result_obj, cost, _tokens = llm_out
 
             # Charge cost to lease
             if lease:
@@ -3617,11 +3609,7 @@ async def process_generate_docs_batch(
                 service="standard-names",
             )
 
-            if isinstance(llm_out, tuple):
-                result_obj, cost, _tokens = llm_out
-            else:
-                result_obj = llm_out
-                cost = 0.0
+            result_obj, cost, _tokens = llm_out
 
             # Charge cost to lease
             if lease:
@@ -3786,11 +3774,7 @@ async def process_review_docs_batch(
                 service="standard-names",
             )
 
-            if isinstance(llm_out, tuple):
-                result_obj, cost, _tokens = llm_out
-            else:
-                result_obj = llm_out
-                cost = 0.0
+            result_obj, cost, _tokens = llm_out
 
             # Charge cost to lease
             if lease:
@@ -4021,11 +4005,7 @@ async def process_refine_docs_batch(
                 service="standard-names",
             )
 
-            if isinstance(llm_out, tuple):
-                result_obj, cost, _tokens = llm_out
-            else:
-                result_obj = llm_out
-                cost = 0.0
+            result_obj, cost, _tokens = llm_out
 
             # Charge cost to lease
             if lease:
