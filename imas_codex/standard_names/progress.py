@@ -411,11 +411,14 @@ def build_sn_pool_stages(
 ) -> list[StageDisplaySpec]:
     """Build the 3 stage specs for the Phase 8 pool display.
 
-    Three rows mapping to the 5 concurrent pools:
+    Three rows mapping to the 6 concurrent pools:
 
-    - **GENERATE** — compose + regen pools.
-    - **ENRICH** — enrich pool.
-    - **REVIEW** — review_names + review_docs pools.
+    - **GENERATE** — generate_name + refine_name pools.
+    - **ENRICH** — generate_docs + refine_docs pools.
+    - **REVIEW** — review_name + review_docs pools.
+
+    .. deprecated::
+        Superseded by :func:`build_sn_6pool_stages` (Phase 8.1).
     """
     return [
         StageDisplaySpec(
@@ -438,5 +441,99 @@ def build_sn_pool_stages(
             group="review",
             stats_attr="review_stats",
             disabled=skip_review,
+        ),
+    ]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 8.1 — 6-pool state + stage specs
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class SN6PoolState:
+    """Observable state for the Phase 8.1 six-pool display.
+
+    Six independent :class:`WorkerStats`, one per pool:
+
+    - ``generate_name_stats`` — initial name composition.
+    - ``review_name_stats``   — name quality review.
+    - ``refine_name_stats``   — name refinement (chain rotation).
+    - ``generate_docs_stats`` — documentation generation.
+    - ``review_docs_stats``   — docs quality review.
+    - ``refine_docs_stats``   — docs refinement (revision rotation).
+
+    :class:`PoolHealth` references are injected after pool construction
+    via :meth:`set_pool_health`.  The display layer (see
+    :mod:`imas_codex.standard_names.display`) reads these stats directly.
+    """
+
+    generate_name_stats: WorkerStats = field(default_factory=WorkerStats)
+    review_name_stats: WorkerStats = field(default_factory=WorkerStats)
+    refine_name_stats: WorkerStats = field(default_factory=WorkerStats)
+    generate_docs_stats: WorkerStats = field(default_factory=WorkerStats)
+    review_docs_stats: WorkerStats = field(default_factory=WorkerStats)
+    refine_docs_stats: WorkerStats = field(default_factory=WorkerStats)
+
+    # Injected after pool construction — maps pool name → PoolHealth.
+    _pool_health: dict[str, PoolHealth] = field(default_factory=dict)
+
+    def set_pool_health(self, pool_name: str, health: PoolHealth) -> None:
+        """Register a pool's health reference for display consumption."""
+        self._pool_health[pool_name] = health
+
+    def get_pool_health(self, pool_name: str) -> PoolHealth | None:
+        """Return the :class:`PoolHealth` for *pool_name*, or ``None``."""
+        return self._pool_health.get(pool_name)
+
+
+def build_sn_6pool_stages() -> list[StageDisplaySpec]:
+    """Build the 6 stage specs for the Phase 8.1 pool display.
+
+    Six rows, one per pool:
+
+    - **GENERATE_NAME** — initial name composition.
+    - **REVIEW_NAME**   — name quality review.
+    - **REFINE_NAME**   — name refinement (chain rotation).
+    - **GENERATE_DOCS** — documentation generation.
+    - **REVIEW_DOCS**   — docs quality review.
+    - **REFINE_DOCS**   — docs refinement (revision rotation).
+    """
+    return [
+        StageDisplaySpec(
+            name="GENERATE_NAME",
+            style="bold magenta",
+            group="generate_name",
+            stats_attr="generate_name_stats",
+        ),
+        StageDisplaySpec(
+            name="REVIEW_NAME",
+            style="bold yellow",
+            group="review_name",
+            stats_attr="review_name_stats",
+        ),
+        StageDisplaySpec(
+            name="REFINE_NAME",
+            style="magenta",
+            group="refine_name",
+            stats_attr="refine_name_stats",
+        ),
+        StageDisplaySpec(
+            name="GENERATE_DOCS",
+            style="bold cyan",
+            group="generate_docs",
+            stats_attr="generate_docs_stats",
+        ),
+        StageDisplaySpec(
+            name="REVIEW_DOCS",
+            style="bold yellow",
+            group="review_docs",
+            stats_attr="review_docs_stats",
+        ),
+        StageDisplaySpec(
+            name="REFINE_DOCS",
+            style="cyan",
+            group="refine_docs",
+            stats_attr="refine_docs_stats",
         ),
     ]
