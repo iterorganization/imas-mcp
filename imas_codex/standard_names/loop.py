@@ -400,7 +400,7 @@ async def run_sn_loop(
             for phase in results:
                 if phase.name == "generate":
                     summary.names_composed += phase.count
-                elif phase.name == "enrich":
+                elif phase.name == "generate_docs":
                     summary.names_enriched += phase.count
                 elif phase.name in ("review_names", "review_docs"):
                     summary.names_reviewed += phase.count
@@ -607,15 +607,14 @@ def _build_pool_specs(
     """
     from collections.abc import Awaitable
 
-    from imas_codex.standard_names.enrich_workers import process_enrich_batch
     from imas_codex.standard_names.graph_ops import (
-        claim_enrich_seed_and_expand,
+        claim_generate_docs_seed_and_expand,
         claim_generate_name_seed_and_expand,
         claim_refine_name_seed_and_expand,
         claim_review_docs_seed_and_expand,
         claim_review_name_seed_and_expand,
         claim_review_names_seed_and_expand,
-        release_enrich_claims,
+        release_generate_docs_claims,
         release_generate_name_claims,
         release_refine_name_claims,
         release_review_docs_claims,
@@ -627,6 +626,7 @@ def _build_pool_specs(
         process_review_names_batch,
     )
     from imas_codex.standard_names.workers import (
+        process_generate_docs_batch,
         process_generate_name_batch,
         process_refine_name_batch,
         process_review_name_batch,
@@ -710,14 +710,13 @@ def _build_pool_specs(
             weight=0.30,
         ),
         PoolSpec(
-            name="enrich",
-            claim=_make_claim_adapter(
-                claim_enrich_seed_and_expand,
-                min_score_threshold=regen_score,
+            name="generate_docs",
+            claim=_make_claim_adapter(claim_generate_docs_seed_and_expand),
+            process=_make_process_adapter(process_generate_docs_batch),
+            release=_make_release_adapter(
+                release_generate_docs_claims, ids_kwarg="sn_ids"
             ),
-            process=_make_process_adapter(process_enrich_batch),
-            release=_make_release_adapter(release_enrich_claims, ids_kwarg="sn_ids"),
-            weight=0.25,
+            weight=0.20,
         ),
         PoolSpec(
             name="review_name",
@@ -790,7 +789,7 @@ async def run_sn_pools(
        runs in a worker thread, completing before any pool issues its
        first claim.  This clears stale claims and revives sources
        whose upstream entities reappeared.
-    3. Build 5 :class:`PoolSpec` objects (generate, enrich,
+    3. Build 5 :class:`PoolSpec` objects (generate, generate_docs,
        review_names, review_docs, regen) with adapter closures.
     4. Delegate to :func:`~imas_codex.standard_names.pools.run_pools`
        which runs all pools concurrently with cooperative shutdown.
@@ -902,7 +901,7 @@ async def run_sn_pools(
             return getattr(h, "total_processed", 0) if h is not None else 0
 
         summary.names_composed = _total("generate")
-        summary.names_enriched = _total("enrich")
+        summary.names_enriched = _total("generate_docs")
         summary.names_reviewed = _total("review_names") + _total("review_docs")
         summary.names_regenerated = _total("refine_name")
 

@@ -3488,3 +3488,135 @@ async def process_review_name_batch(
                     )
 
     return processed
+
+
+async def process_generate_docs_batch(
+    batch: list[dict[str, Any]],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+) -> int:
+    """Process a batch of accepted StandardNames for generate_docs (P4.1).
+
+    For each item in the batch:
+
+    1. Render prompt via ``render_prompt("sn/generate_docs_user", {...})`` with
+       reviewer feedback (reviewer_score_name, reviewer_comments_name,
+       reviewer_verdict_name) and chain history as context.
+    2. Use ``get_model("language")`` — bulk content generation model.
+    3. Call ``acall_llm_structured`` with ``service="standard-names"`` and
+       response_model=``GeneratedDocs``.
+    4. Reserve budget and charge ``LLMCostEvent``.
+    5. Persist via ``persist_generated_docs`` (transitions docs_stage → 'drafted').
+    6. On error: ``release_generate_docs_failed_claims``.
+    7. Stream per-item progress: name + first 100 chars of generated description.
+
+    Returns count of items successfully processed.
+    """
+    import asyncio as _asyncio
+
+    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.settings import get_model
+    from imas_codex.standard_names.budget import LLMCostEvent
+    from imas_codex.standard_names.graph_ops import (
+        persist_generated_docs,
+        release_generate_docs_failed_claims,
+    )
+    from imas_codex.standard_names.models import GeneratedDocs
+
+    model = get_model("language")
+    processed = 0
+
+    for item in batch:
+        if stop_event.is_set():
+            break
+
+        sn_id = item["id"]
+        claim_token = item.get("claim_token") or ""
+        chain_history = item.get("chain_history") or []
+
+        # ── Build prompt context ───────────────────────────────────────
+        prompt_context: dict[str, Any] = {
+            "item": item,
+            "chain_history": chain_history,
+        }
+
+        try:
+            user_prompt = render_prompt("sn/generate_docs_user", prompt_context)
+        except Exception:
+            logger.debug("generate_docs: prompt render failed for %s", sn_id)
+            user_prompt = (
+                f"Generate description and documentation for the IMAS standard name: "
+                f"{sn_id}\nKind: {item.get('kind', 'scalar')}\n"
+                f"Unit: {item.get('unit', '')}"
+            )
+
+        # ── Budget reservation ─────────────────────────────────────────
+        estimated = 0.20
+        lease = mgr.reserve(estimated, phase="generate_docs")
+
+        # ── LLM call ──────────────────────────────────────────────────
+        try:
+            llm_out = await acall_llm_structured(
+                model=model,
+                messages=[{"role": "user", "content": user_prompt}],
+                response_model=GeneratedDocs,
+                service="standard-names",
+            )
+
+            if isinstance(llm_out, tuple):
+                result_obj, cost, _tokens = llm_out
+            else:
+                result_obj = llm_out
+                cost = 0.0
+
+            # Charge cost to lease
+            if lease:
+                _event = LLMCostEvent(
+                    model=model,
+                    tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                    tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                    tokens_cached_read=(getattr(llm_out, "cache_read_tokens", 0) or 0),
+                    tokens_cached_write=(
+                        getattr(llm_out, "cache_creation_tokens", 0) or 0
+                    ),
+                    sn_ids=(sn_id,),
+                    phase="generate_docs",
+                    service="standard-names",
+                )
+                lease.charge_event(cost, _event)
+
+            # ── Persist ───────────────────────────────────────────────
+            await _asyncio.to_thread(
+                persist_generated_docs,
+                sn_id=sn_id,
+                claim_token=claim_token,
+                description=result_obj.description,
+                documentation=result_obj.documentation,
+                model=model,
+            )
+            processed += 1
+
+            # ── Per-item progress ──────────────────────────────────────
+            desc_preview = result_obj.description[:100]
+            logger.info(
+                "\033[32mgenerate_docs\033[0m: %s — %s",
+                sn_id,
+                desc_preview,
+            )
+
+        except Exception:
+            logger.exception("generate_docs failed for %s", sn_id)
+            try:
+                await _asyncio.to_thread(
+                    release_generate_docs_failed_claims,
+                    sn_ids=[sn_id],
+                    claim_token=claim_token,
+                )
+            except Exception:
+                logger.debug(
+                    "release_generate_docs_failed_claims also failed for %s",
+                    sn_id,
+                )
+
+    return processed

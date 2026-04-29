@@ -562,3 +562,34 @@ class RefinedDocs(BaseModel):
     )
 
     model_config = {"extra": "ignore"}
+
+
+class GeneratedDocs(BaseModel):
+    """LLM response model for a single generate_docs call.
+
+    The model is constrained to produce ONLY documentation content
+    (description + documentation).  It must NOT change the name, kind,
+    unit, tags, or any other identity field — those are fixed by the
+    accepted name_stage.
+    """
+
+    description: str = Field(
+        ...,
+        min_length=10,
+        max_length=500,
+        description=(
+            "1-3 sentence technical description of the physical quantity "
+            "(American spelling, no LaTeX, ≤ 500 chars)."
+        ),
+    )
+    documentation: str = Field(
+        ...,
+        min_length=20,
+        description=(
+            "Rich markdown documentation covering physical meaning, governing "
+            "equations (LaTeX), typical values, measurement methods, and "
+            "cross-references to related standard names."
+        ),
+    )
+
+    model_config = {"extra": "ignore"}

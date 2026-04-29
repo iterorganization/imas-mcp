@@ -539,6 +539,26 @@ classes:
           ISO 8601 timestamp of the most recent docs-review pass.
           Set only by ``--target docs`` review.
         range: datetime
+      # --- generate_docs provenance ---
+      docs_stage:
+        description: >-
+          Docs-pipeline stage for this StandardName. Mirrors name_stage for
+          the docs generation/review/refine sub-pipeline.
+          Values: pending | drafted | reviewed | accepted | exhausted.
+          Set to 'pending' when name_stage transitions to 'accepted'.
+      docs_chain_length:
+        description: >-
+          Number of docs refinement passes applied to this StandardName.
+          0 on initial generate_docs; increments on each refine_docs pass.
+        range: integer
+      docs_model:
+        description: >-
+          LLM model used for the most recent generate_docs or refine_docs call.
+      docs_generated_at:
+        description: >-
+          ISO 8601 timestamp when generate_docs last wrote documentation
+          to this node.
+        range: datetime
       review_tier:
         description: >-
           Quality tier from review: outstanding, good, inadequate, poor.
