@@ -292,6 +292,41 @@ enums:
       degraded:
         description: Run completed but one or more LLMCost writes could not be drained — cost_spent is a lower bound.
 
+  NameStage:
+    description: >-
+      Name-pipeline stage for a StandardName node. Tracks progress through
+      the name generation, review, and refinement sub-pipeline.
+      Mirrors DocsStage for the docs sub-pipeline.
+    permissible_values:
+      pending:
+        description: Queued for name generation; not yet drafted.
+      drafted:
+        description: >-
+          Name generated (or refined) by the compose/refine worker.
+          Set by _finalize_generated_name_stage and persist_refined_name.
+          Eligible for name review.
+      reviewed:
+        description: >-
+          Reviewed by the name-review worker; score recorded.
+          If score < min_score and chain_length < rotation_cap, eligible
+          for refine_name claiming.
+      accepted:
+        description: >-
+          Score >= min_score; name accepted. Transitions docs_stage to
+          'pending', making the name eligible for generate_docs.
+      refining:
+        description: >-
+          Claimed by a refine_name worker. Transient state — transitions
+          back to 'reviewed' on failure or to 'drafted' on success (new node).
+      exhausted:
+        description: >-
+          Reviewed but chain_length >= rotation_cap - 1 and score still
+          below threshold. Terminal for the name pipeline.
+      superseded:
+        description: >-
+          Replaced by a refined successor node via REFINED_FROM.
+          Terminal — old node is kept for lineage but not re-processed.
+
 # =============================================================================
 # Classes
 # =============================================================================
@@ -539,6 +574,21 @@ classes:
           ISO 8601 timestamp of the most recent docs-review pass.
           Set only by ``--target docs`` review.
         range: datetime
+      # --- name-pipeline stage tracking (Phase 8.1) ---
+      name_stage:
+        description: >-
+          Name-pipeline stage for this StandardName. Set by
+          _finalize_generated_name_stage (drafted), the name-review worker
+          (reviewed, accepted, exhausted), persist_refined_name (superseded
+          on predecessor, drafted on new node), and the refine_name claim
+          (refining). See NameStage enum for all values.
+        range: NameStage
+      chain_length:
+        description: >-
+          REFINED_FROM chain depth: 0 for original generated names,
+          incremented by 1 on each refine_name pass that creates a new node.
+          Used together with rotation_cap to decide when a name is exhausted.
+        range: integer
       # --- generate_docs provenance ---
       docs_stage:
         description: >-
@@ -919,6 +969,16 @@ classes:
         inlined: false
         annotations:
           relationship_type: DOCS_REVISION_OF
+      refined_from:
+        description: >-
+          The predecessor StandardName node this entry was refined from.
+          Created by persist_refined_name via ``MERGE (new)-[:REFINED_FROM]->(old)``.
+          Scalar — a refined name has exactly one direct predecessor.
+          Walk this chain to retrieve the full name refinement history.
+        range: StandardName
+        inlined: false
+        annotations:
+          relationship_type: REFINED_FROM
 
   DocsRevision:
     description: >-
