@@ -77,4 +77,4 @@ Rules:
 - The `name` field must equal `{{ sn_name }}` exactly — do not alter it.
 
 Return a JSON object matching the output schema with fields:
-``documentation``, ``links``, ``tags``.
+``description``, ``documentation``, ``links``, ``tags``.

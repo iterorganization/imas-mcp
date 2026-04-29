@@ -610,12 +610,14 @@ def _build_pool_specs(
     from imas_codex.standard_names.graph_ops import (
         claim_generate_docs_seed_and_expand,
         claim_generate_name_seed_and_expand,
+        claim_refine_docs_seed_and_expand,
         claim_refine_name_seed_and_expand,
         claim_review_docs_seed_and_expand,
         claim_review_name_seed_and_expand,
         claim_review_names_seed_and_expand,
         release_generate_docs_claims,
         release_generate_name_claims,
+        release_refine_docs_claims,
         release_refine_name_claims,
         release_review_docs_claims,
         release_review_names_claims,
@@ -627,6 +629,7 @@ def _build_pool_specs(
     from imas_codex.standard_names.workers import (
         process_generate_docs_batch,
         process_generate_name_batch,
+        process_refine_docs_batch,
         process_refine_name_batch,
         process_review_docs_batch,
         process_review_name_batch,
@@ -759,6 +762,18 @@ def _build_pool_specs(
                 release_refine_name_claims, ids_kwarg="sn_ids"
             ),
             weight=0.10,
+        ),
+        PoolSpec(
+            name="refine_docs",
+            claim=_make_claim_adapter(
+                claim_refine_docs_seed_and_expand,
+                min_score=regen_score,
+            ),
+            process=_make_process_adapter(process_refine_docs_batch),
+            release=_make_release_adapter(
+                release_refine_docs_claims, ids_kwarg="sn_ids"
+            ),
+            weight=0.05,
         ),
     ]
 

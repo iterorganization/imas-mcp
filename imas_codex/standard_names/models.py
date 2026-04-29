@@ -549,6 +549,15 @@ class RefinedDocs(BaseModel):
     targeted at single-name docs-refine calls rather than batched enrichment.
     """
 
+    description: str = Field(
+        ...,
+        min_length=10,
+        max_length=500,
+        description=(
+            "1-3 sentence technical description of the physical quantity "
+            "(American spelling, no LaTeX, ≤ 500 chars)."
+        ),
+    )
     documentation: str = Field(
         ..., description="Full documentation text with LaTeX, typical values, context"
     )

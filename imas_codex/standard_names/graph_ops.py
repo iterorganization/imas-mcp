@@ -6520,6 +6520,298 @@ def release_generate_docs_failed_claims(
     return released
 
 
+# =============================================================================
+# refine_docs — claim / persist / release (DocsRevision snapshot architecture)
+# =============================================================================
+# Stage gate: docs_stage='reviewed' AND reviewer_score_docs < min_score
+#             AND docs_chain_length < rotation_cap AND verdict != 'accept'
+# Fundamentally different from refine_name: docs refine is IN-PLACE on the
+# existing SN node.  The OLD docs are snapshotted into a DocsRevision node
+# linked via DOCS_REVISION_OF before the SN is updated.
+
+
+@retry_on_deadlock()
+def claim_refine_docs_seed_and_expand(
+    min_score: float = DEFAULT_MIN_SCORE,
+    rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
+    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+    timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+) -> list[dict[str, Any]]:
+    """Claim StandardName nodes for docs refinement.
+
+    Eligibility: ``docs_stage = 'reviewed'`` AND
+    ``reviewer_score_docs < min_score`` AND
+    ``docs_chain_length < rotation_cap`` AND
+    ``reviewer_verdict_docs != 'accept'``.
+
+    The claim atomically transitions ``docs_stage`` from ``'reviewed'``
+    to ``'refining'`` via :func:`_claim_sn_atomic`.
+
+    After claiming, each item is enriched with DOCS_REVISION_OF chain
+    history via :func:`~imas_codex.standard_names.chain_history.docs_chain_history`.
+
+    Returns claimed items as dicts with docs_chain_history appended.
+    """
+    from imas_codex.standard_names.chain_history import docs_chain_history
+
+    where = (
+        "sn.docs_stage = 'reviewed'"
+        " AND sn.reviewer_score_docs IS NOT NULL"
+        " AND sn.reviewer_score_docs < $min_score"
+        " AND coalesce(sn.docs_chain_length, 0) < $rotation_cap"
+        " AND coalesce(sn.reviewer_verdict_docs, 'revise') <> 'accept'"
+    )
+    items = _claim_sn_atomic(
+        eligibility_where=where,
+        query_params={"min_score": min_score, "rotation_cap": rotation_cap},
+        batch_size=batch_size,
+        timeout_seconds=timeout_seconds,
+        extra_return_fields=(
+            ", sn.description AS description"
+            ", sn.documentation AS documentation"
+            ", sn.kind AS kind"
+            ", sn.tags AS tags"
+            ", sn.physics_domain AS physics_domain"
+            ", sn.docs_stage AS docs_stage"
+            ", sn.docs_chain_length AS docs_chain_length"
+            ", sn.docs_model AS docs_model"
+            ", sn.docs_generated_at AS docs_generated_at"
+            ", sn.reviewer_score_docs AS reviewer_score_docs"
+            ", sn.reviewer_comments_per_dim_docs"
+            "     AS reviewer_comments_per_dim_docs"
+            ", sn.reviewer_comments_docs AS reviewer_comments_docs"
+            ", sn.reviewer_verdict_docs AS reviewer_verdict_docs"
+        ),
+        stage_field="docs_stage",
+        to_stage="refining",
+    )
+
+    # Enrich each claimed item with its DOCS_REVISION_OF chain history.
+    for item in items:
+        item["docs_chain_history"] = docs_chain_history(item["id"], limit=5)
+
+    logger.debug(
+        "claim_refine_docs_seed_and_expand: claimed %d",
+        len(items),
+    )
+    return items
+
+
+# =============================================================================
+# Persist — refine_docs (snapshot current docs → DocsRevision, update SN)
+# =============================================================================
+
+
+@retry_on_deadlock()
+def persist_refined_docs(
+    *,
+    sn_id: str,
+    claim_token: str,
+    description: str,
+    documentation: str,
+    model: str,
+    current_description: str,
+    current_documentation: str,
+    current_model: str | None = None,
+    current_generated_at: str | None = None,
+    reviewer_score_to_snapshot: float | None = None,
+    reviewer_comments_to_snapshot: str | None = None,
+    reviewer_comments_per_dim_to_snapshot: str | None = None,
+    reviewer_verdict_to_snapshot: str | None = None,
+) -> dict[str, Any]:
+    """Persist a refined docs revision with DocsRevision snapshot.
+
+    Single-transaction:
+
+    1. Verify ``claim_token`` + ``docs_stage = 'refining'``.
+    2. CREATE ``DocsRevision`` snapshot of CURRENT state (before this refine):
+       ``id = "{sn_id}#rev-{docs_chain_length}"`` (deterministic key).
+    3. CREATE ``(sn)-[:DOCS_REVISION_OF]->(rev)`` edge.
+    4. SET new description/documentation on SN, advance chain, clear claim.
+    5. Clear ``reviewer_*_docs`` fields on the SN (new docs need fresh review).
+
+    Returns ``{"docs_chain_length": <new>, "revision_id": <id>}``.
+    Returns ``{"docs_chain_length": -1, "revision_id": ""}`` on token/stage
+    mismatch (no-op).
+    """
+    with GraphClient() as gc:
+        with gc.session() as session:
+            tx = session.begin_transaction()
+            try:
+                result = list(
+                    tx.run(
+                        """
+                        // 1. Match + verify
+                        MATCH (sn:StandardName {id: $sn_id})
+                        WHERE sn.claim_token = $token
+                          AND sn.docs_stage = 'refining'
+                        WITH sn, coalesce(sn.docs_chain_length, 0) AS cur_chain
+
+                        // 2. Create DocsRevision snapshot (deterministic id)
+                        WITH sn, cur_chain,
+                             $sn_id + '#rev-' + toString(cur_chain) AS rev_id
+                        MERGE (rev:DocsRevision {id: rev_id})
+                        ON CREATE SET
+                          rev.sn_id                          = $sn_id,
+                          rev.revision_number                = cur_chain,
+                          rev.description                    = $cur_desc,
+                          rev.documentation                  = $cur_doc,
+                          rev.model                          = $cur_model,
+                          rev.generated_at                   = $cur_gen_at,
+                          rev.reviewer_score_docs            = $snap_score,
+                          rev.reviewer_comments_docs         = $snap_comments,
+                          rev.reviewer_comments_per_dim_docs = $snap_comments_dim,
+                          rev.reviewer_verdict_docs          = $snap_verdict,
+                          rev.created_at                     = datetime()
+
+                        // 3. Link SN → revision
+                        WITH sn, rev, cur_chain
+                        MERGE (sn)-[:DOCS_REVISION_OF]->(rev)
+
+                        // 4. Update SN with new docs + advance chain
+                        WITH sn, rev, cur_chain
+                        SET sn.description       = $new_desc,
+                            sn.documentation     = $new_doc,
+                            sn.docs_stage        = 'drafted',
+                            sn.docs_chain_length = cur_chain + 1,
+                            sn.docs_model        = $model,
+                            sn.docs_generated_at = datetime(),
+                            sn.claim_token       = null,
+                            sn.claimed_at        = null,
+                            // 5. Clear reviewer_*_docs — new docs need fresh review
+                            sn.reviewer_score_docs            = null,
+                            sn.reviewer_scores_docs           = null,
+                            sn.reviewer_comments_per_dim_docs = null,
+                            sn.reviewer_comments_docs         = null,
+                            sn.reviewer_verdict_docs          = null,
+                            sn.reviewer_model_docs            = null,
+                            sn.reviewed_docs_at               = null
+
+                        RETURN cur_chain + 1 AS docs_chain_length,
+                               rev.id        AS revision_id
+                        """,
+                        sn_id=sn_id,
+                        token=claim_token,
+                        cur_desc=current_description or "",
+                        cur_doc=current_documentation or "",
+                        cur_model=current_model,
+                        cur_gen_at=current_generated_at,
+                        snap_score=reviewer_score_to_snapshot,
+                        snap_comments=reviewer_comments_to_snapshot,
+                        snap_comments_dim=reviewer_comments_per_dim_to_snapshot,
+                        snap_verdict=reviewer_verdict_to_snapshot,
+                        new_desc=description,
+                        new_doc=documentation,
+                        model=model,
+                    )
+                )
+                tx.commit()
+            except BaseException:
+                if tx.closed is False:
+                    tx.close()
+                raise
+
+    if result:
+        row = dict(result[0])
+        logger.debug(
+            "persist_refined_docs: %s (chain_length=%d, rev=%s)",
+            sn_id,
+            row["docs_chain_length"],
+            row["revision_id"],
+        )
+        return row
+    logger.debug(
+        "persist_refined_docs: no-op for %s (token/stage mismatch)",
+        sn_id,
+    )
+    return {"docs_chain_length": -1, "revision_id": ""}
+
+
+@retry_on_deadlock()
+def release_refine_docs_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+) -> int:
+    """Release refine-docs claims, reverting ``docs_stage`` to ``'reviewed'``.
+
+    Token-and-stage verified: only reverts nodes where
+    ``claim_token = $token AND docs_stage = 'refining'``.
+
+    Returns the count of SNs actually released.
+    """
+    if not sn_ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $sn_ids AS sid
+            MATCH (sn:StandardName {id: sid})
+            WHERE sn.claim_token = $token
+              AND sn.docs_stage = 'refining'
+            SET sn.docs_stage  = 'reviewed',
+                sn.claim_token = null,
+                sn.claimed_at  = null
+            RETURN count(sn) AS released
+            """,
+            sn_ids=sn_ids,
+            token=claim_token,
+        )
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_refine_docs_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
+
+
+@retry_on_deadlock()
+def release_refine_docs_failed_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+) -> int:
+    """Release refine-docs claims after LLM or processing failure.
+
+    Token-and-stage verified: only reverts nodes where
+    ``claim_token = $token AND docs_stage = 'refining'``.  Prevents
+    late-release from clobbering an SN already swept by orphan recovery.
+
+    Returns the count of nodes released.
+    """
+    if not sn_ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $sn_ids AS sid
+            MATCH (sn:StandardName {id: sid})
+            WHERE sn.claim_token = $token
+              AND sn.docs_stage = 'refining'
+            SET sn.docs_stage  = 'reviewed',
+                sn.claim_token = null,
+                sn.claimed_at  = null
+            RETURN count(sn) AS released
+            """,
+            sn_ids=sn_ids,
+            token=claim_token,
+        )
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_refine_docs_failed_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
+
+
 @retry_on_deadlock()
 def release_all_orphan_claims() -> dict[str, int]:
     """Release all claimed-but-unreleased StandardName and StandardNameSource nodes.

@@ -909,6 +909,69 @@ classes:
         inlined: false
         annotations:
           relationship_type: HAS_REVIEW
+      docs_revisions:
+        description: >-
+          Linked DocsRevision snapshot nodes in the docs refinement chain.
+          Each refine_docs run appends a new DocsRevision. Walk this edge
+          to retrieve the full documentation history for prompt context.
+        multivalued: true
+        range: DocsRevision
+        inlined: false
+        annotations:
+          relationship_type: DOCS_REVISION_OF
+
+  DocsRevision:
+    description: >-
+      Snapshot of documentation state when refine_docs creates a new revision.
+      Linked from StandardName via DOCS_REVISION_OF (chain). Each revision
+      captures the full documentation state at that point in time, enabling
+      full history retrieval for prompt context and audit.
+    class_uri: sn:DocsRevision
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Composite key (sn_id#rev-N) where N is the revision number.
+        required: true
+      sn_id:
+        description: >-
+          StandardName id this revision belongs to. Denormalised for query
+          convenience; the authoritative link is the DOCS_REVISION_OF edge.
+      revision_number:
+        description: >-
+          Zero-based revision index within the chain. Equals the SN
+          docs_chain_length at the time this snapshot was created.
+        range: integer
+      description:
+        description: >-
+          Snapshot of the SN description text at this revision.
+      documentation:
+        description: >-
+          Snapshot of the documentation text at this revision.
+      model:
+        description: >-
+          Model that generated the docs captured in this revision.
+      generated_at:
+        description: >-
+          When the docs captured in this revision were generated.
+        range: datetime
+      reviewer_score_docs:
+        description: >-
+          Reviewer score for this docs revision (0-1).
+        range: float
+      reviewer_comments_per_dim_docs:
+        description: >-
+          Per-dimension reviewer comments JSON for this revision.
+      reviewer_comments_docs:
+        description: >-
+          Aggregated reviewer comments for this revision.
+      reviewer_verdict_docs:
+        description: >-
+          Reviewer verdict (accept/revise/reject) for this revision.
+      created_at:
+        description: >-
+          When this revision snapshot was created.
+        range: datetime
 
   VocabGap:
     description: >-

@@ -3816,3 +3816,198 @@ async def process_review_docs_batch(
                     )
 
     return processed
+
+
+# =============================================================================
+# process_refine_docs_batch — DocsRevision snapshot + in-place docs update
+# =============================================================================
+
+
+async def process_refine_docs_batch(
+    batch: list[dict[str, Any]],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+) -> int:
+    """Process a batch of reviewed StandardNames for docs refinement (P4.3).
+
+    For each item in the batch:
+
+    1. Read ``docs_chain_length``, decide model (escalation on final attempt).
+    2. Render prompt with current docs, reviewer feedback, and chain history.
+    3. Call LLM to produce refined docs (``RefinedDocs`` response model).
+    4. Persist via ``persist_refined_docs`` — snapshots old docs into
+       ``DocsRevision``, updates SN in-place, advances chain.
+    5. On failure: release claims via ``release_refine_docs_failed_claims``.
+
+    Returns count of items successfully processed.
+    """
+    import asyncio as _asyncio
+
+    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.settings import get_model
+    from imas_codex.standard_names.budget import LLMCostEvent
+    from imas_codex.standard_names.defaults import (
+        DEFAULT_ESCALATION_MODEL,
+        DEFAULT_REFINE_ROTATIONS,
+    )
+    from imas_codex.standard_names.graph_ops import (
+        persist_refined_docs,
+        release_refine_docs_failed_claims,
+    )
+    from imas_codex.standard_names.models import RefinedDocs
+
+    rotation_cap = DEFAULT_REFINE_ROTATIONS
+    processed = 0
+
+    for item in batch:
+        if stop_event.is_set():
+            break
+
+        sn_id = item["id"]
+        claim_token = item.get("claim_token") or ""
+        docs_chain_length = item.get("docs_chain_length", 0) or 0
+        docs_chain_history = item.get("docs_chain_history", [])
+
+        # ── Escalation decision ───────────────────────────────────
+        escalate = docs_chain_length >= rotation_cap - 1
+        if escalate:
+            model = DEFAULT_ESCALATION_MODEL
+        else:
+            model = get_model("language")
+
+        # ── Build prompt context ──────────────────────────────────
+        prompt_context: dict[str, Any] = {
+            "sn_name": sn_id,
+            "description": item.get("description", ""),
+            "documentation": item.get("documentation", ""),
+            "kind": item.get("kind", "scalar"),
+            "unit": item.get("unit", ""),
+            "tags": item.get("tags", []),
+            "physics_domain": item.get("physics_domain", ""),
+            "docs_chain_length": docs_chain_length,
+            "docs_chain_history": docs_chain_history,
+            "reviewer_score_docs": item.get("reviewer_score_docs"),
+            "reviewer_comments_per_dim_docs": item.get(
+                "reviewer_comments_per_dim_docs"
+            ),
+            "reviewer_verdict_docs": item.get("reviewer_verdict_docs"),
+            "dd_paths": [],
+        }
+
+        # Best-effort DD path enrichment
+        try:
+            from imas_codex.graph.client import GraphClient
+
+            with GraphClient() as gc:
+                dd_rows = gc.query(
+                    """
+                    MATCH (n)-[:HAS_STANDARD_NAME]->(sn:StandardName {id: $sn_id})
+                    WHERE n:IMASNode
+                    RETURN n.id AS path, n.ids AS ids,
+                           n.unit AS unit,
+                           n.documentation AS documentation,
+                           n.description AS description
+                    LIMIT 5
+                    """,
+                    sn_id=sn_id,
+                )
+                prompt_context["dd_paths"] = [dict(r) for r in dd_rows]
+        except Exception:
+            logger.debug("refine_docs: DD path enrichment failed for %s", sn_id)
+
+        try:
+            user_prompt = render_prompt("sn/refine_docs_user", prompt_context)
+        except Exception:
+            logger.debug("refine_docs: prompt render failed for %s", sn_id)
+            user_prompt = (
+                f"Refine the documentation for standard name: {sn_id}\n"
+                f"Current description: {item.get('description', '')}\n"
+                f"Current documentation: {item.get('documentation', '')}\n"
+                f"Reviewer feedback: {item.get('reviewer_comments_docs', '')}"
+            )
+
+        # ── Budget reservation ─────────────────────────────────────
+        estimated = 0.20
+        lease = mgr.reserve(estimated, phase="refine_docs")
+
+        # ── LLM call ──────────────────────────────────────────────
+        try:
+            llm_out = await acall_llm_structured(
+                model=model,
+                messages=[{"role": "user", "content": user_prompt}],
+                response_model=RefinedDocs,
+                service="standard-names",
+            )
+
+            if isinstance(llm_out, tuple):
+                result_obj, cost, _tokens = llm_out
+            else:
+                result_obj = llm_out
+                cost = 0.0
+
+            # Charge cost to lease
+            if lease:
+                _event = LLMCostEvent(
+                    model=model,
+                    tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                    tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                    tokens_cached_read=(getattr(llm_out, "cache_read_tokens", 0) or 0),
+                    tokens_cached_write=(
+                        getattr(llm_out, "cache_creation_tokens", 0) or 0
+                    ),
+                    sn_ids=(sn_id,),
+                    phase="refine_docs",
+                    service="standard-names",
+                )
+                lease.charge_event(cost, _event)
+
+            # ── Persist ───────────────────────────────────────────
+            await _asyncio.to_thread(
+                persist_refined_docs,
+                sn_id=sn_id,
+                claim_token=claim_token,
+                description=result_obj.description,
+                documentation=result_obj.documentation,
+                model=model,
+                current_description=item.get("description") or "",
+                current_documentation=item.get("documentation") or "",
+                current_model=item.get("docs_model"),
+                current_generated_at=(
+                    str(item["docs_generated_at"])
+                    if item.get("docs_generated_at")
+                    else None
+                ),
+                reviewer_score_to_snapshot=item.get("reviewer_score_docs"),
+                reviewer_comments_to_snapshot=item.get("reviewer_comments_docs"),
+                reviewer_comments_per_dim_to_snapshot=item.get(
+                    "reviewer_comments_per_dim_docs"
+                ),
+                reviewer_verdict_to_snapshot=item.get("reviewer_verdict_docs"),
+            )
+            processed += 1
+
+            desc_preview = result_obj.description[:80]
+            logger.info(
+                "\033[35mrefine_docs\033[0m: %s — %s (chain=%d, model=%s)",
+                sn_id,
+                desc_preview,
+                docs_chain_length + 1,
+                model,
+            )
+
+        except Exception:
+            logger.exception("refine_docs failed for %s", sn_id)
+            try:
+                await _asyncio.to_thread(
+                    release_refine_docs_failed_claims,
+                    sn_ids=[sn_id],
+                    claim_token=claim_token,
+                )
+            except Exception:
+                logger.debug(
+                    "release_refine_docs_failed_claims also failed for %s",
+                    sn_id,
+                )
+
+    return processed
