@@ -157,34 +157,35 @@ def _run_sn_loop_cmd(
                               RETURN count(s) AS draft
                             }
                             CALL {
-                              MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)
-                              WHERE $min_score IS NOT NULL
-                                AND sn.reviewer_score_name IS NOT NULL
-                                AND sn.reviewer_score_name < $min_score
-                                AND coalesce(sn.regen_count, 0) < 1
-                              RETURN count(DISTINCT src) AS revise
+                              MATCH (sn:StandardName)
+                              WHERE sn.reviewer_score_name IS NOT NULL
+                                AND sn.reviewer_score_name < coalesce($min_score, 1.0)
+                                AND sn.reviewed_name_at IS NOT NULL
+                              RETURN count(sn) AS revise
                             }
                             CALL {
                               MATCH (sn:StandardName)
-                              WHERE sn.pipeline_status IN ['named']
+                              WHERE sn.validation_status = 'valid'
                                 AND sn.enriched_at IS NULL
-                                AND (sn.enrich_claimed_at IS NULL
-                                     OR sn.enrich_claimed_at < datetime() - duration({minutes: 30}))
+                                AND (sn.claimed_at IS NULL
+                                     OR sn.claimed_at < datetime() - duration({minutes: 30}))
+                                AND ($min_score IS NULL
+                                     OR coalesce(sn.confidence, 1.0) >= $min_score)
                               RETURN count(sn) AS enrich
                             }
                             CALL {
                               MATCH (sn:StandardName)
                               WHERE sn.validation_status = 'valid'
                                 AND sn.reviewed_name_at IS NULL
+                                AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
                               RETURN count(sn) AS review_names
                             }
                             CALL {
                               MATCH (sn:StandardName)
-                              WHERE sn.validation_status = 'valid'
+                              WHERE sn.reviewed_docs_at IS NULL
+                                AND sn.enriched_at IS NOT NULL
                                 AND sn.reviewed_name_at IS NOT NULL
-                                AND sn.reviewed_docs_at IS NULL
-                                AND sn.documentation IS NOT NULL
-                                AND size(sn.documentation) >= 50
+                                AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
                               RETURN count(sn) AS review_docs
                             }
                             // ── Completed counts (graph baseline for restart) ──
