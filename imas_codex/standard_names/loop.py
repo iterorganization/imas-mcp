@@ -613,6 +613,7 @@ def _build_pool_specs(
         claim_generate_name_seed_and_expand,
         claim_refine_name_seed_and_expand,
         claim_review_docs_seed_and_expand,
+        claim_review_name_seed_and_expand,
         claim_review_names_seed_and_expand,
         release_enrich_claims,
         release_generate_name_claims,
@@ -628,6 +629,7 @@ def _build_pool_specs(
     from imas_codex.standard_names.workers import (
         process_generate_name_batch,
         process_refine_name_batch,
+        process_review_name_batch,
     )
 
     regen_score = min_score if min_score is not None else DEFAULT_MIN_SCORE
@@ -718,6 +720,15 @@ def _build_pool_specs(
             weight=0.25,
         ),
         PoolSpec(
+            name="review_name",
+            claim=_make_claim_adapter(claim_review_name_seed_and_expand),
+            process=_make_process_adapter(process_review_name_batch),
+            release=_make_release_adapter(
+                release_review_names_claims, ids_kwarg="sn_ids"
+            ),
+            weight=0.15,
+        ),
+        PoolSpec(
             name="review_names",
             claim=_make_claim_adapter(
                 claim_review_names_seed_and_expand,
@@ -727,7 +738,7 @@ def _build_pool_specs(
             release=_make_release_adapter(
                 release_review_names_claims, ids_kwarg="sn_ids"
             ),
-            weight=0.20,
+            weight=0.05,
         ),
         PoolSpec(
             name="review_docs",

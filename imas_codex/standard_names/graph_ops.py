@@ -5287,6 +5287,186 @@ def claim_review_names_seed_and_expand(
     )
 
 
+# -- review_name (Phase 8.1: name_stage='drafted', claim only) ----------------
+
+
+@retry_on_deadlock()
+def claim_review_name_seed_and_expand(
+    facility: str | None = None,
+    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+    timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+) -> list[dict[str, Any]]:
+    """Claim StandardName nodes for name review (Phase 8.1 stage machine).
+
+    Eligibility: ``name_stage = 'drafted'`` AND ``claimed_at IS NULL``.
+
+    Does NOT transition stage at claim time — stage remains ``'drafted'``
+    until :func:`persist_reviewed_name` writes the final outcome.  Only
+    ``claim_token`` and ``claimed_at`` are set so the orphan sweep can
+    recover stuck claims.
+
+    Returns claimed items as dicts with keys:
+    ``id``, ``name``, ``description``, ``documentation``, ``kind``,
+    ``unit``, ``tags``, ``physics_domain``, ``chain_length``,
+    ``claim_token``.
+    """
+    where = "sn.name_stage = 'drafted'"
+    if facility is not None:
+        where += " AND sn.facility = $facility"
+        query_params: dict[str, Any] = {"facility": facility}
+    else:
+        query_params = {}
+    return _claim_sn_atomic(
+        eligibility_where=where,
+        query_params=query_params,
+        batch_size=batch_size,
+        timeout_seconds=timeout_seconds,
+        extra_return_fields=(
+            ", sn.name AS name"
+            ", sn.tags AS tags"
+            ", coalesce(sn.chain_length, 0) AS chain_length"
+            ", sn.name_stage AS name_stage"
+        ),
+    )
+
+
+# -- persist_reviewed_name (Phase 8.1: write review + stage transition) -------
+
+
+@retry_on_deadlock()
+def persist_reviewed_name(
+    *,
+    sn_id: str,
+    claim_token: str,
+    score: float,
+    scores: dict[str, Any] | None = None,
+    comments: str | None = None,
+    comments_per_dim: dict[str, Any] | None = None,
+    verdict: str,
+    model: str,
+    min_score: float = DEFAULT_MIN_SCORE,
+    rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
+) -> str:
+    """Persist name-review results and transition ``name_stage``.
+
+    Single-transaction write:
+
+    1. Verify ``claim_token`` matches the stored token.
+    2. Compute target stage:
+       - ``'accepted'`` if ``verdict == 'accept'`` AND ``score >= min_score``
+       - ``'exhausted'`` if ``chain_length >= rotation_cap - 1``
+         AND ``score < min_score`` (cap reached, no further refine)
+       - ``'reviewed'`` otherwise (eligible for refine_name pickup)
+    3. SET reviewer fields, ``name_stage``, clear claim state.
+
+    Parameters
+    ----------
+    sn_id:
+        StandardName node id.
+    claim_token:
+        Token written at claim time — verified before any write.
+    score:
+        Normalised review score (0-1).
+    scores:
+        Per-dimension sub-scores dict (written as JSON to
+        ``reviewer_scores_name``).
+    comments:
+        Free-text reviewer comments (written to ``reviewer_comments_name``).
+    comments_per_dim:
+        Per-dimension comments dict (written as JSON to
+        ``reviewer_comments_per_dim_name``).
+    verdict:
+        LLM verdict string (``'accept'``, ``'reject'``, or ``'revise'``).
+    model:
+        LLM model slug used for this review.
+    min_score:
+        Acceptance threshold.
+    rotation_cap:
+        Maximum chain depth before exhaustion (same value used by
+        :func:`claim_refine_name_seed_and_expand`).
+
+    Returns
+    -------
+    str
+        The new ``name_stage`` value (``'accepted'``, ``'reviewed'``, or
+        ``'exhausted'``).  Returns ``''`` when the token did not match
+        (no-op).
+    """
+    import json as _json
+
+    # Read current chain_length — needed for exhaustion check.
+    with GraphClient() as gc:
+        rows = gc.query(
+            """
+            MATCH (sn:StandardName {id: $id})
+            WHERE sn.claim_token = $token
+            RETURN coalesce(sn.chain_length, 0) AS chain_length
+            """,
+            id=sn_id,
+            token=claim_token,
+        )
+
+    if not rows:
+        logger.debug(
+            "persist_reviewed_name: token mismatch for %s (token=%s) — no-op",
+            sn_id,
+            claim_token[:8],
+        )
+        return ""
+
+    chain_length: int = int(rows[0]["chain_length"])
+
+    # ── Stage decision ────────────────────────────────────────────────
+    if verdict == "accept" and score >= min_score:
+        target_stage = "accepted"
+    elif chain_length >= rotation_cap - 1 and score < min_score:
+        target_stage = "exhausted"
+    else:
+        target_stage = "reviewed"
+
+    scores_json = _json.dumps(scores) if scores is not None else None
+    comments_per_dim_json = (
+        _json.dumps(comments_per_dim) if comments_per_dim is not None else None
+    )
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (sn:StandardName {id: $id})
+            WHERE sn.claim_token = $token
+            SET sn.reviewer_score_name        = $score,
+                sn.reviewer_scores_name       = $scores_json,
+                sn.reviewer_comments_name     = $comments,
+                sn.reviewer_comments_per_dim_name = $comments_per_dim_json,
+                sn.reviewer_verdict_name      = $verdict,
+                sn.reviewer_model_name        = $model,
+                sn.reviewed_name_at           = datetime(),
+                sn.name_stage                 = $target_stage,
+                sn.claim_token                = null,
+                sn.claimed_at                 = null
+            """,
+            id=sn_id,
+            token=claim_token,
+            score=score,
+            scores_json=scores_json,
+            comments=comments,
+            comments_per_dim_json=comments_per_dim_json,
+            verdict=verdict,
+            model=model,
+            target_stage=target_stage,
+        )
+
+    logger.info(
+        "persist_reviewed_name: %s → name_stage=%s (score=%.3f, chain=%d/%d)",
+        sn_id,
+        target_stage,
+        score,
+        chain_length,
+        rotation_cap,
+    )
+    return target_stage
+
+
 # -- review docs (StandardName, reviewed_docs_at IS NULL) ---------------------
 
 
