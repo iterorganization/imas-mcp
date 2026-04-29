@@ -530,6 +530,228 @@ def render_full_display(
     return display
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Live display adapter for run_discovery() harness
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class SN6PoolDisplay:
+    """Live display adapter that bridges the 6-pool renderers with the
+    ``run_discovery()`` harness.
+
+    Implements the context-manager protocol (``__enter__``/``__exit__``)
+    expected by :func:`~imas_codex.cli.discover.common.run_discovery` and
+    exposes a ``tick()`` method for periodic display refresh.
+
+    Usage::
+
+        display = SN6PoolDisplay(
+            cost_limit=5.0,
+            pending_fn=_pending_fn,
+            accumulated_cost_fn=_cost_fn,
+        )
+        display.on_event({"pool": "review_name", "name": "e_temp", "score": 0.85, ...})
+
+    The ``on_event`` method is the callback wired into worker pools.
+    Each call pushes an item into the corresponding pool's deque and
+    increments its completed counter.
+    """
+
+    def __init__(
+        self,
+        *,
+        cost_limit: float = 0.0,
+        console: Any | None = None,
+        pending_fn: Any | None = None,
+        accumulated_cost_fn: Any | None = None,
+    ) -> None:
+        from rich.console import Console
+
+        self.console = console or Console()
+        self.cost_limit = cost_limit
+        self._pending_fn = pending_fn
+        self._accumulated_cost_fn = accumulated_cost_fn
+
+        # Per-pool display state (6 pools).
+        self.pools: dict[str, PoolDisplayState] = {
+            name: PoolDisplayState(name=name) for name in POOL_ORDER
+        }
+
+        # Lifecycle
+        self._live: Any | None = None
+
+        # Service monitor (set by run_discovery after construction).
+        self.service_monitor: Any = None
+
+        # Shutdown state (for compatibility with run_discovery harness).
+        self._shutting_down = False
+        self._shutdown_start: float | None = None
+
+    # ── Event callback (wired into workers) ───────────────────────────
+
+    def on_event(self, ev: dict[str, Any]) -> None:
+        """Push a per-item event into the display.
+
+        Called by workers after each successful persist.  Thread-safe
+        because deque.append is atomic in CPython.
+
+        Args:
+            ev: Event dict with at minimum ``"pool"`` key matching one
+                of :data:`POOL_ORDER`.  Additional keys are pool-specific
+                and consumed by the per-item formatters.
+        """
+        pool_name = ev.get("pool", "")
+        state = self.pools.get(pool_name)
+        if state is None:
+            return
+        state.add_item(ev)
+        state.completed += 1
+        cost = ev.get("cost", 0.0)
+        if cost:
+            state.cost += float(cost)
+
+    # ── Pending count / total refresh ─────────────────────────────────
+
+    def refresh_pending(self) -> None:
+        """Refresh pool totals from the pending-count callback.
+
+        Mapping from pending-fn keys to pool names:
+
+        - ``generate_name`` ← ``draft`` (pending) + ``draft_done`` (baseline)
+        - ``review_name``   ← ``review_names`` + ``review_names_done``
+        - ``refine_name``   ← ``revise``
+        - ``generate_docs`` ← ``enrich`` + ``enrich_done``
+        - ``review_docs``   ← ``review_docs`` + ``review_docs_done``
+        - ``refine_docs``   — no direct graph query; total stays at 0.
+        """
+        if self._pending_fn is None:
+            return
+        try:
+            counts = self._pending_fn()
+        except Exception:
+            return
+
+        # counts may be either a dict or a list of (name, count) tuples
+        # depending on which _pending_fn variant is wired.
+        if isinstance(counts, list):
+            counts = dict(counts)
+
+        _MAP: dict[str, tuple[str, str | None]] = {
+            "generate_name": ("draft", "draft_done"),
+            "review_name": ("review_names", "review_names_done"),
+            "refine_name": ("revise", None),
+            "generate_docs": ("enrich", "enrich_done"),
+            "review_docs": ("review_docs", "review_docs_done"),
+        }
+        for pool_name, (pending_key, done_key) in _MAP.items():
+            state = self.pools.get(pool_name)
+            if state is None:
+                continue
+            pending = int(counts.get(pending_key, 0))
+            # Seed baseline from done counts on first refresh
+            if done_key is not None:
+                done = int(counts.get(done_key, 0))
+                if done > state.completed:
+                    state.completed = done
+            new_total = state.completed + pending
+            if new_total > state.total:
+                state.total = new_total
+
+    # ── Display rendering ─────────────────────────────────────────────
+
+    def _build_display(self) -> Any:
+        """Build the complete display renderable."""
+        from rich.panel import Panel
+
+        content = render_full_display(
+            self.pools,
+            cost_limit=self.cost_limit,
+        )
+
+        # Shutdown indicator
+        if self._shutting_down:
+            content.append("\n")
+            content.append("  SHUTTING DOWN", style="bold yellow")
+            if self._shutdown_start is not None:
+                import time as _time
+
+                elapsed = _time.time() - self._shutdown_start
+                content.append(f"  ({elapsed:.1f}s)", style="dim")
+
+        return Panel(
+            content,
+            border_style="yellow" if self._shutting_down else "cyan",
+            padding=(0, 1),
+        )
+
+    # ── Tick (called by run_discovery ticker task) ────────────────────
+
+    def tick(self) -> None:
+        """Periodic refresh: update pending counts and repaint."""
+        self.refresh_pending()
+        self._refresh()
+
+    def _refresh(self) -> None:
+        """Repaint the Live display."""
+        if self._live is not None:
+            self._live.update(self._build_display())
+
+    # ── Lifecycle (context manager for run_discovery) ─────────────────
+
+    def __enter__(self) -> SN6PoolDisplay:
+        from rich.live import Live
+
+        self._live = Live(
+            self._build_display(),
+            console=self.console,
+            refresh_per_second=4,
+            vertical_overflow="visible",
+        )
+        self._live.__enter__()
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        if self._live is not None:
+            self._live.__exit__(*args)
+
+    # ── Harness compatibility ─────────────────────────────────────────
+
+    def refresh_from_graph(self, facility: str) -> None:
+        """Called by run_discovery graph-refresh task.  Updates pending."""
+        self.refresh_pending()
+        self._refresh()
+
+    def print_summary(self) -> None:
+        """Print a compact summary after the run completes."""
+        total_items = sum(p.completed for p in self.pools.values())
+        total_cost = sum(p.cost for p in self.pools.values())
+        if total_items > 0 or total_cost > 0:
+            self.console.print()
+            for name in POOL_ORDER:
+                p = self.pools[name]
+                if p.completed > 0:
+                    parts = [
+                        f"  {POOL_LABELS[name]}: {p.completed:,}",
+                    ]
+                    if p.cost > 0:
+                        parts.append(f"${p.cost:.2f}")
+                    self.console.print("  ".join(parts))
+            if total_cost > 0:
+                self.console.print(f"  TOTAL COST: ${total_cost:.2f}")
+
+    def signal_shutdown(self) -> None:
+        """Signal graceful shutdown (3-press handler)."""
+        self._shutting_down = True
+        if self._shutdown_start is None:
+            import time as _time
+
+            self._shutdown_start = _time.time()
+        self._refresh()
+
+    # Alias expected by cli/shutdown.py
+    begin_shutdown = signal_shutdown
+
+
 __all__ = [
     "BAR_WIDTH",
     "ITEM_FORMATTERS",
@@ -540,6 +762,7 @@ __all__ = [
     "PoolDisplayState",
     "SCORE_GREEN_THRESHOLD",
     "SCORE_YELLOW_THRESHOLD",
+    "SN6PoolDisplay",
     "STREAM_MAXLEN",
     "compute_eta",
     "compute_etc",

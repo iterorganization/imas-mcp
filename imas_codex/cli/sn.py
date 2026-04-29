@@ -85,10 +85,6 @@ def _run_sn_loop_cmd(
         run_sn_pools,
         summary_table,
     )
-    from imas_codex.standard_names.progress import (
-        SNPoolState,
-        build_sn_pool_stages,
-    )
 
     run_id = str(_uuid.uuid4())
     use_rich = not quiet and not dry_run and use_rich_output()
@@ -118,9 +114,9 @@ def _run_sn_loop_cmd(
 
     # Build Rich display or fall back to plain logging
     display = None
-    loop_state: SNPoolState | None = None
     cli_console: Console | None = None
     _pool_pending_counts: Callable[[], dict[str, int]] | None = None
+    _on_event: Callable[[dict[str, Any]], None] | None = None
     if use_rich:
         cli_console = Console()
         setup_logging("sn", "sn-run", use_rich=True, verbose=verbose)
@@ -139,14 +135,9 @@ def _run_sn_loop_cmd(
             def _cost_fn() -> float:
                 return 0.0
 
-        from imas_codex.discovery.base.progress import (
-            DataDrivenProgressDisplay,
-        )
-
-        loop_state = SNPoolState()
-
-        # Per-group pending counters from the graph (row-level badges).
+        # Per-pool pending counters from the graph.
         from imas_codex.graph.client import GraphClient as _GC
+        from imas_codex.standard_names.display import SN6PoolDisplay
 
         def _count_pending() -> dict[str, int]:
             try:
@@ -154,10 +145,6 @@ def _run_sn_loop_cmd(
                     rows = list(
                         gc.query(
                             """
-                            CALL {
-                              MATCH (s:StandardNameSource {status: 'extracted'})
-                              RETURN count(s) AS extract
-                            }
                             CALL {
                               MATCH (s:StandardNameSource {status: 'extracted'})
                               WHERE NOT (s)-[:PRODUCED_NAME]->(:StandardName)
@@ -214,7 +201,7 @@ def _run_sn_loop_cmd(
                               WHERE sn.reviewed_docs_at IS NOT NULL
                               RETURN count(sn) AS review_docs_done
                             }
-                            RETURN extract, draft, revise, enrich,
+                            RETURN draft, revise, enrich,
                                    review_names, review_docs,
                                    draft_done, enrich_done,
                                    review_names_done, review_docs_done
@@ -223,49 +210,16 @@ def _run_sn_loop_cmd(
                         )
                     )
                 if not rows:
-                    return {
-                        "extract": 0,
-                        "draft": 0,
-                        "revise": 0,
-                        "enrich": 0,
-                        "review_names": 0,
-                        "review_docs": 0,
-                        "draft_done": 0,
-                        "enrich_done": 0,
-                        "review_names_done": 0,
-                        "review_docs_done": 0,
-                    }
+                    return {}
                 r = rows[0]
-                return {
-                    "extract": int(r.get("extract", 0)),
-                    "draft": int(r.get("draft", 0)),
-                    "revise": int(r.get("revise", 0)),
-                    "enrich": int(r.get("enrich", 0)),
-                    "review_names": int(r.get("review_names", 0)),
-                    "review_docs": int(r.get("review_docs", 0)),
-                    "draft_done": int(r.get("draft_done", 0)),
-                    "enrich_done": int(r.get("enrich_done", 0)),
-                    "review_names_done": int(r.get("review_names_done", 0)),
-                    "review_docs_done": int(r.get("review_docs_done", 0)),
-                }
+                return {k: int(r.get(k, 0)) for k in r}
             except Exception:
-                return {
-                    "extract": 0,
-                    "draft": 0,
-                    "revise": 0,
-                    "enrich": 0,
-                    "review_names": 0,
-                    "review_docs": 0,
-                    "draft_done": 0,
-                    "enrich_done": 0,
-                    "review_names_done": 0,
-                    "review_docs_done": 0,
-                }
+                return {}
 
         _pending_cache: dict[str, tuple[float, dict[str, int]]] = {"v": (0.0, {})}
-        _baseline_seeded: dict[str, bool] = {"v": False}
 
-        def _pending_fn() -> list[tuple[str, int]]:
+        def _display_pending_fn() -> dict[str, int]:
+            """Cached pending counts for the display (returns dict)."""
             import time as _t
 
             now = _t.monotonic()
@@ -273,79 +227,14 @@ def _run_sn_loop_cmd(
             if not val or (now - ts) > 1.0:
                 val = _count_pending()
                 _pending_cache["v"] = (now, val)
-            # Side-effect: seed each stage's processed/total from the graph
-            # baseline on first call so a restarted `sn run` shows
-            # previously-completed work as already-progressed (not 0%).
-            #
-            # baseline   = work done in prior runs (graph-derived)
-            # processed  = baseline + in-session done (advances as workers run)
-            # total      = baseline + pending (stable across restarts)
-            # %          = processed / total
-            try:
-                # Map 3-row pool display stats → graph pending/done keys.
-                # GENERATE aggregates compose (draft) + regen (revise).
-                # ENRICH maps to enrich.
-                # REVIEW aggregates review_names + review_docs.
-                _pairs = (
-                    # (stats_attr, pending_keys, done_key)
-                    ("generate_stats", ["draft", "revise"], "draft_done"),
-                    ("enrich_stats", ["enrich"], "enrich_done"),
-                    (
-                        "review_stats",
-                        ["review_names", "review_docs"],
-                        "review_names_done",
-                    ),
-                )
-                seed_now = not _baseline_seeded["v"]
-                for _attr, _pending_keys, _done_key in _pairs:
-                    _stats = getattr(loop_state, _attr, None)
-                    if _stats is None:
-                        continue
-                    _pending_n = sum(int(val.get(k, 0)) for k in _pending_keys)
-                    _done_n = int(val.get(_done_key, 0)) if _done_key else 0
-                    if seed_now:
-                        # One-shot seed: surface prior-run completed work.
-                        if _done_n > int(_stats.processed):
-                            _stats.processed = _done_n
-                    _new_total = int(_stats.processed) + _pending_n
-                    if _new_total > int(_stats.total):
-                        _stats.total = _new_total
-                _baseline_seeded["v"] = True
-
-                # Update PoolHealth.pending_count for per-subpool display.
-                _pool_pending_map = {
-                    "generate": int(val.get("draft", 0)),
-                    "regen": int(val.get("revise", 0)),
-                    "enrich": int(val.get("enrich", 0)),
-                    "review_names": int(val.get("review_names", 0)),
-                    "review_docs": int(val.get("review_docs", 0)),
-                }
-                if loop_state is not None:
-                    for _pname, _pcount in _pool_pending_map.items():
-                        _ph = loop_state._pool_health.get(_pname)
-                        if _ph is not None:
-                            _ph.pending_count = _pcount
-                    # Refresh status_text from PoolHealth data.
-                    loop_state.refresh_pool_health()
-            except Exception:
-                pass
-            return [
-                ("generate", val.get("draft", 0) + val.get("revise", 0)),
-                ("enrich", val.get("enrich", 0)),
-                ("review", val.get("review_names", 0) + val.get("review_docs", 0)),
-            ]
+            return val
 
         def _pool_pending_counts() -> dict[str, int]:
-            """Return per-pool pending counts using the same cached result.
+            """Return per-pool pending counts for orchestrator fairness.
 
             Matches the ``POOL_NAMES`` tuple keys expected by
             ``run_pools`` / ``_pending_count_watchdog``:
             ``generate``, ``enrich``, ``review_names``, ``review_docs``, ``regen``.
-
-            Note: ``generate`` maps to *draft* only (new compositions).
-            ``regen`` maps to *revise* only (regenerations after low scores).
-            The display aggregates them but the orchestrator needs them split
-            so the fairness weight of each pool is correctly applied.
             """
             _, val = _pending_cache["v"]
             if not val:
@@ -358,20 +247,13 @@ def _run_sn_loop_cmd(
                 "regen": int(val.get("revise", 0)),
             }
 
-        display = DataDrivenProgressDisplay(
-            facility="sn",
+        display = SN6PoolDisplay(
             cost_limit=cost_limit,
-            stages=build_sn_pool_stages(
-                skip_generate=skip_generate,
-                skip_review=skip_review,
-            ),
             console=cli_console,
-            title_suffix="Run",
-            mode_label=None,
+            pending_fn=_display_pending_fn,
             accumulated_cost_fn=_cost_fn,
-            pending_fn=_pending_fn,
         )
-        display.set_engine_state(loop_state)
+        _on_event = display.on_event
     else:
         setup_logging("sn", "sn-run", use_rich=False, verbose=verbose)
         cli_console = Console(quiet=quiet)
@@ -512,8 +394,8 @@ def _run_sn_loop_cmd(
             source=source,
             only_domain=only_domain,
             stop_event=stop_event,
-            loop_state=loop_state,
             pending_fn=_pool_pending_counts,
+            on_event=_on_event,
         )
         return {"summary": summary}
 

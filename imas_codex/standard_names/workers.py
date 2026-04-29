@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import random
+from collections.abc import Callable
 from functools import cache as _cache
 from typing import TYPE_CHECKING, Any
 
@@ -2864,6 +2865,7 @@ async def _compose_batch_core(
     stop_event: asyncio.Event,
     *,
     regen: bool = False,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> int:
     """Shared implementation for compose and regen pool batch processors.
 
@@ -3109,6 +3111,20 @@ async def _compose_batch_core(
             )
             logger.debug("Pool %s: persisted %d candidates", phase_tag, written)
 
+            # ── Emit per-item events ──────────────────────────────────
+            if on_event is not None:
+                for cand in candidates:
+                    on_event(
+                        {
+                            "pool": "generate_name",
+                            "name": cand["id"],
+                            "source": (cand.get("source_paths") or [""])[0],
+                            "dd_path": (cand.get("source_paths") or [""])[0],
+                            "model": model,
+                            "cost": cand.get("llm_cost", 0.0),
+                        }
+                    )
+
         return len(candidates)
 
     except Exception:
@@ -3123,6 +3139,8 @@ async def process_generate_name_batch(
     batch: list[dict],
     mgr: BudgetManager,
     stop_event: asyncio.Event,
+    *,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> int:
     """Pool-mode generate-name batch processor.
 
@@ -3131,7 +3149,9 @@ async def process_generate_name_batch(
 
     Returns count of items successfully processed.
     """
-    return await _compose_batch_core(batch, mgr, stop_event, regen=False)
+    return await _compose_batch_core(
+        batch, mgr, stop_event, regen=False, on_event=on_event
+    )
 
 
 async def process_regen_batch(
@@ -3154,6 +3174,8 @@ async def process_refine_name_batch(
     batch: list[dict[str, Any]],
     mgr: BudgetManager,
     stop_event: asyncio.Event,
+    *,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> int:
     """Process a batch of StandardNames for name refinement (Option B).
 
@@ -3291,6 +3313,20 @@ async def process_refine_name_batch(
                 model,
             )
 
+            if on_event is not None:
+                on_event(
+                    {
+                        "pool": "refine_name",
+                        "name": result_obj.name,
+                        "old_name": sn_id,
+                        "new_name": result_obj.name,
+                        "chain_length": chain_length + 1,
+                        "escalated": escalate,
+                        "model": model,
+                        "cost": cost,
+                    }
+                )
+
         except Exception:
             logger.exception("refine_name failed for %s", sn_id)
             # Release claim — revert to 'reviewed'
@@ -3314,6 +3350,8 @@ async def process_review_name_batch(
     batch: list[dict[str, Any]],
     mgr: BudgetManager,
     stop_event: asyncio.Event,
+    *,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> int:
     """Process a batch of drafted StandardNames for name review (Phase 8.1).
 
@@ -3461,6 +3499,19 @@ async def process_review_name_batch(
                     score,
                     _comment_preview,
                 )
+
+                if on_event is not None:
+                    on_event(
+                        {
+                            "pool": "review_name",
+                            "name": sn_id,
+                            "score": score,
+                            "comment": _comment_preview,
+                            "stage": new_stage,
+                            "model": model,
+                            "cost": cost,
+                        }
+                    )
             else:
                 logger.debug("review_name: %s persist no-op (token mismatch?)", sn_id)
 
@@ -3494,6 +3545,8 @@ async def process_generate_docs_batch(
     batch: list[dict[str, Any]],
     mgr: BudgetManager,
     stop_event: asyncio.Event,
+    *,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> int:
     """Process a batch of accepted StandardNames for generate_docs (P4.1).
 
@@ -3605,6 +3658,17 @@ async def process_generate_docs_batch(
                 desc_preview,
             )
 
+            if on_event is not None:
+                on_event(
+                    {
+                        "pool": "generate_docs",
+                        "name": sn_id,
+                        "description": desc_preview,
+                        "model": model,
+                        "cost": cost,
+                    }
+                )
+
         except Exception:
             logger.exception("generate_docs failed for %s", sn_id)
             try:
@@ -3626,6 +3690,8 @@ async def process_review_docs_batch(
     batch: list[dict[str, Any]],
     mgr: BudgetManager,
     stop_event: asyncio.Event,
+    *,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> int:
     """Process a batch of drafted StandardNames for docs review (Phase 8.1).
 
@@ -3789,6 +3855,19 @@ async def process_review_docs_batch(
                     score,
                     _comment_preview,
                 )
+
+                if on_event is not None:
+                    on_event(
+                        {
+                            "pool": "review_docs",
+                            "name": sn_id,
+                            "score": score,
+                            "comment": _comment_preview,
+                            "stage": new_stage,
+                            "model": model,
+                            "cost": cost,
+                        }
+                    )
             else:
                 logger.debug("review_docs: %s persist no-op (token mismatch?)", sn_id)
 
@@ -3827,6 +3906,8 @@ async def process_refine_docs_batch(
     batch: list[dict[str, Any]],
     mgr: BudgetManager,
     stop_event: asyncio.Event,
+    *,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> int:
     """Process a batch of reviewed StandardNames for docs refinement (P4.3).
 
@@ -3995,6 +4076,18 @@ async def process_refine_docs_batch(
                 docs_chain_length + 1,
                 model,
             )
+
+            if on_event is not None:
+                on_event(
+                    {
+                        "pool": "refine_docs",
+                        "name": sn_id,
+                        "description": desc_preview,
+                        "revision": docs_chain_length + 1,
+                        "model": model,
+                        "cost": cost,
+                    }
+                )
 
         except Exception:
             logger.exception("refine_docs failed for %s", sn_id)

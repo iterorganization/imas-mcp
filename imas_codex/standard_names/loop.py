@@ -597,6 +597,7 @@ def _build_pool_specs(
     escalation_model: str | None = None,
     review_name_backlog_cap: int | None = None,
     review_docs_backlog_cap: int | None = None,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[Any]:
     """Construct 6 :class:`PoolSpec` objects wiring claims → batch processors.
 
@@ -680,7 +681,7 @@ def _build_pool_specs(
         """Wrap a batch processor as a ``ProcessFn``."""
 
         async def _adapter(batch: dict[str, Any]) -> int:
-            return await process_fn(batch["items"], mgr, stop_event)
+            return await process_fn(batch["items"], mgr, stop_event, on_event=on_event)
 
         return _adapter
 
@@ -839,6 +840,7 @@ async def run_sn_pools(
     stop_event: asyncio.Event | None = None,
     loop_state: Any | None = None,
     pending_fn: Callable[[], dict[str, int]] | None = None,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> RunSummary:
     """Run the pool-based ``sn run`` orchestrator (Phase 8).
 
@@ -947,6 +949,7 @@ async def run_sn_pools(
             escalation_model=escalation_model,
             review_name_backlog_cap=review_name_backlog_cap,
             review_docs_backlog_cap=review_docs_backlog_cap,
+            on_event=on_event,
         )
 
         # ── Wire pool health into display state ───────────────────
