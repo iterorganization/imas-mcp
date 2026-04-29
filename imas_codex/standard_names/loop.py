@@ -662,13 +662,36 @@ def _build_pool_specs(
         return _adapter
 
     def _make_release_adapter(
-        release_fn: Callable[[list[str]], int],
+        release_fn: Callable[..., int],
+        ids_kwarg: str = "sn_ids",
     ) -> Callable[[dict[str, Any]], Awaitable[None]]:
-        """Wrap a sync id-list release function as an async ``ReleaseFn``."""
+        """Wrap a token-aware release function as an async ``ReleaseFn``.
+
+        Extracts ``id`` and ``claim_token`` from batch items and forwards
+        them as keyword arguments to *release_fn*.  All items in a batch
+        share the same ``claim_token`` (set atomically at claim time).
+
+        Parameters
+        ----------
+        release_fn:
+            Sync release function accepting keyword arguments
+            *<ids_kwarg>* and *claim_token*.
+        ids_kwarg:
+            Name of the ids keyword argument (``"sn_ids"`` for
+            :class:`StandardName` pools; ``"source_ids"`` for
+            :class:`StandardNameSource` pools).
+        """
 
         async def _adapter(batch: dict[str, Any]) -> None:
-            ids = [item["id"] for item in batch.get("items", [])]
-            await asyncio.to_thread(release_fn, ids)
+            items = batch.get("items", [])
+            if not items:
+                return
+            ids = [item["id"] for item in items]
+            token: str = items[0].get("claim_token") or ""
+            await asyncio.to_thread(
+                release_fn,
+                **{ids_kwarg: ids, "claim_token": token},
+            )
 
         return _adapter
 
@@ -679,7 +702,9 @@ def _build_pool_specs(
             name="generate",
             claim=_make_claim_adapter(claim_generate_name_seed_and_expand),
             process=_make_process_adapter(process_generate_name_batch),
-            release=_make_release_adapter(release_generate_name_claims),
+            release=_make_release_adapter(
+                release_generate_name_claims, ids_kwarg="source_ids"
+            ),
             weight=0.30,
         ),
         PoolSpec(
@@ -689,7 +714,7 @@ def _build_pool_specs(
                 min_score_threshold=regen_score,
             ),
             process=_make_process_adapter(process_enrich_batch),
-            release=_make_release_adapter(release_enrich_claims),
+            release=_make_release_adapter(release_enrich_claims, ids_kwarg="sn_ids"),
             weight=0.25,
         ),
         PoolSpec(
@@ -699,7 +724,9 @@ def _build_pool_specs(
                 min_score=regen_score,
             ),
             process=_make_process_adapter(process_review_names_batch),
-            release=_make_release_adapter(release_review_names_claims),
+            release=_make_release_adapter(
+                release_review_names_claims, ids_kwarg="sn_ids"
+            ),
             weight=0.20,
         ),
         PoolSpec(
@@ -709,7 +736,9 @@ def _build_pool_specs(
                 min_score=regen_score,
             ),
             process=_make_process_adapter(process_review_docs_batch),
-            release=_make_release_adapter(release_review_docs_claims),
+            release=_make_release_adapter(
+                release_review_docs_claims, ids_kwarg="sn_ids"
+            ),
             weight=0.15,
         ),
         PoolSpec(
@@ -719,7 +748,7 @@ def _build_pool_specs(
                 min_score=regen_score,
             ),
             process=_make_process_adapter(process_regen_batch),
-            release=_make_release_adapter(release_regen_claims),
+            release=_make_release_adapter(release_regen_claims, ids_kwarg="sn_ids"),
             weight=0.10,
         ),
     ]

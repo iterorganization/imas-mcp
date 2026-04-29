@@ -18,7 +18,10 @@ from typing import Any
 
 from imas_codex.discovery.base.claims import retry_on_deadlock
 from imas_codex.graph.client import GraphClient
-from imas_codex.standard_names.defaults import DEFAULT_MIN_SCORE
+from imas_codex.standard_names.defaults import (
+    DEFAULT_MIN_SCORE,
+    DEFAULT_REFINE_ROTATIONS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -441,7 +444,7 @@ def fetch_review_feedback_for_sources(
         - ``previous_name`` (str | None): prior standard-name id
         - ``previous_description`` (str | None)
         - ``previous_documentation`` (str | None)
-        - ``reviewer_score`` (float | None): name-axis 0–1 score
+        - ``reviewer_score`` (float | None): composite 0–1 score
         - ``review_tier`` (str | None): ``outstanding|good|inadequate|poor``
         - ``reviewer_comments`` (str | None): free-form reviewer critique
         - ``reviewer_scores`` (dict | None): parsed name-axis dimensional scores
@@ -4984,7 +4987,8 @@ def _claim_sn_atomic(
                                c.id AS cluster_id,
                                sn.physics_domain AS physics_domain,
                                sn.validation_status
-                                   AS validation_status
+                                   AS validation_status,
+                               sn.claim_token AS claim_token
                                {extra_return_fields}
                         """,
                         token=token,
@@ -5198,7 +5202,8 @@ def claim_generate_name_seed_and_expand(
                                sns.source_id AS source_id,
                                sns.source_type AS source_type,
                                sns.batch_key AS batch_key,
-                               sns.description AS description
+                               sns.description AS description,
+                               sns.claim_token AS claim_token
                         """,
                         token=token,
                     )
@@ -5319,40 +5324,212 @@ def claim_review_docs_seed_and_expand(
     )
 
 
-# -- regen (StandardName, low reviewer_score_name) ----------------------------
+# -- refine_name (StandardName, reviewed + low score + chain < cap) -----------
 
 
 @retry_on_deadlock()
-def claim_regen_seed_and_expand(
+def claim_refine_name_seed_and_expand(
     min_score: float = DEFAULT_MIN_SCORE,
+    rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:
-    """Claim StandardName nodes for regeneration (recomposition).
+    """Claim StandardName nodes for name refinement (Option B chain creation).
 
-    Eligibility: ``reviewer_score_name < min_score`` AND
-    ``reviewed_name_at IS NOT NULL`` (already reviewed at least once).
+    Eligibility: ``name_stage = 'reviewed'`` AND
+    ``reviewer_score_name < min_score`` AND ``chain_length < rotation_cap``.
 
-    B3 exclusivity: names with ``reviewed_name_at IS NULL`` are reserved
-    for the review pools and excluded here — regen only targets names
-    that have already been scored and found wanting.
+    The claim atomically transitions ``name_stage`` from ``'reviewed'``
+    to ``'refining'`` via :func:`_claim_sn_atomic`.
+
+    After claiming, each item is enriched with REFINED_FROM chain history
+    via :func:`~imas_codex.standard_names.chain_history.name_chain_history`.
+
+    Returns claimed items as dicts with chain_history appended.
     """
+    from imas_codex.standard_names.chain_history import name_chain_history
+
     where = (
-        "sn.reviewer_score_name IS NOT NULL"
+        "sn.name_stage = 'reviewed'"
+        " AND sn.reviewer_score_name IS NOT NULL"
         " AND sn.reviewer_score_name < $min_score"
-        " AND sn.reviewed_name_at IS NOT NULL"
+        " AND coalesce(sn.chain_length, 0) < $rotation_cap"
     )
-    return _claim_sn_atomic(
+    items = _claim_sn_atomic(
         eligibility_where=where,
-        query_params={"min_score": min_score},
+        query_params={"min_score": min_score, "rotation_cap": rotation_cap},
         batch_size=batch_size,
         timeout_seconds=timeout_seconds,
         extra_return_fields=(
             ", sn.reviewer_score_name AS reviewer_score_name"
-            ", sn.reviewed_name_at AS reviewed_name_at"
-            ", sn.regen_count AS regen_count"
+            ", sn.reviewer_verdict_name AS reviewer_verdict_name"
+            ", sn.reviewer_comments_per_dim_name"
+            "     AS reviewer_comments_per_dim_name"
+            ", sn.chain_length AS chain_length"
+            ", sn.name_stage AS name_stage"
+            ", sn.source_paths AS source_paths"
+            ", sn.tags AS tags"
         ),
+        stage_field="name_stage",
+        to_stage="refining",
     )
+
+    # Enrich each claimed item with its REFINED_FROM chain history.
+    for item in items:
+        item["chain_history"] = name_chain_history(item["id"])
+
+    return items
+
+
+# =============================================================================
+# Persist — refine_name (Option B: new node + REFINED_FROM + edge migration)
+# =============================================================================
+
+
+@retry_on_deadlock()
+def persist_refined_name(
+    *,
+    old_name: str,
+    new_name: str,
+    description: str,
+    kind: str = "scalar",
+    unit: str | None = None,
+    physics_domain: list[str] | None = None,
+    tags: list[str] | None = None,
+    old_chain_length: int = 0,
+    model: str = "unknown",
+    grammar_fields: dict[str, str] | None = None,
+    reason: str = "",
+    escalated: bool = False,
+) -> dict[str, str]:
+    """Persist a refined StandardName as a NEW node with source-edge migration.
+
+    This is the **Option B** persist: since ``StandardName.id`` IS the name
+    string, refining a name produces a new node identity.  In a single
+    transaction:
+
+    1. MERGE new StandardName with ``name_stage='drafted'``,
+       ``chain_length = old_chain_length + 1``.
+    2. Create ``(new)-[:REFINED_FROM]->(old)`` edge.
+    3. Mark old SN as ``name_stage='superseded'``, clear its claim.
+    4. Migrate ``PRODUCED_NAME`` edges from StandardNameSource to new SN.
+    5. Migrate ``HAS_STANDARD_NAME`` edges from IMASNode/FacilitySignal to
+       new SN.
+
+    Returns ``{"new_name": <new_id>, "old_name": <old_id>}``.
+    """
+    import json as _json
+
+    new_chain_length = old_chain_length + 1
+    grammar_json = _json.dumps(grammar_fields) if grammar_fields else None
+
+    escalation_set = ""
+    if escalated:
+        escalation_set = ", new.refine_name_escalated_at = datetime()"
+
+    with GraphClient() as gc:
+        with gc.session() as session:
+            tx = session.begin_transaction()
+            try:
+                result = list(
+                    tx.run(
+                        f"""
+                        // 1. Create (or match) new SN with new id
+                        MERGE (new:StandardName {{id: $new_name}})
+                        ON CREATE SET
+                          new.name_stage        = 'drafted',
+                          new.docs_stage        = 'pending',
+                          new.chain_length      = $new_chain_length,
+                          new.docs_chain_length = 0,
+                          new.description       = $description,
+                          new.kind              = $kind,
+                          new.unit              = $unit,
+                          new.physics_domain    = $physics_domain,
+                          new.tags              = $tags,
+                          new.model             = $model,
+                          new.generated_at      = datetime(),
+                          new.grammar_fields    = $grammar_json,
+                          new.regen_reason      = $reason
+                          {escalation_set}
+
+                        // 2. Link to predecessor
+                        WITH new
+                        MATCH (old:StandardName {{id: $old_name}})
+                        MERGE (new)-[:REFINED_FROM]->(old)
+
+                        // 3. Mark old as superseded, clear claim
+                        SET old.name_stage  = 'superseded',
+                            old.claim_token = null,
+                            old.claimed_at  = null
+
+                        // 4. Migrate PRODUCED_NAME edges
+                        WITH new, old
+                        OPTIONAL MATCH (src:StandardNameSource)-[r:PRODUCED_NAME]->(old)
+                        WITH new, old,
+                             collect({{src: src, r: r}}) AS produced_edges
+                        FOREACH (e IN produced_edges |
+                          DELETE e.r
+                        )
+                        WITH new, old, produced_edges
+                        UNWIND
+                          CASE WHEN size(produced_edges) > 0
+                               THEN produced_edges
+                               ELSE [null]
+                          END AS pe
+                        WITH new, old, pe
+                        WHERE pe IS NOT NULL
+                        MERGE (pe.src)-[:PRODUCED_NAME]->(new)
+
+                        // 5. Migrate HAS_STANDARD_NAME edges
+                        WITH DISTINCT new, old
+                        OPTIONAL MATCH (n)-[r2:HAS_STANDARD_NAME]->(old)
+                        WITH new, old,
+                             collect({{n: n, r: r2}}) AS sn_edges
+                        FOREACH (e IN sn_edges |
+                          DELETE e.r
+                        )
+                        WITH new, old, sn_edges
+                        UNWIND
+                          CASE WHEN size(sn_edges) > 0
+                               THEN sn_edges
+                               ELSE [null]
+                          END AS se
+                        WITH new, old, se
+                        WHERE se IS NOT NULL
+                        MERGE (se.n)-[:HAS_STANDARD_NAME]->(new)
+
+                        WITH DISTINCT new, old
+                        RETURN new.id AS new_name, old.id AS old_name
+                        """,
+                        new_name=new_name,
+                        old_name=old_name,
+                        new_chain_length=new_chain_length,
+                        description=description,
+                        kind=kind,
+                        unit=unit,
+                        physics_domain=physics_domain or [],
+                        tags=tags or [],
+                        model=model,
+                        grammar_json=grammar_json,
+                        reason=reason,
+                    )
+                )
+                tx.commit()
+            except BaseException:
+                if tx.closed is False:
+                    tx.close()
+                raise
+
+    if result:
+        row = dict(result[0])
+        logger.debug(
+            "persist_refined_name: %s → %s (chain_length=%d)",
+            old_name,
+            new_name,
+            new_chain_length,
+        )
+        return row
+    return {"new_name": new_name, "old_name": old_name}
 
 
 # =============================================================================
@@ -5360,99 +5537,472 @@ def claim_regen_seed_and_expand(
 # =============================================================================
 #
 # These are called by pool_loop when process() raises an exception so that
-# claimed items are unlocked and become eligible for other workers.  Each
-# helper clears claimed_at/claim_token by node id list rather than by token,
-# because the token is not preserved in the PoolSpec batch dict.
+# claimed items are unlocked and become eligible for other workers.
+#
+# Every helper verifies ``claim_token`` (and ``expected_stage`` where
+# applicable) in the WHERE clause before clearing claim state.  This
+# prevents a late-arriving release from clobbering a fresh re-claim that
+# was issued after the orphan sweep cleared the stale token.
+#
+# Return value: count of nodes actually released.  A return value less than
+# len(ids) indicates concurrent intervention (orphan sweep or another
+# worker) — callers may ignore this; it is logged at DEBUG.
 #
 
 
 @retry_on_deadlock()
-def release_generate_name_claims(ids: list[str]) -> int:
-    """Release StandardNameSource claims by id list.
+def release_generate_name_claims(
+    *,
+    source_ids: list[str],
+    claim_token: str,
+) -> int:
+    """Release StandardNameSource claims IFF ``claim_token`` matches.
 
     Clears ``claimed_at`` and ``claim_token`` so items become eligible for
     re-claim.  Used by the generate_name pool's error-recovery path.
+
+    Returns the count of sources actually released.  A count less than
+    ``len(source_ids)`` means the orphan sweep (or another worker) already
+    cleared the stale claim — the caller can safely ignore this.
     """
-    if not ids:
+    if not source_ids:
         return 0
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (n:StandardNameSource) WHERE n.id IN $ids
+            UNWIND $ids AS sid
+            MATCH (n:StandardNameSource {id: sid})
+            WHERE n.claim_token = $token
             SET n.claimed_at = null, n.claim_token = null
             RETURN count(n) AS released
             """,
-            ids=ids,
+            ids=source_ids,
+            token=claim_token,
         )
-        return result[0]["released"] if result else 0
+    released: int = result[0]["released"] if result else 0
+    if released < len(source_ids):
+        logger.debug(
+            "release_generate_name_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(source_ids),
+            claim_token[:8],
+        )
+    return released
 
 
 @retry_on_deadlock()
-def release_enrich_claims(ids: list[str]) -> int:
-    """Release StandardName enrichment claims by id list."""
-    if not ids:
-        return 0
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (n:StandardName) WHERE n.id IN $ids
-            SET n.claimed_at = null, n.claim_token = null
-            RETURN count(n) AS released
-            """,
-            ids=ids,
-        )
-        return result[0]["released"] if result else 0
+def release_generate_name_failed_claims(
+    *,
+    source_ids: list[str],
+    claim_token: str,
+) -> int:
+    """Release StandardNameSource claims on worker failure IFF token matches.
+
+    Identical to :func:`release_generate_name_claims`; provided as the
+    symmetric "failed" variant so callers can be explicit about intent.
+
+    Returns the count of sources actually released.
+    """
+    return release_generate_name_claims(
+        source_ids=source_ids,
+        claim_token=claim_token,
+    )
 
 
 @retry_on_deadlock()
-def release_review_names_claims(ids: list[str]) -> int:
-    """Release StandardName review-names claims by id list."""
-    if not ids:
+def release_enrich_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+    expected_stage: str | None = None,
+) -> int:
+    """Release StandardName enrichment claims IFF token (and stage) match.
+
+    Parameters
+    ----------
+    sn_ids:
+        StandardName node ids to release.
+    claim_token:
+        Token that was set at claim time; nodes with a different token are
+        left untouched.
+    expected_stage:
+        If provided, also verify ``name_stage = $expected_stage`` before
+        clearing.  Pass ``None`` (default) to skip stage verification.
+
+    Returns the count of SNs actually released.
+    """
+    if not sn_ids:
         return 0
+    stage_clause = (
+        "AND n.name_stage = $expected_stage" if expected_stage is not None else ""
+    )
+    extra: dict[str, Any] = (
+        {"expected_stage": expected_stage} if expected_stage is not None else {}
+    )
     with GraphClient() as gc:
         result = gc.query(
-            """
-            MATCH (n:StandardName) WHERE n.id IN $ids
+            f"""
+            UNWIND $ids AS sid
+            MATCH (n:StandardName {{id: sid}})
+            WHERE n.claim_token = $token
+              {stage_clause}
             SET n.claimed_at = null, n.claim_token = null
             RETURN count(n) AS released
             """,
-            ids=ids,
+            ids=sn_ids,
+            token=claim_token,
+            **extra,
         )
-        return result[0]["released"] if result else 0
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_enrich_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
 
 
 @retry_on_deadlock()
-def release_review_docs_claims(ids: list[str]) -> int:
-    """Release StandardName review-docs claims by id list."""
-    if not ids:
+def release_enrich_failed_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+    from_stage: str | None = None,
+    to_stage: str | None = None,
+) -> int:
+    """Release StandardName enrichment claims on worker failure.
+
+    Clears claim state and optionally reverts ``name_stage`` to *to_stage*
+    when the worker processing failed and the item should be retried.
+
+    Parameters
+    ----------
+    sn_ids:
+        StandardName node ids to release.
+    claim_token:
+        Token set at claim time.
+    from_stage:
+        If provided, verify ``name_stage = $from_stage`` before acting.
+    to_stage:
+        If provided (and *from_stage* matches), revert ``name_stage`` to
+        this value so the item is eligible for a fresh claim.
+
+    Returns the count of SNs actually released.
+    """
+    if not sn_ids:
         return 0
+    stage_where = "AND n.name_stage = $from_stage" if from_stage is not None else ""
+    stage_set = "n.name_stage = $to_stage," if to_stage is not None else ""
+    params: dict[str, Any] = {"ids": sn_ids, "token": claim_token}
+    if from_stage is not None:
+        params["from_stage"] = from_stage
+    if to_stage is not None:
+        params["to_stage"] = to_stage
     with GraphClient() as gc:
         result = gc.query(
-            """
-            MATCH (n:StandardName) WHERE n.id IN $ids
-            SET n.claimed_at = null, n.claim_token = null
+            f"""
+            UNWIND $ids AS sid
+            MATCH (n:StandardName {{id: sid}})
+            WHERE n.claim_token = $token
+              {stage_where}
+            SET {stage_set}
+                n.claimed_at = null,
+                n.claim_token = null
             RETURN count(n) AS released
             """,
-            ids=ids,
+            **params,
         )
-        return result[0]["released"] if result else 0
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_enrich_failed_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
 
 
 @retry_on_deadlock()
-def release_regen_claims(ids: list[str]) -> int:
-    """Release StandardName regen claims by id list."""
-    if not ids:
+def release_review_names_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+    expected_stage: str | None = None,
+) -> int:
+    """Release StandardName review-names claims IFF token (and stage) match.
+
+    Returns the count of SNs actually released.
+    """
+    if not sn_ids:
+        return 0
+    stage_clause = (
+        "AND n.name_stage = $expected_stage" if expected_stage is not None else ""
+    )
+    extra: dict[str, Any] = (
+        {"expected_stage": expected_stage} if expected_stage is not None else {}
+    )
+    with GraphClient() as gc:
+        result = gc.query(
+            f"""
+            UNWIND $ids AS sid
+            MATCH (n:StandardName {{id: sid}})
+            WHERE n.claim_token = $token
+              {stage_clause}
+            SET n.claimed_at = null, n.claim_token = null
+            RETURN count(n) AS released
+            """,
+            ids=sn_ids,
+            token=claim_token,
+            **extra,
+        )
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_review_names_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
+
+
+@retry_on_deadlock()
+def release_review_names_failed_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+    from_stage: str | None = None,
+    to_stage: str | None = None,
+) -> int:
+    """Release StandardName review-names claims on worker failure.
+
+    Clears claim state and optionally reverts ``name_stage``.
+
+    Returns the count of SNs actually released.
+    """
+    if not sn_ids:
+        return 0
+    stage_where = "AND n.name_stage = $from_stage" if from_stage is not None else ""
+    stage_set = "n.name_stage = $to_stage," if to_stage is not None else ""
+    params: dict[str, Any] = {"ids": sn_ids, "token": claim_token}
+    if from_stage is not None:
+        params["from_stage"] = from_stage
+    if to_stage is not None:
+        params["to_stage"] = to_stage
+    with GraphClient() as gc:
+        result = gc.query(
+            f"""
+            UNWIND $ids AS sid
+            MATCH (n:StandardName {{id: sid}})
+            WHERE n.claim_token = $token
+              {stage_where}
+            SET {stage_set}
+                n.claimed_at = null,
+                n.claim_token = null
+            RETURN count(n) AS released
+            """,
+            **params,
+        )
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_review_names_failed_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
+
+
+@retry_on_deadlock()
+def release_review_docs_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+    expected_stage: str | None = None,
+) -> int:
+    """Release StandardName review-docs claims IFF token (and stage) match.
+
+    Returns the count of SNs actually released.
+    """
+    if not sn_ids:
+        return 0
+    stage_clause = (
+        "AND n.name_stage = $expected_stage" if expected_stage is not None else ""
+    )
+    extra: dict[str, Any] = (
+        {"expected_stage": expected_stage} if expected_stage is not None else {}
+    )
+    with GraphClient() as gc:
+        result = gc.query(
+            f"""
+            UNWIND $ids AS sid
+            MATCH (n:StandardName {{id: sid}})
+            WHERE n.claim_token = $token
+              {stage_clause}
+            SET n.claimed_at = null, n.claim_token = null
+            RETURN count(n) AS released
+            """,
+            ids=sn_ids,
+            token=claim_token,
+            **extra,
+        )
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_review_docs_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
+
+
+@retry_on_deadlock()
+def release_review_docs_failed_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+    from_stage: str | None = None,
+    to_stage: str | None = None,
+) -> int:
+    """Release StandardName review-docs claims on worker failure.
+
+    Clears claim state and optionally reverts ``name_stage``.
+
+    Returns the count of SNs actually released.
+    """
+    if not sn_ids:
+        return 0
+    stage_where = "AND n.name_stage = $from_stage" if from_stage is not None else ""
+    stage_set = "n.name_stage = $to_stage," if to_stage is not None else ""
+    params: dict[str, Any] = {"ids": sn_ids, "token": claim_token}
+    if from_stage is not None:
+        params["from_stage"] = from_stage
+    if to_stage is not None:
+        params["to_stage"] = to_stage
+    with GraphClient() as gc:
+        result = gc.query(
+            f"""
+            UNWIND $ids AS sid
+            MATCH (n:StandardName {{id: sid}})
+            WHERE n.claim_token = $token
+              {stage_where}
+            SET {stage_set}
+                n.claimed_at = null,
+                n.claim_token = null
+            RETURN count(n) AS released
+            """,
+            **params,
+        )
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_review_docs_failed_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
+
+
+@retry_on_deadlock()
+def release_refine_name_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+    expected_stage: str | None = None,
+) -> int:
+    """Release StandardName refine-name claims IFF token (and stage) match.
+
+    Clears ``claimed_at`` and ``claim_token`` and reverts
+    ``name_stage`` from ``'refining'`` back to ``'reviewed'`` when
+    the node is still in the refining stage.
+
+    Returns the count of SNs actually released.
+    """
+    if not sn_ids:
+        return 0
+    stage_clause = (
+        "AND n.name_stage = $expected_stage" if expected_stage is not None else ""
+    )
+    extra: dict[str, Any] = (
+        {"expected_stage": expected_stage} if expected_stage is not None else {}
+    )
+    with GraphClient() as gc:
+        result = gc.query(
+            f"""
+            UNWIND $ids AS sid
+            MATCH (n:StandardName {{id: sid}})
+            WHERE n.claim_token = $token
+              {stage_clause}
+            SET n.claimed_at = null,
+                n.claim_token = null,
+                n.name_stage = CASE
+                    WHEN n.name_stage = 'refining' THEN 'reviewed'
+                    ELSE n.name_stage
+                END
+            RETURN count(n) AS released
+            """,
+            ids=sn_ids,
+            token=claim_token,
+            **extra,
+        )
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_refine_name_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
+
+
+@retry_on_deadlock()
+def release_refine_name_failed_claims(
+    *,
+    sn_ids: list[str],
+    token: str,
+) -> int:
+    """Release refine-name claims after LLM or processing failure.
+
+    Token-and-stage verified: only reverts nodes where
+    ``claim_token = $token AND name_stage = 'refining'``.  This prevents
+    late-release from clobbering an SN that was already swept by orphan
+    recovery or successfully persisted.
+
+    Returns the count of nodes released.
+    """
+    if not sn_ids:
         return 0
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (n:StandardName) WHERE n.id IN $ids
-            SET n.claimed_at = null, n.claim_token = null
-            RETURN count(n) AS released
+            UNWIND $sn_ids AS sid
+            MATCH (sn:StandardName {id: sid})
+            WHERE sn.claim_token = $token
+              AND sn.name_stage = 'refining'
+            SET sn.name_stage = 'reviewed',
+                sn.claim_token = null,
+                sn.claimed_at = null
+            RETURN count(sn) AS released
             """,
-            ids=ids,
+            sn_ids=sn_ids,
+            token=token,
         )
-        return result[0]["released"] if result else 0
+    return result[0]["released"] if result else 0
 
 
 @retry_on_deadlock()
