@@ -769,15 +769,20 @@ Azure Web App has continuous deployment enabled on ACR. When a new image appears
 
 ### Pipeline
 
-Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
+**Six-pool concurrent run loop** (Phase 8.1 Option B):
 
-| Phase | Worker | Key Operation |
-|-------|--------|---------------|
-| EXTRACT | `extract_worker` | Query DD paths (filtered by `SN_SOURCE_CATEGORIES`: quantity + geometry), classify (quantity/skip), enrich with clusters, group into batches. Writes `StandardNameSource` nodes to graph for crash resilience |
-| COMPOSE | `compose_worker` | LLM generates names per batch; unit injected from DD (never from LLM output). Auto-attaches DD paths to existing matching standard names without regeneration. Updates `StandardNameSource` status (composed/attached/vocab_gap) |
-| VALIDATE | `validate_worker` | ISN 3-layer validation (Pydantic → semantic → description) + grammar round-trip |
-| CONSOLIDATE | `consolidate_worker` | Cross-batch dedup, conflict detection (unit/kind/source), coverage accounting |
-| PERSIST | `persist_worker` | Conflict-detecting Neo4j writes with coalesce semantics |
+| Pool | Label | Stage gate | Key operation |
+|------|-------|------------|---------------|
+| 1 | `GENERATE_NAME` | `StandardNameSource.status=pending` | LLM generates name; new SN persisted at `name_stage='drafted'`. Unit injected from DD — never from LLM. |
+| 2 | `REVIEW_NAME` | `name_stage='drafted'` | RD-quorum scores name; atomic transition → `accepted` (rsn≥min) / `reviewed` / `exhausted` |
+| 3 | `REFINE_NAME` | `name_stage='reviewed' AND rsn<min AND chain_length<cap` | Creates NEW SN node; predecessor flipped to `superseded`; source edges migrated; `REFINED_FROM` edge added |
+| 4 | `GENERATE_DOCS` | `name_stage='accepted' AND docs_stage='pending'` | LLM generates documentation; `docs_stage → 'drafted'`. Cross-pipeline gate: fires only after name is accepted |
+| 5 | `REVIEW_DOCS` | `docs_stage='drafted'` | RD-quorum scores docs; atomic transition → `accepted` / `reviewed` / `exhausted` |
+| 6 | `REFINE_DOCS` | `docs_stage='reviewed' AND rds<min AND docs_chain_length<cap` | Rewrites docs in-place; prior content snapshotted on a `DocsRevision` node via `DOCS_REVISION_OF`; `docs_stage → 'drafted'` |
+
+**Acceptance always overrides cap:** even at `chain_length == cap − 1`, an `accepted` verdict wins (no forced exhaustion on a good result). **Escalation:** on the final refine attempt (`chain_length == cap − 1`), the pool switches to `DEFAULT_ESCALATION_MODEL` (default `openrouter/anthropic/claude-opus-4.6`). **Backlog throttle:** when refine_name backlog > 0.5 × generate_name backlog, `BudgetManager.pool_admit` dampens generate_name effective weight by 0.5×.
+
+**EXTRACT → VALIDATE → CONSOLIDATE → PERSIST** sub-pipeline runs inside GENERATE_NAME: DD paths queried (filtered by `SN_SOURCE_CATEGORIES`), classified, clustered, batched; ISN 3-layer validation (Pydantic → semantic → description) + grammar round-trip; cross-batch dedup; conflict-detecting Neo4j writes.
 
 **Key modules:**
 
@@ -787,8 +792,9 @@ Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
 | `imas_codex/standard_names/enrichment.py` | Primary cluster selection (IDS > domain > global scope), grouping cluster selection (global > domain > IDS), global grouping by (cluster × unit) |
 | `imas_codex/standard_names/consolidation.py` | Cross-batch dedup, 5 conflict checks, coverage gap accounting |
 | `imas_codex/standard_names/graph_ops.py` | Neo4j read/write with unit conflict detection + StandardNameSource CRUD (merge, claim, mark, reconcile) |
-| `imas_codex/standard_names/pipeline.py` | DAG orchestrator wiring workers into `run_discovery_engine()` |
-| `imas_codex/standard_names/workers.py` | Five async worker functions (review is standalone, not in generate pipeline) |
+| `imas_codex/standard_names/pipeline.py` | Six-pool loop orchestrator (`run_sn_pools()`); `_build_pool_specs`, `POOL_WEIGHTS`, backlog throttle |
+| `imas_codex/standard_names/workers.py` | Claim/process/persist functions for all six pools; orphan sweep (`orphan_sweep.py`) |
+| `imas_codex/standard_names/defaults.py` | Central constants: `DEFAULT_MIN_SCORE`, `DEFAULT_REFINE_ROTATIONS`, `DEFAULT_ESCALATION_MODEL`, backlog caps |
 | `imas_codex/standard_names/models.py` | Pydantic response models (`StandardNameComposeBatch`, `StandardNameAttachment`) |
 | `imas_codex/standard_names/source_paths.py` | Central encode/parse/split/merge utilities for StandardName source paths |
 | `imas_codex/standard_names/context.py` | Grammar context builder (vocabulary, examples, tokamak ranges) |
@@ -802,8 +808,8 @@ The LLM never provides the unit field.
 
 | Command | Purpose | Key Options |
 |---------|---------|-------------|
-| `sn run` | Generate standard names via 6-phase DAG (reconcile→generate→enrich→link→review→regen). Domain-iterating loop by default; `--paths` forces single-pass. `--only <phase>` runs a single phase in isolation; `--override-edits <name>` lets pipeline overwrite catalog-edited fields for specific names. | `--source {dd,signals}`, `--physics-domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--target {names,docs}`, `--docs-status`, `--docs-batch-size`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--single-pass`, `--turn-number`, `--min-score`, `--skip-enrich`, `--skip-review`, `--skip-regen`, `--only`, `--override-edits` |
-| `sn review` | Score and tier existing valid standard names via RD-quorum reviewer pipeline (1:1 scoring invariant, retry-unmatched) | `--physics-domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--target {names,docs}` |
+| `sn run` | Run the 6-pool standard name pipeline (GENERATE_NAME → REVIEW_NAME → REFINE_NAME → GENERATE_DOCS → REVIEW_DOCS → REFINE_DOCS). Domain-iterating loop by default; `--paths` forces single-pass. `--only <phase>` runs a single phase; `--override-edits <name>` lets the pipeline overwrite catalog-edited fields. New flags: `--min-score` (default 0.75), `--rotation-cap` (default 3), `--escalation-model` (default `openrouter/anthropic/claude-opus-4.6`), `--review-name-backlog-cap`, `--review-docs-backlog-cap`. Removed legacy flags: `--target`, `--skip-enrich`, `--skip-regen`, `--docs-status`, `--docs-batch-size`, `--name-only-batch-size`. | `--source {dd,signals}`, `--physics-domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--single-pass`, `--turn-number`, `--min-score`, `--rotation-cap`, `--escalation-model`, `--review-name-backlog-cap`, `--review-docs-backlog-cap`, `--skip-review`, `--only`, `--override-edits` |
+| `sn review` | Score and tier existing valid standard names via RD-quorum reviewer pipeline (1:1 scoring invariant, retry-unmatched) | `--physics-domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force` |
 | `sn export` | Export validated StandardName nodes to YAML staging dir (`standard_names/<domain>/<name>.yml`). Applies quality gates (reviewer_score_name ≥ 0.65 + description sub-score). | `--staging` (required), `--min-score`, `--include-unreviewed`, `--min-description-score`, `--gate-only`, `--gate-scope {all,a,b,c,d}`, `--domain`, `--force`, `--skip-gate`, `--override-edits` |
 | `sn preview` | Launch ISN `catalog-site serve` against a staging dir for local preview | `--staging` (required), `--port` |
 | `sn publish` | Transport staging dir to ISNC repo (copy files + commit + optional push). No quality gates re-run — they ran at export time. | `--staging` (required), `--isnc` (required), `--push/--no-push`, `--dry-run` |
@@ -815,7 +821,7 @@ The LLM never provides the unit field.
 | `sn sync-grammar` | Seed/refresh ISN grammar vocabulary (ISNGrammarVersion + GrammarSegment + GrammarToken + GrammarTemplate) in the graph | `--dry-run` |
 | `sn benchmark` | Benchmark LLM models on standard name generation quality | `--models`, `--ids`, `--reviewer-model`, `--max-candidates` |
 
-**`sn run` scope routing:** Without `--paths`, `sn run` runs the domain-rotating completion loop (reconcile→generate→enrich→link→review→regen across eligible physics domains). With `--paths`, it runs a single-pass pipeline on the explicit paths. `--single-pass` overrides the default to force single-pass regardless of scope. `--only <phase>` runs a single phase in isolation (e.g. `--only link` to resolve links, `--only reconcile` to mark stale sources).
+**`sn run` scope routing:** Without `--paths`, `sn run` runs the 6-pool completion loop across all eligible work (no domain rotation in the default path — all pools run concurrently). With `--paths`, it runs a single-pass pipeline on the explicit paths. `--single-pass` forces single-pass regardless of scope. `--only <phase>` runs a single phase in isolation (e.g. `--only reconcile` to mark stale sources).
 
 ### Benchmark
 
@@ -909,9 +915,30 @@ even when mid-cycle crashes occur.
 
 ### StandardName Lifecycle
 
-Two distinct lifecycle axes tracked on each `StandardName` node:
+Three lifecycle axes tracked on each `StandardName` node:
 
-**`pipeline_status`** (internal pipeline state, renamed from `review_status` in schema v2):
+**`name_stage`** and **`docs_stage`** (Phase 8.1 pool state machines):
+
+```
+name_stage:  pending → drafted → reviewed ─┬─→ accepted   (terminal; rsn ≥ min_score)
+                         ↑                 ├─→ refining → (new SN created at 'drafted'; old → superseded)
+                         │                 └─→ exhausted  (terminal; chain_length = cap after Opus rotation)
+                         └── superseded (predecessor in REFINED_FROM chain; not the latest)
+```
+
+`docs_stage` uses the same states (`superseded` unused — docs refine never creates a new SN node). The cross-pipeline gate: `GENERATE_DOCS` fires only when `name_stage='accepted'`.
+
+- **pending** → not yet generated
+- **drafted** → LLM output written; awaiting review
+- **reviewed** → scored by reviewer; rsn below threshold; eligible for refine
+- **accepted** → reviewer verdict passed threshold (terminal — good)
+- **refining** → claim held by a refine worker; orphan sweep reverts to `reviewed` after 300 s timeout
+- **exhausted** → refine chain hit cap and Opus escalation still scored below threshold (terminal — bad)
+- **superseded** → predecessor SN in a REFINED_FROM chain; source edges migrated to the latest
+
+`chain_length` (name) and `docs_chain_length` (docs) track depth in the refinement chain (root = 0).
+
+**`pipeline_status`** (catalog round-trip state, renamed from `review_status` in schema v2):
 
 ```
 drafted → published → accepted
@@ -952,7 +979,7 @@ pending → valid | quarantined
 
 **Non-critical issues (→ valid):** semantic warnings, description quality hints — persisted as `validation_issues` but do not gate the name.
 
-**Review does not demote.** The `sn review` pipeline writes axis-specific scores (`reviewer_score_name` / `reviewer_score_docs`, etc.) only — it never mutates `validation_status`. Low-scoring names remain `valid` and are selected for targeted regeneration via `sn run --min-score <threshold>`, which injects the prior reviewer feedback (always-on) into the compose prompt. Reviewer feedback injection is unconditional; there is no toggle.
+**Review does not demote.** The `sn review` pipeline writes axis-specific scores (`reviewer_score_name` / `reviewer_score_docs`, etc.) only — it never mutates `validation_status`. Low-scoring names remain `valid` and are routed to the `REFINE_NAME` / `REFINE_DOCS` pools via `name_stage='reviewed'` / `docs_stage='reviewed'`. Prior reviewer feedback is always injected into the refine prompt — there is no toggle.
 
 Only `valid` names participate in `sn export`.
 
@@ -979,7 +1006,7 @@ extracted → composed | attached | vocab_gap | failed | stale
 
 **`sn run --reset-to`** — Re-processes existing nodes without deleting them (when using
 `--reset-to drafted`) or clears matching SN nodes for a full re-run (`--reset-to extracted`).
-Clears transient fields (embedding, model, confidence, generated_at) and removes
+Clears transient fields (embedding, model, generated_at) and removes
 HAS_STANDARD_NAME and HAS_UNIT relationships. Scoped to the same `--source` filter. Accepts
 additional filter flags: `--since`, `--before`, `--below-score`, `--tier`,
 `--retry-quarantined` to narrow which nodes are reset.
@@ -1006,6 +1033,8 @@ installed `imas-standard-names` package. Idempotent — uses MERGE throughout. N
 run automatically by `sn clear`; use this command to refresh after an ISN version bump
 without wiping standard names.
 
+**Chain history is preserved across resets.** `sn run --reset-to` resets the *current* SN's stage fields but does not delete `REFINED_FROM` chain nodes or `DocsRevision` snapshots — refinement history accumulates permanently in the graph.
+
 **Safety guard:** `sn run --reset-to` and `sn prune` require `--include-accepted` to touch
 names with `pipeline_status=accepted`. Accepted names are catalog-authoritative and should rarely be
 deleted from the graph. (`sn clear` has no such guard — it is a total wipe by design.)
@@ -1018,52 +1047,19 @@ specific IDS without touching the rest of the graph.
 `model` field contains the given substring (e.g. `--from-model gemini`). Useful for re-generating
 names produced by a specific model after benchmarking reveals a better alternative.
 
-**`sn run --target {names,docs}` / `sn review --target {names,docs}`** — Axis selector.
+**`sn review` fidelity rank** is no longer applicable — the `--target` axis selector was removed in Phase 8.1. All six pools run within `sn run`; `sn review` remains a standalone scoring command.
 
-- `--target names` — Name-only compose/review. Compose prompt focuses on naming + grammar; review
-  uses the 4-dimension rubric (grammar/semantic/convention/completeness over 80). Fast and cheap
-  for bulk naming passes where documentation is deferred.
-- `--target docs` — Docs-only generation/review. `sn run --target docs` runs the five-phase
-  enrichment pipeline on existing names (does NOT change name/grammar/unit). `sn review --target
-  docs` uses the 4-dimension docs rubric (description_quality / documentation_quality /
-  completeness / physics_accuracy over 80) to grade just the generated prose. Batch size comes
-  from `[tool.imas-codex.sn-generate].docs-batch-size` (default 12) when `--docs-batch-size` is
-  unspecified, falling back to `[tool.imas-codex.sn-enrich].batch-size`.
-
-**`sn review` fidelity rank:** `names` < `docs`. A lower-fidelity review run will
-NOT overwrite a higher-fidelity review on an existing name unless `--force` is passed.
-This prevents a cheap `--target names` sweep from clobbering a prior docs review.
-
-**Loop (default)** — Without `--paths`, `sn run` runs the DD-completion loop.
-Rotates **one physics domain per turn** using stale-first selection from `SNRun.domains_touched`:
-the domain least recently processed is always picked first. Stops when every domain reports
-zero eligible work, when `--cost-limit` is exhausted, or when the remaining budget drops below
-`MIN_VIABLE_TURN` ($0.75) — too little to start a productive turn.
-`--cost-limit` sets a **single shared budget pool** across all LLM phases within the run
-(generate, review_names, review_docs, regen) — not independent per-phase limits.
-If generate exhausts the pool, review and regen are blocked immediately; partial-phase spend
-is reported per category on the `SNRun` node as `compose_cost` and `review_cost`.
-On `Ctrl-C`. Writes an `SNRun` audit node capturing cost, phase counters, domains touched,
-`turn_number`, `min_score`, and `stop_reason`; `sn status` surfaces the most recent run.
-**Cost is graph-backed via `LLMCost` nodes written by `BudgetManager` (async).** `SNRun.status`
-lifecycle: `started → completed | interrupted | failed | degraded` (degraded when pending
-events can't be flushed). `lease.charge_event(cost, event)` is the only charge API — soft
-semantics, never raises. `BudgetManager` must be started with `await shared_mgr.start()` before
-use. Use `drain_pending()` + `get_total_spent()` in a `finally` block to finalize each run.
-`--physics-domain` bypasses rotation and pins to a single domain.
-`--turn-number N` stamps the current
-iteration number onto the run (user-supplied; does not auto-increment). `--min-score F`
-enables the regen phase: names with `reviewer_score_name < F` are re-composed with the prior
-reviewer feedback injected into the prompt. Reviewer feedback injection is unconditional.
-Use `--single-pass` to opt out and force the single-pass extract→compose pipeline.
-`--skip-enrich`, `--skip-review`, `--skip-regen` narrow the per-turn phase set.
+**Loop (default)** — Without `--paths`, `sn run` runs the 6-pool completion loop. All pools run concurrently, weighted by `POOL_WEIGHTS` (generate_name 0.25, review_name 0.15, refine_name 0.15, generate_docs 0.20, review_docs 0.15, refine_docs 0.10). Stops when every pool reports zero eligible work, when `--cost-limit` is exhausted, or when the remaining budget drops below `MIN_VIABLE_TURN` ($0.75).
+**`sn run --min-score F`** routes names/docs with scores below `F` to the `REFINE_NAME` / `REFINE_DOCS` pools. `--rotation-cap N` sets the chain depth cap (default 3). Escalation to `--escalation-model` fires on the final rotation attempt. `--physics-domain` pins to a single domain. `--turn-number N` stamps the iteration number (user-supplied; does not auto-increment). `--skip-review` disables the review phase. Use `--single-pass` to force the single-pass extract → compose pipeline.
+`--cost-limit` sets a **single shared budget pool** across all six pools — not independent per-pool limits. Partial-phase spend is reported per category on the `SNRun` node. On `Ctrl-C`, writes an `SNRun` audit node capturing cost, pool counters, `min_score`, `rotation_cap`, and `stop_reason`; `sn status` surfaces the most recent run.
+**Cost is graph-backed via `LLMCost` nodes written by `BudgetManager` (async).** `SNRun.status` lifecycle: `started → completed | interrupted | failed | degraded` (degraded when pending events can't be flushed). `lease.charge_event(cost, event)` is the only charge API — soft semantics, never raises. `BudgetManager` must be started with `await shared_mgr.start()` before use. Use `drain_pending()` + `get_total_spent()` in a `finally` block to finalize each run.
 
 ### Write Semantics
 
 Two distinct write paths with different semantics:
 
 - **`write_standard_names()` (build path)**: Uses `coalesce(b.field, sn.field)` for ALL fields — passing None preserves existing graph data. Safe to re-run without erasing imported data. Also persists `validation_issues` (list of tagged strings from ISN 3-layer validation) and `validation_layer_summary` (JSON with per-layer pass/fail counts).
-- **`_write_catalog_entries()` (import path)**: Catalog fields SET directly (overwrite) — catalog is authoritative. Graph-only fields (embedding, model, generated_at, confidence) preserved via coalesce.
+- **`_write_catalog_entries()` (import path)**: Catalog fields SET directly (overwrite) — catalog is authoritative. Graph-only fields (embedding, model, generated_at) preserved via coalesce. Tolerates legacy `confidence:` field by silent ignore.
 - **Review write path**: Each RD-quorum cycle's `Review` nodes are persisted to graph immediately (before the next cycle starts). After all cycles complete, `update_review_aggregates` selects the winning group (most-recent group with `resolution_method` ∈ {`quorum_consensus`, `authoritative_escalation`, `single_review`}) and mirrors the final scores onto the StandardName axis slots (`reviewer_score_name` / `reviewer_score_docs`, etc.).
 
 Both `write_standard_names()` and `_write_import_entries()` call the shared
@@ -1086,6 +1082,8 @@ Forward-reference targets are MERGEd as bare placeholder nodes.
 | `HAS_PHYSICS_DOMAIN` | `StandardName` | `PhysicsDomain` | `physics_domain` field (slug) → singleton seeded at graph init |
 | `HAS_UNIT` | `StandardName` | `Unit` | `unit` field — written by both paths (existing) |
 | `HAS_COCOS` | `StandardName` | `COCOS` | `cocos` integer — written by pipeline path (existing) |
+| `REFINED_FROM` | new `StandardName` | predecessor `StandardName` | Set by `persist_refined_name_batch`; marks the chain. Source edges (`PRODUCED_NAME`, `HAS_STANDARD_NAME`) migrate to the new SN in the same transaction |
+| `DOCS_REVISION_OF` | `StandardName` | `DocsRevision` | Set by `persist_refined_docs_batch`; snapshots prior docs+reviewer state before in-place rewrite |
 
 `HAS_ARGUMENT` / `HAS_ERROR` derivation is driven by the ISN parser in
 `imas_codex/standard_names/derivation.py` (pure logic, no graph access).
@@ -1153,6 +1151,16 @@ StandardName and StandardNameSource nodes defined in `imas_codex/schemas/standar
 - `(StandardNameSource)-[:FROM_DD_PATH]->(IMASNode)` — DD-sourced extraction tracking
 - `(StandardNameSource)-[:FROM_SIGNAL]->(FacilitySignal)` — signal-sourced extraction tracking
 - `(StandardNameSource)-[:PRODUCED_NAME]->(StandardName)` — links source to result
+- `(StandardName)-[:REFINED_FROM]->(StandardName)` — predecessor in name refinement chain (Phase 8.1)
+- `(StandardName)-[:DOCS_REVISION_OF]->(DocsRevision)` — prior docs snapshot before in-place rewrite (Phase 8.1)
+
+**Phase 8.1 schema changes:**
+
+- `confidence` field **removed** (LLM self-confidence is not actionable signal). Catalog import tolerates legacy YAML with `confidence:` via silent ignore.
+- `regen_count` **renamed** to `chain_length` (position in `REFINED_FROM` chain; root = 0).
+- **New fields:** `name_stage` (`NameStage` enum), `docs_stage` (`DocsStage` enum), `docs_chain_length` (int), `refine_name_escalated_at` (datetime?), `refine_docs_escalated_at` (datetime?).
+- **New node:** `DocsRevision` — snapshots `documentation`, `links`, reviewer scores/comments, `model`, `created_at` before a refine_docs rewrite. Linked via `DOCS_REVISION_OF` from the SN.
+- Reviewer fields are axis-split: `reviewer_model_name` vs `reviewer_model_docs` (see axis-split table below).
 
 **COCOS provenance:** `cocos_transformation_type` (string, e.g. `psi_like`, `ip_like`) records
 how a quantity transforms under COCOS convention changes. `cocos` (integer) links directly to
@@ -1189,6 +1197,8 @@ Review `id` format: `{sn_id}:{axis}:{review_group_id}:{cycle_index}`.
 `status` (ISN vocabulary lifecycle: draft/published/deprecated), `origin` (pipeline/catalog_edit),
 `deprecates`, `superseded_by` (vocabulary lifecycle links), `catalog_pr_number`, `catalog_pr_url`,
 `catalog_commit_sha` (PR provenance), `exported_at`, `imported_at` (round-trip timestamps).
+
+**Phase 8.1 fields** (pool state machines): `name_stage`, `docs_stage` (NameStage/DocsStage enum), `chain_length`, `docs_chain_length` (rename from `regen_count`), `refine_name_escalated_at`, `refine_docs_escalated_at`. Field `confidence` removed.
 
 **VocabGap nodes** record missing grammar tokens identified during composition when a needed
 vocabulary token does not exist in the ISN grammar. Linked via `HAS_SN_VOCAB_GAP` from IMASNode
