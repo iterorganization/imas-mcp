@@ -343,6 +343,45 @@ The pipeline is graph-driven - it persists progress to Neo4j so you can:
 - Run scoring on pages scanned in previous sessions
 - Track which pages are queued, scored, skipped, or ingested
 
+#### Standard Names Pipeline
+
+Generate and refine canonical physics quantity names from IMAS DD paths and
+facility signals. Six worker pools run concurrently:
+`generate_name → review_name → refine_name` (names) and
+`generate_docs → review_docs → refine_docs` (documentation).
+
+**Prerequisites:**
+- Neo4j running with IMAS knowledge graph loaded
+- OpenRouter API key in `.env`: `OPENROUTER_API_KEY=sk-or-...`
+
+```bash
+# Full six-pool run — all domains, up to $50 LLM budget
+imas-codex sn run -c 50
+
+# Scope to one physics domain
+imas-codex sn run --physics-domain equilibrium -c 5
+
+# Dry run — preview extraction without LLM calls
+imas-codex sn run --physics-domain magnetics --dry-run
+
+# Tighter quality bar, deeper refine chains, custom escalation model
+imas-codex sn run --min-score 0.85 --rotation-cap 5 --escalation-model openrouter/anthropic/claude-opus-4.7 -c 20
+```
+
+**Refine-pipeline flags (Phase 8.1):**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--min-score` | `0.75` | Reviewer-score threshold; names below this are routed to `refine_name` / `refine_docs` |
+| `--rotation-cap` | `3` | Max `REFINED_FROM` / `DOCS_REVISION_OF` chain depth before marking a name `exhausted` |
+| `--escalation-model` | `claude-opus-4.6` | Higher-capability model used on the final refine attempt |
+
+Names that score ≥ `--min-score` advance to `accepted`. Names that exhaust
+the refine chain without meeting the threshold are marked `exhausted`.
+
+**Graph-driven:** progress is persisted to Neo4j so interrupted runs resume
+from where they stopped.
+
 ### Docker Setup
 
 Run locally in a container (pre-built indexes included):
