@@ -4209,6 +4209,34 @@ def claim_compose_sources(
     return token, [dict(r) for r in claimed]
 
 
+def count_extracted_for_domain(domain: str, source: str = "dd") -> int:
+    """Count StandardNameSource nodes already extracted for a physics domain.
+
+    Used by :func:`run_sn_pools` to decide whether the domain-specific
+    extract seed step is needed before starting the pools.
+
+    Args:
+        domain: Physics domain string (e.g. ``"turbulence"``).
+        source: Source type — ``"dd"`` (DD paths) or ``"signals"``.
+
+    Returns:
+        Number of extracted sources whose backing entity belongs to *domain*.
+    """
+    if source == "dd":
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (sns:StandardNameSource)-[:FROM_DD_PATH]->(n:IMASNode)
+                WHERE sns.status = 'extracted'
+                  AND n.physics_domain = $domain
+                RETURN count(sns) AS cnt
+                """,
+                domain=domain,
+            )
+            return result[0]["cnt"] if result else 0
+    return 0
+
+
 def count_eligible_compose_sources(
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
 ) -> int:

@@ -827,6 +827,65 @@ def _build_pool_specs(
     return specs
 
 
+async def _seed_domain_sources(
+    domain: str,
+    source: str = "dd",
+    stop_event: asyncio.Event | None = None,
+) -> int:
+    """Seed the generate_name pool with StandardNameSource nodes for *domain*.
+
+    Calls :func:`~imas_codex.standard_names.sources.dd.extract_dd_candidates`
+    to discover DD paths for *domain* that have no existing StandardNameSource,
+    then writes them via
+    :func:`~imas_codex.standard_names.graph_ops.merge_standard_name_sources`.
+
+    Returns the number of sources written (0 if none found or source != "dd").
+    """
+    if source != "dd":
+        return 0
+
+    from imas_codex.standard_names.graph_ops import (
+        get_existing_standard_names,
+        merge_standard_name_sources,
+    )
+    from imas_codex.standard_names.sources.dd import extract_dd_candidates
+
+    existing = await asyncio.to_thread(get_existing_standard_names)
+    batches = await asyncio.to_thread(
+        extract_dd_candidates,
+        domain_filter=domain,
+        existing_names=existing,
+        force=False,
+        name_only=False,
+    )
+
+    sources = []
+    for batch in batches:
+        for item in batch.items:
+            path = item.get("path")
+            if not path:
+                continue
+            sources.append(
+                {
+                    "id": f"dd:{path}",
+                    "source_type": "dd",
+                    "source_id": path,
+                    "dd_path": path,
+                    "batch_key": batch.group_key,
+                    "status": "extracted",
+                    "description": item.get("description")
+                    or item.get("documentation")
+                    or "",
+                }
+            )
+
+    if not sources:
+        return 0
+
+    written = await asyncio.to_thread(merge_standard_name_sources, sources, force=False)
+    return written
+
+
 async def run_sn_pools(
     cost_limit: float,
     *,
@@ -939,6 +998,39 @@ async def run_sn_pools(
             recon_total,
             recon_result,
         )
+
+        # ── B3: Domain extract (optional) ─────────────────────────
+        # When only_domain is set, seed the generate_name pool with
+        # StandardNameSource nodes for that domain before the pools
+        # start.  The pools themselves are domain-agnostic — they
+        # claim whatever status='extracted' items already exist —
+        # so without this step, --physics-domain is a no-op.
+        if only_domain:
+            from imas_codex.standard_names.graph_ops import (
+                count_extracted_for_domain,
+            )
+
+            n_existing = count_extracted_for_domain(only_domain, source)
+            logger.info(
+                "run_sn_pools: extract-seed domain=%s — %d items already extracted",
+                only_domain,
+                n_existing,
+            )
+            if n_existing == 0:
+                logger.info(
+                    "run_sn_pools: seeding generate_name pool for domain=%s…",
+                    only_domain,
+                )
+                n_seeded = await _seed_domain_sources(
+                    domain=only_domain,
+                    source=source,
+                    stop_event=stop_event,
+                )
+                logger.info(
+                    "run_sn_pools: seeded %d sources for domain=%s",
+                    n_seeded,
+                    only_domain,
+                )
 
         # ── Build pool specs ──────────────────────────────────────
         specs = _build_pool_specs(
