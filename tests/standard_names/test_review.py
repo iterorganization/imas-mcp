@@ -32,11 +32,9 @@ class TestSNReviewModels:
             source_id="equilibrium/time_slice/profiles_1d/psi",
             standard_name="poloidal_flux",
             verdict=StandardNameReviewVerdict.accept,
-            confidence=0.95,
             reason="Name correctly captures the physics quantity",
         )
         assert item.verdict == StandardNameReviewVerdict.accept
-        assert item.confidence == 0.95
         assert item.revised_name is None
         assert item.revised_fields is None
         assert item.issues == []
@@ -47,7 +45,6 @@ class TestSNReviewModels:
             source_id="magnetics/flux_loop/flux/data",
             standard_name="invalid_name",
             verdict=StandardNameReviewVerdict.reject,
-            confidence=0.8,
             reason="Name does not represent a valid physics quantity",
             issues=["Invalid physical_base", "No matching grammar rule"],
         )
@@ -60,7 +57,6 @@ class TestSNReviewModels:
             source_id="core_profiles/profiles_1d/electrons/temperature",
             standard_name="electron_temp",
             verdict=StandardNameReviewVerdict.revise,
-            confidence=0.85,
             reason="Physical base should be 'temperature' not 'temp'",
             revised_name="electron_temperature",
             revised_fields={"physical_base": "temperature", "subject": "electron"},
@@ -81,14 +77,12 @@ class TestSNReviewModels:
                     source_id="src1",
                     standard_name="electron_temperature",
                     verdict=StandardNameReviewVerdict.accept,
-                    confidence=0.95,
                     reason="Good",
                 ),
                 StandardNameReviewItem(
                     source_id="src2",
                     standard_name="bad_name",
                     verdict=StandardNameReviewVerdict.reject,
-                    confidence=0.7,
                     reason="Invalid",
                 ),
             ]
@@ -96,46 +90,6 @@ class TestSNReviewModels:
         assert len(batch.reviews) == 2
         assert batch.reviews[0].verdict == StandardNameReviewVerdict.accept
         assert batch.reviews[1].verdict == StandardNameReviewVerdict.reject
-
-    def test_review_item_confidence_bounds(self):
-        """Confidence must be between 0.0 and 1.0."""
-        from pydantic import ValidationError
-
-        # Valid at boundaries
-        StandardNameReviewItem(
-            source_id="a",
-            standard_name="b",
-            verdict=StandardNameReviewVerdict.accept,
-            confidence=0.0,
-            reason="c",
-        )
-        StandardNameReviewItem(
-            source_id="a",
-            standard_name="b",
-            verdict=StandardNameReviewVerdict.accept,
-            confidence=1.0,
-            reason="c",
-        )
-
-        # Invalid: above 1.0
-        with pytest.raises(ValidationError):
-            StandardNameReviewItem(
-                source_id="a",
-                standard_name="b",
-                verdict=StandardNameReviewVerdict.accept,
-                confidence=1.5,
-                reason="c",
-            )
-
-        # Invalid: below 0.0
-        with pytest.raises(ValidationError):
-            StandardNameReviewItem(
-                source_id="a",
-                standard_name="b",
-                verdict=StandardNameReviewVerdict.accept,
-                confidence=-0.1,
-                reason="c",
-            )
 
     def test_empty_review_batch(self):
         """Empty review batch is valid."""

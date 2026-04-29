@@ -433,7 +433,6 @@ class TestProtectionRegression:
                 "documentation": "Pipeline docs",
                 "kind": "vector",  # pipeline tries to change kind
                 "pipeline_status": "enriched",  # NOT protected
-                "confidence": 0.99,  # NOT protected
             },
             {
                 "id": "ion_temperature",
@@ -460,7 +459,6 @@ class TestProtectionRegression:
         assert "documentation" not in et, "Protected documentation should be stripped"
         assert "kind" not in et, "Protected kind should be stripped"
         assert et["pipeline_status"] == "enriched", "Non-protected field preserved"
-        assert et["confidence"] == 0.99, "Non-protected field preserved"
 
         # ion_temperature: all fields pass through
         it = filtered[1]
@@ -508,7 +506,7 @@ class TestProtectionRegression:
         assert skipped == ["plasma_current"]
 
     def test_embedding_and_graph_only_fields_pass_through_protection(self) -> None:
-        """Graph-only fields (embedding, model, confidence) are never protected."""
+        """Graph-only fields (embedding, model) are never protected."""
         from imas_codex.standard_names.protection import PROTECTED_FIELDS
 
         # These fields should NOT be in PROTECTED_FIELDS
@@ -516,7 +514,6 @@ class TestProtectionRegression:
             "embedding",
             "model",
             "generated_at",
-            "confidence",
             "pipeline_status",
             "reviewer_score",
             "source_types",

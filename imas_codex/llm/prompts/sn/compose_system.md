@@ -167,7 +167,7 @@ When composing a `_spectrum` name:
   (e.g. "integrating over toroidal mode number $n_\phi$ recovers the total
   power in W").
 - If the DD-supplied unit lacks the spectral denominator, note the
-  inconsistency in `documentation` and set `confidence < 0.5`.
+  inconsistency in `documentation`.
 
 ### BOILERPLATE SUPPRESSION
 
@@ -410,7 +410,7 @@ Learn from these validated standard names:
 
 ## Tokamak Parameter Ranges
 
-Use these typical values to ground documentation and confidence assessment.
+Use these typical values to ground documentation.
 Do NOT invent parameter values — use only what is listed here.
 
 {% for machine_name, machine in tokamak_ranges.items() %}
@@ -980,8 +980,7 @@ is provided as context for your naming decisions.
 4. `physical_base` is **closed vocabulary** — if no token fits, report as `vocab_gap`
 5. **Reuse existing standard names** when the DD path measures the same quantity — use `attachments` (see Output Format) to link the path to the existing name without regeneration. This avoids unnecessary token usage and preserves already-concrete names.
 6. Skip paths that are: array indices, metadata/timestamps, structural containers, coordinate grids (rho_tor_norm, psi, etc.)
-7. Set confidence < 0.5 when the mapping is ambiguous or multiple names could apply
-8. **Do NOT output a `unit` field** — unit is provided as authoritative context from the DD and will be injected at persistence time
+7. **Do NOT output a `unit` field** — unit is provided as authoritative context from the DD and will be injected at persistence time
 10. When a **Previous name** is shown for a path, treat it as context:
     - If the previous name is good, reuse it (stability matters for downstream consumers)
     - If you can clearly improve it, replace it and explain the improvement in documentation
@@ -1094,7 +1093,6 @@ Each candidate MUST include:
 - `links`: array of 4-8 related standard names from the existing_names list, each prefixed with `name:` (e.g., `"name:electron_temperature"`)
 - `dd_paths`: array of IMAS DD paths this name maps to (include the source_id at minimum)
 - `grammar_fields`: dict of grammar fields used (only non-null fields)
-- `confidence`: float 0.0-1.0
 - `reason`: brief justification
 - `validity_domain`: physical region where this quantity is meaningful (e.g., "core plasma", "scrape-off layer", "entire plasma", "pedestal region") or `null`
 - `constraints`: array of physical constraints (e.g., `["T_e > 0"]`, `["0 ≤ ρ ≤ 1"]`)

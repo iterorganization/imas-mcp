@@ -178,7 +178,6 @@ class TestEmbeddingCoverage:
                 "kind": "scalar",
                 "unit": "eV",
                 "pipeline_status": "drafted",
-                "confidence": 0.95,
             }
         ]
         _call_write(names, mock_gc)
@@ -220,7 +219,6 @@ class TestCoalesceSafety:
         ("source_paths", "b.source_paths, sn.source_paths"),
         ("validity_domain", "b.validity_domain, sn.validity_domain"),
         ("constraints", "b.constraints, sn.constraints"),
-        ("confidence", "b.confidence, sn.confidence"),
         ("grammar_parse_version", "b.grammar_parse_version, sn.grammar_parse_version"),
     ]
 
@@ -305,7 +303,6 @@ class TestCoalesceSafety:
             "model",
             "pipeline_status",
             "generated_at",
-            "confidence",
             "review_tier",
             "vocab_gap_detail",
             "validation_issues",
@@ -453,7 +450,6 @@ class TestCoalesceSafety:
             ("tags", "b.tags, sn.tags"),
             ("validity_domain", "b.validity_domain, sn.validity_domain"),
             ("constraints", "b.constraints, sn.constraints"),
-            ("confidence", "b.confidence, sn.confidence"),
         ]
         for field_name, coalesce_args in catalog_owned:
             assert f"coalesce({coalesce_args})" in build_cypher, (
@@ -501,7 +497,6 @@ SAMPLE_GRAPH_RECORD: dict[str, Any] = {
     "source_paths": ["dd:core_profiles/profiles_1d/electrons/temperature"],
     "constraints": ["T_e > 0"],
     "validity_domain": "core plasma",
-    "confidence": 0.95,
     "model": "test/model",
     "ids_name": None,
     "physical_base": "temperature",
@@ -618,7 +613,6 @@ _RICH_SN_RECORD = {
     "constraints": ["T_e > 0"],
     "physical_base": "temperature",
     "subject": "electron",
-    "confidence": 0.95,
     "model": "gpt-4o",
     "pipeline_status": "drafted",
 }
@@ -638,7 +632,6 @@ _GRAPH_QUERY_ROW = {
     "source_paths": ["dd:core_profiles/profiles_1d/electrons/temperature"],
     "constraints": ["T_e > 0"],
     "validity_domain": "core plasma",
-    "confidence": 0.95,
     "model": "gpt-4o",
     "source": "dd",
     "source_path": "core_profiles/profiles_1d/electrons/temperature",
@@ -698,7 +691,6 @@ class TestE2ERoundTrip:
         assert node["constraints"] == ["T_e > 0"]
         assert node["validity_domain"] == "core plasma"
         assert node["pipeline_status"] == "drafted"
-        assert node["confidence"] == 0.95
         assert node["model"] == "gpt-4o"
 
     def test_import_dry_run_does_not_call_graph(self, tmp_path: Path) -> None:

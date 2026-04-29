@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from imas_codex.graph.client import GraphClient
+from imas_codex.standard_names.defaults import DEFAULT_MIN_SCORE
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ _SEGMENT_TO_SN_PROPERTY = {
 def mine_promotion_candidates(
     segment: str = "physical_base",
     min_usage_count: int = 3,
-    min_review_mean_score: float = 0.75,
+    min_review_mean_score: float = DEFAULT_MIN_SCORE,
     exclude_existing: bool = True,
 ) -> list[dict[str, Any]]:
     """Query the graph for saturated grammar tokens.

@@ -186,20 +186,18 @@ async def test_review_blocked_when_compose_exhausts_pool():
 
 @pytest.mark.asyncio
 async def test_l7_cost_returned_from_revise_candidate():
-    """_opus_revise_candidate now returns (revised_name | None, cost_float)."""
+    """_opus_revise_candidate returns (revised_name | None, cost_float)."""
     from imas_codex.standard_names.workers import _opus_revise_candidate
 
     candidate = {
         "id": "electron_temperature",
         "description": "Temperature of electrons",
-        "confidence": 0.55,
         "reason": "low confidence",
     }
 
-    # Mock acall_fn to return a high-confidence result with a known cost
+    # Mock acall_fn to return a successful revision with a known cost
     class FakeRevision:
         revised_name = "electron_kinetic_temperature"
-        confidence = 0.90
         explanation = "more precise"
 
     async def fake_acall(*, model, messages, response_model, service):
@@ -218,19 +216,17 @@ async def test_l7_cost_returned_from_revise_candidate():
 
 @pytest.mark.asyncio
 async def test_l7_cost_returned_even_when_revision_rejected():
-    """Cost is non-zero even when confidence did not improve."""
+    """Cost is always returned from _opus_revise_candidate."""
     from imas_codex.standard_names.workers import _opus_revise_candidate
 
     candidate = {
         "id": "electron_temperature",
         "description": "Temperature of electrons",
-        "confidence": 0.80,
         "reason": "moderate",
     }
 
     class LowConfidenceRevision:
         revised_name = "electron_temperature_v2"
-        confidence = 0.70  # lower than original → rejected
         explanation = "worse"
 
     async def fake_acall(*, model, messages, response_model, service):
@@ -243,7 +239,7 @@ async def test_l7_cost_returned_even_when_revision_rejected():
         acall_fn=fake_acall,
     )
 
-    assert revised is None  # rejected
+    assert revised == "electron_temperature_v2"  # accepted (no confidence gate)
     assert cost == pytest.approx(0.025)
 
 
@@ -252,7 +248,7 @@ async def test_l7_cost_returned_on_exception():
     """Even on LLM exception, cost is 0.0 (nothing charged)."""
     from imas_codex.standard_names.workers import _opus_revise_candidate
 
-    candidate = {"id": "bad_name", "description": "", "confidence": 0.3, "reason": ""}
+    candidate = {"id": "bad_name", "description": "", "reason": ""}
 
     async def broken_acall(**_kwargs):
         raise RuntimeError("LLM timeout")

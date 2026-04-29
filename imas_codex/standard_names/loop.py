@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from imas_codex.core.node_categories import SN_SOURCE_CATEGORIES
+from imas_codex.standard_names.defaults import DEFAULT_MIN_SCORE
 
 logger = logging.getLogger(__name__)
 
@@ -584,7 +585,7 @@ def summary_table(summary: RunSummary) -> dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════
 
 # Default regen threshold when min_score is not explicitly provided.
-_DEFAULT_POOL_MIN_SCORE: float = 0.5
+# Imported from defaults.py — do not re-define here.
 
 
 def _build_pool_specs(
@@ -629,7 +630,7 @@ def _build_pool_specs(
         process_regen_batch,
     )
 
-    regen_score = min_score if min_score is not None else _DEFAULT_POOL_MIN_SCORE
+    regen_score = min_score if min_score is not None else DEFAULT_MIN_SCORE
 
     # ── Adapter factories ─────────────────────────────────────────────
 

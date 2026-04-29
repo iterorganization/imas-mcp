@@ -48,7 +48,6 @@ def _make_sn(suffix: str | int, **overrides: Any) -> dict[str, Any]:
         "position": None,
         "process": None,
         "physics_domain": "transport",
-        "confidence": 0.85,
         "model": "test-model",
     }
     base.update(overrides)
@@ -617,7 +616,6 @@ def _create_test_nodes(names: list[str]) -> None:
                     sn.grammar_physical_base = 'temperature',
                     sn.grammar_subject = 'electron',
                     sn.tags = ['transport'],
-                    sn.confidence = 0.85,
                     sn.model = 'test-model',
                     sn.source_paths = [$path],
                     sn.enrich_claimed_at = null,

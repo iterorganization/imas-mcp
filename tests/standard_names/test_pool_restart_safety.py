@@ -100,7 +100,6 @@ def _make_compose_llm_result(items: list[dict[str, Any]]) -> Any:
                 kind="scalar",
                 dd_paths=[path],
                 grammar_fields={"physical_base": "temperature", "subject": "electron"},
-                confidence=0.9,
                 reason="test",
             )
         )

@@ -62,7 +62,6 @@ class TestFilterProtectedOverrideFalse:
             _make_item(
                 "plasma_current",
                 pipeline_status="named",
-                confidence=0.95,
                 model="test-model",
             )
         ]
@@ -74,7 +73,6 @@ class TestFilterProtectedOverrideFalse:
         assert len(filtered) == 1
         result = filtered[0]
         assert result["pipeline_status"] == "named"
-        assert result["confidence"] == 0.95
         assert result["model"] == "test-model"
         # No protected fields present → not in skipped
         assert skipped == []

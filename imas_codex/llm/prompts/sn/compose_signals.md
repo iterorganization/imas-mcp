@@ -104,7 +104,6 @@ For each signal that represents a distinct physics quantity, generate a standard
       "source_id": "signal_id_here",
       "standard_name": "electron_temperature",
       "grammar_fields": {"physical_base": "temperature", "subject": "electron"},
-      "confidence": 0.85,
       "reason": "Thomson scattering electron temperature measurement"
     }
   ],
@@ -115,6 +114,5 @@ For each signal that represents a distinct physics quantity, generate a standard
 - **source_id**: The signal ID
 - **standard_name**: The composed name string (snake_case)
 - **grammar_fields**: Dict of grammar fields used (only include non-null fields)
-- **confidence**: Float 0.0-1.0 — higher when the signal clearly maps to a single physics quantity
 - **reason**: Brief justification for the name choice
 - **skipped**: List of signal IDs that are not distinct physics quantities

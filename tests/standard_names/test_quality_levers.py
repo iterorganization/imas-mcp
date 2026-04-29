@@ -272,7 +272,7 @@ class TestGrammarRetry:
 
 
 # =========================================================================
-# L7: Borderline-confidence revision
+# L7: Opus revision pass
 # =========================================================================
 
 
@@ -280,13 +280,12 @@ class TestOpusRevision:
     """Tests for L7 Opus revision pass."""
 
     @pytest.mark.asyncio
-    async def test_revision_returns_improved_name(self):
-        """Opus revision returns name when confidence improves."""
+    async def test_revision_returns_name_on_success(self):
+        """Opus revision returns revised name when LLM responds."""
         from imas_codex.standard_names.workers import _opus_revise_candidate
 
         class MockResponse:
             revised_name = "electron_temperature"
-            confidence = 0.9
             explanation = "Better naming"
 
         async def mock_acall(*args, **kwargs):
@@ -294,7 +293,6 @@ class TestOpusRevision:
 
         candidate = {
             "id": "te_profile",
-            "confidence": 0.5,
             "reason": "ambiguous",
             "description": "Electron temperature",
         }
@@ -307,33 +305,6 @@ class TestOpusRevision:
         assert result[0] == "electron_temperature"
 
     @pytest.mark.asyncio
-    async def test_revision_returns_none_when_not_improved(self):
-        """Opus revision returns None when confidence doesn't improve."""
-        from imas_codex.standard_names.workers import _opus_revise_candidate
-
-        class MockResponse:
-            revised_name = "te_profile_revised"
-            confidence = 0.4  # Lower than original
-            explanation = "Not much better"
-
-        async def mock_acall(*args, **kwargs):
-            return MockResponse(), 0.05, 500
-
-        candidate = {
-            "id": "te_profile",
-            "confidence": 0.5,
-            "reason": "ambiguous",
-            "description": "Electron temperature",
-        }
-        result = await _opus_revise_candidate(
-            candidate,
-            "",
-            [],
-            mock_acall,
-        )
-        assert result[0] is None
-
-    @pytest.mark.asyncio
     async def test_revision_returns_none_on_error(self):
         """Opus revision returns None on LLM error."""
         from imas_codex.standard_names.workers import _opus_revise_candidate
@@ -343,7 +314,6 @@ class TestOpusRevision:
 
         candidate = {
             "id": "te_profile",
-            "confidence": 0.5,
             "reason": "ambiguous",
             "description": "Electron temperature",
         }

@@ -661,10 +661,10 @@ class TestFairnessDeadlockBreaker:
     """consecutive_empty_claims excludes stalled pools from the admission gate.
 
     Scenario: a pool has non-zero pending_count (display query uses loose
-    criteria) but claim() consistently returns None (strict eligibility, e.g.
-    confidence threshold).  After _EMPTY_CLAIM_EXCLUDE_THRESHOLD consecutive
-    admitted-but-empty cycles the pool is excluded from active_pools_fn so
-    productive pools can be admitted again.
+    criteria) but claim() consistently returns None (strict eligibility).
+    After _EMPTY_CLAIM_EXCLUDE_THRESHOLD consecutive admitted-but-empty
+    cycles the pool is excluded from active_pools_fn so productive pools
+    can be admitted again.
     """
 
     @pytest.mark.asyncio

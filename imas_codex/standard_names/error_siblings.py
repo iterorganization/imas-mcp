@@ -248,7 +248,6 @@ def mint_error_siblings(
                 "source_id": error_id,
                 "kind": "scalar" if suffix == "_error_index" else None,
                 "source_paths": [encode_source_path("dd", error_id)],
-                "confidence": 1.0,
                 "unit": unit,
                 "physics_domain": physics_domain,
                 "cocos_transformation_type": cocos_type,

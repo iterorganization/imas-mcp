@@ -155,7 +155,6 @@ class TestMintErrorSiblings:
         assert s["model"] == "deterministic:dd_error_modifier"
         assert s["pipeline_status"] == "named"
         assert s["validation_status"] == "valid"
-        assert s["confidence"] == 1.0
         assert s["reviewer_score_name"] == 1.0
         assert s["reviewed_name_at"] is not None
         assert s["reviewer_score_docs"] == 1.0

@@ -40,7 +40,6 @@ def _make_item(name: str, **overrides: Any) -> dict[str, Any]:
         "position": None,
         "process": None,
         "physics_domain": "equilibrium",
-        "confidence": 0.9,
         "model": "test-model",
         # Enriched fields (from C.3 document worker)
         "enriched_description": f"The {name.replace('_', ' ')} in plasma.",

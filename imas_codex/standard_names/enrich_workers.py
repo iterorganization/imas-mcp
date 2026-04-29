@@ -247,7 +247,6 @@ def claim_names_for_enrichment(
                    sn.grammar_position AS position,
                    sn.grammar_process AS process,
                    sn.physics_domain AS physics_domain,
-                   sn.confidence AS confidence,
                    sn.model AS model
             """,
             token=token,

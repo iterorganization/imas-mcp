@@ -82,7 +82,6 @@ class TestComposeChargeEvent:
             source_id: str = "eq/time_slice/profiles_1d/te"
             dd_paths: list[str] = Field(default_factory=lambda: ["eq/te"])
             kind: str = "scalar"
-            confidence: float = 0.9
             reason: str = "test"
             grammar_fields: dict = Field(default_factory=dict)
             unit: str = "eV"
@@ -232,7 +231,6 @@ class TestL7RevisionChargeEvent:
 
         class _OpusResponse(BaseModel):
             revised_name: str = "plasma_current"
-            confidence: float = 0.95
             explanation: str = "improved"
 
         mock_result = _LLMResult(
@@ -250,7 +248,6 @@ class TestL7RevisionChargeEvent:
             "id": "plasma_curr",
             "reason": "low conf",
             "description": "test",
-            "confidence": 0.4,
         }
 
         revised, cost, ti, to = await _opus_revise_candidate(cand, "", [], mock_acall)

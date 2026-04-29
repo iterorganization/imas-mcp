@@ -76,14 +76,13 @@ def _merge_duplicates(group: list[dict]) -> dict:
 
     When multiple candidates produce the SAME standard_name with the SAME
     unit and kind, they are merged:
-    - Keep the entry with the longest documentation
+    - Keep the entry with the longest documentation, then shortest name as tiebreaker
     - Union the dd_paths from all duplicates
-    - Keep highest confidence
     - Resolve physics_domain deterministically across sources
     """
-    # Sort by documentation length (longest first), then confidence
+    # Sort by documentation length (longest first), then name length (shortest first)
     group.sort(
-        key=lambda c: (len(c.get("documentation", "")), c.get("confidence", 0)),
+        key=lambda c: (len(c.get("documentation", "")), -len(c.get("id", ""))),
         reverse=True,
     )
     merged = dict(group[0])
@@ -108,9 +107,6 @@ def _merge_duplicates(group: list[dict]) -> dict:
     for c in group:
         all_source_types.update(c.get("source_types") or [])
     merged["source_types"] = sorted(all_source_types)
-
-    # Keep highest confidence
-    merged["confidence"] = max(c.get("confidence", 0) for c in group)
 
     # Resolve physics_domain across sources (merge all domains)
     merged["physics_domain"] = _resolve_physics_domains(

@@ -11,6 +11,7 @@ import click
 from rich.console import Console
 
 from imas_codex.core.physics_domain import PhysicsDomain
+from imas_codex.standard_names.defaults import DEFAULT_MIN_SCORE
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -171,8 +172,6 @@ def _run_sn_loop_cmd(
                                 AND sn.enriched_at IS NULL
                                 AND (sn.claimed_at IS NULL
                                      OR sn.claimed_at < datetime() - duration({minutes: 30}))
-                                AND ($min_score IS NULL
-                                     OR coalesce(sn.confidence, 1.0) >= $min_score)
                               RETURN count(sn) AS enrich
                             }
                             CALL {
@@ -411,8 +410,6 @@ def _run_sn_loop_cmd(
                                 AND sn.enriched_at IS NULL
                                 AND (sn.claimed_at IS NULL
                                      OR sn.claimed_at < datetime() - duration({minutes: 30}))
-                                AND ($min_score IS NULL
-                                     OR coalesce(sn.confidence, 1.0) >= $min_score)
                               RETURN count(sn) AS enrich
                             }
                             CALL {
@@ -814,7 +811,7 @@ def _check_pipeline_clear_gate() -> None:
     "--min-score",
     "min_score",
     type=float,
-    default=0.75,
+    default=DEFAULT_MIN_SCORE,
     show_default=True,
     help=(
         "Reviewer-score threshold for regen phase. Names with "
@@ -2147,7 +2144,7 @@ def _emit_yaml_output(
 @click.option(
     "--min-score",
     type=float,
-    default=0.75,
+    default=DEFAULT_MIN_SCORE,
     show_default=True,
     help="Saturated-direction: minimum review_mean_score on every "
     "supporting name (quality gate).",

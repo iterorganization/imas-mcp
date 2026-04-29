@@ -59,7 +59,7 @@ class TestWriteStandardNames:
         assert "coalesce(b.source_paths, sn.source_paths)" in cypher
         assert "coalesce(b.validity_domain, sn.validity_domain)" in cypher
         assert "coalesce(b.constraints, sn.constraints)" in cypher
-        assert "coalesce(b.confidence, sn.confidence)" in cypher
+        assert "coalesce(b.confidence, sn.confidence)" not in cypher
         assert "coalesce(b.grammar_parse_version, sn.grammar_parse_version)" in cypher
         assert (
             "coalesce(b.validation_diagnostics_json, sn.validation_diagnostics_json)"
@@ -206,36 +206,6 @@ class TestWriteStandardNames:
 class TestGetValidatedStandardNames:
     """Test get_validated_standard_names query filtering."""
 
-    def test_confidence_filter(self) -> None:
-        """Should filter by minimum confidence."""
-        mock_gc = MagicMock()
-        mock_gc.query = MagicMock(
-            return_value=[
-                {
-                    "name": "electron_temperature",
-                    "description": "Te",
-                    "source": "dd",
-                    "source_path": "core_profiles/profiles_1d/electrons/temperature",
-                    "unit": "eV",
-                    "confidence": 0.95,
-                    "ids_name": "core_profiles",
-                }
-            ]
-        )
-
-        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
-            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
-            MockGC.return_value.__exit__ = MagicMock(return_value=False)
-
-            from imas_codex.standard_names.graph_ops import get_validated_standard_names
-
-            results = get_validated_standard_names(confidence_min=0.9)
-
-        # Verify confidence_min was passed to query
-        call_kwargs = mock_gc.query.call_args[1]
-        assert call_kwargs["confidence_min"] == 0.9
-        assert len(results) == 1
-
     def test_ids_filter(self) -> None:
         """Should filter by IDS name."""
         mock_gc = MagicMock()
@@ -268,7 +238,6 @@ class TestGetValidatedStandardNames:
                     "source": "dd",
                     "source_path": "x",
                     "unit": None,
-                    "confidence": 1.0,
                     "ids_name": None,
                 },
                 {
@@ -277,7 +246,6 @@ class TestGetValidatedStandardNames:
                     "source": "dd",
                     "source_path": "y",
                     "unit": None,
-                    "confidence": 1.0,
                     "ids_name": None,
                 },
             ]
@@ -360,7 +328,7 @@ class TestResetStandardNames:
         assert mock_gc.query.call_count == 1
 
     def test_clears_transient_fields(self) -> None:
-        """Reset should null out embedding, embedded_at, model, generated_at, confidence."""
+        """Reset should null out embedding, embedded_at, model, generated_at."""
         mock_gc = MagicMock()
         # First call = count query; subsequent calls = relationship + set queries
         mock_gc.query = MagicMock(return_value=[{"n": 2}])
@@ -374,7 +342,7 @@ class TestResetStandardNames:
         assert "sn.embedded_at = null" in all_cypher
         assert "sn.model = null" in all_cypher
         assert "sn.generated_at = null" in all_cypher
-        assert "sn.confidence = null" in all_cypher
+        assert "sn.confidence = null" not in all_cypher
 
     def test_removes_has_standard_name_relationships(self) -> None:
         """Reset should delete HAS_STANDARD_NAME relationships."""

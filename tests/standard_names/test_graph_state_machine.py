@@ -40,7 +40,6 @@ def sample_candidates() -> list[dict]:
                 "physical_base": "temperature",
                 "subject": "electron",
             },
-            "confidence": 0.9,
         },
         {
             "id": "ion_density",
@@ -50,7 +49,6 @@ def sample_candidates() -> list[dict]:
             "unit": "m^-3",
             "tags": ["core_profiles"],
             "fields": {"physical_base": "density", "subject": "ion"},
-            "confidence": 0.85,
         },
     ]
 
@@ -290,7 +288,6 @@ class TestClaimNamesForValidation:
                     "process": None,
                     "geometric_base": None,
                     "object": None,
-                    "confidence": 0.9,
                     "source_ids": [],
                 }
             ],
@@ -570,7 +567,6 @@ class TestGetValidatedNames:
                 "tags": None,
                 "links": None,
                 "source_paths": None,
-                "confidence": 0.9,
                 "source_ids": [],
             },
         ]

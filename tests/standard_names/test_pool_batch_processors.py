@@ -107,7 +107,6 @@ def _mock_compose_llm_result(items: list[dict]) -> Any:
             kind="scalar",
             dd_paths=[path],
             grammar_fields={},
-            confidence=0.9,
             reason="test",
         )
         candidates.append(cand)
@@ -200,7 +199,8 @@ _COMPOSE_PATCHES = {
     "imas_codex.standard_names.context.build_domain_vocabulary_preseed": lambda d: (
         f"vocab:{d}" if d else ""
     ),
-    "imas_codex.standard_names.review.themes.extract_reviewer_themes": lambda *a, **k: [],
+    "imas_codex.standard_names.review.themes.extract_reviewer_themes": lambda *a,
+    **k: [],
     "imas_codex.standard_names.graph_ops.persist_composed_batch": lambda *a, **k: (
         len(a[0]) if a else 0
     ),

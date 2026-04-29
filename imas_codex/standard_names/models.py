@@ -26,7 +26,6 @@ class StandardNameCandidate(BaseModel):
     grammar_fields: dict[str, str] = Field(
         default_factory=dict, description="Grammar fields used"
     )
-    confidence: float = Field(ge=0, le=1, description="Naming confidence")
     reason: str = Field(description="Brief justification")
 
 
@@ -82,7 +81,6 @@ class StandardNameProvenance(BaseModel):
     source: str = Field(description="Source type: dd or signal")
     source_id: str = Field(description="Source entity ID")
     ids_name: str | None = Field(default=None, description="IDS name (for DD source)")
-    confidence: float = Field(ge=0, le=1, description="Generation confidence")
     generated_by: str = Field(
         default="imas-codex", description="Tool that generated this"
     )
@@ -154,7 +152,6 @@ class StandardNameReviewItem(BaseModel):
     source_id: str = Field(description="Source entity ID being reviewed")
     standard_name: str = Field(description="The standard name under review")
     verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
-    confidence: float = Field(ge=0, le=1, description="Review confidence")
     reason: str = Field(description="Justification for the verdict")
     revised_name: str | None = Field(
         default=None, description="Suggested revision if verdict is revise"

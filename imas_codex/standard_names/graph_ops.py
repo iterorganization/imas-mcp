@@ -18,6 +18,7 @@ from typing import Any
 
 from imas_codex.discovery.base.claims import retry_on_deadlock
 from imas_codex.graph.client import GraphClient
+from imas_codex.standard_names.defaults import DEFAULT_MIN_SCORE
 
 logger = logging.getLogger(__name__)
 
@@ -898,7 +899,7 @@ def write_standard_names(
     Optional fields: ``unit``, ``description``,
     ``documentation``, ``kind``, ``links``, ``source_paths``,
     ``validity_domain``, ``constraints``, ``model``, ``pipeline_status``,
-    ``generated_at``, ``confidence``,
+    ``generated_at``,
     ``review_tier``,
     ``vocab_gap_detail``, ``validation_issues``,
     ``validation_layer_summary``, ``cocos_transformation_type``, ``dd_version``,
@@ -997,7 +998,6 @@ def write_standard_names(
                 sn.model = coalesce(b.model, sn.model),
                 sn.pipeline_status = coalesce(b.pipeline_status, sn.pipeline_status),
                 sn.generated_at = coalesce(b.generated_at, sn.generated_at),
-                sn.confidence = coalesce(b.confidence, sn.confidence),
                 sn.review_tier = coalesce(b.review_tier, sn.review_tier),
                 sn.vocab_gap_detail = coalesce(b.vocab_gap_detail, sn.vocab_gap_detail),
                 sn.validation_issues = coalesce(b.validation_issues, sn.validation_issues),
@@ -1055,7 +1055,6 @@ def write_standard_names(
                     "pipeline_status": n.get("pipeline_status")
                     or n.get("review_status"),
                     "generated_at": n.get("generated_at"),
-                    "confidence": n.get("confidence"),
                     "review_tier": n.get("review_tier"),
                     "vocab_gap_detail": _ensure_json(n.get("vocab_gap_detail")),
                     "validation_issues": n.get("validation_issues") or None,
@@ -2250,7 +2249,6 @@ def claim_names_for_validation(limit: int = 50) -> tuple[str, list[dict[str, Any
                    sn.unit AS unit, sn.links AS links,
                    sn.source_paths AS source_paths,
                    sn.object AS object,
-                   sn.confidence AS confidence,
                    sn.physics_domain AS physics_domain,
                    collect(DISTINCT src.id) AS source_ids
             """,
@@ -2431,7 +2429,7 @@ def get_validated_names(
             RETURN sn.id AS id, sn.description AS description,
                    sn.documentation AS documentation, sn.kind AS kind,
                    sn.unit AS unit, sn.links AS links,
-                   sn.source_paths AS source_paths, sn.confidence AS confidence,
+                   sn.source_paths AS source_paths,
                    source_ids
             LIMIT $limit
             """,
@@ -2464,7 +2462,6 @@ def mark_names_consolidated(name_ids: list[str]) -> int:
 
 def get_validated_standard_names(
     ids_filter: str | None = None,
-    confidence_min: float = 0.0,
     pipeline_status: str = "drafted",
 ) -> list[dict[str, Any]]:
     """Read validated StandardName nodes and their provenance.
@@ -2480,9 +2477,6 @@ def get_validated_standard_names(
         Restrict to names derived from a specific IDS (matched via
         ``IMASNode -[:HAS_STANDARD_NAME]-> StandardName`` and
         ``IMASNode -[:IN_IDS]-> IDS``).
-    confidence_min:
-        Minimum confidence threshold.  Nodes without a ``confidence``
-        property are treated as 1.0 (grammar-validated).
     pipeline_status:
         Filter by ``pipeline_status`` property (default ``"drafted"``).
 
@@ -2490,11 +2484,10 @@ def get_validated_standard_names(
     -------
     list of dicts with keys: name, description, documentation, kind,
     unit, links, dd_paths, constraints, validity_domain,
-    confidence, model, source, source_path, ids_name, source_ids_names.
+    model, source, source_path, ids_name, source_ids_names.
     """
     with GraphClient() as gc:
         params: dict[str, Any] = {
-            "confidence_min": confidence_min,
             "pipeline_status": pipeline_status,
         }
 
@@ -2502,7 +2495,6 @@ def get_validated_standard_names(
         cypher = """
             MATCH (sn:StandardName)
             WHERE sn.pipeline_status = $pipeline_status
-            AND coalesce(sn.confidence, 1.0) >= $confidence_min
             AND sn.validation_status = 'valid'
             OPTIONAL MATCH (src)-[:HAS_STANDARD_NAME]->(sn)
             OPTIONAL MATCH (src)-[:IN_IDS]->(ids:IDS)
@@ -2532,7 +2524,6 @@ def get_validated_standard_names(
                    sn.source_paths AS source_paths,
                    sn.constraints AS constraints,
                    sn.validity_domain AS validity_domain,
-                   coalesce(sn.confidence, 1.0) AS confidence,
                    sn.model AS model,
                    sn.source_types AS source_types,
                    first_source AS source_path,
@@ -2546,10 +2537,9 @@ def get_validated_standard_names(
 
         results = gc.query(cypher, **params)
         logger.info(
-            "Read %d validated standard names (ids_filter=%s, confidence_min=%.2f, pipeline_status=%s)",
+            "Read %d validated standard names (ids_filter=%s, pipeline_status=%s)",
             len(results),
             ids_filter,
-            confidence_min,
             pipeline_status,
         )
         return list(results)
@@ -2570,8 +2560,8 @@ def reset_standard_names(
 ) -> int:
     """Reset StandardName nodes to allow re-processing.
 
-    Clears transient fields (embedding, embedded_at, model, generated_at,
-    confidence) and removes HAS_STANDARD_NAME, HAS_UNIT, and
+    Clears transient fields (embedding, embedded_at, model, generated_at)
+    and removes HAS_STANDARD_NAME, HAS_UNIT, and
     HAS_COCOS relationships for matching nodes.
 
     Parameters
@@ -2707,7 +2697,7 @@ def reset_standard_names(
         if to_status is not None:
             set_clause = (
                 "sn.embedding = null, sn.embedded_at = null, sn.model = null, "
-                "sn.generated_at = null, sn.confidence = null, "
+                "sn.generated_at = null, "
                 "sn.cocos_transformation_type = null, sn.cocos = null, sn.dd_version = null, "
                 "sn.pipeline_status = $to_status"
             )
@@ -2715,7 +2705,7 @@ def reset_standard_names(
         else:
             set_clause = (
                 "sn.embedding = null, sn.embedded_at = null, sn.model = null, "
-                "sn.generated_at = null, sn.confidence = null, "
+                "sn.generated_at = null, "
                 "sn.cocos_transformation_type = null, sn.cocos = null, sn.dd_version = null"
             )
 
@@ -4720,7 +4710,6 @@ def update_sn_per_phase_costs(run_id: str) -> int:
 # =============================================================================
 
 _DEFAULT_SEED_EXPAND_BATCH = 15
-_DEFAULT_REGEN_MIN_SCORE = 0.5
 
 
 def _seed_and_expand_sn(
@@ -5066,16 +5055,11 @@ def claim_enrich_seed_and_expand(
     """Claim StandardName nodes that lack documentation enrichment.
 
     Eligibility: ``validation_status = 'valid'`` AND ``enriched_at IS NULL``.
-    An optional *min_score_threshold* skips names whose ``confidence``
-    is below the threshold (they will likely be regenerated).
 
     Returns claimed items as dicts.
     """
     where = "sn.validation_status = 'valid' AND sn.enriched_at IS NULL"
     params: dict[str, Any] = {}
-    if min_score_threshold > 0:
-        where += " AND coalesce(sn.confidence, 1.0) >= $min_score_threshold"
-        params["min_score_threshold"] = min_score_threshold
 
     return _seed_and_expand_sn(
         eligibility_where=where,
@@ -5092,7 +5076,7 @@ def claim_enrich_seed_and_expand(
 @retry_on_deadlock()
 def claim_review_names_seed_and_expand(
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
-    min_score: float = _DEFAULT_REGEN_MIN_SCORE,
+    min_score: float = DEFAULT_MIN_SCORE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:
     """Claim StandardName nodes for name-axis review scoring.
@@ -5127,7 +5111,7 @@ def claim_review_names_seed_and_expand(
 @retry_on_deadlock()
 def claim_review_docs_seed_and_expand(
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
-    min_score: float = _DEFAULT_REGEN_MIN_SCORE,
+    min_score: float = DEFAULT_MIN_SCORE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:
     """Claim StandardName nodes for docs-axis review scoring.
@@ -5163,7 +5147,7 @@ def claim_review_docs_seed_and_expand(
 
 @retry_on_deadlock()
 def claim_regen_seed_and_expand(
-    min_score: float = _DEFAULT_REGEN_MIN_SCORE,
+    min_score: float = DEFAULT_MIN_SCORE,
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:

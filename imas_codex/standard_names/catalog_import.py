@@ -152,7 +152,6 @@ _GRAPH_ONLY_PRESERVE = frozenset(
         "embedded_at",
         "model",
         "generated_at",
-        "confidence",
         "source_types",
         "source_paths",
         "pipeline_status",

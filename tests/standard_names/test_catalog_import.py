@@ -81,11 +81,13 @@ class TestErrorHandling:
         assert len(result.errors) == 1
         assert "bad.yaml" in result.errors[0]
 
-    def test_handles_non_mapping_yaml(self, tmp_path: Path) -> None:
-        """Should report errors for YAML files that aren't dicts."""
+    def test_handles_non_list_yaml(self, tmp_path: Path) -> None:
+        """Should report errors for per-domain YAML files that aren't lists."""
         d = tmp_path / "catalog"
-        d.mkdir()
-        (d / "list.yaml").write_text(yaml.safe_dump(["a", "b", "c"]))
+        sn_dir = d / "standard_names"
+        sn_dir.mkdir(parents=True)
+        # Per-domain layout expects a list; a scalar is invalid
+        (sn_dir / "core.yaml").write_text(yaml.safe_dump(42))
 
         from imas_codex.standard_names.catalog_import import run_import
 
@@ -93,7 +95,7 @@ class TestErrorHandling:
 
         assert result.imported == 0
         assert len(result.errors) == 1
-        assert "not a YAML mapping" in result.errors[0]
+        assert "expected a YAML list" in result.errors[0]
 
     def test_handles_incomplete_entry(self, tmp_path: Path) -> None:
         """Should report errors for entries missing required fields."""

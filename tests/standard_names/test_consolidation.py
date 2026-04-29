@@ -24,7 +24,6 @@ def _candidate(
     unit: str | None = "eV",
     kind: str = "scalar",
     source_types: list[str] | None = None,
-    confidence: float = 0.9,
     tags: list[str] | None = None,
     source_paths: list[str] | None = None,
     documentation: str = "",
@@ -38,7 +37,6 @@ def _candidate(
         "source_types": source_types or ["dd"],
         "unit": unit,
         "kind": kind,
-        "confidence": confidence,
         "tags": tags or [],
         "source_paths": source_paths or [],
         "documentation": documentation,
@@ -286,13 +284,22 @@ class TestDuplicateMerging:
         ]
 
     def test_highest_confidence_kept(self):
+        # Prior confidence-based tiebreaker replaced by documentation-length ordering.
+        # Two candidates for same name → longest documentation wins.
         candidates = [
-            _candidate("electron_temperature", "core/te", confidence=0.8),
-            _candidate("electron_temperature", "core/te2", confidence=0.95),
+            _candidate("electron_temperature", "core/te", documentation="Short."),
+            _candidate(
+                "electron_temperature",
+                "core/te2",
+                documentation="Longer documentation wins the tiebreak.",
+            ),
         ]
         result = consolidate_candidates(candidates)
 
-        assert result.approved[0]["confidence"] == 0.95
+        assert (
+            result.approved[0]["documentation"]
+            == "Longer documentation wins the tiebreak."
+        )
 
     def test_longest_documentation_kept(self):
         candidates = [
@@ -515,11 +522,10 @@ class TestMergeDuplicates:
     """Direct tests for the _merge_duplicates helper."""
 
     def test_single_item_returned_as_is(self):
-        group = [_candidate("te", "core/te", confidence=0.9)]
+        group = [_candidate("te", "core/te")]
         merged = _merge_duplicates(group)
 
         assert merged["id"] == "te"
-        assert merged["confidence"] == 0.9
 
     def test_paths_include_source_ids(self):
         group = [

@@ -490,8 +490,7 @@ INSTRUMENT HANDLING ban. Extract the most general physical concept.
 4. `physical_base` is **open vocabulary** — prefer registered tokens; novel bases are auto-tracked for ISN review. All other segments remain closed.
 5. **Reuse existing standard names** — use `attachments` to link a DD path to an existing name rather than regenerating
 6. Skip paths that are: array indices, metadata/timestamps, structural containers, coordinate grids
-7. Set confidence < 0.5 when the mapping is ambiguous or multiple names could apply
-8. **Do NOT output a `unit` field** — unit is injected at persistence time
+7. **Do NOT output a `unit` field** — unit is injected at persistence time
 9. When a **Previous name** is shown, reuse if good; replace if clearly better; strongly prefer human-accepted names
 
 ## Output Format
@@ -515,7 +514,6 @@ Each candidate MUST include:
 - `links`: array of 4-8 related standard names, each prefixed with `name:` (e.g., `"name:electron_temperature"`)
 - `dd_paths`: array of IMAS DD paths this name maps to (include the source_id at minimum)
 - `grammar_fields`: dict of grammar fields used (only non-null fields)
-- `confidence`: float 0.0-1.0
 - `reason`: brief justification
 - `validity_domain`: physical region where meaningful or `null`
 - `constraints`: array of physical constraints (e.g., `["T_e > 0"]`)

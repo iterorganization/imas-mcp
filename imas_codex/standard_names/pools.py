@@ -69,7 +69,7 @@ POOL_NAMES: tuple[str, ...] = tuple(POOL_WEIGHTS.keys())
 # is temporarily excluded from the active-pools admission denominator.
 # This prevents fairness deadlocks when a pool has non-zero pending_count
 # (as reported by the display query) but its claim function consistently
-# returns nothing (different eligibility criteria, e.g. confidence gate).
+# returns nothing (different eligibility criteria between display and claim).
 # Resets to zero on any successful claim.
 _EMPTY_CLAIM_EXCLUDE_THRESHOLD: int = 3
 
@@ -115,7 +115,7 @@ class PoolHealth:
     a pool from the active-pools denominator when it has pending work
     recorded in the graph but consistently returns nothing from claim —
     which happens when the display's pending query and the claim query
-    have different eligibility criteria (e.g. confidence threshold).
+    have different eligibility criteria.
     The counter resets on any successful claim.
 
     Self-healing re-admission: when a pool has been excluded due to
@@ -404,10 +404,10 @@ async def run_pools(
         # not been repeatedly admitted but returned nothing from claim.
         # ``consecutive_empty_claims`` tracks how many times in a row a pool
         # was admitted but claim returned None — this happens when the display
-        # pending query and the claim eligibility query have different criteria
-        # (e.g. confidence threshold).  Excluding such pools from the denominator
-        # prevents a fairness deadlock where productive pools can never be
-        # admitted because pools with phantom pending counts occupy weight share.
+        # pending query and the claim eligibility query have different criteria.
+        # Excluding such pools from the denominator prevents a fairness deadlock
+        # where productive pools can never be admitted because pools with phantom
+        # pending counts occupy weight share.
         # The counter resets on any successful claim, so pools re-enter when
         # conditions change (e.g. after a stale-claim timeout expires).
         #

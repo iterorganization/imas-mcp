@@ -24,6 +24,7 @@ import random
 from functools import cache as _cache
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.standard_names.defaults import DEFAULT_ESCALATION_MODEL
 from imas_codex.standard_names.source_paths import (
     encode_source_path,
     strip_dd_prefix,
@@ -1257,7 +1258,7 @@ def _update_sources_after_vocab_gap(
 
 
 # Opus model for L7 borderline revision pass
-_L7_REVISION_MODEL = "openrouter/anthropic/claude-opus-4.6"
+_L7_REVISION_MODEL = DEFAULT_ESCALATION_MODEL
 _L7_MIN_REMAINING_BUDGET = 0.50  # Skip L7 if remaining budget < this
 
 
@@ -1317,7 +1318,7 @@ async def _opus_revise_candidate(
     reviewer_themes: list[str],
     acall_fn,
 ) -> tuple[str | None, float, int, int]:
-    """L7: Revision pass for low-confidence candidates using Opus model.
+    """L7: Revision pass for candidates using Opus model.
 
     Returns ``(revised_name_or_None, cost_usd, tokens_in, tokens_out)``.
     The cost is always returned so callers can account for it even when
@@ -1327,16 +1328,14 @@ async def _opus_revise_candidate(
 
     class OpusRevisionResponse(BaseModel):
         revised_name: str = Field(description="Improved standard name")
-        confidence: float = Field(ge=0, le=1, description="Confidence in the revision")
         explanation: str = Field(description="Why this revision is better")
 
     name = candidate.get("id", "")
     reason = candidate.get("reason", "")
     description = candidate.get("description", "")
-    original_confidence = candidate.get("confidence", 0.0)
 
     prompt_parts = [
-        f"A standard name was generated with LOW confidence ({original_confidence:.2f}):",
+        "A standard name candidate requires revision:",
         f"  Name: `{name}`",
         f"  Description: {description}",
         f"  Reason: {reason}",
@@ -1359,9 +1358,7 @@ async def _opus_revise_candidate(
             prompt_parts.append(f"  - {theme}")
         prompt_parts.append("")
 
-    prompt_parts.append(
-        "Return a revised name with improved confidence. Only revise if you can do CLEARLY better."
-    )
+    prompt_parts.append("Return a revised name only if you can do CLEARLY better.")
 
     try:
         llm_out = await acall_fn(
@@ -1373,7 +1370,7 @@ async def _opus_revise_candidate(
         result, _cost, _tokens = llm_out
         _ti = getattr(llm_out, "input_tokens", 0) or 0
         _to = getattr(llm_out, "output_tokens", 0) or 0
-        if result and result.confidence > original_confidence:
+        if result:
             return result.revised_name, float(_cost or 0.0), _ti, _to
         return None, float(_cost or 0.0), _ti, _to
     except Exception:
@@ -1731,9 +1728,6 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                                 "primary_text": _cand.standard_name,
                                 "primary_text_style": "white",
                                 "description": _desc,
-                                "score_value": float(_cand.confidence)
-                                if _cand.confidence is not None
-                                else None,
                             }
                         )
                     if not _items:
@@ -1941,7 +1935,6 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         for p in (c.dd_paths or [])
                     ],
                     "fields": c.grammar_fields,
-                    "confidence": c.confidence,
                     "reason": c.reason,
                     "unit": unit,
                     "physics_domain": physics_domain,
@@ -2205,99 +2198,6 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
 
     state.composed = composed
     state.compose_stats.errors = errors
-
-    # --- L7: Borderline-confidence two-pass (Opus revision) ---
-    remaining_budget = (state.cost_limit or float("inf")) - state.total_cost
-    low_confidence = [
-        c
-        for c in composed
-        if c.get("confidence", 1.0) < 0.7 and not c.get("_grammar_retry_exhausted")
-    ][:5]  # Cap at 5 per batch to respect cost budget
-
-    if low_confidence and remaining_budget >= _L7_MIN_REMAINING_BUDGET:
-        wlog.info(
-            "L7: Attempting Opus revision for %d low-confidence candidates",
-            len(low_confidence),
-        )
-        # Acquire L7 lease for the revision pass
-        l7_lease = None
-        if state.budget_manager:
-            l7_estimated = len(low_confidence) * 0.10
-            l7_lease = state.budget_manager.reserve(
-                l7_estimated,
-                phase=getattr(state, "budget_phase_tag", "") or "generate",
-            )
-        try:
-            for cand in low_confidence:
-                if state.should_stop():
-                    break
-                state.opus_revisions_attempted += 1
-                try:
-                    revised, l7_cost, l7_ti, l7_to = await _opus_revise_candidate(
-                        cand,
-                        domain_vocab,
-                        reviewer_themes,
-                        acall_llm_structured,
-                    )
-                    # Track L7 cost unconditionally so it appears in compose_cost.
-                    state.compose_stats.cost += l7_cost
-                    # Charge to graph via lease
-                    if l7_lease and l7_cost > 0:
-                        _l7_event = LLMCostEvent(
-                            model=_L7_REVISION_MODEL,
-                            tokens_in=l7_ti,
-                            tokens_out=l7_to,
-                            sn_ids=(cand.get("id", ""),),
-                            batch_id=f"l7-{cand.get('id', '')}",
-                            phase=(
-                                getattr(state, "budget_phase_tag", "") or "generate"
-                            ),
-                            service="standard-names",
-                        )
-                        l7_lease.charge_event(l7_cost, _l7_event)
-                        if state.loop_stats is not None:
-                            state.loop_stats.cost += l7_cost
-                            state.loop_stats.stream_queue.add(
-                                [
-                                    {
-                                        "primary_text": f"sn={cand.get('id', '')}",
-                                        "primary_text_style": "white",
-                                        "description": "L7-revision",
-                                    }
-                                ]
-                            )
-                    if revised and revised != cand.get("id"):
-                        # Verify revised name parses
-                        from imas_standard_names.grammar import (
-                            compose_standard_name as _compose_sn,
-                            parse_standard_name as _parse_sn,
-                        )
-
-                        parsed = _parse_sn(revised)
-                        normalized = _compose_sn(parsed)
-                        # Accept only if self-reported improvement
-                        wlog.info(
-                            "L7: Opus revision accepted: %r → %r",
-                            cand["id"],
-                            normalized,
-                        )
-                        cand["id"] = normalized
-                        state.opus_revisions_accepted += 1
-                except Exception:
-                    wlog.debug(
-                        "L7: Opus revision failed for %r",
-                        cand.get("id"),
-                        exc_info=True,
-                    )
-        finally:
-            if l7_lease:
-                l7_lease.release_unused()
-    elif low_confidence and remaining_budget < _L7_MIN_REMAINING_BUDGET:
-        wlog.info(
-            "L7: Skipped — remaining budget $%.2f < $%.2f threshold",
-            remaining_budget,
-            _L7_MIN_REMAINING_BUDGET,
-        )
 
     attached = state.stats.get("attachments", 0)
     wlog.info(
@@ -3175,7 +3075,6 @@ async def _compose_batch_core(
                     encode_source_path("dd", p) for p in (c.dd_paths or [])
                 ],
                 "fields": c.grammar_fields,
-                "confidence": c.confidence,
                 "reason": c.reason,
                 "unit": unit,
                 "physics_domain": physics_domain,
