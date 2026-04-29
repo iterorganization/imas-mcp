@@ -6350,10 +6350,11 @@ def claim_generate_docs_seed_and_expand(
         batch_size=batch_size,
         timeout_seconds=timeout_seconds,
         extra_return_fields=(
-            ", sn.description AS description"
-            ", sn.kind AS kind"
+            # description, kind, physics_domain already in base readback —
+            # listing them again would raise Neo4j 42N38 (duplicate return
+            # item name).  Only add fields not present in _claim_sn_atomic's
+            # fixed RETURN list.
             ", sn.tags AS tags"
-            ", sn.physics_domain AS physics_domain"
             ", sn.reviewer_score_name AS reviewer_score_name"
             ", sn.reviewer_comments_name AS reviewer_comments_name"
             ", sn.reviewer_verdict_name AS reviewer_verdict_name"

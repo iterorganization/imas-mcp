@@ -593,6 +593,10 @@ def _build_pool_specs(
     stop_event: asyncio.Event,
     *,
     min_score: float | None = None,
+    rotation_cap: int | None = None,
+    escalation_model: str | None = None,
+    review_name_backlog_cap: int | None = None,
+    review_docs_backlog_cap: int | None = None,
 ) -> list[Any]:
     """Construct 6 :class:`PoolSpec` objects wiring claims → batch processors.
 
@@ -640,6 +644,16 @@ def _build_pool_specs(
     )
 
     regen_score = min_score if min_score is not None else DEFAULT_MIN_SCORE
+    _review_name_cap = (
+        review_name_backlog_cap
+        if review_name_backlog_cap is not None
+        else REVIEW_NAME_BACKLOG_CAP
+    )
+    _review_docs_cap = (
+        review_docs_backlog_cap
+        if review_docs_backlog_cap is not None
+        else REVIEW_DOCS_BACKLOG_CAP
+    )
 
     # ── Adapter factories ─────────────────────────────────────────────
 
@@ -778,10 +792,10 @@ def _build_pool_specs(
     specs_by_name = {s.name: s for s in specs}
 
     throttle_rules: list[tuple[str, str, int]] = [
-        ("generate_name", "review_name", REVIEW_NAME_BACKLOG_CAP),
-        ("refine_name", "review_name", REVIEW_NAME_BACKLOG_CAP),
-        ("generate_docs", "review_docs", REVIEW_DOCS_BACKLOG_CAP),
-        ("refine_docs", "review_docs", REVIEW_DOCS_BACKLOG_CAP),
+        ("generate_name", "review_name", _review_name_cap),
+        ("refine_name", "review_name", _review_name_cap),
+        ("generate_docs", "review_docs", _review_docs_cap),
+        ("refine_docs", "review_docs", _review_docs_cap),
     ]
 
     for upstream, downstream, cap in throttle_rules:
@@ -816,6 +830,10 @@ async def run_sn_pools(
     cost_limit: float,
     *,
     min_score: float | None = None,
+    rotation_cap: int | None = None,
+    escalation_model: str | None = None,
+    review_name_backlog_cap: int | None = None,
+    review_docs_backlog_cap: int | None = None,
     source: str = "dd",
     only_domain: str | None = None,
     stop_event: asyncio.Event | None = None,
@@ -848,6 +866,17 @@ async def run_sn_pools(
         min_score: Review threshold.  Names with
             ``reviewer_score_name < min_score`` are routed to the
             refine_name pool; those above are eligible for review.
+            Defaults to ``DEFAULT_MIN_SCORE`` when *None*.
+        rotation_cap: Maximum REFINED_FROM chain depth before exhaustion.
+            Defaults to ``DEFAULT_REFINE_ROTATIONS`` when *None*.
+        escalation_model: Higher-capability model for final refine attempt.
+            Defaults to ``DEFAULT_ESCALATION_MODEL`` when *None*.
+        review_name_backlog_cap: Max pending review_name items before
+            generate_name / refine_name pause.  Defaults to
+            ``REVIEW_NAME_BACKLOG_CAP`` when *None*.
+        review_docs_backlog_cap: Max pending review_docs items before
+            generate_docs / refine_docs pause.  Defaults to
+            ``REVIEW_DOCS_BACKLOG_CAP`` when *None*.
         source: ``"dd"`` or ``"signals"`` — scopes reconciliation.
         only_domain: When set, restricts the *extract_phase* seeding of
             ``StandardNameSource`` nodes to this physics domain.  The
@@ -876,7 +905,7 @@ async def run_sn_pools(
     if stop_event is None:
         stop_event = asyncio.Event()
 
-    # Shared BudgetManager — all five pools draw from the same pot.
+    # Shared BudgetManager — all six pools draw from the same pot.
     shared_mgr = BudgetManager(cost_limit, run_id=run_id)
     await shared_mgr.start()
 
@@ -910,7 +939,15 @@ async def run_sn_pools(
         )
 
         # ── Build pool specs ──────────────────────────────────────
-        specs = _build_pool_specs(shared_mgr, stop_event, min_score=min_score)
+        specs = _build_pool_specs(
+            shared_mgr,
+            stop_event,
+            min_score=min_score,
+            rotation_cap=rotation_cap,
+            escalation_model=escalation_model,
+            review_name_backlog_cap=review_name_backlog_cap,
+            review_docs_backlog_cap=review_docs_backlog_cap,
+        )
 
         # ── Wire pool health into display state ───────────────────
         if loop_state is not None and hasattr(loop_state, "set_pool_health"):

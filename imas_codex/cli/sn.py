@@ -11,7 +11,13 @@ import click
 from rich.console import Console
 
 from imas_codex.core.physics_domain import PhysicsDomain
-from imas_codex.standard_names.defaults import DEFAULT_MIN_SCORE
+from imas_codex.standard_names.defaults import (
+    DEFAULT_ESCALATION_MODEL,
+    DEFAULT_MIN_SCORE,
+    DEFAULT_REFINE_ROTATIONS,
+    REVIEW_DOCS_BACKLOG_CAP,
+    REVIEW_NAME_BACKLOG_CAP,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -48,14 +54,15 @@ def _run_sn_loop_cmd(
     verbose: bool = False,
     turn_number: int = 1,
     min_score: float | None = None,
+    rotation_cap: int | None = None,
+    escalation_model: str | None = None,
+    review_name_backlog_cap: int | None = None,
+    review_docs_backlog_cap: int | None = None,
     skip_generate: bool = False,
-    skip_enrich: bool = False,
     skip_review: bool = False,
-    skip_regen: bool = False,
     source: str = "dd",
     override_edits: list[str] | None = None,
     only: str | None = None,
-    target: str = "full",
 ) -> None:
     """Execute the DD completion loop with Rich progress display.
 
@@ -136,12 +143,9 @@ def _run_sn_loop_cmd(
             DataDrivenProgressDisplay,
         )
 
-        target_label = (target or "full").lower()
         loop_state = SNPoolState()
 
         # Per-group pending counters from the graph (row-level badges).
-        # Cypher mirrors enrich_workers.claim_names_for_enrichment() and
-        # review/pipeline.py docs-content gate (≥50 chars).
         from imas_codex.graph.client import GraphClient as _GC
 
         def _count_pending() -> dict[str, int]:
@@ -359,12 +363,11 @@ def _run_sn_loop_cmd(
             cost_limit=cost_limit,
             stages=build_sn_pool_stages(
                 skip_generate=skip_generate,
-                skip_enrich=skip_enrich,
                 skip_review=skip_review,
             ),
             console=cli_console,
-            title_suffix="Standard Name",
-            mode_label=(f"target={target_label}" if target_label != "full" else None),
+            title_suffix="Run",
+            mode_label=None,
             accumulated_cost_fn=_cost_fn,
             pending_fn=_pending_fn,
         )
@@ -502,6 +505,10 @@ def _run_sn_loop_cmd(
         summary = await run_sn_pools(
             cost_limit=cost_limit,
             min_score=min_score,
+            rotation_cap=rotation_cap,
+            escalation_model=escalation_model,
+            review_name_backlog_cap=review_name_backlog_cap,
+            review_docs_backlog_cap=review_docs_backlog_cap,
             source=source,
             only_domain=only_domain,
             stop_event=stop_event,
@@ -814,80 +821,62 @@ def _check_pipeline_clear_gate() -> None:
     default=DEFAULT_MIN_SCORE,
     show_default=True,
     help=(
-        "Reviewer-score threshold for regen phase. Names with "
-        "``reviewer_score_name < min_score`` (that haven't already been "
-        "regenerated) are re-composed with prior reviewer critique "
-        "injected into the compose prompt. Pass ``--skip-regen`` (or "
-        "``--min-score 0``) to disable the regen phase entirely."
+        "Reviewer-score threshold for the refine pools.  Names / docs with a "
+        "score below this value are routed to refine_name / refine_docs.  "
+        "Sourced from ``defaults.DEFAULT_MIN_SCORE`` (0.75) when not provided."
     ),
 )
 @click.option(
-    "--skip-enrich",
-    is_flag=True,
-    default=False,
-    help="Skip the enrich phase (documentation generation).",
+    "--rotation-cap",
+    "rotation_cap",
+    type=int,
+    default=DEFAULT_REFINE_ROTATIONS,
+    show_default=True,
+    help=(
+        "Maximum REFINED_FROM / DOCS_REVISION_OF chain depth before a name "
+        "is marked exhausted.  Sourced from "
+        "``defaults.DEFAULT_REFINE_ROTATIONS`` (3) when not provided."
+    ),
+)
+@click.option(
+    "--escalation-model",
+    "escalation_model",
+    type=str,
+    default=DEFAULT_ESCALATION_MODEL,
+    show_default=True,
+    help=(
+        "Higher-capability model used on the final refine attempt "
+        "(chain_length == rotation_cap - 1).  Sourced from "
+        "``defaults.DEFAULT_ESCALATION_MODEL`` when not provided."
+    ),
+)
+@click.option(
+    "--review-name-backlog-cap",
+    "review_name_backlog_cap",
+    type=int,
+    default=REVIEW_NAME_BACKLOG_CAP,
+    show_default=True,
+    help=(
+        "Maximum pending review_name items before generate_name / refine_name "
+        "pause.  Sourced from ``defaults.REVIEW_NAME_BACKLOG_CAP`` (200)."
+    ),
+)
+@click.option(
+    "--review-docs-backlog-cap",
+    "review_docs_backlog_cap",
+    type=int,
+    default=REVIEW_DOCS_BACKLOG_CAP,
+    show_default=True,
+    help=(
+        "Maximum pending review_docs items before generate_docs / refine_docs "
+        "pause.  Sourced from ``defaults.REVIEW_DOCS_BACKLOG_CAP`` (200)."
+    ),
 )
 @click.option(
     "--skip-review",
     is_flag=True,
     default=False,
     help="Skip the review phase (6-dimensional scoring).",
-)
-@click.option(
-    "--skip-regen",
-    is_flag=True,
-    default=False,
-    help=(
-        "Skip the regen phase even when ``--min-score`` is set. "
-        "Useful for A/B testing extract → compose → enrich → review "
-        "in isolation from regeneration."
-    ),
-)
-@click.option(
-    "--target",
-    type=click.Choice(["names", "docs", "full"], case_sensitive=False),
-    default="full",
-    show_default=True,
-    help=(
-        "Which generation pass to run. 'full' (default) runs the full "
-        "pipeline (extract→compose→enrich→review→regen). 'names' runs "
-        "the name-only compose pass (grammar + unit only, wide batches: "
-        "group paths by physics_domain × unit with a lean user prompt) "
-        "and skips enrichment. 'docs' routes through the five-phase "
-        "enrich pipeline to fill description/documentation on already-"
-        "named entries (EXTRACT→CONTEXTUALISE→DOCUMENT→VALIDATE→PERSIST)."
-    ),
-)
-@click.option(
-    "--name-only-batch-size",
-    type=int,
-    default=None,
-    help=(
-        "Max items per name-only batch. Defaults to "
-        "[tool.imas-codex.sn-generate].name-only-batch-size in pyproject.toml "
-        "(50). Only meaningful for --target=names."
-    ),
-)
-@click.option(
-    "--docs-status",
-    "docs_status_filter",
-    default="named",
-    show_default=True,
-    help=(
-        "Review status(es) to enrich from when --target=docs "
-        "(comma-separated or repeated). Ignored for other targets."
-    ),
-)
-@click.option(
-    "--docs-batch-size",
-    type=int,
-    default=None,
-    help=(
-        "LLM batch size for --target=docs. Defaults to "
-        "[tool.imas-codex.sn-generate].docs-batch-size in pyproject.toml "
-        "(12), then [tool.imas-codex.sn-enrich].batch-size as a fallback. "
-        "Ignored for other targets."
-    ),
 )
 @click.option(
     "--single-pass",
@@ -983,14 +972,12 @@ def sn_run(
     retry_skipped: bool,
     retry_vocab_gap: bool,
     turn_number: int,
-    min_score: float | None,
-    skip_enrich: bool,
+    min_score: float,
+    rotation_cap: int,
+    escalation_model: str,
+    review_name_backlog_cap: int,
+    review_docs_backlog_cap: int,
     skip_review: bool,
-    skip_regen: bool,
-    target: str,
-    name_only_batch_size: int | None,
-    docs_status_filter: str,
-    docs_batch_size: int | None,
     single_pass: bool,
     only_phase: str | None,
     override_edits: tuple[str, ...],
@@ -1002,12 +989,12 @@ def sn_run(
     \b
     Scope routing:
       - With --paths: single-pass pipeline (explicit paths too narrow for looping)
-      - Without --paths: domain-iterating completion loop (default)
+      - Without --paths: all-pool completion loop (default, all 6 pools concurrent)
       - With --single-pass: always single-pass pipeline
 
     \b
     Examples:
-      imas-codex sn run -c 50                                 # loop over all domains
+      imas-codex sn run -c 50                                 # all 6 pools, full run
       imas-codex sn run --physics-domain equilibrium -c 5     # loop, one domain
       imas-codex sn run --physics-domain magnetics --dry-run
       imas-codex sn run --source signals --facility tcv --physics-domain magnetics
@@ -1015,10 +1002,10 @@ def sn_run(
       imas-codex sn run --single-pass --paths equilibrium/time_slice/profiles_1d/psi -c 1  # single compose pass on explicit paths
       imas-codex sn run --reset-to drafted --reset-only
       imas-codex sn run --reset-to drafted --below-score 0.6 --reset-only
-      imas-codex sn run --turn-number 2 --min-score 0.6 -c 5  # regen reviewed names below 0.6
       imas-codex sn run --only link                   # resolve links only
       imas-codex sn run --override-edits foo --override-edits bar  # bypass protection on foo, bar
       imas-codex sn run --reviewer-profile pilot -c 5  # use cheap Haiku+Opus reviewer
+      imas-codex sn run --min-score 0.85 --rotation-cap 5    # tighter thresholds
     """
     import os as _os
 
@@ -1044,53 +1031,18 @@ def sn_run(
         if overrides.get("skip_generate", False):
             # When --only skips generate, also skip related pre-processing
             force = False
-        if overrides.get("skip_enrich", False):
-            skip_enrich = True
         if overrides.get("skip_review", False):
             skip_review = True
-        if overrides.get("skip_regen", False):
-            skip_regen = True
         # skip_generate handled via the overrides dict below
         skip_generate_from_only = overrides.get("skip_generate", False)
     else:
         skip_generate_from_only = False
-    # --- Resolve --target ---
-    target_normalized = target.lower()
-    # Downstream compose routing uses a derived name_only boolean.
-    name_only = target_normalized == "names"
 
-    # --target=names skips enrich (docs-enrichment) so its budget is not
-    # spent before compose/review_names get their share.  Enrich requires
-    # a prior compose pass to exist; when the user wants only names review
-    # they explicitly do not want docs enrichment to consume budget.
-    if name_only:
-        skip_enrich = True
-
-    # --target=docs routes through the five-phase enrich pipeline.
-    # The rotator and the compose single-pass do not produce docs on
-    # already-named entries; delegate to the enrich engine instead.
-    if target_normalized == "docs":
-        # Parse --physics-domain from domain_filter (single value) into the
-        # list[str] form the enrich pipeline expects.
-        _docs_domains: list[str] | None = [domain_filter] if domain_filter else None
-        _run_sn_docs_generation(
-            domain_list=_docs_domains,
-            status_filter=docs_status_filter,
-            cost_limit=cost_limit,
-            limit=limit,
-            batch_size=docs_batch_size,
-            dry_run=dry_run,
-            force=force,
-            model_override=compose_model,
-            verbose=verbose,
-            quiet=quiet,
-        )
-        return
-
-    # Scope-routing: --paths → single-pass; else → loop (unless --single-pass).
-    # The loop drives the full extract→enrich→review→regen cycle per domain
-    # and persists an SNRun audit node. --physics-domain is forwarded to scope
-    # the loop to a single domain (single-element iteration).
+    # Scope-routing: --paths → single-pass; else → all-pool loop (unless --single-pass).
+    # The loop runs all 6 pools concurrently, sampling globally from the available
+    # pool of StandardNameSource / StandardName nodes (no per-domain looping).
+    # --physics-domain is forwarded to scope the extract_phase seeding only;
+    # the pools themselves are domain-agnostic.
     use_loop = not single_pass and not paths_list and source == "dd"
 
     # Coerce override_edits tuple to list for downstream
@@ -1106,14 +1058,15 @@ def sn_run(
             verbose=verbose,
             turn_number=turn_number,
             min_score=min_score,
+            rotation_cap=rotation_cap,
+            escalation_model=escalation_model,
+            review_name_backlog_cap=review_name_backlog_cap,
+            review_docs_backlog_cap=review_docs_backlog_cap,
             skip_generate=skip_generate_from_only,
-            skip_enrich=skip_enrich,
             skip_review=skip_review,
-            skip_regen=skip_regen,
             source=source,
             override_edits=_override_edits,
             only=only_phase,
-            target=target_normalized,
         )
         return
 
@@ -1363,14 +1316,18 @@ def sn_run(
             logger.debug("Could not create progress display", exc_info=True)
 
     # Resolve name-only batch size from pyproject default when unspecified.
-    if name_only_batch_size is None:
+    # In the Option B architecture, single-pass always runs in full mode
+    # (name_only=False); the name-only pass is no longer exposed via --target.
+    name_only: bool = False
+    name_only_batch_size: int = 50
+    try:
         from imas_codex.settings import _get_section
 
         name_only_batch_size = int(
             _get_section("sn-run").get("name-only-batch-size", 50)
         )
-    if name_only:
-        logger.info("Mode: name-only (batch_size=%d)", name_only_batch_size)
+    except Exception:
+        pass
 
     state = StandardNameBuildState(
         facility=effective_facility,

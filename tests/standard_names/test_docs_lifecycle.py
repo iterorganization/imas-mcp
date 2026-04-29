@@ -38,6 +38,7 @@ from imas_codex.standard_names.defaults import (
     DEFAULT_REFINE_ROTATIONS,
 )
 from imas_codex.standard_names.graph_ops import (
+    claim_generate_docs_seed_and_expand,
     persist_generated_docs,
     persist_refined_docs,
     persist_reviewed_docs,
@@ -520,14 +521,11 @@ def test_docs_escalation_at_final_attempt(_gc, _clean, mock_llm):
 def test_generate_docs_gates_on_name_accepted(_gc, _clean):
     """generate_docs eligibility gates on name_stage='accepted'.
 
-    NOTE: ``claim_generate_docs_seed_and_expand`` has a production bug where
-    ``extra_return_fields`` duplicates ``description`` and ``kind`` that are
-    already in the base readback query, causing a Neo4j "duplicate return item
-    name" GQL error (42N38).  This test therefore exercises the eligibility
-    gate directly via Cypher rather than calling the claim function, and
-    documents the bug for a follow-up fix.
-
-    The gate condition is: ``name_stage = 'accepted' AND docs_stage = 'pending'``.
+    Verifies that ``claim_generate_docs_seed_and_expand`` returns only SNs
+    with ``name_stage='accepted' AND docs_stage='pending'``.  The duplicate-
+    field bug (Neo4j 42N38) that previously blocked this call has been fixed
+    by removing ``description`` and ``kind`` from ``extra_return_fields``
+    (they are already present in the base readback query of ``_claim_sn_atomic``).
     """
     sn_reviewed = _uid("gate_reviewed")
     sn_accepted = _uid("gate_accepted")
@@ -549,26 +547,15 @@ def test_generate_docs_gates_on_name_accepted(_gc, _clean):
     # SN with name_stage='accepted' — ELIGIBLE
     _create_sn_accepted(_gc, sn_accepted)
 
-    # Directly query the eligibility condition (same WHERE clause as
-    # claim_generate_docs_seed_and_expand) without triggering the
-    # duplicate-return-field production bug.
-    rows = _gc.query(
-        """
-        MATCH (sn:StandardName)
-        WHERE sn.name_stage = 'accepted'
-          AND sn.docs_stage = 'pending'
-          AND sn.claimed_at IS NULL
-          AND sn.id IN $ids
-        RETURN sn.id AS id
-        """,
-        ids=[sn_reviewed, sn_accepted],
-    )
-    eligible_ids = {row["id"] for row in rows}
+    # Call the real claim function — this would previously fail with Neo4j
+    # GQL error 42N38 (duplicate return item name).
+    claimed = claim_generate_docs_seed_and_expand(batch_size=10)
+    claimed_ids = {item["id"] for item in claimed}
 
-    assert sn_reviewed not in eligible_ids, (
+    assert sn_reviewed not in claimed_ids, (
         "name_stage='reviewed' SN must not be eligible for generate_docs"
     )
-    assert sn_accepted in eligible_ids, (
+    assert sn_accepted in claimed_ids, (
         "name_stage='accepted' SN must be eligible for generate_docs"
     )
 
