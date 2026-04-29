@@ -99,6 +99,228 @@ def _compute_link_status(links: list[str] | None) -> str | None:
 
 
 # =============================================================================
+# Pipeline cost model — bucket queries & historical CPI
+# =============================================================================
+
+# Module-level TTL cache for pipeline buckets.
+_pipeline_buckets_cache: dict[str, Any] = {
+    "value": None,
+    "ts": 0.0,
+}
+
+# Module-level cache for historical CPI (once per process).
+_historical_cpi_cache: dict[str, Any] = {
+    "value": None,
+    "ts": 0.0,
+}
+
+
+def query_pipeline_buckets(
+    threshold: float = 0.65,
+    cap: int = 3,
+    cache_ttl: float = 3.0,
+) -> Any:
+    """Query the 6 disjoint pipeline buckets from the graph.
+
+    Uses a module-level time-based cache (TTL = *cache_ttl* seconds).
+
+    Bucket definitions (disjoint by construction):
+
+    - **A**: StandardNameSource nodes with ``status='extracted'``.
+    - **B**: StandardName with ``name_stage='drafted'`` and no
+      ``reviewer_score_name``.
+    - **C**: StandardName reviewed/refining, below *threshold*, under
+      *cap* → definite refine + re-review.
+    - **D**: StandardName accepted, docs not yet drafted.
+    - **E**: StandardName with ``docs_stage='drafted'``, no
+      ``reviewer_score_docs``.
+    - **F**: StandardName docs reviewed/refining, below *threshold*,
+      under *cap* → definite docs refine.
+
+    Args:
+        threshold: Score threshold below which a name/docs enters
+            the refine pool (default 0.65).
+        cap: Maximum refine rotations before exhaustion (default 3).
+        cache_ttl: Cache time-to-live in seconds (default 3.0).
+
+    Returns:
+        :class:`PipelineBuckets` with the 6 counts.
+    """
+    import time as _time
+
+    from imas_codex.standard_names.cost_model import PipelineBuckets
+
+    now = _time.time()
+    if (
+        _pipeline_buckets_cache["value"] is not None
+        and now - _pipeline_buckets_cache["ts"] < cache_ttl
+    ):
+        return _pipeline_buckets_cache["value"]
+
+    with GraphClient() as gc:
+        # Bucket A: pre-draft sources
+        r_a = gc.query(
+            "MATCH (sns:StandardNameSource {status: 'extracted'}) "
+            "RETURN count(*) AS cnt"
+        )
+        a = r_a[0]["cnt"] if r_a else 0
+
+        # Bucket B: drafted, not yet name-reviewed
+        r_b = gc.query(
+            "MATCH (sn:StandardName) "
+            "WHERE sn.name_stage = 'drafted' "
+            "AND sn.reviewer_score_name IS NULL "
+            "RETURN count(*) AS cnt"
+        )
+        b = r_b[0]["cnt"] if r_b else 0
+
+        # Bucket C: reviewed/refining, below threshold, under cap
+        r_c = gc.query(
+            "MATCH (sn:StandardName) "
+            "WHERE sn.name_stage IN ['reviewed', 'refining'] "
+            "AND coalesce(sn.reviewer_score_name, 0.0) < $threshold "
+            "AND coalesce(sn.regen_count, 0) < $cap "
+            "RETURN count(*) AS cnt",
+            threshold=threshold,
+            cap=cap,
+        )
+        c = r_c[0]["cnt"] if r_c else 0
+
+        # Bucket D: name accepted, docs not yet drafted
+        r_d = gc.query(
+            "MATCH (sn:StandardName) "
+            "WHERE sn.name_stage = 'accepted' "
+            "AND (sn.docs_stage IS NULL OR sn.docs_stage = 'pending') "
+            "RETURN count(*) AS cnt"
+        )
+        d = r_d[0]["cnt"] if r_d else 0
+
+        # Bucket E: docs drafted, not yet reviewed
+        r_e = gc.query(
+            "MATCH (sn:StandardName) "
+            "WHERE sn.docs_stage = 'drafted' "
+            "AND sn.reviewer_score_docs IS NULL "
+            "RETURN count(*) AS cnt"
+        )
+        e = r_e[0]["cnt"] if r_e else 0
+
+        # Bucket F: docs reviewed/refining, below threshold, under cap
+        # Schema note: plan.md referenced refine_docs_count but actual
+        # schema field is docs_chain_length.
+        r_f = gc.query(
+            "MATCH (sn:StandardName) "
+            "WHERE sn.docs_stage IN ['reviewed', 'refining'] "
+            "AND coalesce(sn.reviewer_score_docs, 0.0) < $threshold "
+            "AND coalesce(sn.docs_chain_length, 0) < $cap "
+            "RETURN count(*) AS cnt",
+            threshold=threshold,
+            cap=cap,
+        )
+        f = r_f[0]["cnt"] if r_f else 0
+
+    result = PipelineBuckets(
+        a_sources=a,
+        b_drafted_unreviewed=b,
+        c_refine_pending=c,
+        d_accepted_no_docs=d,
+        e_docs_unreviewed=e,
+        f_refine_docs_pending=f,
+    )
+    _pipeline_buckets_cache["value"] = result
+    _pipeline_buckets_cache["ts"] = now
+    return result
+
+
+def query_historical_cpi(model: str | None = None) -> dict[str, float]:
+    """Average per-phase LLM cost across past StandardName nodes.
+
+    Returns dict keyed by pool name (``generate_name``, ``review_name``,
+    ``refine_name``, ``generate_docs``, ``review_docs``, ``refine_docs``).
+    Missing keys = no historical data for that pool.
+
+    Cached for the lifetime of the process (historical data is static
+    within a run).
+
+    Args:
+        model: Optional LLM model filter. If provided, restricts to
+            nodes composed with that model.
+    """
+    import time as _time
+
+    # Process-lifetime cache (historical data is static within a run)
+    if _historical_cpi_cache["value"] is not None:
+        return _historical_cpi_cache["value"]
+
+    result: dict[str, float] = {}
+    with GraphClient() as gc:
+        # generate_name: avg compose cost per name
+        rows = gc.query(
+            "MATCH (sn:StandardName) "
+            "WHERE sn.llm_cost_compose IS NOT NULL "
+            "AND sn.llm_cost_compose > 0 "
+            "AND coalesce(sn.compose_count, 0) > 0 "
+            "RETURN avg(sn.llm_cost_compose / sn.compose_count) AS cpi, "
+            "count(*) AS n"
+        )
+        if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
+            result["generate_name"] = float(rows[0]["cpi"])
+
+        # review_name: avg review cost for name-reviewed nodes
+        rows = gc.query(
+            "MATCH (sn:StandardName) "
+            "WHERE sn.llm_cost_review IS NOT NULL "
+            "AND sn.llm_cost_review > 0 "
+            "AND sn.reviewer_score_name IS NOT NULL "
+            "RETURN avg(sn.llm_cost_review) AS cpi, "
+            "count(*) AS n"
+        )
+        if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
+            result["review_name"] = float(rows[0]["cpi"])
+
+        # refine_name: avg regen cost per refine cycle
+        rows = gc.query(
+            "MATCH (sn:StandardName) "
+            "WHERE sn.llm_cost_regen IS NOT NULL "
+            "AND sn.llm_cost_regen > 0 "
+            "AND coalesce(sn.regen_count, 0) > 0 "
+            "RETURN avg(sn.llm_cost_regen / sn.regen_count) AS cpi, "
+            "count(*) AS n"
+        )
+        if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
+            result["refine_name"] = float(rows[0]["cpi"])
+
+        # generate_docs: avg docs compose cost
+        rows = gc.query(
+            "MATCH (sn:StandardName) "
+            "WHERE sn.llm_cost_docs IS NOT NULL "
+            "AND sn.llm_cost_docs > 0 "
+            "AND sn.docs_stage IS NOT NULL "
+            "RETURN avg(sn.llm_cost_docs) AS cpi, "
+            "count(*) AS n"
+        )
+        if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
+            result["generate_docs"] = float(rows[0]["cpi"])
+
+        # review_docs: use llm_cost_review for docs-reviewed nodes as proxy
+        rows = gc.query(
+            "MATCH (sn:StandardName) "
+            "WHERE sn.llm_cost_review IS NOT NULL "
+            "AND sn.llm_cost_review > 0 "
+            "AND sn.reviewer_score_docs IS NOT NULL "
+            "RETURN avg(sn.llm_cost_review) AS cpi, "
+            "count(*) AS n"
+        )
+        if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
+            result["review_docs"] = float(rows[0]["cpi"])
+
+        # refine_docs: no dedicated cost field — will fall to sibling
+
+    _historical_cpi_cache["value"] = result
+    _historical_cpi_cache["ts"] = _time.time()
+    return result
+
+
+# =============================================================================
 # Read helpers — extraction candidates
 # =============================================================================
 

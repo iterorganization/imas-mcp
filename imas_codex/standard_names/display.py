@@ -37,7 +37,6 @@ from imas_codex.discovery.base.progress import (
     build_pipeline_section,
     build_resource_section,
     compute_parallel_eta,
-    compute_projected_etc,
 )
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -312,6 +311,9 @@ class PoolDisplayState:
     #: Throttle state — set when backlog exceeds cap.
     throttled: bool = False
     throttle_reason: str = ""
+
+    #: Timestamp of the last completed item (for stall detection).
+    last_completion_at: float | None = None
 
     def add_item(self, item: dict[str, Any]) -> None:
         """Push a streamed item into the display deque."""
@@ -611,6 +613,7 @@ class SN6PoolDisplay(BaseProgressDisplay):
             return
         state.add_item(ev)
         state.completed += 1
+        state.last_completion_at = time.time()
         cost = ev.get("cost", 0.0)
         if cost:
             state.cost += float(cost)
@@ -725,20 +728,28 @@ class SN6PoolDisplay(BaseProgressDisplay):
         return build_pipeline_section(rows, self.bar_width)
 
     def _build_resources_section(self) -> Text:
-        """Build TIME + COST resource gauges using canonical renderer."""
+        """Build TIME + COST resource gauges using pipeline-aware ETC.
+
+        Replaces the old per-pool independent projection with a
+        hybrid pipeline-flow model that accounts for upstream work
+        flowing through downstream pools.
+        """
+        from imas_codex.standard_names.cost_model import (
+            compute_cycle_estimates,
+            compute_pipeline_etc,
+            detect_stall,
+            resolve_pool_cpi,
+        )
+
         total_cost = sum(p.cost for p in self.pools.values())
 
         # ETA: parallel ETA across pools with remaining work.
         work_items: list[tuple[int, float | None]] = []
-        cost_items: list[tuple[int, float | None]] = []
         for pool_name in POOL_ORDER:
             state = self.pools[pool_name]
             remaining = state.remaining
             if remaining > 0 and state.rate is not None and state.rate > 0:
                 work_items.append((remaining, state.rate))
-            if state.cost > 0 and state.completed > 0 and state.remaining > 0:
-                cpi = state.cost / state.completed
-                cost_items.append((remaining, cpi))
 
         eta = compute_parallel_eta(work_items)
 
@@ -751,7 +762,84 @@ class SN6PoolDisplay(BaseProgressDisplay):
             except Exception:
                 pass
 
-        projected = compute_projected_etc(accumulated, cost_items)
+        # --- Pipeline-aware ETC ---
+        projected: float | None = None
+        stalled = False
+        try:
+            from imas_codex.standard_names.graph_ops import (
+                query_historical_cpi,
+                query_pipeline_buckets,
+            )
+
+            buckets = query_pipeline_buckets()
+
+            # Build CycleEstimates from this-run pool counters.
+            gn = self.pools["generate_name"]
+            rn = self.pools["review_name"]
+            rfn = self.pools["refine_name"]
+            rd = self.pools["review_docs"]
+            rfd = self.pools["refine_docs"]
+
+            cycles = compute_cycle_estimates(
+                refine_name_done=rfn.completed,
+                name_review_first_pass_done=rn.completed,
+                refine_docs_done=rfd.completed,
+                docs_review_first_pass_done=rd.completed,
+                # accepted_count: names reviewed with score >= threshold
+                accepted_count=max(rn.completed - rfn.completed, 0),
+                total_completed_name_stage=rn.completed,
+                sources_attempted=gn.total if gn.total > 0 else 0,
+                names_drafted=gn.completed,
+            )
+
+            # Resolve CPI per pool.
+            historical = query_historical_cpi()
+
+            # Build sibling CPI fallback map.
+            # refine_name ≈ 1.0 × review_name; refine_docs ≈ 1.0 × review_docs
+            _sibling_map: dict[str, str] = {
+                "refine_name": "review_name",
+                "refine_docs": "review_docs",
+            }
+
+            cpis: dict[str, Any] = {}
+            for pool_name in POOL_ORDER:
+                state = self.pools[pool_name]
+                sibling_pool = _sibling_map.get(pool_name)
+                sibling_cpi: float | None = None
+                if sibling_pool and sibling_pool in cpis:
+                    sibling_cpi = cpis[sibling_pool].value
+
+                cpis[pool_name] = resolve_pool_cpi(
+                    pool=pool_name,
+                    observed_cost=state.cost,
+                    observed_completed=state.completed,
+                    historical=historical,
+                    sibling_cpi=sibling_cpi,
+                )
+
+            projected = compute_pipeline_etc(
+                buckets=buckets,
+                cycles=cycles,
+                cpis=cpis,
+                accumulated_cost=accumulated,
+            )
+
+            # Stall detection.
+            pool_pending = {name: self.pools[name].remaining for name in POOL_ORDER}
+            pool_last_at = {
+                name: self.pools[name].last_completion_at for name in POOL_ORDER
+            }
+            stalled = detect_stall(pool_pending, pool_last_at, time.time())
+        except Exception:
+            # Fallback: no projection if graph queries fail.
+            projected = None
+
+        # Format ETC for display.
+        # When stalled, suppress ETC (canonical renderer can't render "∞").
+        etc_value: float | None = projected
+        if stalled:
+            etc_value = None
 
         config = ResourceConfig(
             elapsed=self.elapsed,
@@ -759,7 +847,7 @@ class SN6PoolDisplay(BaseProgressDisplay):
             run_cost=total_cost if total_cost > 0 else None,
             cost_limit=self.cost_limit if self.cost_limit > 0 else None,
             accumulated_cost=accumulated,
-            etc=projected,
+            etc=etc_value,
         )
         return build_resource_section(config, self.gauge_width)
 
