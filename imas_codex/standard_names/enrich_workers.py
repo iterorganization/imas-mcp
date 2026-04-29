@@ -1115,7 +1115,7 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
                 # Soft-stop: ignore result.hard_stop — never drop in-flight
 
             # Distribute per-item cost so persist_enriched_batch can write
-            # llm_cost_enrich on each StandardName node.
+            # llm_cost on each StandardName node.
             per_item_cost = cost / len(items) if items else 0.0
 
             # Build lookup from LLM response by standard_name

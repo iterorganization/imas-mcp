@@ -1698,7 +1698,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         c.standard_name for c in (result.candidates if result else [])
                     ),
                     batch_id=batch.group_key,
-                    phase=getattr(state, "budget_phase_tag", "") or "generate",
+                    phase=getattr(state, "budget_phase_tag", "") or "generate_name",
                     service="standard-names",
                 )
                 _charge = lease.charge_event(cost, _event)
@@ -1894,7 +1894,8 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             sn_ids=(name_id,),
                             batch_id=f"{batch.group_key}-grammar-retry",
                             phase=(
-                                getattr(state, "budget_phase_tag", "") or "generate"
+                                getattr(state, "budget_phase_tag", "")
+                                or "generate_name"
                             ),
                             service="standard-names",
                         )
@@ -2151,7 +2152,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             lease = None
             if state.budget_manager:
                 estimated = len(batch.items) * 0.20
-                phase_tag = getattr(state, "budget_phase_tag", "") or "generate"
+                phase_tag = getattr(state, "budget_phase_tag", "") or "generate_name"
                 lease = state.budget_manager.reserve(estimated, phase=phase_tag)
                 if lease is None:
                     budget_retries += 1
@@ -2244,7 +2245,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             100.0 * singleton_count / len(sizes) if sizes else 0.0
         )
 
-    state.stats["compose_count"] = len(composed)
+    state.stats["generate_name_count"] = len(composed)
     state.stats["compose_errors"] = errors
     state.stats["compose_cost"] = state.compose_stats.cost
     state.stats["compose_model"] = model

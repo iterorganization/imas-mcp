@@ -370,15 +370,19 @@ class TestUpdateSNPerPhaseCosts:
             [
                 {
                     "sn_id": "electron_temperature",
-                    "phase": "generate",
+                    "phase": "generate_name",
                     "apportioned": 0.30,
                 },
                 {
                     "sn_id": "electron_temperature",
-                    "phase": "enrich",
+                    "phase": "review_name",
                     "apportioned": 0.10,
                 },
-                {"sn_id": "plasma_current", "phase": "generate", "apportioned": 0.20},
+                {
+                    "sn_id": "plasma_current",
+                    "phase": "generate_name",
+                    "apportioned": 0.20,
+                },
             ],
             # Subsequent calls: per-name SET queries
             [{"id": "electron_temperature"}],
@@ -399,12 +403,16 @@ class TestUpdateSNPerPhaseCosts:
                 kwargs = c[1]
                 if kwargs.get("sn_id") == "electron_temperature":
                     cypher = c[0][0]
-                    assert "sn.llm_cost_compose" in cypher
-                    assert "sn.llm_cost_enrich" in cypher
+                    assert "sn.llm_cost_generate_name" in cypher
+                    assert "sn.llm_cost_review_name" in cypher
                     assert "sn.llm_cost" in cypher  # total
                     assert kwargs["total"] == pytest.approx(0.40, abs=1e-6)
-                    assert kwargs["llm_cost_compose"] == pytest.approx(0.30, abs=1e-6)
-                    assert kwargs["llm_cost_enrich"] == pytest.approx(0.10, abs=1e-6)
+                    assert kwargs["llm_cost_generate_name"] == pytest.approx(
+                        0.30, abs=1e-6
+                    )
+                    assert kwargs["llm_cost_review_name"] == pytest.approx(
+                        0.10, abs=1e-6
+                    )
                     break
             else:
                 pytest.fail("electron_temperature SET call not found")

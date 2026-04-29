@@ -1271,7 +1271,7 @@ def sn_run(
     # Print summary
     if result:
         extracted = result.get("extract_count", 0)
-        composed = result.get("compose_count", 0)
+        composed = result.get("generate_name_count", 0)
         attached = result.get("attachments", 0)
         validated = result.get("validate_valid", 0)
         compose_cost = result.get("compose_cost", 0.0)

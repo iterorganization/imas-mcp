@@ -766,6 +766,79 @@ classes:
         inlined: false
         annotations:
           relationship_type: HAS_SEGMENT
+      # --- Typed grammar segment edges (W40 Phase 4) ---
+      # Each typed edge mirrors a HAS_SEGMENT edge for direct graph traversal
+      # and MCP filtering. See HAS_SEGMENT slot above for full rationale.
+      grammar_physical_base_token:
+        description: GrammarToken at the physical_base segment.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_PHYSICAL_BASE
+      grammar_subject_token:
+        description: GrammarToken at the subject segment.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_SUBJECT
+      grammar_transformation_token:
+        description: GrammarToken at the transformation segment.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_TRANSFORMATION
+      grammar_component_token:
+        description: GrammarToken at the component segment.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_COMPONENT
+      grammar_coordinate_token:
+        description: GrammarToken at the coordinate segment.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_COORDINATE
+      grammar_process_token:
+        description: GrammarToken at the process segment.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_PROCESS
+      grammar_position_token:
+        description: GrammarToken at the position segment.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_POSITION
+      grammar_region_token:
+        description: GrammarToken at the region segment.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_REGION
+      grammar_device_token:
+        description: GrammarToken at the device segment.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_DEVICE
+      grammar_geometric_base_token:
+        description: GrammarToken at the geometric_base segment.
+        multivalued: true
+        range: GrammarToken
+        inlined: false
+        annotations:
+          relationship_type: HAS_GEOMETRIC_BASE
       # --- Qualifier fields (R2 A.1 — wave_absorbed_power collapse) ---
       species:
         description: >-
@@ -799,40 +872,75 @@ classes:
         description: >-
           Batch identifier grouping names enriched in the same run.
           Format: "enrich-{timestamp}" or user-supplied tag.
-      # --- Per-phase cost attribution ---
+      # --- Per-pool cost attribution ---
       # The LLMOperation mixin provides the aggregate ``llm_cost`` field
-      # (convenience = sum of per-phase fields).  These per-phase fields
-      # enable fine-grained cost reporting per pipeline stage.  All use
+      # (= sum of per-pool fields).  One cost field + one counter field
+      # per pool, aligned 1:1 with the 6 SN pipeline pools.  All use
       # ``+= coalesce(...)`` accumulation; only ``sn clear`` resets them.
-      llm_cost_compose:
+      llm_cost_generate_name:
         description: >-
-          Cumulative USD cost of compose LLM calls for this name
-          (including regenerations).
+          Cumulative USD cost of generate_name LLM calls for this name.
+          Excludes refine_name (regeneration) costs.
         range: float
-      llm_cost_enrich:
+      llm_cost_review_name:
         description: >-
-          Cumulative USD cost of enrichment / hybrid-search LLM calls.
+          Cumulative USD cost of review_name LLM calls (name-axis
+          reviews across all reviewer models).
         range: float
-      llm_cost_review:
+      llm_cost_refine_name:
         description: >-
-          Cumulative USD cost of review LLM calls (sum across all
-          reviewer models).
+          Cumulative USD cost of refine_name LLM calls (regeneration
+          when reviewer feedback triggered a re-compose).
         range: float
-      llm_cost_regen:
+      llm_cost_generate_docs:
         description: >-
-          Cumulative USD cost of regeneration-specific compose calls
-          (when reviewer feedback triggered a re-compose).  Subset of
-          ``llm_cost_compose``.
+          Cumulative USD cost of generate_docs LLM calls for this name.
         range: float
-      llm_cost_docs:
+      llm_cost_review_docs:
         description: >-
-          Cumulative USD cost of docs-target compose / enrich calls.
+          Cumulative USD cost of review_docs LLM calls (docs-axis
+          reviews across all reviewer models).
         range: float
-      compose_count:
+      llm_cost_refine_docs:
         description: >-
-          Number of compose attempts (including regenerations).
-          Incremented each time ``write_standard_names`` records a
-          non-null ``llm_cost`` for this node.
+          Cumulative USD cost of refine_docs LLM calls (docs
+          regeneration after review feedback).
+        range: float
+      generate_name_count:
+        description: >-
+          Number of generate_name calls for this name.  Incremented
+          each time ``write_standard_names`` records a non-null
+          ``llm_cost`` and this is a first-generation (not a refine).
+        range: integer
+        ifabsent: int(0)
+      review_name_count:
+        description: >-
+          Number of review_name calls for this name.  Incremented
+          each time ``write_name_review_results`` persists a review.
+        range: integer
+        ifabsent: int(0)
+      refine_name_count:
+        description: >-
+          Number of refine_name LLM calls for this name.  Tracks
+          actual LLM invocations; may differ from ``regen_count``
+          (which tracks rotation-cap cycles and may skip no-op
+          refinements).
+        range: integer
+        ifabsent: int(0)
+      generate_docs_count:
+        description: >-
+          Number of generate_docs LLM calls for this name.
+        range: integer
+        ifabsent: int(0)
+      review_docs_count:
+        description: >-
+          Number of review_docs LLM calls for this name.  Incremented
+          each time ``write_docs_review_results`` persists a review.
+        range: integer
+        ifabsent: int(0)
+      refine_docs_count:
+        description: >-
+          Number of refine_docs LLM calls for this name.
         range: integer
         ifabsent: int(0)
       # --- Run provenance ---

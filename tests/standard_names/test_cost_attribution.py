@@ -1,11 +1,11 @@
-"""Tests for per-phase cost attribution (Phase 2).
+"""Tests for per-pool cost attribution.
 
 Validates that:
-1. ``write_standard_names`` accumulates ``llm_cost_compose`` with ``+=``
+1. ``write_standard_names`` accumulates ``llm_cost_generate_name`` with ``+=``
 2. Repeated writes (regeneration) accumulate, not overwrite
-3. ``write_reviews`` propagates ``llm_cost_review`` to StandardName
-4. ``persist_enriched_batch`` accumulates ``llm_cost_enrich``
-5. ``llm_cost`` aggregate tracks the sum of per-phase costs
+3. ``write_reviews`` propagates ``llm_cost_review_name`` / ``llm_cost_review_docs``
+4. ``persist_enriched_batch`` accumulates aggregate ``llm_cost``
+5. ``llm_cost`` aggregate tracks the sum of per-pool costs
 6. ``sn clear`` (DETACH DELETE) wipes all cost fields
 7. ``write_reviews`` passes ``llm_tokens_cached_read/write`` through
 """
@@ -69,7 +69,7 @@ class TestComposeCostAccumulation:
         pytest.fail("No MERGE StandardName Cypher found")
 
     def test_compose_cost_uses_accumulation(self):
-        """llm_cost_compose uses += (not coalesce-set)."""
+        """llm_cost_generate_name uses += (not coalesce-set)."""
         names = [
             {
                 "id": "electron_temperature",
@@ -80,12 +80,12 @@ class TestComposeCostAccumulation:
         ]
         cypher = self._cypher_from_write(names)
 
-        # Must contain accumulation pattern for llm_cost_compose
-        assert "sn.llm_cost_compose" in cypher
-        assert "coalesce(sn.llm_cost_compose, 0.0)" in cypher
+        # Must contain accumulation pattern for llm_cost_generate_name
+        assert "sn.llm_cost_generate_name" in cypher
+        assert "coalesce(sn.llm_cost_generate_name, 0.0)" in cypher
 
     def test_compose_count_increments(self):
-        """compose_count increments by 1 on each write."""
+        """generate_name_count increments by 1 on each write."""
         names = [
             {
                 "id": "electron_temperature",
@@ -96,11 +96,11 @@ class TestComposeCostAccumulation:
         ]
         cypher = self._cypher_from_write(names)
 
-        assert "sn.compose_count" in cypher
-        assert "coalesce(sn.compose_count, 0) + 1" in cypher
+        assert "sn.generate_name_count" in cypher
+        assert "coalesce(sn.generate_name_count, 0) + 1" in cypher
 
-    def test_regen_detected_via_compose_count(self):
-        """llm_cost_regen only accumulates when compose_count > 0."""
+    def test_regen_detected_via_generate_name_count(self):
+        """llm_cost_refine_name only accumulates when generate_name_count > 0."""
         names = [
             {
                 "id": "electron_temperature",
@@ -111,12 +111,12 @@ class TestComposeCostAccumulation:
         ]
         cypher = self._cypher_from_write(names)
 
-        # Regen detection: CASE WHEN sn.compose_count > 0
-        assert "sn.llm_cost_regen" in cypher
-        assert "sn.compose_count" in cypher
-        # Should have a CASE expression checking compose_count > 0
+        # Regen detection: CASE WHEN sn.generate_name_count > 0
+        assert "sn.llm_cost_refine_name" in cypher
+        assert "sn.generate_name_count" in cypher
+        # Should have a CASE expression checking generate_name_count > 0
         assert re.search(
-            r"sn\.compose_count\s+IS\s+NOT\s+NULL.*sn\.compose_count\s*>\s*0",
+            r"sn\.generate_name_count\s+IS\s+NOT\s+NULL.*sn\.generate_name_count\s*>\s*0",
             cypher,
             re.DOTALL,
         )
@@ -179,7 +179,7 @@ class TestEnrichCostAccumulation:
         pytest.fail("No MERGE StandardName Cypher found in enrich")
 
     def test_enrich_cost_uses_accumulation(self):
-        """llm_cost_enrich uses += pattern."""
+        """llm_cost (aggregate) uses += pattern for enrich."""
         items = [
             {
                 "id": "electron_temperature",
@@ -190,8 +190,9 @@ class TestEnrichCostAccumulation:
         ]
         cypher = self._cypher_from_enrich(items)
 
-        assert "sn.llm_cost_enrich" in cypher
-        assert "coalesce(sn.llm_cost_enrich, 0.0)" in cypher
+        # No per-pool enrich field — only aggregate llm_cost
+        assert "sn.llm_cost" in cypher
+        assert "coalesce(sn.llm_cost, 0.0)" in cypher
 
     def test_enrich_aggregate_also_accumulated(self):
         """The aggregate llm_cost also uses += in enrich writer."""
@@ -216,7 +217,7 @@ class TestReviewCostPropagation:
     """``write_reviews`` must propagate review cost to StandardName."""
 
     def test_review_cost_accumulated_on_standard_name(self):
-        """After writing Reviews, StandardName.llm_cost_review gets +=."""
+        """After writing Reviews, StandardName.llm_cost_review_name gets +=."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
@@ -250,13 +251,15 @@ class TestReviewCostPropagation:
 
         queries = _capture_queries(mock_gc)
 
-        # Should have a query that updates StandardName.llm_cost_review
-        review_cost_queries = [(c, k) for c, k in queries if "llm_cost_review" in c]
+        # Should have a query that updates StandardName.llm_cost_review_name
+        review_cost_queries = [
+            (c, k) for c, k in queries if "llm_cost_review_name" in c
+        ]
         assert len(review_cost_queries) >= 1, (
-            "Expected a Cypher query updating llm_cost_review on StandardName"
+            "Expected a Cypher query updating llm_cost_review_name on StandardName"
         )
         cypher = review_cost_queries[0][0]
-        assert "coalesce(sn.llm_cost_review, 0.0)" in cypher
+        assert "coalesce(sn.llm_cost_review_name, 0.0)" in cypher
 
     def test_review_cached_tokens_written(self):
         """write_reviews passes llm_tokens_cached_read/write to Review node."""
@@ -376,29 +379,72 @@ class TestCostSchemaFields:
     def _sn_attrs(self) -> dict:
         return self.schema["classes"]["StandardName"]["attributes"]
 
-    def test_llm_cost_compose_exists(self):
-        assert "llm_cost_compose" in self._sn_attrs()
-        assert self._sn_attrs()["llm_cost_compose"]["range"] == "float"
+    def test_llm_cost_generate_name_exists(self):
+        assert "llm_cost_generate_name" in self._sn_attrs()
+        assert self._sn_attrs()["llm_cost_generate_name"]["range"] == "float"
 
-    def test_llm_cost_enrich_exists(self):
-        assert "llm_cost_enrich" in self._sn_attrs()
-        assert self._sn_attrs()["llm_cost_enrich"]["range"] == "float"
+    def test_llm_cost_review_name_exists(self):
+        assert "llm_cost_review_name" in self._sn_attrs()
+        assert self._sn_attrs()["llm_cost_review_name"]["range"] == "float"
 
-    def test_llm_cost_review_exists(self):
-        assert "llm_cost_review" in self._sn_attrs()
-        assert self._sn_attrs()["llm_cost_review"]["range"] == "float"
+    def test_llm_cost_refine_name_exists(self):
+        assert "llm_cost_refine_name" in self._sn_attrs()
+        assert self._sn_attrs()["llm_cost_refine_name"]["range"] == "float"
 
-    def test_llm_cost_regen_exists(self):
-        assert "llm_cost_regen" in self._sn_attrs()
-        assert self._sn_attrs()["llm_cost_regen"]["range"] == "float"
+    def test_llm_cost_generate_docs_exists(self):
+        assert "llm_cost_generate_docs" in self._sn_attrs()
+        assert self._sn_attrs()["llm_cost_generate_docs"]["range"] == "float"
 
-    def test_llm_cost_docs_exists(self):
-        assert "llm_cost_docs" in self._sn_attrs()
-        assert self._sn_attrs()["llm_cost_docs"]["range"] == "float"
+    def test_llm_cost_review_docs_exists(self):
+        assert "llm_cost_review_docs" in self._sn_attrs()
+        assert self._sn_attrs()["llm_cost_review_docs"]["range"] == "float"
 
-    def test_compose_count_exists(self):
-        assert "compose_count" in self._sn_attrs()
-        assert self._sn_attrs()["compose_count"]["range"] == "integer"
+    def test_llm_cost_refine_docs_exists(self):
+        assert "llm_cost_refine_docs" in self._sn_attrs()
+        assert self._sn_attrs()["llm_cost_refine_docs"]["range"] == "float"
+
+    def test_generate_name_count_exists(self):
+        assert "generate_name_count" in self._sn_attrs()
+        assert self._sn_attrs()["generate_name_count"]["range"] == "integer"
+
+    def test_review_name_count_exists(self):
+        assert "review_name_count" in self._sn_attrs()
+        assert self._sn_attrs()["review_name_count"]["range"] == "integer"
+
+    def test_refine_name_count_exists(self):
+        assert "refine_name_count" in self._sn_attrs()
+        assert self._sn_attrs()["refine_name_count"]["range"] == "integer"
+
+    def test_generate_docs_count_exists(self):
+        assert "generate_docs_count" in self._sn_attrs()
+        assert self._sn_attrs()["generate_docs_count"]["range"] == "integer"
+
+    def test_review_docs_count_exists(self):
+        assert "review_docs_count" in self._sn_attrs()
+        assert self._sn_attrs()["review_docs_count"]["range"] == "integer"
+
+    def test_refine_docs_count_exists(self):
+        assert "refine_docs_count" in self._sn_attrs()
+        assert self._sn_attrs()["refine_docs_count"]["range"] == "integer"
+
+    def test_all_pools_have_cost_and_count(self):
+        """Every pool name has llm_cost_<pool> and <pool>_count fields."""
+        attrs = self._sn_attrs()
+        pools = [
+            "generate_name",
+            "review_name",
+            "refine_name",
+            "generate_docs",
+            "review_docs",
+            "refine_docs",
+        ]
+        for pool in pools:
+            cost_field = f"llm_cost_{pool}"
+            count_field = f"{pool}_count"
+            assert cost_field in attrs, f"Missing cost field: {cost_field}"
+            assert attrs[cost_field]["range"] == "float"
+            assert count_field in attrs, f"Missing count field: {count_field}"
+            assert attrs[count_field]["range"] == "integer"
 
 
 # ---------------------------------------------------------------------------

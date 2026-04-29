@@ -310,12 +310,12 @@ async def _run_generate_phase(
             exit_code=1,
             cost=state.total_cost,
             elapsed=time.monotonic() - t0,
-            count=state.stats.get("compose_count", 0),
+            count=state.stats.get("generate_name_count", 0),
             error=str(exc),
         )
     elapsed = time.monotonic() - t0
 
-    compose_count = state.stats.get("compose_count", 0)
+    compose_count = state.stats.get("generate_name_count", 0)
     compose_cost = state.stats.get("compose_cost", 0.0)
 
     # Stamp run provenance on produced names

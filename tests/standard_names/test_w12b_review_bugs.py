@@ -145,10 +145,10 @@ class TestBug2SetupLogging:
 
 
 class TestBug4PerNameCost:
-    """write_name_review_results must propagate per-name llm_cost_review."""
+    """write_name_review_results must propagate per-name llm_cost_review_name."""
 
     def test_name_writer_includes_cost_in_set_clause(self) -> None:
-        """Cypher SET must include llm_cost_review accumulation."""
+        """Cypher SET must include llm_cost_review_name accumulation."""
         from imas_codex.standard_names.graph_ops import write_name_review_results
 
         mock_gc, cm = _mock_graph_client()
@@ -156,12 +156,12 @@ class TestBug4PerNameCost:
             write_name_review_results([_review_entry(llm_cost=0.005)])
 
         cypher = mock_gc.query.call_args[0][0]
-        assert "llm_cost_review" in cypher
+        assert "llm_cost_review_name" in cypher
         assert "llm_cost" in cypher
 
         # Verify batch dict carries cost
         batch = mock_gc.query.call_args[1]["batch"]
-        assert batch[0]["llm_cost_review"] == 0.005
+        assert batch[0]["llm_cost_review_name"] == 0.005
 
     def test_name_writer_cost_defaults_to_zero(self) -> None:
         """When no llm_cost key, batch dict defaults to 0.0."""
@@ -176,7 +176,7 @@ class TestBug4PerNameCost:
             write_name_review_results([entry])
 
         batch = mock_gc.query.call_args[1]["batch"]
-        assert batch[0]["llm_cost_review"] == 0.0
+        assert batch[0]["llm_cost_review_name"] == 0.0
 
     def test_docs_writer_includes_cost_in_set_clause(self) -> None:
         """Docs-axis writer also propagates per-name cost."""
@@ -195,10 +195,10 @@ class TestBug4PerNameCost:
 
         # Second call is the SET
         cypher = mock_gc.query.call_args_list[1][0][0]
-        assert "llm_cost_review" in cypher
+        assert "llm_cost_review_docs" in cypher
 
         batch = mock_gc.query.call_args_list[1][1]["batch"]
-        assert batch[0]["llm_cost_review"] == 0.01
+        assert batch[0]["llm_cost_review_docs"] == 0.01
 
     def test_write_reviews_skip_cost_prevents_accumulation(self) -> None:
         """write_reviews(skip_cost=True) must NOT run the SN cost query."""
@@ -228,7 +228,7 @@ class TestBug4PerNameCost:
         cypher = mock_gc.query.call_args[0][0]
         assert "MERGE (r:StandardNameReview" in cypher
         # Should NOT contain the cost accumulation query
-        assert "llm_cost_review" not in cypher
+        assert "llm_cost_review_name" not in cypher
 
     def test_write_reviews_default_does_accumulate_cost(self) -> None:
         """write_reviews() without skip_cost runs the cost accumulation."""
@@ -246,6 +246,7 @@ class TestBug4PerNameCost:
                 "scores_json": "{}",
                 "tier": "good",
                 "reviewed_at": "2026-04-25T00:00:00Z",
+                "review_axis": "names",
                 "llm_cost": 0.005,
             },
         ]
@@ -256,4 +257,4 @@ class TestBug4PerNameCost:
         # Should be 2 calls: MERGE StandardNameReview + cost accumulation
         assert mock_gc.query.call_count == 2
         cost_cypher = mock_gc.query.call_args_list[1][0][0]
-        assert "llm_cost_review" in cost_cypher
+        assert "llm_cost_review_name" in cost_cypher

@@ -252,68 +252,27 @@ def query_historical_cpi(model: str | None = None) -> dict[str, float]:
         return _historical_cpi_cache["value"]
 
     result: dict[str, float] = {}
+    # Pool → (cost_field, count_field) — direct 1:1 mapping.
+    _pool_fields = {
+        "generate_name": ("llm_cost_generate_name", "generate_name_count"),
+        "review_name": ("llm_cost_review_name", "review_name_count"),
+        "refine_name": ("llm_cost_refine_name", "refine_name_count"),
+        "generate_docs": ("llm_cost_generate_docs", "generate_docs_count"),
+        "review_docs": ("llm_cost_review_docs", "review_docs_count"),
+        "refine_docs": ("llm_cost_refine_docs", "refine_docs_count"),
+    }
     with GraphClient() as gc:
-        # generate_name: avg compose cost per name
-        rows = gc.query(
-            "MATCH (sn:StandardName) "
-            "WHERE sn.llm_cost_compose IS NOT NULL "
-            "AND sn.llm_cost_compose > 0 "
-            "AND coalesce(sn.compose_count, 0) > 0 "
-            "RETURN avg(sn.llm_cost_compose / sn.compose_count) AS cpi, "
-            "count(*) AS n"
-        )
-        if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
-            result["generate_name"] = float(rows[0]["cpi"])
-
-        # review_name: avg review cost for name-reviewed nodes
-        rows = gc.query(
-            "MATCH (sn:StandardName) "
-            "WHERE sn.llm_cost_review IS NOT NULL "
-            "AND sn.llm_cost_review > 0 "
-            "AND sn.reviewer_score_name IS NOT NULL "
-            "RETURN avg(sn.llm_cost_review) AS cpi, "
-            "count(*) AS n"
-        )
-        if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
-            result["review_name"] = float(rows[0]["cpi"])
-
-        # refine_name: avg regen cost per refine cycle
-        rows = gc.query(
-            "MATCH (sn:StandardName) "
-            "WHERE sn.llm_cost_regen IS NOT NULL "
-            "AND sn.llm_cost_regen > 0 "
-            "AND coalesce(sn.regen_count, 0) > 0 "
-            "RETURN avg(sn.llm_cost_regen / sn.regen_count) AS cpi, "
-            "count(*) AS n"
-        )
-        if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
-            result["refine_name"] = float(rows[0]["cpi"])
-
-        # generate_docs: avg docs compose cost
-        rows = gc.query(
-            "MATCH (sn:StandardName) "
-            "WHERE sn.llm_cost_docs IS NOT NULL "
-            "AND sn.llm_cost_docs > 0 "
-            "AND sn.docs_stage IS NOT NULL "
-            "RETURN avg(sn.llm_cost_docs) AS cpi, "
-            "count(*) AS n"
-        )
-        if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
-            result["generate_docs"] = float(rows[0]["cpi"])
-
-        # review_docs: use llm_cost_review for docs-reviewed nodes as proxy
-        rows = gc.query(
-            "MATCH (sn:StandardName) "
-            "WHERE sn.llm_cost_review IS NOT NULL "
-            "AND sn.llm_cost_review > 0 "
-            "AND sn.reviewer_score_docs IS NOT NULL "
-            "RETURN avg(sn.llm_cost_review) AS cpi, "
-            "count(*) AS n"
-        )
-        if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
-            result["review_docs"] = float(rows[0]["cpi"])
-
-        # refine_docs: no dedicated cost field — will fall to sibling
+        for pool, (cost_f, count_f) in _pool_fields.items():
+            rows = gc.query(
+                f"MATCH (sn:StandardName) "
+                f"WHERE sn.{cost_f} IS NOT NULL "
+                f"AND sn.{cost_f} > 0 "
+                f"AND coalesce(sn.{count_f}, 0) > 0 "
+                f"RETURN avg(sn.{cost_f} / sn.{count_f}) AS cpi, "
+                f"count(*) AS n"
+            )
+            if rows and rows[0]["n"] > 0 and rows[0]["cpi"] is not None:
+                result[pool] = float(rows[0]["cpi"])
 
     _historical_cpi_cache["value"] = result
     _historical_cpi_cache["ts"] = _time.time()
@@ -1234,17 +1193,22 @@ def write_standard_names(
                 sn.embedded_at = coalesce(b.embedded_at, sn.embedded_at),
                 sn.grammar_parse_version = coalesce(b.grammar_parse_version, sn.grammar_parse_version),
                 sn.validation_diagnostics_json = coalesce(b.validation_diagnostics_json, sn.validation_diagnostics_json),
-                sn.llm_cost_regen = CASE WHEN sn.compose_count IS NOT NULL
-                                             AND sn.compose_count > 0
+                sn.llm_cost_refine_name = CASE WHEN sn.generate_name_count IS NOT NULL
+                                             AND sn.generate_name_count > 0
                                              AND b.llm_cost IS NOT NULL
-                                        THEN coalesce(sn.llm_cost_regen, 0.0) + b.llm_cost
-                                        ELSE sn.llm_cost_regen END,
-                sn.llm_cost_compose = CASE WHEN b.llm_cost IS NOT NULL
-                                      THEN coalesce(sn.llm_cost_compose, 0.0) + b.llm_cost
-                                      ELSE sn.llm_cost_compose END,
-                sn.compose_count = CASE WHEN b.llm_cost IS NOT NULL
-                                   THEN coalesce(sn.compose_count, 0) + 1
-                                   ELSE sn.compose_count END,
+                                        THEN coalesce(sn.llm_cost_refine_name, 0.0) + b.llm_cost
+                                        ELSE sn.llm_cost_refine_name END,
+                sn.refine_name_count = CASE WHEN sn.generate_name_count IS NOT NULL
+                                            AND sn.generate_name_count > 0
+                                            AND b.llm_cost IS NOT NULL
+                                       THEN coalesce(sn.refine_name_count, 0) + 1
+                                       ELSE sn.refine_name_count END,
+                sn.llm_cost_generate_name = CASE WHEN b.llm_cost IS NOT NULL
+                                      THEN coalesce(sn.llm_cost_generate_name, 0.0) + b.llm_cost
+                                      ELSE sn.llm_cost_generate_name END,
+                sn.generate_name_count = CASE WHEN b.llm_cost IS NOT NULL
+                                   THEN coalesce(sn.generate_name_count, 0) + 1
+                                   ELSE sn.generate_name_count END,
                 sn.regen_count = CASE WHEN b.regen_increment = true
                                  THEN coalesce(sn.regen_count, 0) + 1
                                  ELSE sn.regen_count END,
@@ -1499,8 +1463,8 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
     records:
         Review record dicts.
     skip_cost:
-        When ``True``, skip accumulating ``llm_cost_review`` on
-        StandardName nodes.  Use when StandardNameReview records were
+        When ``True``, skip accumulating ``llm_cost_review_name`` /
+        ``llm_cost_review_docs`` on StandardName nodes.  Use when StandardNameReview records were
         already persisted inline (crash-safety path) to avoid
         double-counting.
 
@@ -1588,26 +1552,46 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
         )
 
         # --- Accumulate review cost on StandardName ---
-        # Build per-SN cost totals from the batch (sum review costs per name).
+        # Build per-SN cost totals from the batch, split by review axis.
         # Skipped when skip_cost=True (records already persisted inline).
         if not skip_cost:
-            sn_cost_map: dict[str, float] = {}
+            name_cost_map: dict[str, float] = {}
+            docs_cost_map: dict[str, float] = {}
             for r in valid:
                 sn_id = r.get("standard_name_id")
                 cost = r.get("llm_cost")
                 if sn_id and cost:
-                    sn_cost_map[sn_id] = sn_cost_map.get(sn_id, 0.0) + cost
-            if sn_cost_map:
+                    axis = r.get("review_axis", "names")
+                    if axis == "docs":
+                        docs_cost_map[sn_id] = docs_cost_map.get(sn_id, 0.0) + cost
+                    else:
+                        name_cost_map[sn_id] = name_cost_map.get(sn_id, 0.0) + cost
+            if name_cost_map:
                 gc.query(
                     """
                     UNWIND $batch AS b
                     MATCH (sn:StandardName {id: b.sn_id})
-                    SET sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + b.cost,
+                    SET sn.llm_cost_review_name = coalesce(sn.llm_cost_review_name, 0.0) + b.cost,
+                        sn.review_name_count = coalesce(sn.review_name_count, 0) + 1,
                         sn.llm_cost = coalesce(sn.llm_cost, 0.0) + b.cost
                     """,
                     batch=[
                         {"sn_id": sn_id, "cost": cost}
-                        for sn_id, cost in sn_cost_map.items()
+                        for sn_id, cost in name_cost_map.items()
+                    ],
+                )
+            if docs_cost_map:
+                gc.query(
+                    """
+                    UNWIND $batch AS b
+                    MATCH (sn:StandardName {id: b.sn_id})
+                    SET sn.llm_cost_review_docs = coalesce(sn.llm_cost_review_docs, 0.0) + b.cost,
+                        sn.review_docs_count = coalesce(sn.review_docs_count, 0) + 1,
+                        sn.llm_cost = coalesce(sn.llm_cost, 0.0) + b.cost
+                    """,
+                    batch=[
+                        {"sn_id": sn_id, "cost": cost}
+                        for sn_id, cost in docs_cost_map.items()
                     ],
                 )
 
@@ -1705,8 +1689,9 @@ def write_name_review_results(
                 sn.review_input_hash = b.review_input_hash,
                 sn.reviewer_suggested_name = coalesce(nullIf(b.reviewer_suggested_name, ''), sn.reviewer_suggested_name),
                 sn.reviewer_suggestion_justification_name = coalesce(nullIf(b.reviewer_suggestion_justification_name, ''), sn.reviewer_suggestion_justification_name),
-                sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + coalesce(b.llm_cost_review, 0.0),
-                sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review, 0.0)
+                sn.llm_cost_review_name = coalesce(sn.llm_cost_review_name, 0.0) + coalesce(b.llm_cost_review_name, 0.0),
+                sn.review_name_count = coalesce(sn.review_name_count, 0) + 1,
+                sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review_name, 0.0)
             """,
             batch=[
                 {
@@ -1727,7 +1712,7 @@ def write_name_review_results(
                         "_suggestion_justification"
                     )
                     or "",
-                    "llm_cost_review": e.get("llm_cost") or 0.0,
+                    "llm_cost_review_name": e.get("llm_cost") or 0.0,
                 }
                 for e in entries
             ],
@@ -1824,8 +1809,9 @@ def write_docs_review_results(
                 sn.reviewer_verdict_docs = coalesce(b.reviewer_verdict_docs, sn.reviewer_verdict_docs),
                 sn.reviewer_model_docs = coalesce(b.reviewer_model_docs, sn.reviewer_model_docs),
                 sn.review_input_hash = b.review_input_hash,
-                sn.llm_cost_review = coalesce(sn.llm_cost_review, 0.0) + coalesce(b.llm_cost_review, 0.0),
-                sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review, 0.0)
+                sn.llm_cost_review_docs = coalesce(sn.llm_cost_review_docs, 0.0) + coalesce(b.llm_cost_review_docs, 0.0),
+                sn.review_docs_count = coalesce(sn.review_docs_count, 0) + 1,
+                sn.llm_cost = coalesce(sn.llm_cost, 0.0) + coalesce(b.llm_cost_review_docs, 0.0)
             """,
             batch=[
                 {
@@ -1840,7 +1826,7 @@ def write_docs_review_results(
                     "reviewer_verdict_docs": e.get("reviewer_verdict"),
                     "reviewer_model_docs": e.get("reviewer_model"),
                     "review_input_hash": e.get("review_input_hash"),
-                    "llm_cost_review": e.get("llm_cost") or 0.0,
+                    "llm_cost_review_docs": e.get("llm_cost") or 0.0,
                 }
                 for e in passed
             ],
@@ -2340,9 +2326,6 @@ def persist_enriched_batch(
                 sn.pipeline_status = b.pipeline_status,
                 sn.enriched_at = datetime(b.enriched_at),
                 sn.llm_model = coalesce(b.llm_model, sn.llm_model),
-                sn.llm_cost_enrich = CASE WHEN b.llm_cost IS NOT NULL
-                                     THEN coalesce(sn.llm_cost_enrich, 0.0) + b.llm_cost
-                                     ELSE sn.llm_cost_enrich END,
                 sn.llm_cost = CASE WHEN b.llm_cost IS NOT NULL
                               THEN coalesce(sn.llm_cost, 0.0) + b.llm_cost
                               ELSE sn.llm_cost END,
@@ -4698,11 +4681,12 @@ def export_review_comments(
 
 # Phase → StandardName.llm_cost_<suffix> field mapping.
 _PHASE_TO_SN_COST_FIELD: dict[str, str] = {
-    "generate": "llm_cost_compose",
-    "enrich": "llm_cost_enrich",
-    "review_names": "llm_cost_review",
-    "review_docs": "llm_cost_docs",
-    "regen": "llm_cost_regen",
+    "generate_name": "llm_cost_generate_name",
+    "review_name": "llm_cost_review_name",
+    "refine_name": "llm_cost_refine_name",
+    "generate_docs": "llm_cost_generate_docs",
+    "review_docs": "llm_cost_review_docs",
+    "refine_docs": "llm_cost_refine_docs",
 }
 
 

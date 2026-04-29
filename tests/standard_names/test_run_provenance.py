@@ -71,7 +71,7 @@ class TestRotationProvenanceOnGenerate:
 
         mock_state = MagicMock()
         mock_state.total_cost = 0.1
-        mock_state.stats = {"compose_count": 2, "compose_cost": 0.1}
+        mock_state.stats = {"generate_name_count": 2, "compose_cost": 0.1}
         mock_state.consolidated = [
             {"id": "electron_temperature"},
             {"id": "ion_density"},
@@ -135,7 +135,7 @@ class TestRotationProvenanceOnRegen:
 
         mock_state = MagicMock()
         mock_state.total_cost = 0.05
-        mock_state.stats = {"compose_count": 1, "compose_cost": 0.05}
+        mock_state.stats = {"generate_name_count": 1, "compose_cost": 0.05}
         mock_state.consolidated = [{"id": "plasma_current"}]
 
         provenance_calls = []
