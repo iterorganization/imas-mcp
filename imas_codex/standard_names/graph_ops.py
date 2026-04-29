@@ -5292,3 +5292,40 @@ def release_regen_claims(ids: list[str]) -> int:
             ids=ids,
         )
         return result[0]["released"] if result else 0
+
+
+@retry_on_deadlock()
+def release_all_orphan_claims() -> dict[str, int]:
+    """Release all claimed-but-unreleased StandardName and StandardNameSource nodes.
+
+    Called from the ``run_sn_pools`` finally block after clean shutdown so
+    that any batch still marked as claimed at process-exit is unlocked.
+    Per-batch release already happens inside each process() try/finally, but
+    batches in flight at the 60s grace-period timeout leave ``claimed_at``
+    set permanently.  This sweep clears them unconditionally — it is safe
+    because the run is over and no other process can be competing for the
+    same tokens.
+
+    Returns a dict with ``"sn"`` and ``"sns"`` keys showing the counts
+    of released nodes.
+    """
+    with GraphClient() as gc:
+        sn_result = gc.query(
+            """
+            MATCH (n:StandardName)
+            WHERE n.claimed_at IS NOT NULL
+            SET n.claimed_at = null, n.claim_token = null
+            RETURN count(n) AS released
+            """
+        )
+        sns_result = gc.query(
+            """
+            MATCH (n:StandardNameSource)
+            WHERE n.claimed_at IS NOT NULL
+            SET n.claimed_at = null, n.claim_token = null
+            RETURN count(n) AS released
+            """
+        )
+    sn_count = sn_result[0]["released"] if sn_result else 0
+    sns_count = sns_result[0]["released"] if sns_result else 0
+    return {"sn": sn_count, "sns": sns_count}
