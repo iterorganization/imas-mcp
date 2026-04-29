@@ -1,5 +1,5 @@
 ---
-name: sn/compose_dd
+name: sn/generate_name_dd
 description: Dynamic user prompt for SN composition — per-batch DD paths with enriched context
 used_by: imas_codex.standard_names.workers.compose_worker
 task: composition

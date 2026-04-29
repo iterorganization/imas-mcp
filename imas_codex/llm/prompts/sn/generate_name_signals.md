@@ -1,5 +1,5 @@
 ---
-name: sn/compose_signals
+name: sn/generate_name_signals
 description: Generate standard names for facility signal descriptions
 used_by: imas_codex.standard_names.workers.compose_worker
 task: composition

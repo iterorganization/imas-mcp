@@ -1,5 +1,5 @@
 ---
-name: sn/compose_dd_tool_calling
+name: sn/generate_name_dd_tool_calling
 description: Variant C — lean compose prompt that fetches DD context on-demand via tool calls
 used_by: scripts/prompt_ab.py (plan 32 Phase 2 research harness)
 task: composition

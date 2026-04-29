@@ -1,5 +1,5 @@
 ---
-name: sn/compose_system_lean
+name: sn/generate_name_system_lean
 description: Lean system prompt for SN composition — ≤8K tokens (~24K chars). Phase A of plan 43.
 used_by: imas_codex.standard_names.workers.compose_worker
 task: composition

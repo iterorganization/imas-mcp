@@ -1,5 +1,5 @@
 ---
-name: sn/compose_system
+name: sn/generate_name_system
 description: Static system prompt for SN composition — prompt-cached via OpenRouter
 used_by: imas_codex.standard_names.workers.compose_worker
 task: composition

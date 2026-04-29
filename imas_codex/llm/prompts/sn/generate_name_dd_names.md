@@ -1,5 +1,5 @@
 ---
-name: sn/compose_dd_names
+name: sn/generate_name_dd_names
 description: Lean user prompt for SN composition in names batching mode (Workstream 2a)
 used_by: imas_codex.standard_names.workers.compose_worker
 task: composition
