@@ -5646,37 +5646,21 @@ def persist_refined_name(
                         WITH new, old
                         OPTIONAL MATCH (src:StandardNameSource)-[r:PRODUCED_NAME]->(old)
                         WITH new, old,
-                             collect({{src: src, r: r}}) AS produced_edges
-                        FOREACH (e IN produced_edges |
-                          DELETE e.r
-                        )
-                        WITH new, old, produced_edges
-                        UNWIND
-                          CASE WHEN size(produced_edges) > 0
-                               THEN produced_edges
-                               ELSE [null]
-                          END AS pe
-                        WITH new, old, pe
-                        WHERE pe IS NOT NULL
-                        MERGE (pe.src)-[:PRODUCED_NAME]->(new)
+                             collect(src) AS pn_sources,
+                             collect(r)   AS pn_rels
+                        FOREACH (rel IN pn_rels | DELETE rel)
+                        WITH new, old, pn_sources
+                        FOREACH (s IN pn_sources | MERGE (s)-[:PRODUCED_NAME]->(new))
 
                         // 5. Migrate HAS_STANDARD_NAME edges
                         WITH DISTINCT new, old
                         OPTIONAL MATCH (n)-[r2:HAS_STANDARD_NAME]->(old)
                         WITH new, old,
-                             collect({{n: n, r: r2}}) AS sn_edges
-                        FOREACH (e IN sn_edges |
-                          DELETE e.r
-                        )
-                        WITH new, old, sn_edges
-                        UNWIND
-                          CASE WHEN size(sn_edges) > 0
-                               THEN sn_edges
-                               ELSE [null]
-                          END AS se
-                        WITH new, old, se
-                        WHERE se IS NOT NULL
-                        MERGE (se.n)-[:HAS_STANDARD_NAME]->(new)
+                             collect(n)  AS hsn_nodes,
+                             collect(r2) AS hsn_rels
+                        FOREACH (rel IN hsn_rels | DELETE rel)
+                        WITH new, old, hsn_nodes
+                        FOREACH (n IN hsn_nodes | MERGE (n)-[:HAS_STANDARD_NAME]->(new))
 
                         WITH DISTINCT new, old
                         RETURN new.id AS new_name, old.id AS old_name
@@ -6183,6 +6167,214 @@ def release_refine_name_failed_claims(
             token=token,
         )
     return result[0]["released"] if result else 0
+
+
+# =============================================================================
+# generate_docs — claim / persist / release
+# =============================================================================
+# Stage gate: name_stage='accepted' AND docs_stage='pending'
+# The claim does NOT transition docs_stage (persist_generated_docs does that).
+
+
+@retry_on_deadlock()
+def claim_generate_docs_seed_and_expand(
+    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+    timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+) -> list[dict[str, Any]]:
+    """Claim StandardName nodes ready for generate_docs.
+
+    Eligibility: ``name_stage = 'accepted'`` AND ``docs_stage = 'pending'``
+    AND ``claimed_at IS NULL`` (or stale).
+
+    The claim does NOT transition ``docs_stage`` — that happens in
+    :func:`persist_generated_docs` so that a failed worker leaves the node
+    cleanly at ``'pending'``.
+
+    Each claimed item is enriched with REFINED_FROM chain history via
+    :func:`~imas_codex.standard_names.chain_history.name_chain_history`
+    and the name-review feedback fields so the LLM understands why this
+    name was accepted.
+
+    Returns claimed items as dicts.
+    """
+    from imas_codex.standard_names.chain_history import name_chain_history
+
+    where = "sn.name_stage = 'accepted' AND sn.docs_stage = 'pending'"
+
+    items = _claim_sn_atomic(
+        eligibility_where=where,
+        query_params={},
+        batch_size=batch_size,
+        timeout_seconds=timeout_seconds,
+        extra_return_fields=(
+            ", sn.description AS description"
+            ", sn.kind AS kind"
+            ", sn.tags AS tags"
+            ", sn.physics_domain AS physics_domain"
+            ", sn.reviewer_score_name AS reviewer_score_name"
+            ", sn.reviewer_comments_name AS reviewer_comments_name"
+            ", sn.reviewer_verdict_name AS reviewer_verdict_name"
+            ", sn.chain_length AS chain_length"
+            ", sn.docs_stage AS docs_stage"
+            ", sn.name_stage AS name_stage"
+        ),
+        # stage_field=None → claim only, no stage transition
+    )
+
+    # Enrich each claimed item with REFINED_FROM chain history.
+    for item in items:
+        item["chain_history"] = name_chain_history(item["id"])
+
+    logger.debug(
+        "claim_generate_docs_seed_and_expand: claimed %d",
+        len(items),
+    )
+    return items
+
+
+@retry_on_deadlock()
+def persist_generated_docs(
+    *,
+    sn_id: str,
+    claim_token: str,
+    description: str,
+    documentation: str,
+    model: str,
+) -> str:
+    """Persist generate_docs results and transition ``docs_stage`` to ``'drafted'``.
+
+    Single-transaction write:
+
+    1. Verify ``claim_token`` matches the stored token.
+    2. SET ``description``, ``documentation``, ``docs_stage = 'drafted'``,
+       ``docs_chain_length = 0``, ``docs_model``, ``docs_generated_at``,
+       clear ``claim_token`` and ``claimed_at``.
+
+    Parameters
+    ----------
+    sn_id:
+        StandardName node id.
+    claim_token:
+        Token written at claim time — verified before any write.
+    description:
+        Short description (1–3 sentences) from the LLM.
+    documentation:
+        Rich markdown documentation from the LLM.
+    model:
+        LLM model identifier used for generation.
+
+    Returns the new ``docs_stage`` value (``'drafted'``).
+    Raises :exc:`ValueError` if token verification fails (no matching node).
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sn:StandardName {id: $sn_id})
+            WHERE sn.claim_token = $token
+            SET sn.description      = $description,
+                sn.documentation    = $documentation,
+                sn.docs_stage       = 'drafted',
+                sn.docs_chain_length = 0,
+                sn.docs_model       = $model,
+                sn.docs_generated_at = datetime(),
+                sn.claim_token      = null,
+                sn.claimed_at       = null
+            RETURN sn.docs_stage AS docs_stage
+            """,
+            sn_id=sn_id,
+            token=claim_token,
+            description=description,
+            documentation=documentation,
+            model=model,
+        )
+    if not result:
+        raise ValueError(
+            f"persist_generated_docs: token mismatch or node not found for {sn_id!r}"
+        )
+    new_stage: str = result[0]["docs_stage"]
+    logger.debug("persist_generated_docs: %s → docs_stage=%s", sn_id, new_stage)
+    return new_stage
+
+
+@retry_on_deadlock()
+def release_generate_docs_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+) -> int:
+    """Release generate_docs claims IFF token matches.
+
+    Called after successful persist to clear any nodes whose claim state
+    was not already cleared inside :func:`persist_generated_docs`
+    (e.g., skipped items in a multi-item batch).
+
+    Returns the count of SNs actually released.
+    """
+    if not sn_ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $ids AS sid
+            MATCH (n:StandardName {id: sid})
+            WHERE n.claim_token = $token
+            SET n.claimed_at = null, n.claim_token = null
+            RETURN count(n) AS released
+            """,
+            ids=sn_ids,
+            token=claim_token,
+        )
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_generate_docs_claims: %d/%d released (token=%s) — "
+            "remainder already cleared or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
+
+
+@retry_on_deadlock()
+def release_generate_docs_failed_claims(
+    *,
+    sn_ids: list[str],
+    claim_token: str,
+) -> int:
+    """Release generate_docs claims after LLM or processing failure.
+
+    Token-verified: only clears ``claim_token`` and ``claimed_at`` on nodes
+    where ``claim_token = $token``.  Does NOT change ``docs_stage`` (it
+    stays at ``'pending'`` since the claim never transitioned it).
+
+    Returns the count of nodes released.
+    """
+    if not sn_ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $sn_ids AS sid
+            MATCH (sn:StandardName {id: sid})
+            WHERE sn.claim_token = $token
+            SET sn.claim_token = null,
+                sn.claimed_at  = null
+            RETURN count(sn) AS released
+            """,
+            sn_ids=sn_ids,
+            token=claim_token,
+        )
+    released: int = result[0]["released"] if result else 0
+    if released < len(sn_ids):
+        logger.debug(
+            "release_generate_docs_failed_claims: %d/%d released (token=%s) — "
+            "remainder already swept or re-claimed",
+            released,
+            len(sn_ids),
+            claim_token[:8],
+        )
+    return released
 
 
 @retry_on_deadlock()
