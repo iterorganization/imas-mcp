@@ -29,7 +29,7 @@ _CLAIM_PATCHES = {
     "enrich": f"{_GO}.claim_enrich_seed_and_expand",
     "review_names": f"{_GO}.claim_review_names_seed_and_expand",
     "review_docs": f"{_GO}.claim_review_docs_seed_and_expand",
-    "regen": f"{_GO}.claim_regen_seed_and_expand",
+    "refine_name": f"{_GO}.claim_refine_name_seed_and_expand",
 }
 
 
@@ -78,7 +78,9 @@ class TestReconcileRunsBeforePools:
                 _CLAIM_PATCHES["review_docs"],
                 side_effect=_claim_factory("review_docs"),
             ),
-            patch(_CLAIM_PATCHES["regen"], side_effect=_claim_factory("regen")),
+            patch(
+                _CLAIM_PATCHES["refine_name"], side_effect=_claim_factory("refine_name")
+            ),
             patch(f"{_GO}.create_sn_run_open"),
             patch(f"{_GO}.finalize_sn_run"),
             patch(f"{_BM}.start", new_callable=AsyncMock),
@@ -227,7 +229,7 @@ class TestPhysicsDomainPassthrough:
             "enrich",
             "review_names",
             "review_docs",
-            "regen",
+            "refine_name",
         }
 
         # Verify that run_sn_pools signature accepts only_domain
@@ -268,7 +270,7 @@ class TestRestartClearsStaleClaims:
             patch(_CLAIM_PATCHES["enrich"], return_value=[]),
             patch(_CLAIM_PATCHES["review_names"], return_value=[]),
             patch(_CLAIM_PATCHES["review_docs"], return_value=[]),
-            patch(_CLAIM_PATCHES["regen"], return_value=[]),
+            patch(_CLAIM_PATCHES["refine_name"], return_value=[]),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 
@@ -316,7 +318,7 @@ class TestFinalizeWithCorrectStatus:
             patch(_CLAIM_PATCHES["enrich"], return_value=[]),
             patch(_CLAIM_PATCHES["review_names"], return_value=[]),
             patch(_CLAIM_PATCHES["review_docs"], return_value=[]),
-            patch(_CLAIM_PATCHES["regen"], return_value=[]),
+            patch(_CLAIM_PATCHES["refine_name"], return_value=[]),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 
@@ -359,7 +361,7 @@ class TestFinalizeWithCorrectStatus:
             patch(_CLAIM_PATCHES["enrich"], return_value=[]),
             patch(_CLAIM_PATCHES["review_names"], return_value=[]),
             patch(_CLAIM_PATCHES["review_docs"], return_value=[]),
-            patch(_CLAIM_PATCHES["regen"], return_value=[]),
+            patch(_CLAIM_PATCHES["refine_name"], return_value=[]),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 

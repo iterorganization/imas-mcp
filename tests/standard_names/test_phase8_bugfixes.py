@@ -85,8 +85,16 @@ class TestClaimReturnScalarPhysicsDomain:
     items carry a str — not a list that would break set-comprehension hashing.
     """
 
-    def _run_sn_claim(self, claim_fn, seed_row: dict, readback_row: dict) -> list[dict]:
+    def _run_sn_claim(
+        self,
+        claim_fn,
+        seed_row: dict,
+        readback_row: dict,
+        extra_patches=None,
+    ) -> list[dict]:
         """Helper: exercise a StandardName-backed claim function."""
+        from contextlib import ExitStack
+
         gc = _mock_gc()
         gc._tx.run = MagicMock(
             side_effect=[
@@ -94,7 +102,11 @@ class TestClaimReturnScalarPhysicsDomain:
                 [readback_row],  # read-back by token
             ]
         )
-        with _patch_gc(gc):
+        with ExitStack() as stack:
+            stack.enter_context(_patch_gc(gc))
+            if extra_patches:
+                for target, mock_val in extra_patches.items():
+                    stack.enter_context(patch(target, mock_val))
             return claim_fn(batch_size=1)
 
     # ── claim_enrich ──────────────────────────────────────────────────
@@ -194,13 +206,15 @@ class TestClaimReturnScalarPhysicsDomain:
             f"physics_domain should be str, got {type(pd)}: {pd!r}"
         )
 
-    # ── claim_regen ───────────────────────────────────────────────────
+    # ── claim_refine_name ─────────────────────────────────────────────
 
-    def test_claim_regen_returns_scalar_physics_domain(self) -> None:
-        from imas_codex.standard_names.graph_ops import claim_regen_seed_and_expand
+    def test_claim_refine_name_returns_scalar_physics_domain(self) -> None:
+        from imas_codex.standard_names.graph_ops import (
+            claim_refine_name_seed_and_expand,
+        )
 
         result = self._run_sn_claim(
-            claim_regen_seed_and_expand,
+            claim_refine_name_seed_and_expand,
             seed_row={
                 "_cluster_id": None,
                 "_unit": "s",
@@ -218,6 +232,11 @@ class TestClaimReturnScalarPhysicsDomain:
                 "reviewer_score_name": 0.3,
                 "reviewed_name_at": "2024-01-01",
                 "regen_count": 0,
+            },
+            extra_patches={
+                "imas_codex.standard_names.chain_history.name_chain_history": MagicMock(
+                    return_value=[]
+                )
             },
         )
         assert result

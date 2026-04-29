@@ -237,10 +237,10 @@ class TestAtomicClaimReturnsExpandedPayload:
         ]:
             assert key in item, f"missing key: {key}"
 
-    def test_payload_keys_regen(self):
-        """claim_regen_seed_and_expand returns SN payload + regen-specific fields."""
+    def test_payload_keys_refine_name(self):
+        """claim_refine_name_seed_and_expand returns SN payload + refine-specific fields."""
         from imas_codex.standard_names.graph_ops import (
-            claim_regen_seed_and_expand,
+            claim_refine_name_seed_and_expand,
         )
 
         gc, tx = _mock_gc_tx()
@@ -258,6 +258,13 @@ class TestAtomicClaimReturnsExpandedPayload:
                         "physics_domain": None,
                         "validation_status": "valid",
                         "reviewer_score_name": 0.3,
+                        "reviewer_verdict_name": None,
+                        "reviewer_comments_per_dim_name": None,
+                        "chain_length": 1,
+                        "name_stage": "reviewed",
+                        "source_paths": [],
+                        "tags": [],
+                        "chain_history": [],
                         "reviewed_name_at": "2024-01-01",
                         "regen_count": 1,
                     }
@@ -265,13 +272,27 @@ class TestAtomicClaimReturnsExpandedPayload:
             ]
         )
 
-        with _patch_gc(gc):
-            items = claim_regen_seed_and_expand(min_score=0.5, batch_size=1)
+        with (
+            _patch_gc(gc),
+            patch(
+                "imas_codex.standard_names.chain_history.name_chain_history",
+                return_value=[],
+            ),
+        ):
+            items = claim_refine_name_seed_and_expand(min_score=0.5, batch_size=1)
 
         assert len(items) == 1
-        assert "reviewer_score_name" in items[0]
-        assert "regen_count" in items[0]
-        assert items[0]["regen_count"] == 1
+        for key in [
+            "reviewer_score_name",
+            "reviewer_verdict_name",
+            "reviewer_comments_per_dim_name",
+            "chain_length",
+            "name_stage",
+            "source_paths",
+            "tags",
+            "chain_history",
+        ]:
+            assert key in items[0], f"missing key: {key}"
 
 
 # ---------------------------------------------------------------------------
