@@ -490,3 +490,31 @@ class TestPoolAdmitExtension:
         assert not mgr.pool_admit("ghost_pool", POOL_WEIGHTS, set()), (
             "unknown pool (not in weights) must be denied even when active_pools is empty"
         )
+
+    def test_pool_admit_rejects_when_exhausted_with_empty_active_pools(self) -> None:
+        """Exhausted budget hard-gates pool_admit even in headless mode.
+
+        Before the fix, the headless short-circuit ``if not active_pools: return True``
+        was evaluated *before* the exhaustion check, so a depleted budget was ignored
+        when running headless.  The exhaustion check must come first.
+        """
+        mgr = self._mgr(total=5.0)
+        # Drive the remaining pool to zero/negative so exhausted() returns True.
+        mgr._pool = -0.01
+        assert mgr.exhausted(), "precondition: mgr must be exhausted"
+        # Simulate headless mode: active_pools is empty.
+        for pool in POOL_WEIGHTS:
+            assert not mgr.pool_admit(pool, POOL_WEIGHTS, set()), (
+                f"pool '{pool}' must be rejected when budget is exhausted, "
+                "even when active_pools is empty (headless mode)"
+            )
+
+    def test_pool_admit_rejects_when_exhausted_with_active_pools(self) -> None:
+        """Exhausted budget hard-gates pool_admit regardless of active_pools content."""
+        mgr = self._mgr(total=5.0)
+        mgr._pool = -0.01
+        assert mgr.exhausted(), "precondition: mgr must be exhausted"
+        active = {"generate"}
+        assert not mgr.pool_admit("generate", POOL_WEIGHTS, active), (
+            "pool 'generate' must be rejected when budget is exhausted"
+        )

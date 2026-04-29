@@ -606,6 +606,11 @@ class BudgetManager:
         """
         if pool not in weights:
             return False
+        # Hard gate: never admit when budget is exhausted, regardless of
+        # active_pools state.  This prevents headless mode from bypassing the
+        # cost cap (the bug that caused the 10.5× live smoke overshoot).
+        if self.exhausted():
+            return False
         # When active_pools is empty (e.g. headless/non-TTY mode where the
         # Rich display never updates pending_count, or at startup before the
         # first display refresh), admit all known pools unconditionally so

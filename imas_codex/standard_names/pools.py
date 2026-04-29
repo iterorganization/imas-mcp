@@ -248,6 +248,32 @@ async def pool_loop(
     logger.info("pool[%s] exiting cleanly", spec.name)
 
 
+async def _budget_watchdog(
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+    poll: float = 5.0,
+) -> None:
+    """Poll ``mgr.exhausted()`` and set ``stop_event`` when budget runs out.
+
+    This ensures the pools receive a clean shutdown signal even in headless
+    mode where the Rich display ticker never updates ``PoolHealth.pending_count``
+    (which was the root cause of the live smoke run's 10.5× overshoot).
+
+    The function terminates as soon as ``stop_event`` is set — whether by
+    this watchdog itself or by an external signal — so it never outlives the
+    pool tasks.
+    """
+    while not stop_event.is_set():
+        if mgr.exhausted():
+            logger.info("run_pools: budget exhausted — signalling graceful shutdown")
+            stop_event.set()
+            return
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=poll)
+        except TimeoutError:
+            continue
+
+
 async def run_pools(
     pools: list[PoolSpec],
     mgr: BudgetManager,
@@ -263,13 +289,17 @@ async def run_pools(
     Shutdown sequence (plan.md Phase 8 finding H6):
 
     1. ``stop_event.set()`` (set by caller, e.g. via ``run_discovery``
-       3-press shutdown).
+       3-press shutdown, or by the budget watchdog when exhausted).
     2. Each pool exits its claim loop and returns; pools currently
        processing a batch finish that batch normally.
     3. The harness waits up to ``grace_period`` seconds for all pool
        tasks to complete naturally.
     4. Any pool still running after grace is hard-cancelled.
     5. ``mgr.drain_pending()`` flushes the LLMCost write queue.
+
+    A ``_budget_watchdog`` task runs alongside the pool tasks and sets
+    ``stop_event`` as soon as ``mgr.exhausted()`` flips True, propagating
+    clean shutdown through the existing grace path.
 
     The caller is responsible for finalizing the SNRun row after this
     function returns.
@@ -295,6 +325,11 @@ async def run_pools(
         )
         for p in pools
     ]
+
+    watchdog_task = asyncio.create_task(
+        _budget_watchdog(mgr, stop_event),
+        name="budget_watchdog",
+    )
 
     # Wait until stop_event is set OR all pools complete naturally.
     stop_waiter = asyncio.create_task(stop_event.wait(), name="stop_waiter")
@@ -322,6 +357,11 @@ async def run_pools(
         await asyncio.gather(stop_waiter, return_exceptions=True)
         # If a pool exited with an exception, surface it after others finish.
         await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Cancel watchdog (it may already be done if it triggered the shutdown).
+    if not watchdog_task.done():
+        watchdog_task.cancel()
+    await asyncio.gather(watchdog_task, return_exceptions=True)
 
     # Drain LLMCost queue before final accounting.
     await mgr.drain_pending()
