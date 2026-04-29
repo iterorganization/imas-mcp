@@ -56,10 +56,10 @@ POOL_ORDER: tuple[str, ...] = (
 
 #: Display labels — short labels that fit the canonical LABEL_WIDTH (12).
 POOL_LABELS: dict[str, str] = {
-    "generate_name": "DRAFT",
+    "generate_name": "DRAFT NAME",
     "review_name": "REVIEW NAME",
     "refine_name": "REFINE NAME",
-    "generate_docs": "DOCS",
+    "generate_docs": "DRAFT DOCS",
     "review_docs": "REVIEW DOCS",
     "refine_docs": "REFINE DOCS",
 }

@@ -427,7 +427,6 @@ def _run_sn_loop_cmd(
     ):
         if key in row:
             table.add_row(key, str(row[key]))
-    table.add_row("domains_touched", ", ".join(row["domains_touched"]) or "—")
     out_console.print(table)
 
 
@@ -1783,10 +1782,6 @@ def sn_status() -> None:
         rr_table.add_row("names_enriched", str(rr["names_enriched"] or 0))
         rr_table.add_row("names_reviewed", str(rr["names_reviewed"] or 0))
         rr_table.add_row("names_regenerated", str(rr["names_regenerated"] or 0))
-        rr_table.add_row(
-            "domains_touched",
-            ", ".join(rr["domains_touched"] or []) or "—",
-        )
         console.print(rr_table)
 
     # --- Linking integrity & review cost --------------------------------

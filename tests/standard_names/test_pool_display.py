@@ -433,10 +433,10 @@ class TestFooterRendering:
     def test_pool_labels_are_correct(self):
         """All 6 pool labels use short form that fits LABEL_WIDTH (12)."""
         expected_labels = {
-            "DRAFT",
+            "DRAFT NAME",
             "REVIEW NAME",
             "REFINE NAME",
-            "DOCS",
+            "DRAFT DOCS",
             "REVIEW DOCS",
             "REFINE DOCS",
         }
