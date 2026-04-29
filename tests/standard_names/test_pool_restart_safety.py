@@ -58,10 +58,26 @@ def _mock_budget_manager() -> MagicMock:
 
 
 def _mock_gc():
-    """Mock GraphClient context manager."""
+    """Mock GraphClient context manager with transaction support."""
     gc = MagicMock()
     gc.__enter__ = MagicMock(return_value=gc)
     gc.__exit__ = MagicMock(return_value=False)
+
+    # Transaction-based mock
+    tx = MagicMock()
+    tx.closed = False
+    tx.commit = MagicMock()
+    tx.close = MagicMock()
+
+    session = MagicMock()
+    session.begin_transaction = MagicMock(return_value=tx)
+
+    @contextmanager
+    def _session_ctx():
+        yield session
+
+    gc.session = _session_ctx
+    gc._tx = tx  # expose for test access
     return gc
 
 
@@ -410,7 +426,7 @@ class TestStaleClaimRecoverable:
         gc = _mock_gc()
         # Step 1 (seed): return the stale source — the claim query's WHERE clause
         # accepts it because claimed_at < datetime() - duration($cutoff).
-        gc.query = MagicMock(
+        gc._tx.run = MagicMock(
             side_effect=[
                 # Seed row
                 [
@@ -444,7 +460,7 @@ class TestStaleClaimRecoverable:
         assert result[0]["id"] == "stale-source-001"
 
         # Verify the Cypher seed query checks claimed_at against the cutoff.
-        seed_call = gc.query.call_args_list[0]
+        seed_call = gc._tx.run.call_args_list[0]
         seed_cypher = seed_call.args[0]
         assert "claimed_at" in seed_cypher, (
             "Seed Cypher must filter on claimed_at for stale-claim recovery"
@@ -498,7 +514,7 @@ class TestFreshClaimNotDisturbed:
         gc = _mock_gc()
         # The Cypher seed query filters out fresh claims (claimed_at is recent).
         # Simulate: graph returns empty because no unclaimed/stale sources exist.
-        gc.query = MagicMock(
+        gc._tx.run = MagicMock(
             side_effect=[
                 [],  # Seed step: no eligible source (fresh claim blocks it)
             ]

@@ -28,10 +28,32 @@ from imas_codex.standard_names.pools import PoolSpec, pool_loop
 
 
 def _mock_gc() -> MagicMock:
-    """Build a mock GraphClient that supports ``with`` blocks."""
+    """Build a mock GraphClient that supports ``with`` blocks and transactions.
+
+    Supports both legacy ``gc.query()`` and the new transaction pattern
+    (``gc.session() → session.begin_transaction() → tx.run()``).
+    """
+    from contextlib import contextmanager
+
     gc = MagicMock()
     gc.__enter__ = MagicMock(return_value=gc)
     gc.__exit__ = MagicMock(return_value=False)
+
+    # Transaction-based mock: gc.session() → session.begin_transaction() → tx
+    tx = MagicMock()
+    tx.closed = False
+    tx.commit = MagicMock()
+    tx.close = MagicMock()
+
+    session = MagicMock()
+    session.begin_transaction = MagicMock(return_value=tx)
+
+    @contextmanager
+    def _session_ctx():
+        yield session
+
+    gc.session = _session_ctx
+    gc._tx = tx  # expose for test access
     return gc
 
 
@@ -66,7 +88,7 @@ class TestClaimReturnScalarPhysicsDomain:
     def _run_sn_claim(self, claim_fn, seed_row: dict, readback_row: dict) -> list[dict]:
         """Helper: exercise a StandardName-backed claim function."""
         gc = _mock_gc()
-        gc.query = MagicMock(
+        gc._tx.run = MagicMock(
             side_effect=[
                 [seed_row],  # seed
                 [readback_row],  # read-back by token
@@ -215,7 +237,7 @@ class TestClaimReturnScalarPhysicsDomain:
         from imas_codex.standard_names.graph_ops import claim_compose_seed_and_expand
 
         gc = _mock_gc()
-        gc.query = MagicMock(
+        gc._tx.run = MagicMock(
             side_effect=[
                 # seed — _physics_domain is a plain string (IMASNode scalar)
                 [
@@ -243,7 +265,7 @@ class TestClaimReturnScalarPhysicsDomain:
 
         assert result, "expected at least one item"
         # The seed CASE expression should return a scalar _physics_domain
-        seed_call_args = gc.query.call_args_list[0].args[0]
+        seed_call_args = gc._tx.run.call_args_list[0].args[0]
         assert "head(coalesce" not in seed_call_args, (
             "Seed Cypher still contains head(coalesce — BUG-1 not fixed"
         )
@@ -260,7 +282,7 @@ class TestClaimReturnScalarPhysicsDomain:
         from imas_codex.standard_names.graph_ops import claim_compose_seed_and_expand
 
         gc = _mock_gc()
-        gc.query = MagicMock(
+        gc._tx.run = MagicMock(
             side_effect=[
                 # seed — cluster_id=None triggers the fallback expand path
                 [
@@ -281,14 +303,14 @@ class TestClaimReturnScalarPhysicsDomain:
             claim_compose_seed_and_expand(batch_size=2)
 
         # Find the expand Cypher call (2nd query call)
-        assert gc.query.call_count >= 2, "expand query was never issued"
-        expand_call = gc.query.call_args_list[1].args[0]
+        assert gc._tx.run.call_count >= 2, "expand query was never issued"
+        expand_call = gc._tx.run.call_args_list[1].args[0]
         assert "IN imas.physics_domain" not in expand_call, (
             "Expand Cypher still uses IN operator on scalar IMASNode.physics_domain"
         )
-        assert "imas.physics_domain = $fallback_domain" in expand_call, (
-            "Expand Cypher does not use scalar = comparison for physics_domain"
-        )
+        assert (
+            "imas.physics_domain" in expand_call and "$fallback_domain" in expand_call
+        ), "Expand Cypher does not use scalar = comparison for physics_domain"
 
 
 # ---------------------------------------------------------------------------

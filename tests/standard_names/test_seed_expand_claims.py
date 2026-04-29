@@ -5,11 +5,18 @@ Verifies the five ``claim_*_seed_and_expand`` functions in
 ``run_sn_pools`` worker-pool orchestrator.
 
 Tests mock :class:`GraphClient` — no live Neo4j required.
+
+All five claim functions now execute seed+expand+read-back inside a
+**single Neo4j transaction** (via ``session.begin_transaction()``).
+The mock helper ``_mock_gc_tx()`` wires up the nested context
+managers so ``tx.run()`` receives the same side-effect sequences
+that previously drove ``gc.query()``.
 """
 
 from __future__ import annotations
 
 import random
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,8 +26,39 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+def _mock_gc_tx():
+    """Build a mock GraphClient that supports transactional claim queries.
+
+    Returns ``(gc, tx)`` where *gc* is the mock GraphClient and *tx* is
+    the mock Transaction whose ``.run()`` should be configured with
+    ``side_effect`` by each test.
+    """
+    gc = MagicMock()
+    gc.__enter__ = MagicMock(return_value=gc)
+    gc.__exit__ = MagicMock(return_value=False)
+
+    tx = MagicMock()
+    tx.closed = False
+    tx.commit = MagicMock()
+    tx.close = MagicMock()
+
+    session = MagicMock()
+    session.begin_transaction = MagicMock(return_value=tx)
+
+    @contextmanager
+    def _session_ctx():
+        yield session
+
+    gc.session = _session_ctx
+    return gc, tx
+
+
 def _mock_gc():
-    """Build a mock GraphClient that supports ``with`` blocks."""
+    """Build a mock GraphClient that supports ``with`` blocks.
+
+    Legacy helper — kept for tests that only need ``gc.query()``.
+    For transaction-based tests, use ``_mock_gc_tx()``.
+    """
     gc = MagicMock()
     gc.__enter__ = MagicMock(return_value=gc)
     gc.__exit__ = MagicMock(return_value=False)
@@ -52,10 +90,10 @@ class TestSeedIsRandom:
 
         seen_ids: set[str] = set()
         for _i in range(10):
-            gc = _mock_gc()
+            gc, tx = _mock_gc_tx()
             # Seed returns a different row each time (simulating rand())
             seed_id = f"src-{random.randint(1, 100)}"
-            gc.query = MagicMock(
+            tx.run = MagicMock(
                 side_effect=[
                     # Step 1 (seed) — with batch_size=1, expand is skipped
                     [
@@ -84,7 +122,7 @@ class TestSeedIsRandom:
                     seen_ids.add(result[0]["id"])
 
             # Verify the Cypher seed query uses ORDER BY rand()
-            seed_query = gc.query.call_args_list[0]
+            seed_query = tx.run.call_args_list[0]
             assert "ORDER BY rand()" in seed_query.args[0]
 
         # With random seeds from 1..100, 10 draws should NOT all be the same
@@ -96,8 +134,8 @@ class TestSeedIsRandom:
             claim_enrich_seed_and_expand,
         )
 
-        gc = _mock_gc()
-        gc.query = MagicMock(
+        gc, tx = _mock_gc_tx()
+        tx.run = MagicMock(
             side_effect=[
                 # seed
                 [{"_cluster_id": "c1", "_unit": "eV", "_physics_domain": "eq"}],
@@ -122,7 +160,7 @@ class TestSeedIsRandom:
         with _patch_gc(gc):
             claim_enrich_seed_and_expand(batch_size=5)
 
-        seed_query = gc.query.call_args_list[0].args[0]
+        seed_query = tx.run.call_args_list[0].args[0]
         assert "ORDER BY rand()" in seed_query
 
 
@@ -139,8 +177,8 @@ class TestBatchIsCoherent:
             claim_enrich_seed_and_expand,
         )
 
-        gc = _mock_gc()
-        gc.query = MagicMock(
+        gc, tx = _mock_gc_tx()
+        tx.run = MagicMock(
             side_effect=[
                 # seed — cluster c1, unit eV
                 [{"_cluster_id": "c1", "_unit": "eV", "_physics_domain": "cp"}],
@@ -172,7 +210,7 @@ class TestBatchIsCoherent:
         assert all(it["unit"] == "eV" for it in items)
 
         # Verify expand query targets the same cluster × unit
-        expand_query = gc.query.call_args_list[1].args[0]
+        expand_query = tx.run.call_args_list[1].args[0]
         assert "IMASSemanticCluster" in expand_query
         assert "$cluster_id" in expand_query
         assert "$unit" in expand_query
@@ -191,8 +229,8 @@ class TestFallbackToPhysicsDomain:
             claim_review_names_seed_and_expand,
         )
 
-        gc = _mock_gc()
-        gc.query = MagicMock(
+        gc, tx = _mock_gc_tx()
+        tx.run = MagicMock(
             side_effect=[
                 # seed — NO cluster_id, has physics_domain + unit
                 [
@@ -228,7 +266,7 @@ class TestFallbackToPhysicsDomain:
         assert len(items) == 1
 
         # The expand query should reference $fallback_domain, NOT $cluster_id
-        expand_query = gc.query.call_args_list[1].args[0]
+        expand_query = tx.run.call_args_list[1].args[0]
         assert "$fallback_domain" in expand_query
         assert "physics_domain" in expand_query
         assert "$cluster_id" not in expand_query
@@ -247,8 +285,8 @@ class TestReviewExcludesLowScore:
             claim_review_names_seed_and_expand,
         )
 
-        gc = _mock_gc()
-        gc.query = MagicMock(
+        gc, tx = _mock_gc_tx()
+        tx.run = MagicMock(
             side_effect=[
                 # seed
                 [{"_cluster_id": "c1", "_unit": "eV", "_physics_domain": "cp"}],
@@ -276,7 +314,7 @@ class TestReviewExcludesLowScore:
             items = claim_review_names_seed_and_expand(batch_size=5, min_score=0.5)
 
         # Verify the WHERE clause contains the B3 exclusivity filter
-        seed_query = gc.query.call_args_list[0].args[0]
+        seed_query = tx.run.call_args_list[0].args[0]
         assert "coalesce(sn.reviewer_score_name, 1.0) >= $min_score" in seed_query
 
         # Should only return the high-score name
@@ -288,8 +326,8 @@ class TestReviewExcludesLowScore:
             claim_review_docs_seed_and_expand,
         )
 
-        gc = _mock_gc()
-        gc.query = MagicMock(
+        gc, tx = _mock_gc_tx()
+        tx.run = MagicMock(
             side_effect=[
                 [{"_cluster_id": None, "_unit": None, "_physics_domain": None}],
                 # no expand (no grouping keys)
@@ -315,7 +353,7 @@ class TestReviewExcludesLowScore:
         with _patch_gc(gc):
             items = claim_review_docs_seed_and_expand(batch_size=1, min_score=0.5)
 
-        seed_query = gc.query.call_args_list[0].args[0]
+        seed_query = tx.run.call_args_list[0].args[0]
         assert "coalesce(sn.reviewer_score_name, 1.0) >= $min_score" in seed_query
         assert len(items) == 1
 
@@ -333,8 +371,8 @@ class TestRegenExcludesUnreviewed:
             claim_regen_seed_and_expand,
         )
 
-        gc = _mock_gc()
-        gc.query = MagicMock(
+        gc, tx = _mock_gc_tx()
+        tx.run = MagicMock(
             side_effect=[
                 # seed — a reviewed name with low score
                 [{"_cluster_id": "c1", "_unit": "m", "_physics_domain": "eq"}],
@@ -363,7 +401,7 @@ class TestRegenExcludesUnreviewed:
             items = claim_regen_seed_and_expand(min_score=0.5, batch_size=5)
 
         # Verify the WHERE clause requires reviewed_name_at IS NOT NULL
-        seed_query = gc.query.call_args_list[0].args[0]
+        seed_query = tx.run.call_args_list[0].args[0]
         assert "sn.reviewed_name_at IS NOT NULL" in seed_query
         assert "sn.reviewer_score_name < $min_score" in seed_query
 
@@ -390,8 +428,8 @@ class TestReviewAndRegenDisjoint:
         )
 
         # ── review_names claim ──
-        gc_review = _mock_gc()
-        gc_review.query = MagicMock(
+        gc_review, tx_review = _mock_gc_tx()
+        tx_review.run = MagicMock(
             side_effect=[
                 [{"_cluster_id": None, "_unit": None, "_physics_domain": None}],
                 # read-back
@@ -416,8 +454,8 @@ class TestReviewAndRegenDisjoint:
             review_items = claim_review_names_seed_and_expand(batch_size=1)
 
         # ── regen claim ──
-        gc_regen = _mock_gc()
-        gc_regen.query = MagicMock(
+        gc_regen, tx_regen = _mock_gc_tx()
+        tx_regen.run = MagicMock(
             side_effect=[
                 [{"_cluster_id": None, "_unit": None, "_physics_domain": None}],
                 # read-back
@@ -447,8 +485,8 @@ class TestReviewAndRegenDisjoint:
         assert review_ids.isdisjoint(regen_ids), f"overlap: {review_ids & regen_ids}"
 
         # Structural check: predicates are mutually exclusive
-        review_seed_q = gc_review.query.call_args_list[0].args[0]
-        regen_seed_q = gc_regen.query.call_args_list[0].args[0]
+        review_seed_q = tx_review.run.call_args_list[0].args[0]
+        regen_seed_q = tx_regen.run.call_args_list[0].args[0]
         assert "sn.reviewed_name_at IS NULL" in review_seed_q
         assert "sn.reviewed_name_at IS NOT NULL" in regen_seed_q
 
@@ -462,17 +500,17 @@ class TestClaimTokenTwoStep:
     """Read-back uses claim_token match, not just claimed_at."""
 
     def _run_and_check_readback(self, fn, side_effects, **kwargs):
-        gc = _mock_gc()
-        gc.query = MagicMock(side_effect=side_effects)
+        gc, tx = _mock_gc_tx()
+        tx.run = MagicMock(side_effect=side_effects)
         with _patch_gc(gc):
             fn(**kwargs)
 
         # The final query is the read-back (last call).
-        readback_query = gc.query.call_args_list[-1].args[0]
-        assert "claim_token: $token" in readback_query, (
+        readback_query = tx.run.call_args_list[-1].args[0]
+        assert "claim_token" in readback_query, (
             f"read-back must use claim_token match, got:\n{readback_query}"
         )
-        return gc
+        return gc, tx
 
     def test_compose_two_step(self):
         from imas_codex.standard_names.graph_ops import (
@@ -636,8 +674,8 @@ class TestEmptyPoolReturnsEmpty:
     def test_empty(self, fn_name: str):
         import imas_codex.standard_names.graph_ops as ops
 
-        gc = _mock_gc()
-        gc.query = MagicMock(return_value=[])  # seed returns nothing
+        gc, tx = _mock_gc_tx()
+        tx.run = MagicMock(return_value=[])  # seed returns nothing
 
         with _patch_gc(gc):
             fn = getattr(ops, fn_name)

@@ -4712,15 +4712,25 @@ def update_sn_per_phase_costs(run_id: str) -> int:
 _DEFAULT_SEED_EXPAND_BATCH = 15
 
 
-def _seed_and_expand_sn(
+def _claim_sn_atomic(
     *,
     eligibility_where: str,
     query_params: dict[str, Any],
     batch_size: int,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
     extra_return_fields: str = "",
+    stage_field: str | None = None,
+    to_stage: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Shared seed-and-expand claim for StandardName nodes.
+    """Single-transaction stage-aware claim for StandardName nodes.
+
+    All steps — seed, expand, and read-back — execute inside **one** Neo4j
+    transaction.  If any step fails, the entire transaction rolls back and
+    no partial claim state leaks into the graph.
+
+    Callers should wrap this with ``@retry_on_deadlock()`` so that a
+    ``TransientError`` (deadlock) causes the whole function — including
+    token generation — to retry cleanly.
 
     Parameters
     ----------
@@ -4736,130 +4746,180 @@ def _seed_and_expand_sn(
         Stale-claim recovery window.
     extra_return_fields:
         Additional ``RETURN`` columns appended after the common set.
-        Must start with a comma if non-empty, e.g. ``", sn.enriched_at AS enriched_at"``.
+        Must start with a comma if non-empty, e.g.
+        ``", sn.enriched_at AS enriched_at"``.
+    stage_field:
+        Optional stage property to transition at claim time
+        (``'name_stage'`` or ``'docs_stage'``).  When *None* (default),
+        no stage transition occurs — only ``claim_token`` and
+        ``claimed_at`` are written.
+    to_stage:
+        Target stage value for the transition (e.g. ``'refining'``).
+        Ignored when *stage_field* is *None*.
 
     Returns
     -------
     list[dict]
-        Claimed items as plain dicts.  Empty list when no eligible seed exists.
+        Claimed items as plain dicts.  Empty list when no eligible seed
+        exists.
     """
     token = str(uuid.uuid4())
     cutoff = f"PT{timeout_seconds}S"
     params: dict[str, Any] = {**query_params, "token": token, "cutoff": cutoff}
 
+    # Build optional SET clause for atomic stage transition.
+    stage_set = ""
+    if stage_field and to_stage:
+        stage_set = f", sn.{stage_field} = $to_stage"
+        params["to_stage"] = to_stage
+
     with GraphClient() as gc:
-        # ── Step 1: Seed ─────────────────────────────────────────
-        seed_result = gc.query(
-            f"""
-            MATCH (sn:StandardName)
-            WHERE {eligibility_where}
-              AND (sn.claimed_at IS NULL
-                   OR sn.claimed_at < datetime() - duration($cutoff))
-            WITH sn ORDER BY rand() LIMIT 1
-            SET sn.claimed_at = datetime(), sn.claim_token = $token
-            WITH sn
-            OPTIONAL MATCH (sn)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
-            OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
-            RETURN c.id AS _cluster_id, u.id AS _unit,
-                   sn.physics_domain AS _physics_domain
-            """,
-            **params,
-        )
-
-        if not seed_result:
-            return []
-
-        seed = dict(seed_result[0])
-        cluster_id = seed.get("_cluster_id")
-        unit = seed.get("_unit")
-        physics_domain = seed.get("_physics_domain")
-        expand_limit = batch_size - 1
-
-        # ── Step 2: Expand ───────────────────────────────────────
-        if expand_limit > 0:
-            expand_params: dict[str, Any] = {
-                **params,
-                "expand_limit": expand_limit,
-            }
-            if cluster_id is not None and unit is not None:
-                expand_params.update(cluster_id=cluster_id, unit=unit)
-                gc.query(
-                    f"""
-                    MATCH (sn:StandardName)
-                    WHERE {eligibility_where}
-                      AND sn.claimed_at IS NULL
-                    MATCH (sn)-[:IN_CLUSTER]->(:IMASSemanticCluster {{id: $cluster_id}})
-                    MATCH (sn)-[:HAS_UNIT]->(:Unit {{id: $unit}})
-                    WITH sn LIMIT $expand_limit
-                    SET sn.claimed_at = datetime(), sn.claim_token = $token
-                    """,
-                    **expand_params,
+        with gc.session() as session:
+            tx = session.begin_transaction()
+            try:
+                # ── Step 1: Seed ─────────────────────────────────
+                seed_result = list(
+                    tx.run(
+                        f"""
+                        MATCH (sn:StandardName)
+                        WHERE {eligibility_where}
+                          AND (sn.claimed_at IS NULL
+                               OR sn.claimed_at < datetime()
+                                    - duration($cutoff))
+                        WITH sn ORDER BY rand() LIMIT 1
+                        SET sn.claimed_at = datetime(),
+                            sn.claim_token = $token
+                            {stage_set}
+                        WITH sn
+                        OPTIONAL MATCH (sn)-[:IN_CLUSTER]
+                            ->(c:IMASSemanticCluster)
+                        OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
+                        RETURN c.id AS _cluster_id, u.id AS _unit,
+                               sn.physics_domain AS _physics_domain
+                        """,
+                        **params,
+                    )
                 )
-            elif cluster_id is not None:
-                expand_params["cluster_id"] = cluster_id
-                gc.query(
-                    f"""
-                    MATCH (sn:StandardName)
-                    WHERE {eligibility_where}
-                      AND sn.claimed_at IS NULL
-                    MATCH (sn)-[:IN_CLUSTER]->(:IMASSemanticCluster {{id: $cluster_id}})
-                    WITH sn LIMIT $expand_limit
-                    SET sn.claimed_at = datetime(), sn.claim_token = $token
-                    """,
-                    **expand_params,
-                )
-            elif physics_domain is not None and unit is not None:
-                expand_params.update(fallback_domain=physics_domain, unit=unit)
-                gc.query(
-                    f"""
-                    MATCH (sn:StandardName)
-                    WHERE {eligibility_where}
-                      AND sn.claimed_at IS NULL
-                      AND $fallback_domain IN sn.physics_domain
-                    MATCH (sn)-[:HAS_UNIT]->(:Unit {{id: $unit}})
-                    WITH sn LIMIT $expand_limit
-                    SET sn.claimed_at = datetime(), sn.claim_token = $token
-                    """,
-                    **expand_params,
-                )
-            elif physics_domain is not None:
-                expand_params["fallback_domain"] = physics_domain
-                gc.query(
-                    f"""
-                    MATCH (sn:StandardName)
-                    WHERE {eligibility_where}
-                      AND sn.claimed_at IS NULL
-                      AND $fallback_domain IN sn.physics_domain
-                    WITH sn LIMIT $expand_limit
-                    SET sn.claimed_at = datetime(), sn.claim_token = $token
-                    """,
-                    **expand_params,
-                )
-            # else: no grouping key — seed-only batch
 
-        # ── Step 3: Read-back by token ───────────────────────────
-        results = gc.query(
-            f"""
-            MATCH (sn:StandardName {{claim_token: $token}})
-            OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
-            OPTIONAL MATCH (sn)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
-            RETURN sn.id AS id,
-                   sn.description AS description,
-                   sn.documentation AS documentation,
-                   sn.kind AS kind,
-                   coalesce(u.id, sn.unit) AS unit,
-                   c.id AS cluster_id,
-                   sn.physics_domain AS physics_domain,
-                   sn.validation_status AS validation_status
-                   {extra_return_fields}
-            """,
-            token=token,
-        )
+                if not seed_result:
+                    tx.close()
+                    return []
 
-        items = [dict(r) for r in results] if results else []
+                seed = dict(seed_result[0])
+                cluster_id = seed.get("_cluster_id")
+                unit = seed.get("_unit")
+                physics_domain = seed.get("_physics_domain")
+                expand_limit = batch_size - 1
+
+                # ── Step 2: Expand ───────────────────────────────
+                if expand_limit > 0:
+                    expand_params: dict[str, Any] = {
+                        **params,
+                        "expand_limit": expand_limit,
+                    }
+                    if cluster_id is not None and unit is not None:
+                        expand_params.update(cluster_id=cluster_id, unit=unit)
+                        tx.run(
+                            f"""
+                            MATCH (sn:StandardName)
+                            WHERE {eligibility_where}
+                              AND sn.claimed_at IS NULL
+                            MATCH (sn)-[:IN_CLUSTER]
+                                ->(:IMASSemanticCluster
+                                    {{id: $cluster_id}})
+                            MATCH (sn)-[:HAS_UNIT]
+                                ->(:Unit {{id: $unit}})
+                            WITH sn LIMIT $expand_limit
+                            SET sn.claimed_at = datetime(),
+                                sn.claim_token = $token
+                                {stage_set}
+                            """,
+                            **expand_params,
+                        )
+                    elif cluster_id is not None:
+                        expand_params["cluster_id"] = cluster_id
+                        tx.run(
+                            f"""
+                            MATCH (sn:StandardName)
+                            WHERE {eligibility_where}
+                              AND sn.claimed_at IS NULL
+                            MATCH (sn)-[:IN_CLUSTER]
+                                ->(:IMASSemanticCluster
+                                    {{id: $cluster_id}})
+                            WITH sn LIMIT $expand_limit
+                            SET sn.claimed_at = datetime(),
+                                sn.claim_token = $token
+                                {stage_set}
+                            """,
+                            **expand_params,
+                        )
+                    elif physics_domain is not None and unit is not None:
+                        expand_params.update(fallback_domain=physics_domain, unit=unit)
+                        tx.run(
+                            f"""
+                            MATCH (sn:StandardName)
+                            WHERE {eligibility_where}
+                              AND sn.claimed_at IS NULL
+                              AND $fallback_domain IN sn.physics_domain
+                            MATCH (sn)-[:HAS_UNIT]
+                                ->(:Unit {{id: $unit}})
+                            WITH sn LIMIT $expand_limit
+                            SET sn.claimed_at = datetime(),
+                                sn.claim_token = $token
+                                {stage_set}
+                            """,
+                            **expand_params,
+                        )
+                    elif physics_domain is not None:
+                        expand_params["fallback_domain"] = physics_domain
+                        tx.run(
+                            f"""
+                            MATCH (sn:StandardName)
+                            WHERE {eligibility_where}
+                              AND sn.claimed_at IS NULL
+                              AND $fallback_domain IN sn.physics_domain
+                            WITH sn LIMIT $expand_limit
+                            SET sn.claimed_at = datetime(),
+                                sn.claim_token = $token
+                                {stage_set}
+                            """,
+                            **expand_params,
+                        )
+                    # else: no grouping key — seed-only batch
+
+                # ── Step 3: Read-back by token ───────────────────
+                results = list(
+                    tx.run(
+                        f"""
+                        MATCH (sn:StandardName {{claim_token: $token}})
+                        OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
+                        OPTIONAL MATCH (sn)-[:IN_CLUSTER]
+                            ->(c:IMASSemanticCluster)
+                        RETURN sn.id AS id,
+                               sn.description AS description,
+                               sn.documentation AS documentation,
+                               sn.kind AS kind,
+                               coalesce(u.id, sn.unit) AS unit,
+                               c.id AS cluster_id,
+                               sn.physics_domain AS physics_domain,
+                               sn.validation_status
+                                   AS validation_status
+                               {extra_return_fields}
+                        """,
+                        token=token,
+                    )
+                )
+
+                items = [dict(r) for r in results]
+                tx.commit()
+
+            except BaseException:
+                if tx.closed is False:
+                    tx.close()
+                raise
 
     logger.debug(
-        "_seed_and_expand_sn: claimed %d (token=%s)",
+        "_claim_sn_atomic: claimed %d (token=%s)",
         len(items),
         token[:8],
     )
@@ -4882,6 +4942,10 @@ def claim_compose_seed_and_expand(
     ``(cluster_id, unit)`` (via ``FROM_DD_PATH``→``IN_CLUSTER`` /
     ``HAS_UNIT``).  When no cluster exists the fallback key is
     ``(physics_domain, unit)``.
+
+    All three steps (seed, expand, read-back) execute inside a **single**
+    Neo4j transaction so that no partial claim state leaks on deadlock
+    retry.
 
     Parameters
     ----------
@@ -4915,125 +4979,157 @@ def claim_compose_seed_and_expand(
         extra_params["facility"] = facility
 
     with GraphClient() as gc:
-        # ── Step 1: Seed ─────────────────────────────────────────
-        seed_result = gc.query(
-            f"""
-            MATCH (sns:StandardNameSource)
-            WHERE sns.status = 'extracted'
-              AND (sns.claimed_at IS NULL
-                   OR sns.claimed_at < datetime() - duration($cutoff))
-              {facility_where}
-            WITH sns ORDER BY rand() LIMIT 1
-            SET sns.claimed_at = datetime(), sns.claim_token = $token
-            WITH sns
-            OPTIONAL MATCH (sns)-[:FROM_DD_PATH]->(imas:IMASNode)
-            OPTIONAL MATCH (imas)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
-            OPTIONAL MATCH (imas)-[:HAS_UNIT]->(u:Unit)
-            OPTIONAL MATCH (sns)-[:FROM_SIGNAL]->(sig:FacilitySignal)
-            RETURN c.id AS _cluster_id,
-                   CASE WHEN u IS NOT NULL THEN u.id
-                        WHEN sig IS NOT NULL THEN sig.unit
-                        ELSE null END AS _unit,
-                   CASE WHEN imas IS NOT NULL
-                        THEN imas.physics_domain
-                        WHEN sig IS NOT NULL THEN sig.physics_domain
-                        ELSE null END AS _physics_domain,
-                   sns.batch_key AS _batch_key
-            """,
-            token=token,
-            cutoff=cutoff,
-            **extra_params,
-        )
-
-        if not seed_result:
-            return []
-
-        seed = dict(seed_result[0])
-        cluster_id = seed.get("_cluster_id")
-        unit = seed.get("_unit")
-        physics_domain = seed.get("_physics_domain")
-        batch_key = seed.get("_batch_key")
-        expand_limit = batch_size - 1
-
-        # ── Step 2: Expand ───────────────────────────────────────
-        if expand_limit > 0:
-            expanded = False
-            if cluster_id is not None and unit is not None:
-                gc.query(
-                    f"""
-                    MATCH (sns:StandardNameSource)
-                    WHERE sns.status = 'extracted'
-                      AND sns.claimed_at IS NULL
-                      {facility_where}
-                    MATCH (sns)-[:FROM_DD_PATH]->(imas:IMASNode)
-                    MATCH (imas)-[:IN_CLUSTER]->(:IMASSemanticCluster {{id: $cluster_id}})
-                    MATCH (imas)-[:HAS_UNIT]->(:Unit {{id: $unit}})
-                    WITH sns LIMIT $expand_limit
-                    SET sns.claimed_at = datetime(), sns.claim_token = $token
-                    """,
-                    token=token,
-                    cluster_id=cluster_id,
-                    unit=unit,
-                    expand_limit=expand_limit,
-                    **extra_params,
-                )
-                expanded = True
-            elif physics_domain is not None and unit is not None:
-                # IMASNode.physics_domain is stored as a scalar String (not a
-                # list), so use = rather than the Cypher IN operator (which
-                # requires a list and throws a head()-TypeError on a String).
-                gc.query(
-                    f"""
-                    MATCH (sns:StandardNameSource)
-                    WHERE sns.status = 'extracted'
-                      AND sns.claimed_at IS NULL
-                      {facility_where}
-                    MATCH (sns)-[:FROM_DD_PATH]->(imas:IMASNode)
-                    WHERE imas.physics_domain = $fallback_domain
-                    MATCH (imas)-[:HAS_UNIT]->(:Unit {{id: $unit}})
-                    WITH sns LIMIT $expand_limit
-                    SET sns.claimed_at = datetime(), sns.claim_token = $token
-                    """,
-                    token=token,
-                    fallback_domain=physics_domain,
-                    unit=unit,
-                    expand_limit=expand_limit,
-                    **extra_params,
-                )
-                expanded = True
-
-            if not expanded and batch_key:
-                # Last resort: group by batch_key (IDS or diagnostic).
-                gc.query(
-                    f"""
-                    MATCH (sns:StandardNameSource)
-                    WHERE sns.status = 'extracted'
-                      AND sns.claimed_at IS NULL
-                      AND sns.batch_key = $batch_key
-                      {facility_where}
-                    WITH sns LIMIT $expand_limit
-                    SET sns.claimed_at = datetime(), sns.claim_token = $token
-                    """,
-                    token=token,
-                    batch_key=batch_key,
-                    expand_limit=expand_limit,
-                    **extra_params,
+        with gc.session() as session:
+            tx = session.begin_transaction()
+            try:
+                # ── Step 1: Seed ─────────────────────────────────
+                seed_result = list(
+                    tx.run(
+                        f"""
+                        MATCH (sns:StandardNameSource)
+                        WHERE sns.status = 'extracted'
+                          AND (sns.claimed_at IS NULL
+                               OR sns.claimed_at < datetime()
+                                    - duration($cutoff))
+                          {facility_where}
+                        WITH sns ORDER BY rand() LIMIT 1
+                        SET sns.claimed_at = datetime(),
+                            sns.claim_token = $token
+                        WITH sns
+                        OPTIONAL MATCH (sns)-[:FROM_DD_PATH]
+                            ->(imas:IMASNode)
+                        OPTIONAL MATCH (imas)-[:IN_CLUSTER]
+                            ->(c:IMASSemanticCluster)
+                        OPTIONAL MATCH (imas)-[:HAS_UNIT]->(u:Unit)
+                        OPTIONAL MATCH (sns)-[:FROM_SIGNAL]
+                            ->(sig:FacilitySignal)
+                        RETURN c.id AS _cluster_id,
+                               CASE WHEN u IS NOT NULL THEN u.id
+                                    WHEN sig IS NOT NULL
+                                    THEN sig.unit
+                                    ELSE null END AS _unit,
+                               CASE WHEN imas IS NOT NULL
+                                    THEN imas.physics_domain
+                                    WHEN sig IS NOT NULL
+                                    THEN sig.physics_domain
+                                    ELSE null END
+                                        AS _physics_domain,
+                               sns.batch_key AS _batch_key
+                        """,
+                        token=token,
+                        cutoff=cutoff,
+                        **extra_params,
+                    )
                 )
 
-        # ── Step 3: Read-back ────────────────────────────────────
-        results = gc.query(
-            """
-            MATCH (sns:StandardNameSource {claim_token: $token})
-            RETURN sns.id AS id,
-                   sns.source_id AS source_id,
-                   sns.source_type AS source_type,
-                   sns.batch_key AS batch_key,
-                   sns.description AS description
-            """,
-            token=token,
-        )
+                if not seed_result:
+                    tx.close()
+                    return []
 
-        items = [dict(r) for r in results] if results else []
+                seed = dict(seed_result[0])
+                cluster_id = seed.get("_cluster_id")
+                unit = seed.get("_unit")
+                physics_domain = seed.get("_physics_domain")
+                batch_key = seed.get("_batch_key")
+                expand_limit = batch_size - 1
+
+                # ── Step 2: Expand ───────────────────────────────
+                if expand_limit > 0:
+                    expanded = False
+                    if cluster_id is not None and unit is not None:
+                        tx.run(
+                            f"""
+                            MATCH (sns:StandardNameSource)
+                            WHERE sns.status = 'extracted'
+                              AND sns.claimed_at IS NULL
+                              {facility_where}
+                            MATCH (sns)-[:FROM_DD_PATH]
+                                ->(imas:IMASNode)
+                            MATCH (imas)-[:IN_CLUSTER]
+                                ->(:IMASSemanticCluster
+                                    {{id: $cluster_id}})
+                            MATCH (imas)-[:HAS_UNIT]
+                                ->(:Unit {{id: $unit}})
+                            WITH sns LIMIT $expand_limit
+                            SET sns.claimed_at = datetime(),
+                                sns.claim_token = $token
+                            """,
+                            token=token,
+                            cluster_id=cluster_id,
+                            unit=unit,
+                            expand_limit=expand_limit,
+                            **extra_params,
+                        )
+                        expanded = True
+                    elif physics_domain is not None and unit is not None:
+                        # IMASNode.physics_domain is a scalar String;
+                        # use = not IN.
+                        tx.run(
+                            f"""
+                            MATCH (sns:StandardNameSource)
+                            WHERE sns.status = 'extracted'
+                              AND sns.claimed_at IS NULL
+                              {facility_where}
+                            MATCH (sns)-[:FROM_DD_PATH]
+                                ->(imas:IMASNode)
+                            WHERE imas.physics_domain
+                                = $fallback_domain
+                            MATCH (imas)-[:HAS_UNIT]
+                                ->(:Unit {{id: $unit}})
+                            WITH sns LIMIT $expand_limit
+                            SET sns.claimed_at = datetime(),
+                                sns.claim_token = $token
+                            """,
+                            token=token,
+                            fallback_domain=physics_domain,
+                            unit=unit,
+                            expand_limit=expand_limit,
+                            **extra_params,
+                        )
+                        expanded = True
+
+                    if not expanded and batch_key:
+                        # Last resort: group by batch_key.
+                        tx.run(
+                            f"""
+                            MATCH (sns:StandardNameSource)
+                            WHERE sns.status = 'extracted'
+                              AND sns.claimed_at IS NULL
+                              AND sns.batch_key = $batch_key
+                              {facility_where}
+                            WITH sns LIMIT $expand_limit
+                            SET sns.claimed_at = datetime(),
+                                sns.claim_token = $token
+                            """,
+                            token=token,
+                            batch_key=batch_key,
+                            expand_limit=expand_limit,
+                            **extra_params,
+                        )
+
+                # ── Step 3: Read-back ────────────────────────────
+                results = list(
+                    tx.run(
+                        """
+                        MATCH (sns:StandardNameSource
+                               {claim_token: $token})
+                        RETURN sns.id AS id,
+                               sns.source_id AS source_id,
+                               sns.source_type AS source_type,
+                               sns.batch_key AS batch_key,
+                               sns.description AS description
+                        """,
+                        token=token,
+                    )
+                )
+
+                items = [dict(r) for r in results]
+                tx.commit()
+
+            except BaseException:
+                if tx.closed is False:
+                    tx.close()
+                raise
 
     logger.debug(
         "claim_compose_seed_and_expand: claimed %d (token=%s)",
@@ -5061,7 +5157,7 @@ def claim_enrich_seed_and_expand(
     where = "sn.validation_status = 'valid' AND sn.enriched_at IS NULL"
     params: dict[str, Any] = {}
 
-    return _seed_and_expand_sn(
+    return _claim_sn_atomic(
         eligibility_where=where,
         query_params=params,
         batch_size=batch_size,
@@ -5093,7 +5189,7 @@ def claim_review_names_seed_and_expand(
         " AND sn.validation_status = 'valid'"
         " AND coalesce(sn.reviewer_score_name, 1.0) >= $min_score"
     )
-    return _seed_and_expand_sn(
+    return _claim_sn_atomic(
         eligibility_where=where,
         query_params={"min_score": min_score},
         batch_size=batch_size,
@@ -5129,7 +5225,7 @@ def claim_review_docs_seed_and_expand(
         " AND sn.reviewed_name_at IS NOT NULL"
         " AND coalesce(sn.reviewer_score_name, 1.0) >= $min_score"
     )
-    return _seed_and_expand_sn(
+    return _claim_sn_atomic(
         eligibility_where=where,
         query_params={"min_score": min_score},
         batch_size=batch_size,
@@ -5165,7 +5261,7 @@ def claim_regen_seed_and_expand(
         " AND sn.reviewer_score_name < $min_score"
         " AND sn.reviewed_name_at IS NOT NULL"
     )
-    return _seed_and_expand_sn(
+    return _claim_sn_atomic(
         eligibility_where=where,
         query_params={"min_score": min_score},
         batch_size=batch_size,
