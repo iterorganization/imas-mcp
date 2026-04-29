@@ -505,3 +505,60 @@ class StandardNameEnrichBatch(BaseModel):
     """LLM response for enriching a batch of standard names."""
 
     items: list[StandardNameEnrichItem]
+
+
+# =============================================================================
+# Refine-pipeline response models (Phase 8.1)
+# =============================================================================
+
+
+class RefinedName(BaseModel):
+    """LLM response model for a single refine_name call.
+
+    Mirrors ``StandardNameCandidate`` but is targeted at single-path refine
+    calls rather than batched composition.  The ``confidence`` field is
+    intentionally absent — it was removed in Phase 8.1.
+    """
+
+    name: str = Field(
+        ...,
+        description="The refined standard name in snake_case",
+        alias="standard_name",
+    )
+    description: str = Field(
+        ..., description="One-sentence physics definition (≤ 120 chars, no LaTeX)"
+    )
+    kind: Literal["scalar", "vector", "metadata"] = Field(
+        default="scalar", description="Entry kind"
+    )
+    grammar_fields: dict[str, str] = Field(
+        default_factory=dict, description="Grammar segment decomposition"
+    )
+    reason: str = Field(
+        default="",
+        description="Brief justification for how this addresses reviewer concerns",
+    )
+
+    model_config = {"extra": "ignore", "populate_by_name": True}
+
+
+class RefinedDocs(BaseModel):
+    """LLM response model for a single refine_docs call.
+
+    Mirrors the ``StandardNameEnrichItem`` documentation fields but is
+    targeted at single-name docs-refine calls rather than batched enrichment.
+    """
+
+    documentation: str = Field(
+        ..., description="Full documentation text with LaTeX, typical values, context"
+    )
+    links: list[str] = Field(
+        default_factory=list,
+        description="Related standard names (name:xxx or dd:path format)",
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        description="Physics domain / IDS tags (lowercase, snake_case)",
+    )
+
+    model_config = {"extra": "ignore"}
