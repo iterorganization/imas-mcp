@@ -825,6 +825,16 @@ async def run_sn_pools(
         health_map = await run_pools(specs, shared_mgr, stop_event)
         logger.info("run_sn_pools: all pools exited — %s", health_map)
 
+        # Aggregate per-pool processed counts into RunSummary.
+        def _total(name: str) -> int:
+            h = health_map.get(name)
+            return getattr(h, "total_processed", 0) if h is not None else 0
+
+        summary.names_composed = _total("generate")
+        summary.names_enriched = _total("enrich")
+        summary.names_reviewed = _total("review_names") + _total("review_docs")
+        summary.names_regenerated = _total("regen")
+
         # ── Determine stop reason ─────────────────────────────────
         # Check exhaustion before stop_event: the budget watchdog sets
         # stop_event when exhausted, so checking stop_event first would
@@ -844,6 +854,22 @@ async def run_sn_pools(
         logger.error("run_sn_pools failed: %s", exc, exc_info=True)
     finally:
         summary.ended_at = datetime.now(UTC)
+
+        # Release any orphaned claims left by batches in flight at shutdown.
+        try:
+            from imas_codex.standard_names.graph_ops import release_all_orphan_claims
+
+            orphan_counts = release_all_orphan_claims()
+            if orphan_counts.get("sn", 0) or orphan_counts.get("sns", 0):
+                logger.info(
+                    "run_sn_pools: orphan sweep released %d SN + %d SNS",
+                    orphan_counts.get("sn", 0),
+                    orphan_counts.get("sns", 0),
+                )
+        except Exception as _orphan_exc:  # noqa: BLE001
+            logger.warning(
+                "run_sn_pools: orphan sweep failed (non-fatal): %s", _orphan_exc
+            )
 
         # Drain pending LLMCost graph writes.
         cost_is_exact = await shared_mgr.drain_pending()
