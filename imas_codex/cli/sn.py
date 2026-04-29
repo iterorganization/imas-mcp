@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import click
@@ -111,6 +112,7 @@ def _run_sn_loop_cmd(
     display = None
     loop_state: SNPoolState | None = None
     cli_console: Console | None = None
+    _pool_pending_counts: Callable[[], dict[str, int]] | None = None
     if use_rich:
         cli_console = Console()
         setup_logging("sn", "sn-run", use_rich=True, verbose=verbose)
@@ -330,6 +332,29 @@ def _run_sn_loop_cmd(
                 ("review", val.get("review_names", 0) + val.get("review_docs", 0)),
             ]
 
+        def _pool_pending_counts() -> dict[str, int]:
+            """Return per-pool pending counts using the same cached result.
+
+            Matches the ``POOL_NAMES`` tuple keys expected by
+            ``run_pools`` / ``_pending_count_watchdog``:
+            ``generate``, ``enrich``, ``review_names``, ``review_docs``, ``regen``.
+
+            Note: ``generate`` maps to *draft* only (new compositions).
+            ``regen`` maps to *revise* only (regenerations after low scores).
+            The display aggregates them but the orchestrator needs them split
+            so the fairness weight of each pool is correctly applied.
+            """
+            _, val = _pending_cache["v"]
+            if not val:
+                val = _count_pending()
+            return {
+                "generate": int(val.get("draft", 0)),
+                "enrich": int(val.get("enrich", 0)),
+                "review_names": int(val.get("review_names", 0)),
+                "review_docs": int(val.get("review_docs", 0)),
+                "regen": int(val.get("revise", 0)),
+            }
+
         display = DataDrivenProgressDisplay(
             facility="sn",
             cost_limit=cost_limit,
@@ -355,6 +380,95 @@ def _run_sn_loop_cmd(
                 f"{f', min_score={min_score}' if min_score is not None else ''}"
                 f"{', dry-run' if dry_run else ''})"
             )
+
+        # In headless mode the Rich display ticker is absent, so build a
+        # lightweight pending-count callable for the orchestrator's fairness
+        # watchdog.  This keeps ``active_pools_fn`` accurate even without a
+        # TTY, preventing cheap pools from starving enrich / review.
+        from imas_codex.graph.client import GraphClient as _GC_headless
+
+        def _count_pending() -> dict[str, int]:  # type: ignore[redefined-outer-name]
+            try:
+                with _GC_headless() as gc:
+                    rows = list(
+                        gc.query(
+                            """
+                            CALL {
+                              MATCH (s:StandardNameSource {status: 'extracted'})
+                              WHERE NOT (s)-[:PRODUCED_NAME]->(:StandardName)
+                              RETURN count(s) AS draft
+                            }
+                            CALL {
+                              MATCH (sn:StandardName)
+                              WHERE sn.reviewer_score_name IS NOT NULL
+                                AND sn.reviewer_score_name < coalesce($min_score, 1.0)
+                                AND sn.reviewed_name_at IS NOT NULL
+                              RETURN count(sn) AS revise
+                            }
+                            CALL {
+                              MATCH (sn:StandardName)
+                              WHERE sn.validation_status = 'valid'
+                                AND sn.enriched_at IS NULL
+                                AND (sn.claimed_at IS NULL
+                                     OR sn.claimed_at < datetime() - duration({minutes: 30}))
+                                AND ($min_score IS NULL
+                                     OR coalesce(sn.confidence, 1.0) >= $min_score)
+                              RETURN count(sn) AS enrich
+                            }
+                            CALL {
+                              MATCH (sn:StandardName)
+                              WHERE sn.validation_status = 'valid'
+                                AND sn.reviewed_name_at IS NULL
+                                AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
+                              RETURN count(sn) AS review_names
+                            }
+                            CALL {
+                              MATCH (sn:StandardName)
+                              WHERE sn.reviewed_docs_at IS NULL
+                                AND sn.enriched_at IS NOT NULL
+                                AND sn.reviewed_name_at IS NOT NULL
+                                AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
+                              RETURN count(sn) AS review_docs
+                            }
+                            RETURN draft, revise, enrich, review_names, review_docs
+                            """,
+                            min_score=min_score,
+                        )
+                    )
+                if not rows:
+                    return {
+                        "draft": 0,
+                        "revise": 0,
+                        "enrich": 0,
+                        "review_names": 0,
+                        "review_docs": 0,
+                    }
+                r = rows[0]
+                return {
+                    "draft": int(r.get("draft", 0)),
+                    "revise": int(r.get("revise", 0)),
+                    "enrich": int(r.get("enrich", 0)),
+                    "review_names": int(r.get("review_names", 0)),
+                    "review_docs": int(r.get("review_docs", 0)),
+                }
+            except Exception:
+                return {
+                    "draft": 0,
+                    "revise": 0,
+                    "enrich": 0,
+                    "review_names": 0,
+                    "review_docs": 0,
+                }
+
+        def _pool_pending_counts() -> dict[str, int]:  # type: ignore[redefined-outer-name]
+            val = _count_pending()
+            return {
+                "generate": val["draft"],
+                "enrich": val["enrich"],
+                "review_names": val["review_names"],
+                "review_docs": val["review_docs"],
+                "regen": val["revise"],
+            }
 
     # Build harness config — SN loop wants graph + model status at top
     disc_config = DiscoveryConfig(
@@ -395,6 +509,7 @@ def _run_sn_loop_cmd(
             only_domain=only_domain,
             stop_event=stop_event,
             loop_state=loop_state,
+            pending_fn=_pool_pending_counts,
         )
         return {"summary": summary}
 

@@ -616,6 +616,13 @@ class BudgetManager:
         # first display refresh), admit all known pools unconditionally so
         # they can discover their own work via claim() and self-regulate via
         # backoff when claim() returns None.
+        #
+        # With ``pending_fn`` wired in ``run_pools`` (Phase 8 fix), this path
+        # is only hit transiently: the ``_pending_count_watchdog`` updates
+        # pending counts immediately on its first poll, so ``active_pools_fn``
+        # returns a non-empty set before the pools have issued any claims.
+        # Without ``pending_fn`` the bypass persists indefinitely, letting all
+        # pools compete without fairness weighting.
         if not active_pools:
             return True
         if pool not in active_pools:

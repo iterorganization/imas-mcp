@@ -12,6 +12,7 @@ import asyncio
 import json as _json
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -603,7 +604,7 @@ def _build_pool_specs(
       corresponding ``process_*_batch`` async function, forwarding the
       shared :class:`BudgetManager` and ``stop_event``.
     """
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable
 
     from imas_codex.standard_names.enrich_workers import process_enrich_batch
     from imas_codex.standard_names.graph_ops import (
@@ -731,6 +732,7 @@ async def run_sn_pools(
     only_domain: str | None = None,
     stop_event: asyncio.Event | None = None,
     loop_state: Any | None = None,
+    pending_fn: Callable[[], dict[str, int]] | None = None,
 ) -> RunSummary:
     """Run the pool-based ``sn run`` orchestrator (Phase 8).
 
@@ -763,6 +765,11 @@ async def run_sn_pools(
             pools themselves are domain-agnostic.
         stop_event: Cooperative shutdown signal (set by the CLI harness).
         loop_state: Optional :class:`SNLoopState` for Rich progress.
+        pending_fn: Optional callable ``() → dict[str, int]`` mapping
+            pool names to pending counts.  When provided, a background
+            watchdog polls this every 5 seconds to keep
+            ``PoolHealth.pending_count`` current in headless / ``--quiet``
+            mode where the Rich display ticker is absent.
     """
     from imas_codex.standard_names.budget import BudgetManager
     from imas_codex.standard_names.pools import run_pools
@@ -822,7 +829,9 @@ async def run_sn_pools(
                 loop_state.set_pool_health(spec.name, spec.health)
 
         # ── Run pools ─────────────────────────────────────────────
-        health_map = await run_pools(specs, shared_mgr, stop_event)
+        health_map = await run_pools(
+            specs, shared_mgr, stop_event, pending_fn=pending_fn
+        )
         logger.info("run_sn_pools: all pools exited — %s", health_map)
 
         # Aggregate per-pool processed counts into RunSummary.

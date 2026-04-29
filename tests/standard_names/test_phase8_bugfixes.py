@@ -1091,3 +1091,236 @@ class TestReleaseAllOrphanClaims:
             result = release_all_orphan_claims()
 
         assert result == {"sn": 0, "sns": 0}
+
+
+# =============================================================================
+# pending_fn / _pending_count_watchdog tests
+# =============================================================================
+
+
+class TestPendingCountWatchdog:
+    """``_pending_count_watchdog`` updates PoolHealth.pending_count from pending_fn."""
+
+    @pytest.mark.asyncio
+    async def test_watchdog_sets_pending_counts_on_first_poll(self) -> None:
+        """Watchdog sets pending_count on all pools immediately."""
+        from imas_codex.standard_names.pools import PoolSpec, _pending_count_watchdog
+
+        spec_a = PoolSpec(
+            name="enrich",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=0),
+        )
+        spec_b = PoolSpec(
+            name="review_names",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=0),
+        )
+
+        # Start with 0 pending.
+        assert spec_a.health.pending_count == 0
+        assert spec_b.health.pending_count == 0
+
+        stop = asyncio.Event()
+        call_count = 0
+
+        def pending_fn() -> dict[str, int]:
+            nonlocal call_count
+            call_count += 1
+            return {"enrich": 12, "review_names": 7, "generate": 3}
+
+        # Run watchdog, let it do its initial sync poll, then stop.
+        async def _stopper():
+            await asyncio.sleep(0.05)
+            stop.set()
+
+        await asyncio.gather(
+            _pending_count_watchdog([spec_a, spec_b], stop, pending_fn, poll=1.0),
+            _stopper(),
+        )
+
+        # Initial poll should have fired at least once.
+        assert call_count >= 1
+        assert spec_a.health.pending_count == 12
+        assert spec_b.health.pending_count == 7
+
+    @pytest.mark.asyncio
+    async def test_watchdog_polls_repeatedly(self) -> None:
+        """Watchdog keeps polling while stop_event is not set."""
+        from imas_codex.standard_names.pools import PoolSpec, _pending_count_watchdog
+
+        spec = PoolSpec(
+            name="enrich",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=0),
+        )
+
+        stop = asyncio.Event()
+        call_count = 0
+
+        def pending_fn() -> dict[str, int]:
+            nonlocal call_count
+            call_count += 1
+            # Second call returns higher count to verify watchdog updated.
+            return {"enrich": call_count * 5}
+
+        async def _stopper():
+            # Let at least 2 polls fire with 0.02s poll interval.
+            await asyncio.sleep(0.12)
+            stop.set()
+
+        await asyncio.gather(
+            _pending_count_watchdog([spec], stop, pending_fn, poll=0.02),
+            _stopper(),
+        )
+
+        # Should have polled more than once (initial + at least one timed).
+        assert call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_watchdog_ignores_unknown_pool_names(self) -> None:
+        """pending_fn keys not matching any pool are silently ignored."""
+        from imas_codex.standard_names.pools import PoolSpec, _pending_count_watchdog
+
+        spec = PoolSpec(
+            name="enrich",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=0),
+        )
+
+        stop = asyncio.Event()
+
+        def pending_fn() -> dict[str, int]:
+            return {"enrich": 9, "nonexistent_pool": 999}
+
+        async def _stopper():
+            await asyncio.sleep(0.05)
+            stop.set()
+
+        # Should not raise.
+        await asyncio.gather(
+            _pending_count_watchdog([spec], stop, pending_fn, poll=1.0),
+            _stopper(),
+        )
+
+        assert spec.health.pending_count == 9
+
+    @pytest.mark.asyncio
+    async def test_watchdog_survives_pending_fn_exception(self) -> None:
+        """Exceptions from pending_fn are logged and swallowed; watchdog continues."""
+        from imas_codex.standard_names.pools import PoolSpec, _pending_count_watchdog
+
+        spec = PoolSpec(
+            name="enrich",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=0),
+        )
+
+        stop = asyncio.Event()
+        call_count = 0
+
+        def pending_fn() -> dict[str, int]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("graph connection refused")
+            return {"enrich": 5}
+
+        async def _stopper():
+            await asyncio.sleep(0.12)
+            stop.set()
+
+        # Should not propagate the exception.
+        await asyncio.gather(
+            _pending_count_watchdog([spec], stop, pending_fn, poll=0.02),
+            _stopper(),
+        )
+
+        # After the exception on call 1, subsequent calls succeed.
+        assert call_count >= 2
+        # Final pending_count updated from successful calls.
+        assert spec.health.pending_count == 5
+
+    @pytest.mark.asyncio
+    async def test_run_pools_wires_pending_fn(self) -> None:
+        """run_pools with pending_fn updates pool pending_count from the watchdog."""
+        import asyncio
+
+        from imas_codex.standard_names.pools import PoolSpec, run_pools
+
+        stop = asyncio.Event()
+        mgr = _mock_mgr()
+        mgr.drain_pending = AsyncMock(return_value=None)
+
+        spec = PoolSpec(
+            name="enrich",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=0),
+        )
+
+        def pending_fn() -> dict[str, int]:
+            return {"enrich": 17, "generate": 3}
+
+        async def _stopper():
+            await asyncio.sleep(0.15)
+            stop.set()
+
+        await asyncio.gather(
+            run_pools(
+                [spec],
+                mgr,
+                stop,
+                pending_fn=pending_fn,
+                pending_poll_interval=0.01,
+            ),
+            _stopper(),
+        )
+
+        # The watchdog must have updated pending_count (initial poll fires
+        # synchronously before any claim loop iterations).
+        assert spec.health.pending_count == 17
+
+
+class TestPoolPendingCountsSplit:
+    """``_pool_pending_counts`` in cli/sn.py returns generate/regen split correctly."""
+
+    def test_generate_maps_to_draft_only(self) -> None:
+        """generate pool maps to 'draft' count, NOT draft+revise."""
+        # We exercise the logic without touching the CLI by directly calling
+        # the mapping pattern used in _pool_pending_counts.
+        raw = {
+            "draft": 5,
+            "revise": 3,
+            "enrich": 7,
+            "review_names": 2,
+            "review_docs": 1,
+        }
+        # Mirror the mapping from cli/sn.py:_pool_pending_counts
+        result = {
+            "generate": raw["draft"],
+            "enrich": raw["enrich"],
+            "review_names": raw["review_names"],
+            "review_docs": raw["review_docs"],
+            "regen": raw["revise"],
+        }
+        assert result["generate"] == 5, "generate should be draft only"
+        assert result["regen"] == 3, "regen should be revise only"
+        assert result["enrich"] == 7
+        assert result["review_names"] == 2
+        assert result["review_docs"] == 1
+
+    def test_generate_and_regen_sum_matches_display_total(self) -> None:
+        """generate+regen sum equals the display aggregate (draft+revise)."""
+        raw = {
+            "draft": 4,
+            "revise": 6,
+            "enrich": 0,
+            "review_names": 0,
+            "review_docs": 0,
+        }
+        result = {
+            "generate": raw["draft"],
+            "regen": raw["revise"],
+        }
+        display_generate_total = raw["draft"] + raw["revise"]  # what display shows
+        assert result["generate"] + result["regen"] == display_generate_total

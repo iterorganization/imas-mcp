@@ -309,11 +309,61 @@ async def _budget_watchdog(
             continue
 
 
+async def _pending_count_watchdog(
+    pools: list[PoolSpec],
+    stop_event: asyncio.Event,
+    pending_fn: Callable[[], dict[str, int]],
+    poll: float = 5.0,
+) -> None:
+    """Poll ``pending_fn`` and push per-pool pending counts to ``PoolHealth``.
+
+    Runs alongside the pool tasks and the budget watchdog.  Calling
+    ``pending_fn()`` every *poll* seconds makes ``active_pools_fn`` accurate
+    in headless / ``--quiet`` mode where the Rich display ticker is absent.
+    Without this watchdog the fairness mechanism degrades to unconditional
+    admission for all pools, allowing cheap pools (generate, regen) to starve
+    expensive-but-important pools (enrich, review_docs).
+
+    The watchdog performs an initial poll immediately so that pending counts are
+    populated before the first admission decision.  It then sleeps *poll*
+    seconds between subsequent refreshes.
+
+    Pool names in the ``pending_fn`` result that do not match a live pool are
+    silently ignored.  Pools absent from the result default to 0.
+    """
+    pool_by_name = {p.name: p for p in pools}
+
+    def _refresh() -> None:
+        try:
+            counts = pending_fn()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("pending_count_watchdog: pending_fn raised: %s", exc)
+            return
+        for name, pool in pool_by_name.items():
+            pool.health.pending_count = counts.get(name, 0)
+        logger.debug(
+            "pending_count_watchdog: updated pending counts — %s",
+            {n: pool_by_name[n].health.pending_count for n in pool_by_name},
+        )
+
+    # First poll before any admission decisions.
+    _refresh()
+
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=poll)
+            break  # stop_event triggered
+        except TimeoutError:
+            _refresh()
+
+
 async def run_pools(
     pools: list[PoolSpec],
     mgr: BudgetManager,
     stop_event: asyncio.Event,
     *,
+    pending_fn: Callable[[], dict[str, int]] | None = None,
+    pending_poll_interval: float = 5.0,
     grace_period: float = 60.0,
     weights: dict[str, float] = POOL_WEIGHTS,
 ) -> dict[str, PoolHealth]:
@@ -335,6 +385,15 @@ async def run_pools(
     A ``_budget_watchdog`` task runs alongside the pool tasks and sets
     ``stop_event`` as soon as ``mgr.exhausted()`` flips True, propagating
     clean shutdown through the existing grace path.
+
+    When *pending_fn* is provided, a ``_pending_count_watchdog`` task polls
+    it every *pending_poll_interval* seconds and updates each pool's
+    ``PoolHealth.pending_count``.  This keeps ``active_pools_fn`` accurate in
+    headless / ``--quiet`` mode where the Rich display ticker is absent.
+    Without it, the ``not active_pools`` bypass in ``BudgetManager.pool_admit``
+    admits all pools unconditionally, allowing cheap pools to exhaust the
+    budget before slower-but-higher-priority pools (e.g. enrich) can claim
+    any work.
 
     The caller is responsible for finalizing the SNRun row after this
     function returns.
@@ -398,6 +457,16 @@ async def run_pools(
         name="budget_watchdog",
     )
 
+    # Optional: pending-count watchdog for headless / --quiet mode.
+    pending_watchdog_task: asyncio.Task[None] | None = None
+    if pending_fn is not None:
+        pending_watchdog_task = asyncio.create_task(
+            _pending_count_watchdog(
+                pools, stop_event, pending_fn, pending_poll_interval
+            ),
+            name="pending_count_watchdog",
+        )
+
     # Wait until stop_event is set OR all pools complete naturally.
     stop_waiter = asyncio.create_task(stop_event.wait(), name="stop_waiter")
     done, pending = await asyncio.wait(
@@ -430,6 +499,11 @@ async def run_pools(
         watchdog_task.cancel()
     await asyncio.gather(watchdog_task, return_exceptions=True)
 
+    if pending_watchdog_task is not None:
+        if not pending_watchdog_task.done():
+            pending_watchdog_task.cancel()
+        await asyncio.gather(pending_watchdog_task, return_exceptions=True)
+
     # Drain LLMCost queue before final accounting.
     await mgr.drain_pending()
 
@@ -441,6 +515,7 @@ __all__ = [
     "POOL_WEIGHTS",
     "PoolHealth",
     "PoolSpec",
+    "_pending_count_watchdog",
     "pool_loop",
     "run_pools",
 ]
