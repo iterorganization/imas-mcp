@@ -315,17 +315,22 @@ class PoolDisplayState:
     #: Timestamp of the last completed item (for stall detection).
     last_completion_at: float | None = None
 
+    #: Events received *this session* (not including graph baseline).
+    #: Used for rate calculation so the display doesn't show a fake rate
+    #: derived from historical graph counts divided by session elapsed time.
+    _events_this_run: int = 0
+
     def add_item(self, item: dict[str, Any]) -> None:
         """Push a streamed item into the display deque."""
         self.items.append(item)
 
     @property
     def rate(self) -> float | None:
-        """Items per second (session average)."""
+        """Items per second (this-run average, excluding graph baseline)."""
         elapsed = time.time() - self.start_time
-        if elapsed <= 0 or self.completed <= 0:
+        if elapsed <= 0 or self._events_this_run <= 0:
             return None
-        return self.completed / elapsed
+        return self._events_this_run / elapsed
 
     @property
     def remaining(self) -> int:
@@ -613,6 +618,7 @@ class SN6PoolDisplay(BaseProgressDisplay):
             return
         state.add_item(ev)
         state.completed += 1
+        state._events_this_run += 1
         state.last_completion_at = time.time()
         cost = ev.get("cost", 0.0)
         if cost:
@@ -721,7 +727,11 @@ class SN6PoolDisplay(BaseProgressDisplay):
                     primary_text_style=primary_text_style,
                     description=description,
                     score_value=score_value,
-                    is_processing=completed > 0 and completed < total,
+                    is_processing=(
+                        state._events_this_run > 0
+                        and completed > 0
+                        and completed < total
+                    ),
                     is_complete=completed > 0 and completed >= total,
                 )
             )

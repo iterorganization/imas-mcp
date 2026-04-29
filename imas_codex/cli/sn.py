@@ -152,9 +152,10 @@ def _run_sn_loop_cmd(
                             }
                             CALL {
                               MATCH (sn:StandardName)
-                              WHERE sn.reviewer_score_name IS NOT NULL
+                              WHERE sn.name_stage = 'reviewed'
+                                AND sn.reviewer_score_name IS NOT NULL
                                 AND sn.reviewer_score_name < coalesce($min_score, 1.0)
-                                AND sn.reviewed_name_at IS NOT NULL
+                                AND coalesce(sn.chain_length, 0) < 3
                               RETURN count(sn) AS revise
                             }
                             CALL {
@@ -232,19 +233,21 @@ def _run_sn_loop_cmd(
         def _pool_pending_counts() -> dict[str, int]:
             """Return per-pool pending counts for orchestrator fairness.
 
-            Matches the ``POOL_NAMES`` tuple keys expected by
+            Keys must match ``PoolSpec.name`` values used by
             ``run_pools`` / ``_pending_count_watchdog``:
-            ``generate``, ``enrich``, ``review_names``, ``review_docs``, ``regen``.
+            ``generate_name``, ``review_name``, ``refine_name``,
+            ``generate_docs``, ``review_docs``, ``refine_docs``.
             """
             _, val = _pending_cache["v"]
             if not val:
                 val = _count_pending()
             return {
-                "generate": int(val.get("draft", 0)),
-                "enrich": int(val.get("enrich", 0)),
-                "review_names": int(val.get("review_names", 0)),
+                "generate_name": int(val.get("draft", 0)),
+                "review_name": int(val.get("review_names", 0)),
+                "refine_name": int(val.get("revise", 0)),
+                "generate_docs": int(val.get("enrich", 0)),
                 "review_docs": int(val.get("review_docs", 0)),
-                "regen": int(val.get("revise", 0)),
+                "refine_docs": 0,
             }
 
         display = SN6PoolDisplay(
@@ -284,9 +287,10 @@ def _run_sn_loop_cmd(
                             }
                             CALL {
                               MATCH (sn:StandardName)
-                              WHERE sn.reviewer_score_name IS NOT NULL
+                              WHERE sn.name_stage = 'reviewed'
+                                AND sn.reviewer_score_name IS NOT NULL
                                 AND sn.reviewer_score_name < coalesce($min_score, 1.0)
-                                AND sn.reviewed_name_at IS NOT NULL
+                                AND coalesce(sn.chain_length, 0) < 3
                               RETURN count(sn) AS revise
                             }
                             CALL {
@@ -345,11 +349,12 @@ def _run_sn_loop_cmd(
         def _pool_pending_counts() -> dict[str, int]:  # type: ignore[redefined-outer-name]
             val = _count_pending()
             return {
-                "generate": val["draft"],
-                "enrich": val["enrich"],
-                "review_names": val["review_names"],
+                "generate_name": val["draft"],
+                "review_name": val["review_names"],
+                "refine_name": val["revise"],
+                "generate_docs": val["enrich"],
                 "review_docs": val["review_docs"],
-                "regen": val["revise"],
+                "refine_docs": 0,
             }
 
     # Build harness config — SN loop wants graph + model status at top

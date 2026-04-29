@@ -10,6 +10,8 @@ Verifies:
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from imas_codex.standard_names.display import (
@@ -279,6 +281,62 @@ class TestDisplayPoolsInitialised:
             assert state.total == 0
             assert state.cost == 0.0
             assert len(state.items) == 0
+
+
+class TestEventsThisRun:
+    """_events_this_run tracks only events in the current session."""
+
+    def test_events_this_run_starts_zero(self) -> None:
+        state = PoolDisplayState(name="generate_name")
+        assert state._events_this_run == 0
+
+    def test_events_this_run_incremented_by_on_event(self) -> None:
+        display = SN6PoolDisplay(cost_limit=5.0)
+        display.on_event({"pool": "generate_name", "name": "foo", "cost": 0.001})
+        display.on_event({"pool": "generate_name", "name": "bar", "cost": 0.001})
+        assert display.pools["generate_name"]._events_this_run == 2
+
+    def test_events_this_run_not_affected_by_baseline(self) -> None:
+        """Graph baseline via refresh_pending does NOT inflate _events_this_run."""
+        pending = {"draft": 5, "draft_done": 100}
+        display = SN6PoolDisplay(cost_limit=5.0, pending_fn=lambda: pending)
+        display.refresh_pending()
+
+        state = display.pools["generate_name"]
+        # Baseline seeded completed, but _events_this_run untouched
+        assert state.completed == 100
+        assert state._events_this_run == 0
+
+    def test_rate_uses_events_this_run(self) -> None:
+        """Rate is computed from _events_this_run, not completed (baseline)."""
+        pending = {"draft": 5, "draft_done": 1000}
+        display = SN6PoolDisplay(cost_limit=5.0, pending_fn=lambda: pending)
+        display.refresh_pending()
+
+        state = display.pools["generate_name"]
+        # Before any event, rate is None (not 1000 / elapsed)
+        assert state.rate is None
+
+        # Simulate that pool started 10 seconds ago
+        state.start_time = time.time() - 10.0
+
+        # After one event, rate should be ~1/10 = 0.1
+        display.on_event({"pool": "generate_name", "name": "x", "cost": 0.001})
+        assert state._events_this_run == 1
+        assert state.rate is not None
+        # Rate ≈ 0.1 (1 event / ~10s), NOT 100.1 (1001 / ~10s)
+        assert state.rate < 1.0
+
+    def test_events_isolated_across_pools(self) -> None:
+        """_events_this_run tracks per-pool, not global."""
+        display = SN6PoolDisplay(cost_limit=5.0)
+        display.on_event({"pool": "generate_name", "name": "a", "cost": 0.001})
+        display.on_event({"pool": "generate_name", "name": "b", "cost": 0.001})
+        display.on_event({"pool": "review_name", "name": "c", "cost": 0.005})
+
+        assert display.pools["generate_name"]._events_this_run == 2
+        assert display.pools["review_name"]._events_this_run == 1
+        assert display.pools["refine_name"]._events_this_run == 0
 
 
 class TestContextManager:

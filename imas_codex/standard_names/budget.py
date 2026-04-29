@@ -599,8 +599,9 @@ class BudgetManager:
         forfeit their weight share so active pools can borrow it.
 
         ``pool`` here is a logical pool name matching the keys in
-        ``weights`` (e.g. "generate", "enrich", "review_names",
-        "review_docs", "regen").  These map 1:1 to ``_phase_spent`` keys.
+        ``weights`` (e.g. ``"generate_name"``, ``"review_name"``,
+        ``"refine_name"``, ``"generate_docs"``, ``"review_docs"``,
+        ``"refine_docs"``).  These map 1:1 to ``_phase_spent`` keys.
 
         Returns True if the pool is permitted to claim its next batch.
         """
