@@ -359,16 +359,16 @@ class TestReviewExcludesLowScore:
 
 
 # ---------------------------------------------------------------------------
-# 5. test_regen_excludes_unreviewed
+# 5. test_refine_name_excludes_unreviewed
 # ---------------------------------------------------------------------------
 
 
-class TestRegenExcludesUnreviewed:
-    """Regen claim requires reviewed_name_at IS NOT NULL."""
+class TestRefineNameEligibility:
+    """Refine-name claim requires name_stage = 'reviewed'."""
 
-    def test_regen_eligibility(self):
+    def test_refine_name_excludes_unreviewed_names(self):
         from imas_codex.standard_names.graph_ops import (
-            claim_regen_seed_and_expand,
+            claim_refine_name_seed_and_expand,
         )
 
         gc, tx = _mock_gc_tx()
@@ -390,40 +390,51 @@ class TestRegenExcludesUnreviewed:
                         "physics_domain": ["eq"],
                         "validation_status": "valid",
                         "reviewer_score_name": 0.3,
-                        "reviewed_name_at": "2024-01-01T00:00:00Z",
-                        "regen_count": 0,
+                        "reviewer_verdict_name": None,
+                        "reviewer_comments_per_dim_name": None,
+                        "chain_length": 0,
+                        "name_stage": "refining",
+                        "source_paths": None,
+                        "tags": None,
                     }
                 ],
             ]
         )
 
-        with _patch_gc(gc):
-            items = claim_regen_seed_and_expand(min_score=0.5, batch_size=5)
+        with (
+            _patch_gc(gc),
+            patch(
+                "imas_codex.standard_names.chain_history.name_chain_history",
+                return_value=[],
+            ),
+        ):
+            items = claim_refine_name_seed_and_expand(min_score=0.5, batch_size=5)
 
-        # Verify the WHERE clause requires reviewed_name_at IS NOT NULL
+        # Verify the WHERE clause requires name_stage = 'reviewed'
         seed_query = tx.run.call_args_list[0].args[0]
-        assert "sn.reviewed_name_at IS NOT NULL" in seed_query
-        assert "sn.reviewer_score_name < $min_score" in seed_query
+        assert "sn.name_stage = 'reviewed'" in seed_query
+        assert "sn.reviewer_score_name" in seed_query
+        assert "chain_length" in seed_query
 
         assert len(items) == 1
         assert items[0]["id"] == "reviewed_low"
 
 
 # ---------------------------------------------------------------------------
-# 6. test_review_and_regen_disjoint
+# 6. test_review_and_refine_disjoint
 # ---------------------------------------------------------------------------
 
 
-class TestReviewAndRegenDisjoint:
-    """Review and regen claim predicates are mutually exclusive."""
+class TestReviewAndRefineDisjoint:
+    """Review and refine-name claim predicates are mutually exclusive."""
 
-    def test_predicates_are_disjoint(self):
+    def test_review_and_refine_disjoint(self):
         """review_names requires reviewed_name_at IS NULL;
-        regen requires reviewed_name_at IS NOT NULL.
+        refine_name requires name_stage = 'reviewed'.
         Same-name overlap is structurally impossible.
         """
         from imas_codex.standard_names.graph_ops import (
-            claim_regen_seed_and_expand,
+            claim_refine_name_seed_and_expand,
             claim_review_names_seed_and_expand,
         )
 
@@ -453,9 +464,9 @@ class TestReviewAndRegenDisjoint:
         with _patch_gc(gc_review):
             review_items = claim_review_names_seed_and_expand(batch_size=1)
 
-        # ── regen claim ──
-        gc_regen, tx_regen = _mock_gc_tx()
-        tx_regen.run = MagicMock(
+        # ── refine_name claim ──
+        gc_refine, tx_refine = _mock_gc_tx()
+        tx_refine.run = MagicMock(
             side_effect=[
                 [{"_cluster_id": None, "_unit": None, "_physics_domain": None}],
                 # read-back
@@ -470,25 +481,37 @@ class TestReviewAndRegenDisjoint:
                         "physics_domain": None,
                         "validation_status": "valid",
                         "reviewer_score_name": 0.3,
-                        "reviewed_name_at": "2024-01-01T00:00:00Z",
-                        "regen_count": 0,
+                        "reviewer_verdict_name": None,
+                        "reviewer_comments_per_dim_name": None,
+                        "chain_length": 0,
+                        "name_stage": "refining",
+                        "source_paths": None,
+                        "tags": None,
                     }
                 ],
             ]
         )
 
-        with _patch_gc(gc_regen):
-            regen_items = claim_regen_seed_and_expand(min_score=0.5, batch_size=1)
+        with (
+            _patch_gc(gc_refine),
+            patch(
+                "imas_codex.standard_names.chain_history.name_chain_history",
+                return_value=[],
+            ),
+        ):
+            refine_items = claim_refine_name_seed_and_expand(
+                min_score=0.5, batch_size=1
+            )
 
         review_ids = {it["id"] for it in review_items}
-        regen_ids = {it["id"] for it in regen_items}
-        assert review_ids.isdisjoint(regen_ids), f"overlap: {review_ids & regen_ids}"
+        refine_ids = {it["id"] for it in refine_items}
+        assert review_ids.isdisjoint(refine_ids), f"overlap: {review_ids & refine_ids}"
 
         # Structural check: predicates are mutually exclusive
         review_seed_q = tx_review.run.call_args_list[0].args[0]
-        regen_seed_q = tx_regen.run.call_args_list[0].args[0]
+        refine_seed_q = tx_refine.run.call_args_list[0].args[0]
         assert "sn.reviewed_name_at IS NULL" in review_seed_q
-        assert "sn.reviewed_name_at IS NOT NULL" in regen_seed_q
+        assert "sn.name_stage = 'reviewed'" in refine_seed_q
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +525,13 @@ class TestClaimTokenTwoStep:
     def _run_and_check_readback(self, fn, side_effects, **kwargs):
         gc, tx = _mock_gc_tx()
         tx.run = MagicMock(side_effect=side_effects)
-        with _patch_gc(gc):
+        with (
+            _patch_gc(gc),
+            patch(
+                "imas_codex.standard_names.chain_history.name_chain_history",
+                return_value=[],
+            ),
+        ):
             fn(**kwargs)
 
         # The final query is the read-back (last call).
@@ -597,13 +626,13 @@ class TestClaimTokenTwoStep:
             batch_size=5,
         )
 
-    def test_regen_two_step(self):
+    def test_refine_name_two_step(self):
         from imas_codex.standard_names.graph_ops import (
-            claim_regen_seed_and_expand,
+            claim_refine_name_seed_and_expand,
         )
 
         self._run_and_check_readback(
-            claim_regen_seed_and_expand,
+            claim_refine_name_seed_and_expand,
             [
                 [{"_cluster_id": None, "_unit": None, "_physics_domain": None}],
                 [
@@ -617,8 +646,12 @@ class TestClaimTokenTwoStep:
                         "physics_domain": None,
                         "validation_status": "valid",
                         "reviewer_score_name": 0.3,
-                        "reviewed_name_at": "2024-01-01",
-                        "regen_count": 0,
+                        "reviewer_verdict_name": None,
+                        "reviewer_comments_per_dim_name": None,
+                        "chain_length": 0,
+                        "name_stage": "refining",
+                        "source_paths": None,
+                        "tags": None,
                     }
                 ],
             ],
@@ -641,7 +674,7 @@ class TestRetryOnDeadlockApplied:
             "claim_enrich_seed_and_expand",
             "claim_review_names_seed_and_expand",
             "claim_review_docs_seed_and_expand",
-            "claim_regen_seed_and_expand",
+            "claim_refine_name_seed_and_expand",
         ],
     )
     def test_has_wrapped(self, fn_name: str):
@@ -668,7 +701,7 @@ class TestEmptyPoolReturnsEmpty:
             "claim_enrich_seed_and_expand",
             "claim_review_names_seed_and_expand",
             "claim_review_docs_seed_and_expand",
-            "claim_regen_seed_and_expand",
+            "claim_refine_name_seed_and_expand",
         ],
     )
     def test_empty(self, fn_name: str):

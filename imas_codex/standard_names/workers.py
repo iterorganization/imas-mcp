@@ -3148,3 +3148,163 @@ async def process_regen_batch(
     Returns count of items successfully processed.
     """
     return await _compose_batch_core(batch, mgr, stop_event, regen=True)
+
+
+async def process_refine_name_batch(
+    batch: list[dict[str, Any]],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+) -> int:
+    """Process a batch of StandardNames for name refinement (Option B).
+
+    For each item in the batch:
+    1. Walk the REFINED_FROM chain via ``chain_history`` (already enriched).
+    2. Decide whether to escalate (chain_length ≥ rotation_cap - 1).
+    3. Call LLM to produce a refined name (``RefinedName`` response model).
+    4. Persist via ``persist_refined_name`` (new node + edge migration).
+    5. On failure, release claims via ``release_refine_name_failed_claims``.
+
+    Returns count of items successfully processed.
+    """
+    import asyncio as _asyncio
+
+    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.settings import get_model
+    from imas_codex.standard_names.budget import LLMCostEvent
+    from imas_codex.standard_names.defaults import (
+        DEFAULT_ESCALATION_MODEL,
+        DEFAULT_REFINE_ROTATIONS,
+    )
+    from imas_codex.standard_names.graph_ops import (
+        persist_refined_name,
+        release_refine_name_failed_claims,
+    )
+    from imas_codex.standard_names.models import RefinedName
+
+    rotation_cap = DEFAULT_REFINE_ROTATIONS
+    processed = 0
+
+    for item in batch:
+        if stop_event.is_set():
+            break
+
+        sn_id = item["id"]
+        chain_length = item.get("chain_length", 0) or 0
+        chain_history = item.get("chain_history", [])
+
+        # ── Escalation decision ───────────────────────────────────
+        escalate = chain_length >= rotation_cap - 1
+        if escalate:
+            model = DEFAULT_ESCALATION_MODEL
+        else:
+            model = get_model("language")
+
+        # ── Build prompt context ──────────────────────────────────
+        path = item.get("source_paths", [""])[0] if item.get("source_paths") else ""
+        prompt_context: dict[str, Any] = {
+            "item": item,
+            "chain_history": chain_history,
+            "chain_length": chain_length,
+            "hybrid_neighbours": [],
+        }
+
+        # Attempt hybrid neighbour search (best-effort)
+        try:
+            from imas_codex.graph.client import GraphClient
+
+            with GraphClient() as gc:
+                neighbours = _hybrid_search_neighbours(gc, path)
+                prompt_context["hybrid_neighbours"] = [
+                    {"path": n.get("path", ""), "description": n.get("description")}
+                    for n in neighbours
+                ]
+        except Exception:
+            logger.debug("Hybrid neighbour search failed for %s", sn_id)
+
+        user_prompt = render_prompt("sn/refine_name_user", prompt_context)
+
+        # ── Budget reservation ─────────────────────────────────────
+        estimated = 0.20  # single item
+        lease = mgr.reserve(estimated, phase="refine_name")
+
+        # ── LLM call ──────────────────────────────────────────────
+        try:
+            llm_out = await acall_llm_structured(
+                model=model,
+                messages=[{"role": "user", "content": user_prompt}],
+                response_model=RefinedName,
+                service="standard-names",
+            )
+
+            # acall_llm_structured returns (result, cost, tokens) tuple
+            if isinstance(llm_out, tuple):
+                result_obj, cost, _tokens = llm_out
+            else:
+                result_obj = llm_out
+                cost = 0.0
+
+            # Charge cost to lease
+            if lease:
+                _event = LLMCostEvent(
+                    model=model,
+                    tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                    tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                    tokens_cached_read=(getattr(llm_out, "cache_read_tokens", 0) or 0),
+                    tokens_cached_write=(
+                        getattr(llm_out, "cache_creation_tokens", 0) or 0
+                    ),
+                    sn_ids=(result_obj.name,),
+                    phase="refine_name",
+                    service="standard-names",
+                )
+                lease.charge_event(cost, _event)
+
+            # ── Persist ───────────────────────────────────────────
+            await _asyncio.to_thread(
+                persist_refined_name,
+                old_name=sn_id,
+                new_name=result_obj.name,
+                description=result_obj.description,
+                kind=result_obj.kind,
+                unit=item.get("unit"),
+                physics_domain=(
+                    item.get("physics_domain")
+                    if isinstance(item.get("physics_domain"), list)
+                    else [item.get("physics_domain")]
+                    if item.get("physics_domain")
+                    else None
+                ),
+                tags=item.get("tags") if isinstance(item.get("tags"), list) else None,
+                old_chain_length=chain_length,
+                model=model,
+                grammar_fields=result_obj.grammar_fields,
+                reason=result_obj.reason,
+                escalated=escalate,
+            )
+            processed += 1
+            logger.info(
+                "refine_name: %s → %s (chain_length=%d, model=%s)",
+                sn_id,
+                result_obj.name,
+                chain_length + 1,
+                model,
+            )
+
+        except Exception:
+            logger.exception("refine_name failed for %s", sn_id)
+            # Release claim — revert to 'reviewed'
+            token = item.get("claim_token") or ""
+            try:
+                await _asyncio.to_thread(
+                    release_refine_name_failed_claims,
+                    sn_ids=[sn_id],
+                    token=token,
+                )
+            except Exception:
+                logger.debug(
+                    "release_refine_name_failed_claims also failed for %s",
+                    sn_id,
+                )
+
+    return processed
