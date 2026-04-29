@@ -23,3 +23,13 @@ DEFAULT_ORPHAN_SWEEP_INTERVAL_S: int = 30
 
 DEFAULT_ORPHAN_SWEEP_TIMEOUT_S: int = 300
 """How long a *_stage='refining' claim may sit before being reverted (seconds)."""
+
+# ── Backlog throttle caps ─────────────────────────────────────────────
+# Upstream generators pause when downstream review queues exceed these
+# counts, preventing unbounded backlog growth and wasted budget.
+
+REVIEW_NAME_BACKLOG_CAP: int = 200
+"""Max review_name pending items before generate_name / refine_name pause."""
+
+REVIEW_DOCS_BACKLOG_CAP: int = 200
+"""Max review_docs pending items before generate_docs / refine_docs pause."""

@@ -594,7 +594,7 @@ def _build_pool_specs(
     *,
     min_score: float | None = None,
 ) -> list[Any]:
-    """Construct 5 :class:`PoolSpec` objects wiring claims → batch processors.
+    """Construct 6 :class:`PoolSpec` objects wiring claims → batch processors.
 
     Each pool gets two adapter closures:
 
@@ -604,9 +604,17 @@ def _build_pool_specs(
     * **process adapter** — unpacks the claimed batch and delegates to the
       corresponding ``process_*_batch`` async function, forwarding the
       shared :class:`BudgetManager` and ``stop_event``.
+
+    After construction, backlog throttle wrappers are applied to upstream
+    pools (generate_name, generate_docs, refine_name, refine_docs) so they
+    pause when their downstream review queues exceed the configured cap.
     """
     from collections.abc import Awaitable
 
+    from imas_codex.standard_names.defaults import (
+        REVIEW_DOCS_BACKLOG_CAP,
+        REVIEW_NAME_BACKLOG_CAP,
+    )
     from imas_codex.standard_names.graph_ops import (
         claim_generate_docs_seed_and_expand,
         claim_generate_name_seed_and_expand,
@@ -614,7 +622,6 @@ def _build_pool_specs(
         claim_refine_name_seed_and_expand,
         claim_review_docs_seed_and_expand,
         claim_review_name_seed_and_expand,
-        claim_review_names_seed_and_expand,
         release_generate_docs_claims,
         release_generate_name_claims,
         release_refine_docs_claims,
@@ -623,9 +630,6 @@ def _build_pool_specs(
         release_review_names_claims,
     )
     from imas_codex.standard_names.pools import PoolSpec
-    from imas_codex.standard_names.review.pipeline import (
-        process_review_names_batch,
-    )
     from imas_codex.standard_names.workers import (
         process_generate_docs_batch,
         process_generate_name_batch,
@@ -702,24 +706,15 @@ def _build_pool_specs(
 
     # ── PoolSpec construction ─────────────────────────────────────────
 
-    return [
+    specs = [
         PoolSpec(
-            name="generate",
+            name="generate_name",
             claim=_make_claim_adapter(claim_generate_name_seed_and_expand),
             process=_make_process_adapter(process_generate_name_batch),
             release=_make_release_adapter(
                 release_generate_name_claims, ids_kwarg="source_ids"
             ),
-            weight=0.30,
-        ),
-        PoolSpec(
-            name="generate_docs",
-            claim=_make_claim_adapter(claim_generate_docs_seed_and_expand),
-            process=_make_process_adapter(process_generate_docs_batch),
-            release=_make_release_adapter(
-                release_generate_docs_claims, ids_kwarg="sn_ids"
-            ),
-            weight=0.20,
+            weight=0.25,
         ),
         PoolSpec(
             name="review_name",
@@ -727,27 +722,6 @@ def _build_pool_specs(
             process=_make_process_adapter(process_review_name_batch),
             release=_make_release_adapter(
                 release_review_names_claims, ids_kwarg="sn_ids"
-            ),
-            weight=0.15,
-        ),
-        PoolSpec(
-            name="review_names",
-            claim=_make_claim_adapter(
-                claim_review_names_seed_and_expand,
-                min_score=regen_score,
-            ),
-            process=_make_process_adapter(process_review_names_batch),
-            release=_make_release_adapter(
-                release_review_names_claims, ids_kwarg="sn_ids"
-            ),
-            weight=0.05,
-        ),
-        PoolSpec(
-            name="review_docs",
-            claim=_make_claim_adapter(claim_review_docs_seed_and_expand),
-            process=_make_process_adapter(process_review_docs_batch),
-            release=_make_release_adapter(
-                release_review_docs_claims, ids_kwarg="sn_ids"
             ),
             weight=0.15,
         ),
@@ -761,7 +735,25 @@ def _build_pool_specs(
             release=_make_release_adapter(
                 release_refine_name_claims, ids_kwarg="sn_ids"
             ),
-            weight=0.10,
+            weight=0.15,
+        ),
+        PoolSpec(
+            name="generate_docs",
+            claim=_make_claim_adapter(claim_generate_docs_seed_and_expand),
+            process=_make_process_adapter(process_generate_docs_batch),
+            release=_make_release_adapter(
+                release_generate_docs_claims, ids_kwarg="sn_ids"
+            ),
+            weight=0.20,
+        ),
+        PoolSpec(
+            name="review_docs",
+            claim=_make_claim_adapter(claim_review_docs_seed_and_expand),
+            process=_make_process_adapter(process_review_docs_batch),
+            release=_make_release_adapter(
+                release_review_docs_claims, ids_kwarg="sn_ids"
+            ),
+            weight=0.15,
         ),
         PoolSpec(
             name="refine_docs",
@@ -773,9 +765,51 @@ def _build_pool_specs(
             release=_make_release_adapter(
                 release_refine_docs_claims, ids_kwarg="sn_ids"
             ),
-            weight=0.05,
+            weight=0.10,
         ),
     ]
+
+    # ── Backlog throttle wiring ───────────────────────────────────────
+    # Upstream generators/refiners pause when their downstream review
+    # queue exceeds the configured cap.  The throttle wraps the claim
+    # adapter to return None (skip) when the downstream pool's
+    # PoolHealth.pending_count is over cap, causing the pool to enter
+    # its normal exponential backoff.  No blocking, no special yield.
+    specs_by_name = {s.name: s for s in specs}
+
+    throttle_rules: list[tuple[str, str, int]] = [
+        ("generate_name", "review_name", REVIEW_NAME_BACKLOG_CAP),
+        ("refine_name", "review_name", REVIEW_NAME_BACKLOG_CAP),
+        ("generate_docs", "review_docs", REVIEW_DOCS_BACKLOG_CAP),
+        ("refine_docs", "review_docs", REVIEW_DOCS_BACKLOG_CAP),
+    ]
+
+    for upstream, downstream, cap in throttle_rules:
+        spec = specs_by_name[upstream]
+        downstream_health = specs_by_name[downstream].health
+        original_claim = spec.claim
+
+        async def _throttled_claim(
+            _orig: Callable[[], Awaitable[dict[str, Any] | None]] = original_claim,
+            _health: Any = downstream_health,
+            _cap: int = cap,
+            _up: str = upstream,
+            _down: str = downstream,
+        ) -> dict[str, Any] | None:
+            if _health.pending_count > _cap:
+                logger.debug(
+                    "throttle: %s paused — %s backlog %d > cap %d",
+                    _up,
+                    _down,
+                    _health.pending_count,
+                    _cap,
+                )
+                return None
+            return await _orig()
+
+        spec.claim = _throttled_claim
+
+    return specs
 
 
 async def run_sn_pools(
@@ -790,7 +824,7 @@ async def run_sn_pools(
 ) -> RunSummary:
     """Run the pool-based ``sn run`` orchestrator (Phase 8).
 
-    Replaces the per-domain serial :func:`run_sn_loop` with five
+    Replaces the per-domain serial :func:`run_sn_loop` with six
     concurrent worker pools that pull work from the graph
     independently and share a single :class:`BudgetManager`.
 
@@ -801,8 +835,9 @@ async def run_sn_pools(
        runs in a worker thread, completing before any pool issues its
        first claim.  This clears stale claims and revives sources
        whose upstream entities reappeared.
-    3. Build 5 :class:`PoolSpec` objects (generate, generate_docs,
-       review_names, review_docs, regen) with adapter closures.
+    3. Build 6 :class:`PoolSpec` objects (generate_name, review_name,
+       refine_name, generate_docs, review_docs, refine_docs) with
+       adapter closures and backlog throttle wiring.
     4. Delegate to :func:`~imas_codex.standard_names.pools.run_pools`
        which runs all pools concurrently with cooperative shutdown.
     5. Finalize ``SNRun`` with the actual stop reason and graph-derived
@@ -810,9 +845,9 @@ async def run_sn_pools(
 
     Args:
         cost_limit: Maximum LLM spend in USD.
-        min_score: Regen/review threshold.  Names with
-            ``reviewer_score_name < min_score`` are routed to the regen
-            pool; those above are eligible for review.
+        min_score: Review threshold.  Names with
+            ``reviewer_score_name < min_score`` are routed to the
+            refine_name pool; those above are eligible for review.
         source: ``"dd"`` or ``"signals"`` — scopes reconciliation.
         only_domain: When set, restricts the *extract_phase* seeding of
             ``StandardNameSource`` nodes to this physics domain.  The
@@ -912,10 +947,10 @@ async def run_sn_pools(
             h = health_map.get(name)
             return getattr(h, "total_processed", 0) if h is not None else 0
 
-        summary.names_composed = _total("generate")
+        summary.names_composed = _total("generate_name")
         summary.names_enriched = _total("generate_docs")
-        summary.names_reviewed = _total("review_names") + _total("review_docs")
-        summary.names_regenerated = _total("refine_name")
+        summary.names_reviewed = _total("review_name") + _total("review_docs")
+        summary.names_regenerated = _total("refine_name") + _total("refine_docs")
 
         # ── Determine stop reason ─────────────────────────────────
         # Check exhaustion before stop_event: the budget watchdog sets
@@ -969,10 +1004,10 @@ async def run_sn_pools(
 
         # Phase-level cost breakdowns.
         phase_spent = shared_mgr.phase_spent
-        summary.compose_cost = phase_spent.get("generate", 0.0) + phase_spent.get(
+        summary.compose_cost = phase_spent.get("generate_name", 0.0) + phase_spent.get(
             "refine_name", 0.0
         )
-        summary.review_cost = phase_spent.get("review_names", 0.0) + phase_spent.get(
+        summary.review_cost = phase_spent.get("review_name", 0.0) + phase_spent.get(
             "review_docs", 0.0
         )
 

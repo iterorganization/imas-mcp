@@ -4,16 +4,15 @@ Replaces the per-domain serial ``run_sn_loop`` with N persistent async
 tasks that pull work from the graph independently and share a single
 :class:`BudgetManager` for cost coordination.
 
-Five pools run under a single ``asyncio.gather``:
+Six pools run under a single ``asyncio.gather``:
 
-* ``generate``       — composes new ``StandardName`` rows from
+* ``generate_name``  — composes new ``StandardName`` rows from
                        ``StandardNameSource(status='extracted')``.
-* ``enrich``         — adds description+documentation to
-                       ``StandardName(enriched_at IS NULL)``.
-* ``review_names``   — scores name+grammar.
-* ``review_docs``    — scores description+documentation (gated on
-                       ``reviewed_name_at IS NOT NULL``).
-* ``regen``          — recomposes names below the regen threshold.
+* ``review_name``    — scores name+grammar (name_stage='drafted').
+* ``refine_name``    — recomposes names below the review threshold.
+* ``generate_docs``  — adds description+documentation to accepted names.
+* ``review_docs``    — scores description+documentation.
+* ``refine_docs``    — refines docs below the review threshold.
 
 Each pool follows a cooperative shutdown contract:
 
@@ -30,11 +29,12 @@ budget writer queue is drained before the SNRun is finalized so cost
 accounting remains exact.
 
 This module deliberately contains only the orchestration scaffolding.
-The five claim queries live in ``graph_ops.py`` and the per-pool
+The six claim queries live in ``graph_ops.py`` and the per-pool
 batch-processor functions live in their respective worker modules
-(``workers.py`` for compose+regen, ``enrich_workers.py``,
-``review/pipeline.py``).  This separation keeps the orchestrator
-agnostic of prompt/persist details — its only job is to schedule.
+(``workers.py`` for generate_name+refine_name, ``review/pipeline.py``
+for legacy review, ``workers.py`` for all Phase 8.1 workers).  This
+separation keeps the orchestrator agnostic of prompt/persist details —
+its only job is to schedule.
 """
 
 from __future__ import annotations
@@ -54,13 +54,14 @@ logger = logging.getLogger(__name__)
 
 
 # Default per-pool weights for soft-fairness admission control.
-# Sum to 1.0.  Mirror the rationale in plan.md Phase 8.
+# Sum to 1.0.  Six pools per Phase 8.1 refine pipeline.
 POOL_WEIGHTS: dict[str, float] = {
-    "generate": 0.30,
-    "enrich": 0.25,
-    "review_names": 0.20,
+    "generate_name": 0.25,
+    "review_name": 0.15,
+    "refine_name": 0.15,
+    "generate_docs": 0.20,
     "review_docs": 0.15,
-    "regen": 0.10,
+    "refine_docs": 0.10,
 }
 
 POOL_NAMES: tuple[str, ...] = tuple(POOL_WEIGHTS.keys())

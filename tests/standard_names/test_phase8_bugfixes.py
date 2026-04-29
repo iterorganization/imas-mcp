@@ -253,7 +253,9 @@ class TestClaimReturnScalarPhysicsDomain:
         The seed query now returns imas.physics_domain directly (no head/coalesce).
         Verify the CASE expression no longer wraps in head().
         """
-        from imas_codex.standard_names.graph_ops import claim_compose_seed_and_expand
+        from imas_codex.standard_names.graph_ops import (
+            claim_generate_name_seed_and_expand,
+        )
 
         gc = _mock_gc()
         gc._tx.run = MagicMock(
@@ -280,7 +282,7 @@ class TestClaimReturnScalarPhysicsDomain:
             ]
         )
         with _patch_gc(gc):
-            result = claim_compose_seed_and_expand(batch_size=1)
+            result = claim_generate_name_seed_and_expand(batch_size=1)
 
         assert result, "expected at least one item"
         # The seed CASE expression should return a scalar _physics_domain
@@ -298,7 +300,9 @@ class TestClaimReturnScalarPhysicsDomain:
         The fix changes `$fallback_domain IN imas.physics_domain`
         to `imas.physics_domain = $fallback_domain`.
         """
-        from imas_codex.standard_names.graph_ops import claim_compose_seed_and_expand
+        from imas_codex.standard_names.graph_ops import (
+            claim_generate_name_seed_and_expand,
+        )
 
         gc = _mock_gc()
         gc._tx.run = MagicMock(
@@ -319,7 +323,7 @@ class TestClaimReturnScalarPhysicsDomain:
             ]
         )
         with _patch_gc(gc):
-            claim_compose_seed_and_expand(batch_size=2)
+            claim_generate_name_seed_and_expand(batch_size=2)
 
         # Find the expand Cypher call (2nd query call)
         assert gc._tx.run.call_count >= 2, "expand query was never issued"
@@ -416,7 +420,7 @@ class TestPoolLoopReleaseOnFailure:
             released_batches.append(batch)
 
         spec = PoolSpec(
-            name="generate",
+            name="generate_name",
             claim=claim,
             process=process,
             release=release,
@@ -431,7 +435,7 @@ class TestPoolLoopReleaseOnFailure:
                 spec,
                 mgr,
                 stop,
-                active_pools_fn=lambda: {"generate"},
+                active_pools_fn=lambda: {"generate_name"},
                 admission_poll=0.05,
             )
         )
@@ -466,7 +470,7 @@ class TestPoolLoopReleaseOnFailure:
             raise RuntimeError("release also boom")
 
         spec = PoolSpec(
-            name="generate",
+            name="generate_name",
             claim=claim,
             process=process,
             release=release,
@@ -482,7 +486,7 @@ class TestPoolLoopReleaseOnFailure:
                 spec,
                 mgr,
                 stop,
-                active_pools_fn=lambda: {"generate"},
+                active_pools_fn=lambda: {"generate_name"},
                 admission_poll=0.05,
             )
         )
@@ -514,7 +518,7 @@ class TestPoolLoopReleaseOnFailure:
             release_called["n"] += 1
 
         spec = PoolSpec(
-            name="generate",
+            name="generate_name",
             claim=claim,
             process=process,
             release=release,
@@ -529,7 +533,7 @@ class TestPoolLoopReleaseOnFailure:
                 spec,
                 mgr,
                 stop,
-                active_pools_fn=lambda: {"generate"},
+                active_pools_fn=lambda: {"generate_name"},
                 admission_poll=0.05,
             )
         )
@@ -554,7 +558,7 @@ class TestPoolLoopReleaseOnFailure:
         async def process(batch: dict) -> int:
             raise RuntimeError("boom without release field")
 
-        spec = PoolSpec(name="generate", claim=claim, process=process)
+        spec = PoolSpec(name="generate_name", claim=claim, process=process)
         # release defaults to None
         assert spec.release is None
 
@@ -568,7 +572,7 @@ class TestPoolLoopReleaseOnFailure:
                 spec,
                 mgr,
                 stop,
-                active_pools_fn=lambda: {"generate"},
+                active_pools_fn=lambda: {"generate_name"},
                 admission_poll=0.05,
             )
         )
@@ -743,7 +747,7 @@ class TestFairnessDeadlockBreaker:
             processed.append(batch)
             return len(batch["items"])
 
-        spec = PoolSpec(name="generate", claim=claim, process=process)
+        spec = PoolSpec(name="generate_name", claim=claim, process=process)
         spec.health.pending_count = 1
         spec.backoff.base = 0.01
         spec.backoff.cap = 0.02
@@ -754,7 +758,7 @@ class TestFairnessDeadlockBreaker:
                 spec,
                 mgr,
                 stop,
-                active_pools_fn=lambda: {"generate"},
+                active_pools_fn=lambda: {"generate_name"},
                 admission_poll=0.01,
             )
         )
@@ -802,7 +806,7 @@ class TestFairnessDeadlockBreaker:
 
         # 'enrich' — non-zero pending_count but claim always returns None.
         enrich_spec = PoolSpec(
-            name="enrich",
+            name="generate_docs",
             claim=AsyncMock(return_value=None),
             process=AsyncMock(return_value=0),
         )
@@ -819,7 +823,7 @@ class TestFairnessDeadlockBreaker:
 
         # After threshold: 'enrich' must NOT appear in active_pools.
         active = active_pools_fn()
-        assert "enrich" not in active, (
+        assert "generate_docs" not in active, (
             f"'enrich' should be excluded from active_pools after "
             f"{_EMPTY_CLAIM_EXCLUDE_THRESHOLD} consecutive empty claims, "
             f"but active_pools={active}"
@@ -908,7 +912,7 @@ class TestPoolAdmitRecoverWhenPendingIncreases:
 
         pools: list[PoolSpec] = []
         spec = PoolSpec(
-            name="enrich",
+            name="generate_docs",
             claim=AsyncMock(return_value=None),
             process=AsyncMock(return_value=0),
         )
@@ -923,14 +927,16 @@ class TestPoolAdmitRecoverWhenPendingIncreases:
 
         # First call: no growth → still excluded.
         result = active_pools_fn()
-        assert "enrich" not in result, (
+        assert "generate_docs" not in result, (
             "pool should still be excluded (no pending growth)"
         )
 
         # Simulate new names becoming enrich-eligible.
         spec.health.pending_count = 25
         result = active_pools_fn()
-        assert "enrich" in result, "pool should re-enter after pending count increased"
+        assert "generate_docs" in result, (
+            "pool should re-enter after pending count increased"
+        )
         assert spec.health.consecutive_empty_claims == 0, (
             "consecutive_empty_claims should have been reset to 0"
         )
@@ -944,7 +950,7 @@ class TestPoolAdmitRecoverWhenPendingIncreases:
 
         pools: list[PoolSpec] = []
         spec = PoolSpec(
-            name="enrich",
+            name="generate_docs",
             claim=AsyncMock(return_value=None),
             process=AsyncMock(return_value=0),
         )
@@ -957,7 +963,7 @@ class TestPoolAdmitRecoverWhenPendingIncreases:
 
         # Count stays at 10 — pool stays excluded.
         result = active_pools_fn()
-        assert "enrich" not in result
+        assert "generate_docs" not in result
         assert spec.health.consecutive_empty_claims == _EMPTY_CLAIM_EXCLUDE_THRESHOLD
 
 
@@ -983,7 +989,7 @@ class TestPoolLoopAccumulatesTotalProcessed:
         stop = asyncio.Event()
         mgr = _mock_mgr()
 
-        spec = PoolSpec(name="enrich", claim=_claim, process=_process)
+        spec = PoolSpec(name="generate_docs", claim=_claim, process=_process)
 
         async def _stopper():
             # Give pool_loop time to drain both batches then signal stop.
@@ -997,7 +1003,7 @@ class TestPoolLoopAccumulatesTotalProcessed:
                 spec,
                 mgr,
                 stop,
-                active_pools_fn=lambda: {"enrich"},
+                active_pools_fn=lambda: {"generate_docs"},
                 admission_poll=0.005,
             ),
             _stopper(),
@@ -1011,7 +1017,7 @@ class TestPoolLoopAccumulatesTotalProcessed:
         stop = asyncio.Event()
         mgr = _mock_mgr()
         spec = PoolSpec(
-            name="enrich",
+            name="generate_docs",
             claim=AsyncMock(return_value=None),
             process=AsyncMock(return_value=5),
         )
@@ -1025,7 +1031,7 @@ class TestPoolLoopAccumulatesTotalProcessed:
                 spec,
                 mgr,
                 stop,
-                active_pools_fn=lambda: {"enrich"},
+                active_pools_fn=lambda: {"generate_docs"},
                 admission_poll=0.005,
             ),
             _stopper(),
@@ -1047,23 +1053,23 @@ class TestRunSnPoolsFinalizePopulatesCounters:
         # We need run_pools to return a health_map with known total_processed.
         from imas_codex.standard_names.pools import PoolHealth
 
-        health_generate = PoolHealth(pool="generate")
+        health_generate = PoolHealth(pool="generate_name")
         health_generate.total_processed = 7
-        health_enrich = PoolHealth(pool="enrich")
+        health_enrich = PoolHealth(pool="generate_docs")
         health_enrich.total_processed = 4
-        health_review_names = PoolHealth(pool="review_names")
+        health_review_names = PoolHealth(pool="review_name")
         health_review_names.total_processed = 3
         health_review_docs = PoolHealth(pool="review_docs")
         health_review_docs.total_processed = 2
-        health_regen = PoolHealth(pool="regen")
+        health_regen = PoolHealth(pool="refine_name")
         health_regen.total_processed = 1
 
         fake_health_map = {
-            "generate": health_generate,
-            "enrich": health_enrich,
-            "review_names": health_review_names,
+            "generate_name": health_generate,
+            "generate_docs": health_enrich,
+            "review_name": health_review_names,
             "review_docs": health_review_docs,
-            "regen": health_regen,
+            "refine_name": health_regen,
         }
 
         with (
@@ -1148,12 +1154,12 @@ class TestPendingCountWatchdog:
         from imas_codex.standard_names.pools import PoolSpec, _pending_count_watchdog
 
         spec_a = PoolSpec(
-            name="enrich",
+            name="generate_docs",
             claim=AsyncMock(return_value=None),
             process=AsyncMock(return_value=0),
         )
         spec_b = PoolSpec(
-            name="review_names",
+            name="review_name",
             claim=AsyncMock(return_value=None),
             process=AsyncMock(return_value=0),
         )
@@ -1168,7 +1174,7 @@ class TestPendingCountWatchdog:
         def pending_fn() -> dict[str, int]:
             nonlocal call_count
             call_count += 1
-            return {"enrich": 12, "review_names": 7, "generate": 3}
+            return {"generate_docs": 12, "review_name": 7, "generate_name": 3}
 
         # Run watchdog, let it do its initial sync poll, then stop.
         async def _stopper():
@@ -1191,7 +1197,7 @@ class TestPendingCountWatchdog:
         from imas_codex.standard_names.pools import PoolSpec, _pending_count_watchdog
 
         spec = PoolSpec(
-            name="enrich",
+            name="generate_docs",
             claim=AsyncMock(return_value=None),
             process=AsyncMock(return_value=0),
         )
@@ -1203,7 +1209,7 @@ class TestPendingCountWatchdog:
             nonlocal call_count
             call_count += 1
             # Second call returns higher count to verify watchdog updated.
-            return {"enrich": call_count * 5}
+            return {"generate_docs": call_count * 5}
 
         async def _stopper():
             # Let at least 2 polls fire with 0.02s poll interval.
@@ -1224,7 +1230,7 @@ class TestPendingCountWatchdog:
         from imas_codex.standard_names.pools import PoolSpec, _pending_count_watchdog
 
         spec = PoolSpec(
-            name="enrich",
+            name="generate_docs",
             claim=AsyncMock(return_value=None),
             process=AsyncMock(return_value=0),
         )
@@ -1232,7 +1238,7 @@ class TestPendingCountWatchdog:
         stop = asyncio.Event()
 
         def pending_fn() -> dict[str, int]:
-            return {"enrich": 9, "nonexistent_pool": 999}
+            return {"generate_docs": 9, "nonexistent_pool": 999}
 
         async def _stopper():
             await asyncio.sleep(0.05)
@@ -1252,7 +1258,7 @@ class TestPendingCountWatchdog:
         from imas_codex.standard_names.pools import PoolSpec, _pending_count_watchdog
 
         spec = PoolSpec(
-            name="enrich",
+            name="generate_docs",
             claim=AsyncMock(return_value=None),
             process=AsyncMock(return_value=0),
         )
@@ -1265,7 +1271,7 @@ class TestPendingCountWatchdog:
             call_count += 1
             if call_count == 1:
                 raise RuntimeError("graph connection refused")
-            return {"enrich": 5}
+            return {"generate_docs": 5}
 
         async def _stopper():
             await asyncio.sleep(0.12)
@@ -1294,13 +1300,13 @@ class TestPendingCountWatchdog:
         mgr.drain_pending = AsyncMock(return_value=None)
 
         spec = PoolSpec(
-            name="enrich",
+            name="generate_docs",
             claim=AsyncMock(return_value=None),
             process=AsyncMock(return_value=0),
         )
 
         def pending_fn() -> dict[str, int]:
-            return {"enrich": 17, "generate": 3}
+            return {"generate_docs": 17, "generate_name": 3}
 
         async def _stopper():
             await asyncio.sleep(0.15)
@@ -1338,16 +1344,16 @@ class TestPoolPendingCountsSplit:
         }
         # Mirror the mapping from cli/sn.py:_pool_pending_counts
         result = {
-            "generate": raw["draft"],
-            "enrich": raw["enrich"],
-            "review_names": raw["review_names"],
+            "generate_name": raw["draft"],
+            "generate_docs": raw["enrich"],
+            "review_name": raw["review_names"],
             "review_docs": raw["review_docs"],
-            "regen": raw["revise"],
+            "refine_name": raw["revise"],
         }
-        assert result["generate"] == 5, "generate should be draft only"
-        assert result["regen"] == 3, "regen should be revise only"
-        assert result["enrich"] == 7
-        assert result["review_names"] == 2
+        assert result["generate_name"] == 5, "generate should be draft only"
+        assert result["refine_name"] == 3, "regen should be revise only"
+        assert result["generate_docs"] == 7
+        assert result["review_name"] == 2
         assert result["review_docs"] == 1
 
     def test_generate_and_regen_sum_matches_display_total(self) -> None:
@@ -1360,8 +1366,8 @@ class TestPoolPendingCountsSplit:
             "review_docs": 0,
         }
         result = {
-            "generate": raw["draft"],
-            "regen": raw["revise"],
+            "generate_name": raw["draft"],
+            "refine_name": raw["revise"],
         }
         display_generate_total = raw["draft"] + raw["revise"]  # what display shows
-        assert result["generate"] + result["regen"] == display_generate_total
+        assert result["generate_name"] + result["refine_name"] == display_generate_total

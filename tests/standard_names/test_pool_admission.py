@@ -292,14 +292,14 @@ class TestIdlePoolReflow:
     """Idle pool (empty queue) receives 0% spend; active pools absorb its share."""
 
     def test_idle_pool_reflows_to_active(self) -> None:
-        """``regen`` is idle; its weight (0.10) is absorbed by the other 4 pools.
+        """``refine_name`` is idle; its weight (0.15) is absorbed by the other 5 pools.
 
         Each active pool's expected share is its raw weight divided by the
-        sum of all active weights (0.90).  Uses a synchronous simulation.
+        sum of all active weights (0.85).  Uses a synchronous simulation.
         """
-        active_names = [n for n in POOL_NAMES if n != "regen"]
+        active_names = [n for n in POOL_NAMES if n != "refine_name"]
         active_weights = {n: POOL_WEIGHTS[n] for n in active_names}
-        # Simulate with only the 4 active pools (regen excluded entirely).
+        # Simulate with only the 5 active pools (refine_name excluded entirely).
         mgr = BudgetManager(total_budget=_TOTAL_BUDGET)
         counts = _simulate_pool_admissions(active_names, active_weights, mgr)
 
@@ -307,10 +307,10 @@ class TestIdlePoolReflow:
         total_spent = sum(phase.values())
         assert total_spent > 0.5 * _TOTAL_BUDGET
 
-        # regen was never in the simulation → $0 spend.
-        regen_spent = phase.get("regen", 0.0)
+        # refine_name was never in the simulation → $0 spend.
+        regen_spent = phase.get("refine_name", 0.0)
         assert regen_spent == 0.0, (
-            f"regen should have $0 spend but got ${regen_spent:.6f}"
+            f"refine_name should have $0 spend but got ${regen_spent:.6f}"
         )
 
         # Active pools get renormalised shares.
@@ -343,7 +343,7 @@ class TestSoleActivePool:
 
     @pytest.mark.asyncio
     async def test_sole_active_pool_gets_full_admission(self) -> None:
-        """Only ``generate`` has work; it must capture ≥99% of spend.
+        """Only ``generate_name`` has work; it must capture ≥99% of spend.
 
         Uses pool_loop directly with tiny admission_poll: the sole-active
         short-circuit (len(active_pools)==1) means no stuck state can occur
@@ -353,7 +353,7 @@ class TestSoleActivePool:
         stop = asyncio.Event()
 
         specs = [
-            _make_spec(name, mgr, stop, has_work=(name == "generate"))
+            _make_spec(name, mgr, stop, has_work=(name == "generate_name"))
             for name in POOL_NAMES
         ]
 
@@ -363,14 +363,14 @@ class TestSoleActivePool:
         total_spent = sum(phase.values())
         assert total_spent > 0.5 * _TOTAL_BUDGET
 
-        generate_share = phase.get("generate", 0.0) / total_spent
+        generate_share = phase.get("generate_name", 0.0) / total_spent
         assert generate_share >= 0.99, (
-            f"generate share={generate_share:.4f} < 0.99 — "
+            f"generate_name share={generate_share:.4f} < 0.99 — "
             "sole-active pool must dominate spend"
         )
 
         for name in POOL_NAMES:
-            if name != "generate":
+            if name != "generate_name":
                 other_spent = phase.get(name, 0.0)
                 assert other_spent == 0.0, (
                     f"Pool '{name}' has non-zero spend ${other_spent:.6f} "
@@ -409,13 +409,13 @@ class TestPoolAdmitExtension:
         should be admitted immediately (share=0 < effective_weight).
         """
         mgr = self._mgr()
-        # Simulate generate + enrich having run while regen was idle.
-        self._charge(mgr, "generate", 0.30)
-        self._charge(mgr, "enrich", 0.25)
-        # regen rejoins with 0 spend — its share (0.0) is below effective weight.
-        active = {"generate", "enrich", "regen"}
-        assert mgr.pool_admit("regen", POOL_WEIGHTS, active), (
-            "regen should be admitted immediately on rejoining active set "
+        # Simulate generate_name + generate_docs having run while refine_name was idle.
+        self._charge(mgr, "generate_name", 0.30)
+        self._charge(mgr, "generate_docs", 0.25)
+        # refine_name rejoins with 0 spend — its share (0.0) is below effective weight.
+        active = {"generate_name", "generate_docs", "refine_name"}
+        assert mgr.pool_admit("refine_name", POOL_WEIGHTS, active), (
+            "refine_name should be admitted immediately on rejoining active set "
             "(0 spend < effective weight)"
         )
 
@@ -456,14 +456,14 @@ class TestPoolAdmitExtension:
     def test_pool_spent_total_helper(self) -> None:
         """mgr.pool_spent_total returns the per-pool spend from _phase_spent."""
         mgr = self._mgr()
-        assert mgr.pool_spent_total("generate") == 0.0, (
+        assert mgr.pool_spent_total("generate_name") == 0.0, (
             "fresh manager should report 0 spend for any pool"
         )
-        self._charge(mgr, "generate", 0.05)
-        assert abs(mgr.pool_spent_total("generate") - 0.05) < 1e-9
+        self._charge(mgr, "generate_name", 0.05)
+        assert abs(mgr.pool_spent_total("generate_name") - 0.05) < 1e-9
         # Other pools unaffected.
-        assert mgr.pool_spent_total("enrich") == 0.0
-        assert mgr.pool_spent_total("regen") == 0.0
+        assert mgr.pool_spent_total("generate_docs") == 0.0
+        assert mgr.pool_spent_total("refine_name") == 0.0
 
     def test_headless_mode_empty_active_pools_admits_all(self) -> None:
         """When active_pools is empty, pool_admit admits all known pools.
@@ -471,7 +471,7 @@ class TestPoolAdmitExtension:
         In headless (non-TTY) mode the Rich display never fires so
         PoolHealth.pending_count stays 0 for every pool.  active_pools_fn()
         returns {} (empty set).  Before this fix, pool_admit returned False
-        for every pool → all 5 pools permanently blocked in the admission gate.
+        for every pool → all 6 pools permanently blocked in the admission gate.
 
         Fix: treat active_pools={} as "no pending-count data" and admit all
         pools that appear in the weights dict.
@@ -514,7 +514,7 @@ class TestPoolAdmitExtension:
         mgr = self._mgr(total=5.0)
         mgr._pool = -0.01
         assert mgr.exhausted(), "precondition: mgr must be exhausted"
-        active = {"generate"}
-        assert not mgr.pool_admit("generate", POOL_WEIGHTS, active), (
-            "pool 'generate' must be rejected when budget is exhausted"
+        active = {"generate_name"}
+        assert not mgr.pool_admit("generate_name", POOL_WEIGHTS, active), (
+            "pool 'generate_name' must be rejected when budget is exhausted"
         )

@@ -3007,7 +3007,7 @@ async def _compose_batch_core(
 
     # ── Budget reservation ─────────────────────────────────────────────
     estimated = len(batch) * 0.20
-    phase_tag = "regen" if regen else "generate"
+    phase_tag = "regen" if regen else "generate_name"
     lease = mgr.reserve(estimated, phase=phase_tag)
     # Soft-stop: proceed even without lease (untracked)
 

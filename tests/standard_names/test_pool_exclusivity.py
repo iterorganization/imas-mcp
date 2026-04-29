@@ -326,7 +326,7 @@ class TestReviewAndRegenClaimDisjointNames:
 
         pools = [
             _make_pool(
-                "review_names",
+                "review_name",
                 lambda: db.claim_review_names(min_score=MIN_SCORE),
                 claims_log,
                 db,
@@ -338,7 +338,7 @@ class TestReviewAndRegenClaimDisjointNames:
                 db,
             ),
             _make_pool(
-                "regen",
+                "refine_name",
                 lambda: db.claim_regen(min_score=MIN_SCORE),
                 claims_log,
                 db,
@@ -362,9 +362,9 @@ class TestReviewAndRegenClaimDisjointNames:
         regen_claimed: set[str] = set()
 
         for pool_name, _token, ids in claims_log:
-            if pool_name in {"review_names", "review_docs"}:
+            if pool_name in {"review_name", "review_docs"}:
                 review_claimed.update(ids)
-            elif pool_name == "regen":
+            elif pool_name == "refine_name":
                 regen_claimed.update(ids)
 
         # ── Primary assertion: disjoint ───────────────────────────────
@@ -373,9 +373,11 @@ class TestReviewAndRegenClaimDisjointNames:
             f"Names claimed by BOTH review and regen (B3 violation): {overlap}"
         )
 
-        # ── Group A: unreviewed → review_names only, never regen ─────
+        # ── Group A: unreviewed → review_name only, never refine_name ──
         regen_in_a = regen_claimed & group_a_ids
-        assert not regen_in_a, f"Regen claimed unreviewed (Group A) names: {regen_in_a}"
+        assert not regen_in_a, (
+            f"Refine_name claimed unreviewed (Group A) names: {regen_in_a}"
+        )
 
         # ── Group B: low score → regen only, never review ─────────────
         review_in_b = review_claimed & group_b_ids
@@ -394,13 +396,13 @@ class TestReviewAndRegenClaimDisjointNames:
         )
 
         # ── Sanity: some work was done ────────────────────────────────
-        # Group A should have been claimed by review_names.
-        # Group B should have been claimed by regen.
+        # Group A should have been claimed by review_name.
+        # Group B should have been claimed by refine_name.
         assert review_claimed & group_a_ids, (
-            "review_names made zero progress on Group A — test may be misconfigured"
+            "review_name made zero progress on Group A — test may be misconfigured"
         )
         assert regen_claimed & group_b_ids, (
-            "regen made zero progress on Group B — test may be misconfigured"
+            "refine_name made zero progress on Group B — test may be misconfigured"
         )
 
 

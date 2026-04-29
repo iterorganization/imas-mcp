@@ -37,33 +37,35 @@ class TestPoolAdmit:
     def test_admits_when_no_spend_yet(self) -> None:
         mgr = self._mgr()
         # Before anything has been spent, every active pool is admitted.
-        assert mgr.pool_admit("generate", POOL_WEIGHTS, {"generate", "enrich"})
+        assert mgr.pool_admit(
+            "generate_name", POOL_WEIGHTS, {"generate_name", "generate_docs"}
+        )
 
     def test_rejects_pool_not_in_active_set(self) -> None:
         mgr = self._mgr()
         # A pool whose queue is empty is not in active_pools and is
         # therefore not admitted (forfeits its share).
-        assert not mgr.pool_admit("regen", POOL_WEIGHTS, {"generate"})
+        assert not mgr.pool_admit("refine_name", POOL_WEIGHTS, {"generate_name"})
 
     def test_under_share_admitted(self) -> None:
         mgr = self._mgr()
         # Inject phase-spent so generate is well under its 0.30 share.
-        mgr._phase_spent["generate"] = 0.10
-        mgr._phase_spent["enrich"] = 0.90
-        active = {"generate", "enrich"}
+        mgr._phase_spent["generate_name"] = 0.10
+        mgr._phase_spent["generate_docs"] = 0.90
+        active = {"generate_name", "generate_docs"}
         # generate share = 0.10/1.00 = 0.10; effective_weight =
         # 0.30 / (0.30 + 0.25) ≈ 0.545.  Admit.
-        assert mgr.pool_admit("generate", POOL_WEIGHTS, active)
+        assert mgr.pool_admit("generate_name", POOL_WEIGHTS, active)
 
     def test_over_share_rejected(self) -> None:
         mgr = self._mgr()
         # generate has consumed almost all spend — should be rejected
         # so other active pools can catch up.
-        mgr._phase_spent["generate"] = 0.95
-        mgr._phase_spent["enrich"] = 0.05
-        active = {"generate", "enrich"}
+        mgr._phase_spent["generate_name"] = 0.95
+        mgr._phase_spent["generate_docs"] = 0.05
+        active = {"generate_name", "generate_docs"}
         # generate share = 0.95/1.00 = 0.95 > 0.545 → reject.
-        assert not mgr.pool_admit("generate", POOL_WEIGHTS, active)
+        assert not mgr.pool_admit("generate_name", POOL_WEIGHTS, active)
 
     def test_idle_pool_share_reflows_to_active(self) -> None:
         """When some pools are idle, their weight reflows to active pools.
@@ -73,21 +75,23 @@ class TestPoolAdmit:
         of share.
         """
         mgr = self._mgr()
-        mgr._phase_spent["generate"] = 4.99
-        # generate is the only active pool — full share forfeit.
-        assert mgr.pool_admit("generate", POOL_WEIGHTS, {"generate"})
+        mgr._phase_spent["generate_name"] = 4.99
+        # generate_name is the only active pool — full share forfeit.
+        assert mgr.pool_admit("generate_name", POOL_WEIGHTS, {"generate_name"})
 
     def test_solo_active_pool_always_admitted(self) -> None:
         mgr = self._mgr()
-        mgr._phase_spent["generate"] = 0.50
-        # When generate is the only active pool, plan.md's "no other
+        mgr._phase_spent["generate_name"] = 0.50
+        # When generate_name is the only active pool, plan.md's "no other
         # pool is active" branch admits unconditionally regardless of
         # share or weight.
-        assert mgr.pool_admit("generate", {"generate": 1.0}, {"generate"})
+        assert mgr.pool_admit(
+            "generate_name", {"generate_name": 1.0}, {"generate_name"}
+        )
 
     def test_unknown_pool_rejected(self) -> None:
         mgr = self._mgr()
-        assert not mgr.pool_admit("nonexistent", POOL_WEIGHTS, {"generate"})
+        assert not mgr.pool_admit("nonexistent", POOL_WEIGHTS, {"generate_name"})
 
 
 # =====================================================================
@@ -107,7 +111,7 @@ class TestPoolLoop:
         async def process(batch: object) -> int:
             return 0
 
-        spec = PoolSpec(name="generate", claim=claim, process=process)
+        spec = PoolSpec(name="generate_name", claim=claim, process=process)
         spec.health.pending_count = 1  # admit
         # Use a tiny backoff base for test speed.
         spec.backoff.base = 0.05
@@ -115,14 +119,14 @@ class TestPoolLoop:
         spec.backoff.reset()
 
         async def active_pools_fn() -> set[str]:
-            return {"generate"}
+            return {"generate_name"}
 
         task = asyncio.create_task(
             pool_loop(
                 spec,
                 mgr,
                 stop,
-                active_pools_fn=lambda: {"generate"},
+                active_pools_fn=lambda: {"generate_name"},
                 admission_poll=0.05,
             )
         )
@@ -148,7 +152,7 @@ class TestPoolLoop:
             processed.extend(batch["items"])
             return len(batch["items"])
 
-        spec = PoolSpec(name="generate", claim=claim, process=process)
+        spec = PoolSpec(name="generate_name", claim=claim, process=process)
         spec.health.pending_count = 1
         spec.backoff.base = 0.05
         spec.backoff.cap = 0.1
@@ -159,7 +163,7 @@ class TestPoolLoop:
                 spec,
                 mgr,
                 stop,
-                active_pools_fn=lambda: {"generate"},
+                active_pools_fn=lambda: {"generate_name"},
                 admission_poll=0.05,
             )
         )
@@ -182,7 +186,7 @@ class TestPoolLoop:
         async def process(batch: dict) -> int:
             raise RuntimeError("boom")
 
-        spec = PoolSpec(name="generate", claim=claim, process=process)
+        spec = PoolSpec(name="generate_name", claim=claim, process=process)
         spec.health.pending_count = 1
         spec.backoff.base = 0.05
         spec.backoff.cap = 0.1
@@ -193,7 +197,7 @@ class TestPoolLoop:
                 spec,
                 mgr,
                 stop,
-                active_pools_fn=lambda: {"generate"},
+                active_pools_fn=lambda: {"generate_name"},
                 admission_poll=0.05,
             )
         )
@@ -217,7 +221,7 @@ class TestRunPools:
         """All non-empty pools make progress concurrently (acceptance #1)."""
         mgr = BudgetManager(total_budget=10.0)
         stop = asyncio.Event()
-        progress = {"generate": 0, "enrich": 0, "review_names": 0}
+        progress = {"generate_name": 0, "generate_docs": 0, "review_name": 0}
 
         def make_spec(name: str) -> PoolSpec:
             async def claim() -> dict | None:
@@ -236,7 +240,9 @@ class TestRunPools:
             spec.backoff.reset()
             return spec
 
-        pools = [make_spec(n) for n in ["generate", "enrich", "review_names"]]
+        pools = [
+            make_spec(n) for n in ["generate_name", "generate_docs", "review_name"]
+        ]
 
         async def driver() -> None:
             await asyncio.sleep(0.3)
@@ -263,7 +269,7 @@ class TestRunPools:
         async def process(batch: object) -> int:
             return 0
 
-        spec = PoolSpec(name="generate", claim=claim, process=process)
+        spec = PoolSpec(name="generate_name", claim=claim, process=process)
         spec.health.pending_count = 1  # active for admission test
         # Use realistic backoff so we measure ramp-up.
         spec.backoff.base = 0.1
@@ -302,7 +308,7 @@ class TestRunPools:
         async def process(batch: object) -> int:
             return 0
 
-        spec = PoolSpec(name="generate", claim=claim, process=process)
+        spec = PoolSpec(name="generate_name", claim=claim, process=process)
         spec.health.pending_count = 1
         spec.backoff.base = 0.01
         spec.backoff.cap = 0.05
@@ -326,7 +332,7 @@ class TestRunPools:
 
 class TestPoolHealth:
     def test_wedge_detection(self) -> None:
-        h = PoolHealth(pool="enrich", pending_count=10)
+        h = PoolHealth(pool="generate_docs", pending_count=10)
         h.last_progress_at = 100.0
         # Recent progress: not wedged.
         assert not h.is_wedged(poll_interval=3.0, now=101.0)
@@ -334,7 +340,7 @@ class TestPoolHealth:
         assert h.is_wedged(poll_interval=3.0, now=107.0)
 
     def test_wedge_requires_pending_work(self) -> None:
-        h = PoolHealth(pool="regen", pending_count=0)
+        h = PoolHealth(pool="refine_name", pending_count=0)
         h.last_progress_at = 0.0  # very old
         # Empty queue: never wedged.
         assert not h.is_wedged(poll_interval=3.0, now=1000.0)

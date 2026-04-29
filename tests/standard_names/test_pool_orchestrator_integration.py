@@ -23,13 +23,14 @@ import pytest
 _GO = "imas_codex.standard_names.graph_ops"
 _BM = "imas_codex.standard_names.budget.BudgetManager"
 
-# Stub all 5 claim functions to return empty (no work).
+# Stub all 6 claim functions to return empty (no work).
 _CLAIM_PATCHES = {
-    "compose": f"{_GO}.claim_generate_name_seed_and_expand",
-    "enrich": f"{_GO}.claim_enrich_seed_and_expand",
-    "review_names": f"{_GO}.claim_review_names_seed_and_expand",
-    "review_docs": f"{_GO}.claim_review_docs_seed_and_expand",
+    "generate_name": f"{_GO}.claim_generate_name_seed_and_expand",
+    "review_name": f"{_GO}.claim_review_name_seed_and_expand",
     "refine_name": f"{_GO}.claim_refine_name_seed_and_expand",
+    "generate_docs": f"{_GO}.claim_generate_docs_seed_and_expand",
+    "review_docs": f"{_GO}.claim_review_docs_seed_and_expand",
+    "refine_docs": f"{_GO}.claim_refine_docs_seed_and_expand",
 }
 
 
@@ -68,11 +69,17 @@ class TestReconcileRunsBeforePools:
                 f"{_GO}.reconcile_standard_name_sources",
                 side_effect=_reconcile_spy,
             ),
-            patch(_CLAIM_PATCHES["compose"], side_effect=_claim_factory("compose")),
-            patch(_CLAIM_PATCHES["enrich"], side_effect=_claim_factory("enrich")),
             patch(
-                _CLAIM_PATCHES["review_names"],
-                side_effect=_claim_factory("review_names"),
+                _CLAIM_PATCHES["generate_name"],
+                side_effect=_claim_factory("generate_name"),
+            ),
+            patch(
+                _CLAIM_PATCHES["generate_docs"],
+                side_effect=_claim_factory("generate_docs"),
+            ),
+            patch(
+                _CLAIM_PATCHES["review_name"],
+                side_effect=_claim_factory("review_name"),
             ),
             patch(
                 _CLAIM_PATCHES["review_docs"],
@@ -80,6 +87,9 @@ class TestReconcileRunsBeforePools:
             ),
             patch(
                 _CLAIM_PATCHES["refine_name"], side_effect=_claim_factory("refine_name")
+            ),
+            patch(
+                _CLAIM_PATCHES["refine_docs"], side_effect=_claim_factory("refine_docs")
             ),
             patch(f"{_GO}.create_sn_run_open"),
             patch(f"{_GO}.finalize_sn_run"),
@@ -222,14 +232,15 @@ class TestPhysicsDomainPassthrough:
         stop = asyncio.Event()
         specs = _build_pool_specs(mgr, stop, min_score=0.6)
 
-        assert len(specs) == 5
+        assert len(specs) == 6
         pool_names = {s.name for s in specs}
         assert pool_names == {
-            "generate",
-            "enrich",
-            "review_names",
-            "review_docs",
+            "generate_name",
+            "review_name",
             "refine_name",
+            "generate_docs",
+            "review_docs",
+            "refine_docs",
         }
 
         # Verify that run_sn_pools signature accepts only_domain
@@ -266,11 +277,12 @@ class TestRestartClearsStaleClaims:
             patch(f"{_BM}.drain_pending", new_callable=AsyncMock, return_value=True),
             patch(f"{_BM}.get_total_spent", new_callable=AsyncMock, return_value=0.0),
             # Stub all claims to return empty.
-            patch(_CLAIM_PATCHES["compose"], return_value=[]),
-            patch(_CLAIM_PATCHES["enrich"], return_value=[]),
-            patch(_CLAIM_PATCHES["review_names"], return_value=[]),
+            patch(_CLAIM_PATCHES["generate_name"], return_value=[]),
+            patch(_CLAIM_PATCHES["generate_docs"], return_value=[]),
+            patch(_CLAIM_PATCHES["review_name"], return_value=[]),
             patch(_CLAIM_PATCHES["review_docs"], return_value=[]),
             patch(_CLAIM_PATCHES["refine_name"], return_value=[]),
+            patch(_CLAIM_PATCHES["refine_docs"], return_value=[]),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 
@@ -314,11 +326,12 @@ class TestFinalizeWithCorrectStatus:
             patch(f"{_BM}.start", new_callable=AsyncMock),
             patch(f"{_BM}.drain_pending", new_callable=AsyncMock, return_value=True),
             patch(f"{_BM}.get_total_spent", new_callable=AsyncMock, return_value=0.0),
-            patch(_CLAIM_PATCHES["compose"], return_value=[]),
-            patch(_CLAIM_PATCHES["enrich"], return_value=[]),
-            patch(_CLAIM_PATCHES["review_names"], return_value=[]),
+            patch(_CLAIM_PATCHES["generate_name"], return_value=[]),
+            patch(_CLAIM_PATCHES["generate_docs"], return_value=[]),
+            patch(_CLAIM_PATCHES["review_name"], return_value=[]),
             patch(_CLAIM_PATCHES["review_docs"], return_value=[]),
             patch(_CLAIM_PATCHES["refine_name"], return_value=[]),
+            patch(_CLAIM_PATCHES["refine_docs"], return_value=[]),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 
@@ -357,11 +370,12 @@ class TestFinalizeWithCorrectStatus:
             patch(f"{_BM}.start", new_callable=AsyncMock),
             patch(f"{_BM}.drain_pending", new_callable=AsyncMock, return_value=True),
             patch(f"{_BM}.get_total_spent", new_callable=AsyncMock, return_value=0.0),
-            patch(_CLAIM_PATCHES["compose"], return_value=[]),
-            patch(_CLAIM_PATCHES["enrich"], return_value=[]),
-            patch(_CLAIM_PATCHES["review_names"], return_value=[]),
+            patch(_CLAIM_PATCHES["generate_name"], return_value=[]),
+            patch(_CLAIM_PATCHES["generate_docs"], return_value=[]),
+            patch(_CLAIM_PATCHES["review_name"], return_value=[]),
             patch(_CLAIM_PATCHES["review_docs"], return_value=[]),
             patch(_CLAIM_PATCHES["refine_name"], return_value=[]),
+            patch(_CLAIM_PATCHES["refine_docs"], return_value=[]),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 

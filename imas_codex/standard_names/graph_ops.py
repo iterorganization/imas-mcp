@@ -6847,3 +6847,78 @@ def release_all_orphan_claims() -> dict[str, int]:
     sn_count = sn_result[0]["released"] if sn_result else 0
     sns_count = sns_result[0]["released"] if sns_result else 0
     return {"sn": sn_count, "sns": sns_count}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Pool pending counts — single round-trip query for all 6 pools
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def pool_pending_counts(
+    *,
+    min_score: float = 0.75,
+    rotation_cap: int = 3,
+) -> dict[str, int]:
+    """Return pending-work counts for all six worker pools in one query.
+
+    The six predicates mirror the eligibility criteria in the
+    corresponding ``claim_*_seed_and_expand`` functions but do NOT
+    filter on ``claimed_at`` — the counts reflect total eligible work,
+    including items currently being processed.  This is correct for
+    both throttle decisions (total queue depth matters) and display
+    (users want to see total pending, not just unclaimed).
+
+    Returns a dict keyed by pool name::
+
+        {
+            "generate_name": int,
+            "review_name": int,
+            "refine_name": int,
+            "generate_docs": int,
+            "review_docs": int,
+            "refine_docs": int,
+        }
+    """
+    from imas_codex.graph.client import GraphClient
+
+    cypher = """
+    CALL { MATCH (s:StandardNameSource {status: 'extracted'})
+           RETURN count(s) AS generate_name }
+    CALL { MATCH (sn:StandardName {name_stage: 'drafted'})
+           RETURN count(sn) AS review_name }
+    CALL { MATCH (sn:StandardName {name_stage: 'reviewed'})
+           WHERE sn.reviewer_score_name < $min_score
+             AND coalesce(sn.chain_length, 0) < $rotation_cap
+           RETURN count(sn) AS refine_name }
+    CALL { MATCH (sn:StandardName {name_stage: 'accepted', docs_stage: 'pending'})
+           RETURN count(sn) AS generate_docs }
+    CALL { MATCH (sn:StandardName {docs_stage: 'drafted'})
+           RETURN count(sn) AS review_docs }
+    CALL { MATCH (sn:StandardName {docs_stage: 'reviewed'})
+           WHERE sn.reviewer_score_docs < $min_score
+             AND coalesce(sn.docs_chain_length, 0) < $rotation_cap
+           RETURN count(sn) AS refine_docs }
+    RETURN generate_name, review_name, refine_name,
+           generate_docs, review_docs, refine_docs
+    """
+    with GraphClient() as gc:
+        rows = list(gc.query(cypher, min_score=min_score, rotation_cap=rotation_cap))
+
+    if not rows:
+        return {
+            "generate_name": 0,
+            "review_name": 0,
+            "refine_name": 0,
+            "generate_docs": 0,
+            "review_docs": 0,
+            "refine_docs": 0,
+        }
+    r = rows[0]
+    return {
+        "generate_name": int(r.get("generate_name", 0)),
+        "review_name": int(r.get("review_name", 0)),
+        "refine_name": int(r.get("refine_name", 0)),
+        "generate_docs": int(r.get("generate_docs", 0)),
+        "review_docs": int(r.get("review_docs", 0)),
+        "refine_docs": int(r.get("refine_docs", 0)),
+    }
