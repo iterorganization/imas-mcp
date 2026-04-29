@@ -829,10 +829,29 @@ async def run_sn_pools(
             for spec in specs:
                 loop_state.set_pool_health(spec.name, spec.health)
 
-        # ── Run pools ─────────────────────────────────────────────
-        health_map = await run_pools(
-            specs, shared_mgr, stop_event, pending_fn=pending_fn
+        # ── Run pools + orphan sweep ──────────────────────────────
+        from imas_codex.standard_names.defaults import (
+            DEFAULT_ORPHAN_SWEEP_INTERVAL_S,
+            DEFAULT_ORPHAN_SWEEP_TIMEOUT_S,
         )
+        from imas_codex.standard_names.orphan_sweep import run_orphan_sweep_loop
+
+        sweep_task = asyncio.create_task(
+            run_orphan_sweep_loop(
+                interval_s=DEFAULT_ORPHAN_SWEEP_INTERVAL_S,
+                timeout_s=DEFAULT_ORPHAN_SWEEP_TIMEOUT_S,
+                stop_event=stop_event,
+            ),
+            name="orphan_sweep",
+        )
+        try:
+            health_map = await run_pools(
+                specs, shared_mgr, stop_event, pending_fn=pending_fn
+            )
+        finally:
+            if not sweep_task.done():
+                sweep_task.cancel()
+            await asyncio.gather(sweep_task, return_exceptions=True)
         logger.info("run_sn_pools: all pools exited — %s", health_map)
 
         # Aggregate per-pool processed counts into RunSummary.
