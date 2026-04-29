@@ -6568,11 +6568,11 @@ def claim_refine_docs_seed_and_expand(
         batch_size=batch_size,
         timeout_seconds=timeout_seconds,
         extra_return_fields=(
-            ", sn.description AS description"
-            ", sn.documentation AS documentation"
-            ", sn.kind AS kind"
+            # description, documentation, kind, physics_domain already in base
+            # readback — listing them again raises Neo4j 42N38 (duplicate
+            # return item name).  Only add fields not present in
+            # _claim_sn_atomic's fixed RETURN list.
             ", sn.tags AS tags"
-            ", sn.physics_domain AS physics_domain"
             ", sn.docs_stage AS docs_stage"
             ", sn.docs_chain_length AS docs_chain_length"
             ", sn.docs_model AS docs_model"

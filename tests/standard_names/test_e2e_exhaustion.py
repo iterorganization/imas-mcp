@@ -471,24 +471,13 @@ def test_e2e_docs_exhausted_keeps_name_accepted(_gc, _clean):
         f"Expected 2 DocsRevision nodes, got {_count_docs_revisions(_gc, sn_id)}"
     )
 
-    # BUG NOTE: claim_refine_docs_seed_and_expand has a pre-existing Neo4j
-    # 42N38 duplicate-column bug (description/kind/physics_domain duplicated in
-    # extra_return_fields vs _claim_sn_atomic base).  Verify eligibility via
-    # direct graph query instead of calling the claim API.
-    rows_refine_eligible = _gc.query(
-        """
-        MATCH (sn:StandardName {id: $id})
-        WHERE sn.docs_stage = 'reviewed'
-          AND sn.reviewer_score_docs IS NOT NULL
-          AND sn.reviewer_score_docs < 0.75
-          AND coalesce(sn.docs_chain_length, 0) < $cap
-        RETURN sn.id AS id
-        """,
-        id=sn_id,
-        cap=_CAP,
-    )
-    assert not rows_refine_eligible, (
-        "Exhausted SN must not satisfy refine_docs eligibility (docs_stage != 'reviewed')"
+    # Exhausted SN must not be claimed by refine_docs (docs_stage != 'reviewed')
+    from imas_codex.standard_names.graph_ops import claim_refine_docs_seed_and_expand
+
+    claimed_refine = claim_refine_docs_seed_and_expand(batch_size=50)
+    claimed_refine_ids = {item["id"] for item in claimed_refine}
+    assert sn_id not in claimed_refine_ids, (
+        "Exhausted SN must not appear in refine_docs claim"
     )
 
     # review_docs must NOT claim this SN (docs_stage='exhausted', not 'drafted')
