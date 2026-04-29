@@ -1,28 +1,23 @@
 """Per-pool streaming display for the 6-pool SN pipeline.
 
-Six pools rendered individually:
+Six pools rendered individually using the canonical ``BaseProgressDisplay``
+layout (full-width panel, per-worker streaming via ``PipelineRowConfig``):
 
-    GENERATE_NAME → REVIEW_NAME → REFINE_NAME
-    GENERATE_DOCS → REVIEW_DOCS → REFINE_DOCS
-
-Each pool gets its own progress bar with per-item streaming lines,
-accumulated cost, and throughput.  The footer shows overall TIME/ETA,
-COST/ETC/CAP, and SERVERS latency.
-
-All rendering functions are **pure** — they accept state dicts and
-return :class:`rich.text.Text` renderables.  This makes them unit-
-testable without a ``Live`` context.
-
-Display layout (~30 lines):
-
-    GENERATE_NAME  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────  720/2000  36%  1.5/s  $1.20
-      electron_temperature_in_core_plasma  →  e_temp_core
-    REVIEW_NAME    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────  640/2000  32%  2.1/s  $0.85
-      e_temp_core  0.83  "Good grammar; documentation could be…"
+    DRAFT         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────      720  36%
+    electron_temperature_in_core_plasma                          1.5/s
+    → e_temp_core                                                $1.20
+    REVIEW NAME   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────      640  32%
+    e_temp_core                                                  2.1/s
+    0.83  "Good grammar; documentation could be…"                $0.85
     ...
     ─────────────────────────────────────────────────────────────
     TIME  ━━━━━━━━━━━━────────────────  18m 32s  ETA 2h 14m
-    COST  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━  $4.55  ETC $9.20  CAP $46.00
+    COST  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━  $4.55  ETC $9.20
+
+Inherits ``BaseProgressDisplay`` for full-width rendering, canonical
+HEADER → SERVERS → PIPELINE → RESOURCES layout, and service-monitor
+integration.  Per-item streaming uses ``PipelineRowConfig`` (3-line
+per pool) with the standard ``build_pipeline_section`` renderer.
 """
 
 from __future__ import annotations
@@ -33,6 +28,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from rich.text import Text
+
+from imas_codex.discovery.base.progress import (
+    BaseProgressDisplay,
+    PipelineRowConfig,
+    ResourceConfig,
+    WorkerStats,
+    build_pipeline_section,
+    build_resource_section,
+    compute_parallel_eta,
+    compute_projected_etc,
+)
 
 # ═══════════════════════════════════════════════════════════════════════
 # Constants
@@ -48,8 +54,19 @@ POOL_ORDER: tuple[str, ...] = (
     "refine_docs",
 )
 
-#: Display labels (upper-case, underscore-separated).
+#: Display labels — short labels that fit the canonical LABEL_WIDTH (12).
 POOL_LABELS: dict[str, str] = {
+    "generate_name": "DRAFT",
+    "review_name": "REVIEW NAME",
+    "refine_name": "REFINE NAME",
+    "generate_docs": "DOCS",
+    "review_docs": "REVIEW DOCS",
+    "refine_docs": "REFINE DOCS",
+}
+
+#: Legacy long labels (upper-case, underscore-separated).
+#: Used by legacy :func:`render_pool_panel` for backward compat.
+_LEGACY_POOL_LABELS: dict[str, str] = {
     "generate_name": "GENERATE_NAME",
     "review_name": "REVIEW_NAME",
     "refine_name": "REFINE_NAME",
@@ -68,13 +85,7 @@ POOL_STYLES: dict[str, str] = {
     "refine_docs": "cyan",
 }
 
-#: Label column width (right-padded to align bars).
-LABEL_COL = 16
-
-#: Progress bar width.
-BAR_WIDTH = 36
-
-#: Maximum streamed items kept per pool.
+#: Maximum streamed items kept per pool (legacy compat).
 STREAM_MAXLEN = 3
 
 #: Review-score color thresholds.
@@ -83,7 +94,93 @@ SCORE_YELLOW_THRESHOLD = 0.65
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Per-item line renderers (pure functions)
+# Event → PipelineRowConfig field mapping (per-pool)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _map_generate_name(ev: dict[str, Any]) -> dict[str, Any]:
+    """Map a generate_name event to PipelineRowConfig stream fields."""
+    source = ev.get("source", ev.get("dd_path", ""))
+    name = ev.get("name", "")
+    return {
+        "primary_text": str(source),
+        "primary_text_style": "dim",
+        "description": f"→ {name}" if name else "",
+    }
+
+
+def _map_review_name(ev: dict[str, Any]) -> dict[str, Any]:
+    """Map a review_name event to PipelineRowConfig stream fields."""
+    name = str(ev.get("name", ""))
+    raw_score = ev.get("score")
+    sc = float(raw_score) if raw_score is not None else None
+    comment = str(ev.get("comment", ""))
+    return {
+        "primary_text": name,
+        "primary_text_style": "white",
+        "score_value": sc,
+        "description": f'"{comment}"' if comment else "",
+    }
+
+
+def _map_refine_name(ev: dict[str, Any]) -> dict[str, Any]:
+    """Map a refine_name event to PipelineRowConfig stream fields."""
+    old = str(ev.get("old_name", ""))
+    chain = int(ev.get("chain_length", 0))
+    escalated = bool(ev.get("escalated", False))
+    new = str(ev.get("new_name", ""))
+    model = str(ev.get("model", ""))
+    if escalated:
+        desc = f"(chain={chain}) → escalating to {model}"
+    else:
+        desc = f"(chain={chain}) → {new}"
+    return {
+        "primary_text": old,
+        "primary_text_style": "white",
+        "description": desc,
+    }
+
+
+def _map_generate_docs(ev: dict[str, Any]) -> dict[str, Any]:
+    """Map a generate_docs event to PipelineRowConfig stream fields."""
+    name = str(ev.get("name", ""))
+    desc = str(ev.get("description", ""))
+    return {
+        "primary_text": name,
+        "primary_text_style": "white",
+        "description": f'"{desc}"' if desc else "",
+    }
+
+
+def _map_review_docs(ev: dict[str, Any]) -> dict[str, Any]:
+    """Map a review_docs event to PipelineRowConfig stream fields."""
+    return _map_review_name(ev)
+
+
+def _map_refine_docs(ev: dict[str, Any]) -> dict[str, Any]:
+    """Map a refine_docs event to PipelineRowConfig stream fields."""
+    name = str(ev.get("name", ""))
+    rev = int(ev.get("revision", 0))
+    desc = str(ev.get("description", ""))
+    return {
+        "primary_text": name,
+        "primary_text_style": "white",
+        "description": f'(rev={rev}) "{desc}"' if desc else f"(rev={rev})",
+    }
+
+
+#: Registry mapping pool name → event-to-stream-fields mapper.
+_EVENT_MAPPERS: dict[str, Any] = {
+    "generate_name": _map_generate_name,
+    "review_name": _map_review_name,
+    "refine_name": _map_refine_name,
+    "generate_docs": _map_generate_docs,
+    "review_docs": _map_review_docs,
+    "refine_docs": _map_refine_docs,
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# Legacy per-item renderers (kept for backward compat / test imports)
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -107,10 +204,7 @@ def _clip(text: str, maxlen: int) -> str:
 
 
 def format_item_generate_name(item: dict[str, Any]) -> Text:
-    """Render a GENERATE_NAME per-item line.
-
-    Format: ``<source>  →  <name>``
-    """
+    """Render a GENERATE_NAME per-item line."""
     source = item.get("source", item.get("dd_path", ""))
     name = item.get("name", "")
     line = Text("    ")
@@ -121,15 +215,11 @@ def format_item_generate_name(item: dict[str, Any]) -> Text:
 
 
 def format_item_review_name(item: dict[str, Any]) -> Text:
-    """Render a REVIEW_NAME per-item line.
-
-    Format: ``<name>  <score>  "<comment clipped to 80 chars>"``
-    """
+    """Render a REVIEW_NAME per-item line."""
     name = str(item.get("name", ""))
     raw_score = item.get("score", 0.0)
     sc = float(raw_score) if raw_score is not None else 0.0
     comment = str(item.get("comment", ""))
-
     line = Text("    ")
     line.append(_clip(name, 30), style="white")
     line.append("  ")
@@ -140,17 +230,12 @@ def format_item_review_name(item: dict[str, Any]) -> Text:
 
 
 def format_item_refine_name(item: dict[str, Any]) -> Text:
-    """Render a REFINE_NAME per-item line.
-
-    Format: ``<old_name> (chain=<n>) → <new_name>``
-    or on escalation: ``<old_name> (chain=<n>) → escalating to <model>``
-    """
+    """Render a REFINE_NAME per-item line."""
     old = str(item.get("old_name", ""))
     chain = int(item.get("chain_length", 0))
     escalated = bool(item.get("escalated", False))
     new = str(item.get("new_name", ""))
     model = str(item.get("model", ""))
-
     line = Text("    ")
     line.append(_clip(old, 30), style="white")
     line.append(f" (chain={chain})", style="dim")
@@ -163,13 +248,9 @@ def format_item_refine_name(item: dict[str, Any]) -> Text:
 
 
 def format_item_generate_docs(item: dict[str, Any]) -> Text:
-    """Render a GENERATE_DOCS per-item line.
-
-    Format: ``<name>  "<description first 100 chars>"``
-    """
+    """Render a GENERATE_DOCS per-item line."""
     name = str(item.get("name", ""))
     desc = str(item.get("description", ""))
-
     line = Text("    ")
     line.append(_clip(name, 30), style="white")
     if desc:
@@ -178,22 +259,15 @@ def format_item_generate_docs(item: dict[str, Any]) -> Text:
 
 
 def format_item_review_docs(item: dict[str, Any]) -> Text:
-    """Render a REVIEW_DOCS per-item line.
-
-    Same format as REVIEW_NAME but for docs context.
-    """
+    """Render a REVIEW_DOCS per-item line."""
     return format_item_review_name(item)
 
 
 def format_item_refine_docs(item: dict[str, Any]) -> Text:
-    """Render a REFINE_DOCS per-item line.
-
-    Format: ``<name> (rev=<n>) "<description first 100 chars>"``
-    """
+    """Render a REFINE_DOCS per-item line."""
     name = str(item.get("name", ""))
     rev = int(item.get("revision", 0))
     desc = str(item.get("description", ""))
-
     line = Text("    ")
     line.append(_clip(name, 30), style="white")
     line.append(f" (rev={rev})", style="dim")
@@ -202,7 +276,7 @@ def format_item_refine_docs(item: dict[str, Any]) -> Text:
     return line
 
 
-#: Registry of per-item formatters by pool name.
+#: Registry of per-item formatters by pool name (legacy).
 ITEM_FORMATTERS: dict[str, Any] = {
     "generate_name": format_item_generate_name,
     "review_name": format_item_review_name,
@@ -214,7 +288,7 @@ ITEM_FORMATTERS: dict[str, Any] = {
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Pool state dataclass
+# Pool state dataclass (legacy — kept for backward compat / tests)
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -237,7 +311,7 @@ class PoolDisplayState:
 
     #: Throttle state — set when backlog exceeds cap.
     throttled: bool = False
-    throttle_reason: str = ""  # e.g. "review_name backlog 207>200"
+    throttle_reason: str = ""
 
     def add_item(self, item: dict[str, Any]) -> None:
         """Push a streamed item into the display deque."""
@@ -267,8 +341,14 @@ class PoolDisplayState:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Progress bar builder (pure)
+# Legacy rendering utilities (kept for backward compat / tests)
 # ═══════════════════════════════════════════════════════════════════════
+
+#: Legacy label column width (superseded by LABEL_WIDTH from base).
+LABEL_COL = 16
+
+#: Legacy progress bar width (superseded by terminal-responsive bar_width).
+BAR_WIDTH = 36
 
 
 def make_bar(ratio: float, width: int = BAR_WIDTH) -> str:
@@ -279,73 +359,6 @@ def make_bar(ratio: float, width: int = BAR_WIDTH) -> str:
     ratio = max(0.0, min(1.0, ratio))
     filled = int(width * ratio)
     return "━" * filled + "─" * (width - filled)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Pool panel renderer (pure)
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def render_pool_panel(state: PoolDisplayState) -> Text:
-    """Render one pool's block: header line + up to STREAM_MAXLEN item lines.
-
-    Returns a :class:`rich.text.Text` that can be joined with others
-    to compose the full display.
-    """
-    pool_name = state.name
-    label = POOL_LABELS.get(pool_name, pool_name.upper())
-    style = POOL_STYLES.get(pool_name, "white")
-
-    # ── Header line ───────────────────────────────────────────────
-    header = Text()
-
-    # Pool label (with optional throttle suffix)
-    if state.throttled:
-        header.append(f"  {label}", style=style)
-        header.append(f" [paused: {state.throttle_reason}]", style="bold red")
-    else:
-        header.append(f"  {label}", style=style)
-
-    # Pad to align bar
-    label_len = len(header.plain)
-    pad = max(1, LABEL_COL - label_len)
-    header.append(" " * pad)
-
-    # Progress bar
-    filled_count = int(BAR_WIDTH * state.ratio)
-    header.append("━" * filled_count, style="green")
-    header.append("─" * (BAR_WIDTH - filled_count), style="dim")
-    header.append("  ")
-
-    # Counts
-    header.append(f"{state.completed}/{state.total}", style="white")
-    header.append(f"  {state.pct:.0f}%", style="dim")
-
-    # Rate
-    r = state.rate
-    if r is not None:
-        header.append(f"  {r:.1f}/s", style="dim")
-
-    # Cost
-    if state.cost > 0:
-        header.append(f"  ${state.cost:.2f}", style="green")
-
-    # ── Streamed items ────────────────────────────────────────────
-    result = Text()
-    result.append_text(header)
-
-    formatter = ITEM_FORMATTERS.get(pool_name)
-    if formatter and state.items:
-        for item in state.items:
-            result.append("\n")
-            result.append_text(formatter(item))
-
-    return result
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Footer renderers (pure)
-# ═══════════════════════════════════════════════════════════════════════
 
 
 def format_time_value(seconds: float) -> str:
@@ -362,19 +375,12 @@ def format_time_value(seconds: float) -> str:
     return f"{h}h {m:02d}m" if m else f"{h}h"
 
 
-def compute_eta(
-    pools: list[PoolDisplayState],
-) -> float | None:
-    """ETA in seconds based on aggregate throughput.
-
-    ``remaining_total / current_throughput``.
-    """
+def compute_eta(pools: list[PoolDisplayState]) -> float | None:
+    """ETA in seconds based on aggregate throughput."""
     total_remaining = sum(p.remaining for p in pools)
     if total_remaining <= 0:
         return 0.0
-
     total_completed = sum(p.completed for p in pools)
-    # Compute overall elapsed from earliest start
     if not pools:
         return None
     earliest = min(p.start_time for p in pools)
@@ -385,22 +391,56 @@ def compute_eta(
     return total_remaining / throughput
 
 
-def compute_etc(
-    pools: list[PoolDisplayState],
-) -> float | None:
-    """Estimated Total Cost: current_cost + cost_per_item × remaining.
-
-    ``cost_per_item`` is the rolling average across all pools.
-    """
+def compute_etc(pools: list[PoolDisplayState]) -> float | None:
+    """Estimated Total Cost: current_cost + cost_per_item × remaining."""
     total_cost = sum(p.cost for p in pools)
     total_completed = sum(p.completed for p in pools)
     total_remaining = sum(p.remaining for p in pools)
-
     if total_completed <= 0 or total_remaining <= 0:
         return None
-
     cost_per_item = total_cost / total_completed
     return total_cost + cost_per_item * total_remaining
+
+
+def render_pool_panel(state: PoolDisplayState) -> Text:
+    """Render one pool's block using legacy custom layout.
+
+    .. deprecated:: Use ``SN6PoolDisplay._build_pipeline_section`` instead.
+    """
+    pool_name = state.name
+    label = _LEGACY_POOL_LABELS.get(pool_name, pool_name.upper())
+    style = POOL_STYLES.get(pool_name, "white")
+
+    header = Text()
+    if state.throttled:
+        header.append(f"  {label}", style=style)
+        header.append(f" [paused: {state.throttle_reason}]", style="bold red")
+    else:
+        header.append(f"  {label}", style=style)
+
+    label_len = len(header.plain)
+    pad = max(1, LABEL_COL - label_len)
+    header.append(" " * pad)
+    filled_count = int(BAR_WIDTH * state.ratio)
+    header.append("━" * filled_count, style="green")
+    header.append("─" * (BAR_WIDTH - filled_count), style="dim")
+    header.append("  ")
+    header.append(f"{state.completed}/{state.total}", style="white")
+    header.append(f"  {state.pct:.0f}%", style="dim")
+    r = state.rate
+    if r is not None:
+        header.append(f"  {r:.1f}/s", style="dim")
+    if state.cost > 0:
+        header.append(f"  ${state.cost:.2f}", style="green")
+
+    result = Text()
+    result.append_text(header)
+    formatter = ITEM_FORMATTERS.get(pool_name)
+    if formatter and state.items:
+        for item in state.items:
+            result.append("\n")
+            result.append_text(formatter(item))
+    return result
 
 
 def render_footer(
@@ -412,26 +452,19 @@ def render_footer(
     graph_host: str = "graph",
     llm_host: str = "llm",
 ) -> Text:
-    """Render the footer block: TIME + COST + SERVERS.
+    """Render the footer block using legacy custom layout.
 
-    All fields are optional; omitted when data is unavailable.
+    .. deprecated:: Use ``SN6PoolDisplay._build_resources_section`` instead.
     """
     footer = Text()
-
-    # ── Separator ─────────────────────────────────────────────────
     sep_width = LABEL_COL + BAR_WIDTH + 30
     footer.append("─" * sep_width, style="dim")
-
-    # ── TIME row ──────────────────────────────────────────────────
     earliest = min(p.start_time for p in pools) if pools else time.time()
     elapsed = time.time() - earliest
     eta = compute_eta(pools)
-
     footer.append("\n  TIME", style="bold white")
     pad = max(1, LABEL_COL - 6)
     footer.append(" " * pad)
-
-    # Time bar: elapsed / (elapsed + eta)
     total_expected = elapsed + (eta if eta and eta > 0 else 0)
     time_ratio = elapsed / total_expected if total_expected > 0 else 1.0
     bar_filled = int(BAR_WIDTH * min(time_ratio, 1.0))
@@ -440,16 +473,12 @@ def render_footer(
     footer.append(f"  {format_time_value(elapsed)}", style="white")
     if eta is not None and eta > 0:
         footer.append(f"  ETA {format_time_value(eta)}", style="dim")
-
-    # ── COST row ──────────────────────────────────────────────────
     total_cost = sum(p.cost for p in pools)
     if total_cost > 0 or cost_limit > 0:
         etc = compute_etc(pools)
         footer.append("\n  COST", style="bold white")
         pad = max(1, LABEL_COL - 6)
         footer.append(" " * pad)
-
-        # Cost bar: cost / limit
         cost_ratio = total_cost / cost_limit if cost_limit > 0 else 0.0
         bar_filled = int(BAR_WIDTH * min(cost_ratio, 1.0))
         cost_color = (
@@ -462,8 +491,6 @@ def render_footer(
             footer.append(f"  ETC ${etc:.2f}", style="dim")
         if cost_limit > 0:
             footer.append(f"  CAP ${cost_limit:.2f}", style="dim")
-
-    # ── SERVERS row ───────────────────────────────────────────────
     server_parts: list[str] = []
     if graph_latency_ms is not None:
         server_parts.append(f"{graph_host} (avg {graph_latency_ms:.0f}ms)")
@@ -474,13 +501,7 @@ def render_footer(
         pad = max(1, LABEL_COL - 9)
         footer.append(" " * pad)
         footer.append("  ".join(server_parts), style="dim")
-
     return footer
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Full display composer
-# ═══════════════════════════════════════════════════════════════════════
 
 
 def render_full_display(
@@ -492,29 +513,18 @@ def render_full_display(
     graph_host: str = "graph",
     llm_host: str = "llm",
 ) -> Text:
-    """Compose the full display from 6 pool panels + footer.
+    """Compose legacy display from 6 pool panels + footer.
 
-    Args:
-        pools: Mapping of pool name → :class:`PoolDisplayState`.
-        cost_limit: Budget cap in USD.
-        graph_latency_ms: Rolling avg graph query latency.
-        llm_latency_s: Rolling avg LLM call latency.
-
-    Returns:
-        A single :class:`rich.text.Text` suitable for ``Live.update()``.
+    .. deprecated:: Use ``SN6PoolDisplay`` (canonical BaseProgressDisplay
+        subclass) instead.
     """
     display = Text()
-
-    # Title
     display.append("  Standard Name Pipeline\n", style="bold white")
-
     pool_list = [pools[name] for name in POOL_ORDER if name in pools]
-
     for i, pstate in enumerate(pool_list):
         if i > 0:
             display.append("\n")
         display.append_text(render_pool_panel(pstate))
-
     display.append("\n")
     display.append_text(
         render_footer(
@@ -526,22 +536,21 @@ def render_full_display(
             llm_host=llm_host,
         )
     )
-
     return display
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Live display adapter for run_discovery() harness
+# SN6PoolDisplay — canonical BaseProgressDisplay subclass
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class SN6PoolDisplay:
-    """Live display adapter that bridges the 6-pool renderers with the
-    ``run_discovery()`` harness.
+class SN6PoolDisplay(BaseProgressDisplay):
+    """Full-width 6-pool display using the canonical ``BaseProgressDisplay``.
 
-    Implements the context-manager protocol (``__enter__``/``__exit__``)
-    expected by :func:`~imas_codex.cli.discover.common.run_discovery` and
-    exposes a ``tick()`` method for periodic display refresh.
+    Renders 6 pipeline rows (one per pool) with per-worker streaming
+    via ``PipelineRowConfig``, plus TIME/COST resource gauges.  Inherits
+    full-width panel, service-monitor SERVERS section, and shutdown
+    handling from ``BaseProgressDisplay``.
 
     Usage::
 
@@ -553,8 +562,8 @@ class SN6PoolDisplay:
         display.on_event({"pool": "review_name", "name": "e_temp", "score": 0.85, ...})
 
     The ``on_event`` method is the callback wired into worker pools.
-    Each call pushes an item into the corresponding pool's deque and
-    increments its completed counter.
+    Each call pushes an item into the corresponding pool's
+    ``WorkerStats.stream_queue`` and increments its counter.
     """
 
     def __init__(
@@ -565,27 +574,24 @@ class SN6PoolDisplay:
         pending_fn: Any | None = None,
         accumulated_cost_fn: Any | None = None,
     ) -> None:
-        from rich.console import Console
-
-        self.console = console or Console()
-        self.cost_limit = cost_limit
+        super().__init__(
+            facility="sn",
+            cost_limit=cost_limit,
+            console=console,
+            title_suffix="Standard Name",
+        )
         self._pending_fn = pending_fn
         self._accumulated_cost_fn = accumulated_cost_fn
 
-        # Per-pool display state (6 pools).
+        # Per-pool observable state (6 pools).
+        # PoolDisplayState tracks completed/total/cost; WorkerStats drives
+        # the canonical streaming display via stream_queue.
         self.pools: dict[str, PoolDisplayState] = {
             name: PoolDisplayState(name=name) for name in POOL_ORDER
         }
-
-        # Lifecycle
-        self._live: Any | None = None
-
-        # Service monitor (set by run_discovery after construction).
-        self.service_monitor: Any = None
-
-        # Shutdown state (for compatibility with run_discovery harness).
-        self._shutting_down = False
-        self._shutdown_start: float | None = None
+        self._pool_stats: dict[str, WorkerStats] = {
+            name: WorkerStats() for name in POOL_ORDER
+        }
 
     # ── Event callback (wired into workers) ───────────────────────────
 
@@ -597,8 +603,7 @@ class SN6PoolDisplay:
 
         Args:
             ev: Event dict with at minimum ``"pool"`` key matching one
-                of :data:`POOL_ORDER`.  Additional keys are pool-specific
-                and consumed by the per-item formatters.
+                of :data:`POOL_ORDER`.  Additional keys are pool-specific.
         """
         pool_name = ev.get("pool", "")
         state = self.pools.get(pool_name)
@@ -609,6 +614,17 @@ class SN6PoolDisplay:
         cost = ev.get("cost", 0.0)
         if cost:
             state.cost += float(cost)
+
+        # Push to canonical stream queue for per-worker display.
+        ws = self._pool_stats.get(pool_name)
+        if ws is not None:
+            mapper = _EVENT_MAPPERS.get(pool_name)
+            if mapper:
+                stream_item = mapper(ev)
+                ws.stream_queue.add([stream_item])
+            ws.processed = state.completed
+            ws.total = max(state.total, state.completed)
+            ws.cost = state.cost
 
     # ── Pending count / total refresh ─────────────────────────────────
 
@@ -631,8 +647,7 @@ class SN6PoolDisplay:
         except Exception:
             return
 
-        # counts may be either a dict or a list of (name, count) tuples
-        # depending on which _pending_fn variant is wired.
+        # counts may be either a dict or a list of (name, count) tuples.
         if isinstance(counts, list):
             counts = dict(counts)
 
@@ -648,7 +663,6 @@ class SN6PoolDisplay:
             if state is None:
                 continue
             pending = int(counts.get(pending_key, 0))
-            # Seed baseline from done counts on first refresh
             if done_key is not None:
                 done = int(counts.get(done_key, 0))
                 if done > state.completed:
@@ -657,67 +671,117 @@ class SN6PoolDisplay:
             if new_total > state.total:
                 state.total = new_total
 
-    # ── Display rendering ─────────────────────────────────────────────
+            # Sync WorkerStats for canonical rendering.
+            ws = self._pool_stats.get(pool_name)
+            if ws is not None:
+                ws.processed = state.completed
+                ws.total = max(state.total, state.completed)
+                ws.cost = state.cost
 
-    def _build_display(self) -> Any:
-        """Build the complete display renderable."""
-        from rich.panel import Panel
+    # ── Canonical display methods (override BaseProgressDisplay) ──────
 
-        content = render_full_display(
-            self.pools,
-            cost_limit=self.cost_limit,
+    def _build_pipeline_section(self) -> Text:
+        """Build pipeline section using canonical PipelineRowConfig."""
+        rows: list[PipelineRowConfig] = []
+        for pool_name in POOL_ORDER:
+            state = self.pools[pool_name]
+            ws = self._pool_stats[pool_name]
+            label = POOL_LABELS[pool_name]
+            style = POOL_STYLES[pool_name]
+
+            completed = state.completed
+            total = max(state.total, completed, 1)
+
+            # Stream item from WorkerStats queue.
+            primary_text = ""
+            primary_text_style = "white"
+            description = ""
+            score_value: float | None = None
+            si = ws._current_stream_item
+            if si:
+                primary_text = si.get("primary_text", "")
+                primary_text_style = si.get("primary_text_style", "white")
+                description = si.get("description", "")
+                _sv = si.get("score_value")
+                if isinstance(_sv, int | float):
+                    score_value = float(_sv)
+
+            rows.append(
+                PipelineRowConfig(
+                    name=label,
+                    style=style,
+                    completed=completed,
+                    total=total,
+                    rate=state.rate,
+                    cost=state.cost if state.cost > 0 else None,
+                    primary_text=primary_text,
+                    primary_text_style=primary_text_style,
+                    description=description,
+                    score_value=score_value,
+                    is_processing=completed > 0 and completed < total,
+                    is_complete=completed > 0 and completed >= total,
+                )
+            )
+        return build_pipeline_section(rows, self.bar_width)
+
+    def _build_resources_section(self) -> Text:
+        """Build TIME + COST resource gauges using canonical renderer."""
+        total_cost = sum(p.cost for p in self.pools.values())
+
+        # ETA: parallel ETA across pools with remaining work.
+        work_items: list[tuple[int, float | None]] = []
+        cost_items: list[tuple[int, float | None]] = []
+        for pool_name in POOL_ORDER:
+            state = self.pools[pool_name]
+            remaining = state.remaining
+            if remaining > 0 and state.rate is not None and state.rate > 0:
+                work_items.append((remaining, state.rate))
+            if state.cost > 0 and state.completed > 0 and state.remaining > 0:
+                cpi = state.cost / state.completed
+                cost_items.append((remaining, cpi))
+
+        eta = compute_parallel_eta(work_items)
+
+        # Accumulated cost from graph (cross-run).
+        accumulated = total_cost
+        if self._accumulated_cost_fn:
+            try:
+                graph_cost = self._accumulated_cost_fn()
+                accumulated = graph_cost + total_cost
+            except Exception:
+                pass
+
+        projected = compute_projected_etc(accumulated, cost_items)
+
+        config = ResourceConfig(
+            elapsed=self.elapsed,
+            eta=eta,
+            run_cost=total_cost if total_cost > 0 else None,
+            cost_limit=self.cost_limit if self.cost_limit > 0 else None,
+            accumulated_cost=accumulated,
+            etc=projected,
         )
-
-        # Shutdown indicator
-        if self._shutting_down:
-            content.append("\n")
-            content.append("  SHUTTING DOWN", style="bold yellow")
-            if self._shutdown_start is not None:
-                import time as _time
-
-                elapsed = _time.time() - self._shutdown_start
-                content.append(f"  ({elapsed:.1f}s)", style="dim")
-
-        return Panel(
-            content,
-            border_style="yellow" if self._shutting_down else "cyan",
-            padding=(0, 1),
-        )
+        return build_resource_section(config, self.gauge_width)
 
     # ── Tick (called by run_discovery ticker task) ────────────────────
 
     def tick(self) -> None:
-        """Periodic refresh: update pending counts and repaint."""
+        """Periodic refresh: drain stream queues, update pending, repaint."""
+        # Drain stream queues → _current_stream_item for each pool.
+        for ws in self._pool_stats.values():
+            item = ws.stream_queue.pop()
+            if item is not None:
+                ws._current_stream_item = item
+            elif ws.stream_queue.is_stale():
+                ws._current_stream_item = None
+
         self.refresh_pending()
         self._refresh()
-
-    def _refresh(self) -> None:
-        """Repaint the Live display."""
-        if self._live is not None:
-            self._live.update(self._build_display())
-
-    # ── Lifecycle (context manager for run_discovery) ─────────────────
-
-    def __enter__(self) -> SN6PoolDisplay:
-        from rich.live import Live
-
-        self._live = Live(
-            self._build_display(),
-            console=self.console,
-            refresh_per_second=4,
-            vertical_overflow="visible",
-        )
-        self._live.__enter__()
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        if self._live is not None:
-            self._live.__exit__(*args)
 
     # ── Harness compatibility ─────────────────────────────────────────
 
     def refresh_from_graph(self, facility: str) -> None:
-        """Called by run_discovery graph-refresh task.  Updates pending."""
+        """Called by run_discovery graph-refresh task."""
         self.refresh_pending()
         self._refresh()
 
@@ -739,17 +803,9 @@ class SN6PoolDisplay:
             if total_cost > 0:
                 self.console.print(f"  TOTAL COST: ${total_cost:.2f}")
 
-    def signal_shutdown(self) -> None:
-        """Signal graceful shutdown (3-press handler)."""
-        self._shutting_down = True
-        if self._shutdown_start is None:
-            import time as _time
-
-            self._shutdown_start = _time.time()
-        self._refresh()
-
-    # Alias expected by cli/shutdown.py
-    begin_shutdown = signal_shutdown
+    def on_worker_status(self, group: Any) -> None:
+        """Callback for worker status updates (harness compat)."""
+        self.update_worker_status(group)
 
 
 __all__ = [

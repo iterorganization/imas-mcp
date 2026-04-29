@@ -431,19 +431,19 @@ class TestFooterRendering:
         assert "llm:iter (avg 1.2s)" in footer
 
     def test_pool_labels_are_correct(self):
-        """All 6 pool labels use the canonical GENERATE_NAME etc. form."""
+        """All 6 pool labels use short form that fits LABEL_WIDTH (12)."""
         expected_labels = {
-            "GENERATE_NAME",
-            "REVIEW_NAME",
-            "REFINE_NAME",
-            "GENERATE_DOCS",
-            "REVIEW_DOCS",
-            "REFINE_DOCS",
+            "DRAFT",
+            "REVIEW NAME",
+            "REFINE NAME",
+            "DOCS",
+            "REVIEW DOCS",
+            "REFINE DOCS",
         }
         assert set(POOL_LABELS.values()) == expected_labels
-        # No old labels
-        for old_label in ("DRAFT", "REVISE", "DESCRIBE", "DOCUMENTATION", "ENRICH"):
-            assert old_label not in POOL_LABELS.values()
+        # Labels should fit the canonical LABEL_WIDTH=12 (+2 indent)
+        for label in POOL_LABELS.values():
+            assert len(f"  {label}") <= 14, f"Label '{label}' too long for LABEL_WIDTH"
 
     def test_pool_order_is_six(self):
         assert len(POOL_ORDER) == 6
