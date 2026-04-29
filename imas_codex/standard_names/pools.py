@@ -117,6 +117,19 @@ class PoolHealth:
     which happens when the display's pending query and the claim query
     have different eligibility criteria (e.g. confidence threshold).
     The counter resets on any successful claim.
+
+    Self-healing re-admission: when a pool has been excluded due to
+    consecutive_empty_claims, ``active_pools_fn`` checks whether the
+    pool's ``pending_count`` has grown since the last check.  A pending
+    count increase means new eligible nodes have appeared (e.g. the
+    generate pool produced names that are now enrich-eligible).  When
+    that happens ``consecutive_empty_claims`` is reset to 0 so the pool
+    re-enters contention.  ``_last_pending_count`` tracks the value from
+    the most recent active_pools_fn evaluation.
+
+    ``total_processed`` accumulates the sum of all successful
+    ``spec.process(batch)`` return values.  Used by ``run_sn_pools`` to
+    populate ``SNRun.names_composed/enriched/reviewed/regenerated``.
     """
 
     pool: str
@@ -126,6 +139,8 @@ class PoolHealth:
     error_count: int = 0
     last_error: str | None = None
     consecutive_empty_claims: int = 0
+    total_processed: int = 0
+    _last_pending_count: int = 0
 
     def mark_progress(self) -> None:
         self.last_progress_at = time.time()
@@ -244,6 +259,7 @@ async def pool_loop(
         # ── Process ───────────────────────────────────────────────
         try:
             count = await spec.process(batch)
+            spec.health.total_processed += count
             spec.health.mark_progress()
             logger.debug("pool[%s] processed %d items", spec.name, count)
         except asyncio.CancelledError:
@@ -335,12 +351,33 @@ async def run_pools(
         # admitted because pools with phantom pending counts occupy weight share.
         # The counter resets on any successful claim, so pools re-enter when
         # conditions change (e.g. after a stale-claim timeout expires).
-        return {
-            p.name
-            for p in pools
-            if p.health.pending_count > 0
-            and p.health.consecutive_empty_claims < _EMPTY_CLAIM_EXCLUDE_THRESHOLD
-        }
+        #
+        # Self-healing: if pending_count has grown since the last evaluation,
+        # new eligible nodes appeared in the graph (e.g. the generate pool just
+        # produced names that are now enrich-eligible).  Reset
+        # consecutive_empty_claims so the pool can re-enter contention
+        # immediately rather than waiting for a stale-claim timeout.
+        result: set[str] = set()
+        for p in pools:
+            current = p.health.pending_count
+            if (
+                current > p.health._last_pending_count
+                and p.health.consecutive_empty_claims > 0
+            ):
+                logger.debug(
+                    "pool[%s] pending grew %d→%d — resetting consecutive_empty_claims",
+                    p.name,
+                    p.health._last_pending_count,
+                    current,
+                )
+                p.health.consecutive_empty_claims = 0
+            p.health._last_pending_count = current
+            if (
+                current > 0
+                and p.health.consecutive_empty_claims < _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+            ):
+                result.add(p.name)
+        return result
 
     tasks = [
         asyncio.create_task(

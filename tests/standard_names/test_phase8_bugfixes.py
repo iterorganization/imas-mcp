@@ -818,3 +818,276 @@ class TestFairnessDeadlockBreaker:
         # At threshold — pool must be excluded.
         spec.health.consecutive_empty_claims = _EMPTY_CLAIM_EXCLUDE_THRESHOLD
         assert "review_docs" not in active_pools_fn()
+
+
+# =============================================================================
+# Follow-up bugfix tests (pool lock-out recovery, counter aggregation, orphans)
+# =============================================================================
+
+
+class TestPoolAdmitRecoverWhenPendingIncreases:
+    """Bug 1 — self-healing re-admission via pending_count growth.
+
+    active_pools_fn (inside run_pools) resets consecutive_empty_claims to 0
+    when a pool's pending_count grows.  This test exercises the exact same
+    logic by calling a standalone active_pools_fn closure that mirrors the
+    production implementation.
+    """
+
+    def _make_active_pools_fn(self, pools):
+        """Replicate the production active_pools_fn closure."""
+        from imas_codex.standard_names.pools import _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+
+        def active_pools_fn() -> set[str]:
+            result: set[str] = set()
+            for p in pools:
+                current = p.health.pending_count
+                if (
+                    current > p.health._last_pending_count
+                    and p.health.consecutive_empty_claims > 0
+                ):
+                    p.health.consecutive_empty_claims = 0
+                p.health._last_pending_count = current
+                if (
+                    current > 0
+                    and p.health.consecutive_empty_claims
+                    < _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+                ):
+                    result.add(p.name)
+            return result
+
+        return active_pools_fn
+
+    def test_excluded_pool_re_enters_when_pending_grows(self) -> None:
+        """Pool excluded by consecutive_empty_claims re-enters when pending grows."""
+        from imas_codex.standard_names.pools import (
+            _EMPTY_CLAIM_EXCLUDE_THRESHOLD,
+            PoolSpec,
+        )
+
+        pools: list[PoolSpec] = []
+        spec = PoolSpec(
+            name="enrich",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=0),
+        )
+        spec.health.pending_count = 10
+        spec.health.consecutive_empty_claims = (
+            _EMPTY_CLAIM_EXCLUDE_THRESHOLD + 2
+        )  # excluded
+        spec.health._last_pending_count = 10  # no growth yet
+        pools.append(spec)
+
+        active_pools_fn = self._make_active_pools_fn(pools)
+
+        # First call: no growth → still excluded.
+        result = active_pools_fn()
+        assert "enrich" not in result, (
+            "pool should still be excluded (no pending growth)"
+        )
+
+        # Simulate new names becoming enrich-eligible.
+        spec.health.pending_count = 25
+        result = active_pools_fn()
+        assert "enrich" in result, "pool should re-enter after pending count increased"
+        assert spec.health.consecutive_empty_claims == 0, (
+            "consecutive_empty_claims should have been reset to 0"
+        )
+
+    def test_no_reset_when_pending_unchanged(self) -> None:
+        """Excluded pool stays excluded when pending count doesn't change."""
+        from imas_codex.standard_names.pools import (
+            _EMPTY_CLAIM_EXCLUDE_THRESHOLD,
+            PoolSpec,
+        )
+
+        pools: list[PoolSpec] = []
+        spec = PoolSpec(
+            name="enrich",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=0),
+        )
+        spec.health.pending_count = 10
+        spec.health.consecutive_empty_claims = _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+        spec.health._last_pending_count = 10
+        pools.append(spec)
+
+        active_pools_fn = self._make_active_pools_fn(pools)
+
+        # Count stays at 10 — pool stays excluded.
+        result = active_pools_fn()
+        assert "enrich" not in result
+        assert spec.health.consecutive_empty_claims == _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+
+
+class TestPoolLoopAccumulatesTotalProcessed:
+    """Bug 3 — pool_loop accumulates total_processed via PoolHealth."""
+
+    @pytest.mark.asyncio
+    async def test_total_processed_accumulates(self) -> None:
+        """After two successful batches of 5, total_processed == 10."""
+        calls = 0
+
+        async def _claim():
+            nonlocal calls
+            if calls >= 2:
+                return None
+            return {"ids": [f"sn-{i}" for i in range(5)]}
+
+        async def _process(batch):
+            nonlocal calls
+            calls += 1
+            return 5  # 5 items processed per batch
+
+        stop = asyncio.Event()
+        mgr = _mock_mgr()
+
+        spec = PoolSpec(name="enrich", claim=_claim, process=_process)
+
+        async def _stopper():
+            # Give pool_loop time to drain both batches then signal stop.
+            while calls < 2:
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.05)
+            stop.set()
+
+        await asyncio.gather(
+            pool_loop(
+                spec,
+                mgr,
+                stop,
+                active_pools_fn=lambda: {"enrich"},
+                admission_poll=0.005,
+            ),
+            _stopper(),
+        )
+
+        assert spec.health.total_processed == 10
+
+    @pytest.mark.asyncio
+    async def test_total_processed_not_incremented_on_empty_claim(self) -> None:
+        """Empty claims do not increment total_processed."""
+        stop = asyncio.Event()
+        mgr = _mock_mgr()
+        spec = PoolSpec(
+            name="enrich",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=5),
+        )
+
+        async def _stopper():
+            await asyncio.sleep(0.05)
+            stop.set()
+
+        await asyncio.gather(
+            pool_loop(
+                spec,
+                mgr,
+                stop,
+                active_pools_fn=lambda: {"enrich"},
+                admission_poll=0.005,
+            ),
+            _stopper(),
+        )
+
+        assert spec.health.total_processed == 0
+
+
+class TestRunSnPoolsFinalizePopulatesCounters:
+    """Bug 3 — run_sn_pools populates SNRun.names_* from health_map."""
+
+    @pytest.mark.asyncio
+    async def test_finalize_populates_counter_fields(self) -> None:
+        """run_sn_pools assigns names_composed/enriched/reviewed/regenerated
+        from pool total_processed values."""
+        _GO = "imas_codex.standard_names.graph_ops"
+        _BM = "imas_codex.standard_names.budget.BudgetManager"
+
+        # We need run_pools to return a health_map with known total_processed.
+        from imas_codex.standard_names.pools import PoolHealth
+
+        health_generate = PoolHealth(pool="generate")
+        health_generate.total_processed = 7
+        health_enrich = PoolHealth(pool="enrich")
+        health_enrich.total_processed = 4
+        health_review_names = PoolHealth(pool="review_names")
+        health_review_names.total_processed = 3
+        health_review_docs = PoolHealth(pool="review_docs")
+        health_review_docs.total_processed = 2
+        health_regen = PoolHealth(pool="regen")
+        health_regen.total_processed = 1
+
+        fake_health_map = {
+            "generate": health_generate,
+            "enrich": health_enrich,
+            "review_names": health_review_names,
+            "review_docs": health_review_docs,
+            "regen": health_regen,
+        }
+
+        with (
+            patch(f"{_GO}.reconcile_standard_name_sources", return_value={}),
+            patch(
+                "imas_codex.standard_names.pools.run_pools",
+                new_callable=AsyncMock,
+                return_value=fake_health_map,
+            ),
+            patch(f"{_GO}.create_sn_run_open"),
+            patch(f"{_GO}.finalize_sn_run"),
+            patch(f"{_GO}.release_all_orphan_claims", return_value={"sn": 0, "sns": 0}),
+            patch(f"{_BM}.start", new_callable=AsyncMock),
+            patch(f"{_BM}.drain_pending", new_callable=AsyncMock, return_value=True),
+            patch(f"{_BM}.get_total_spent", new_callable=AsyncMock, return_value=0.0),
+            patch(f"{_BM}.exhausted", return_value=True),
+            patch(f"{_BM}.phase_spent", new_callable=lambda: property(lambda self: {})),
+        ):
+            from imas_codex.standard_names.loop import run_sn_pools
+
+            stop = asyncio.Event()
+            stop.set()  # immediate stop
+            summary = await run_sn_pools(cost_limit=5.0, stop_event=stop)
+
+        assert summary.names_composed == 7
+        assert summary.names_enriched == 4
+        assert summary.names_reviewed == 5  # 3 + 2
+        assert summary.names_regenerated == 1
+
+
+class TestReleaseAllOrphanClaims:
+    """Bug 4 — release_all_orphan_claims clears SN + SNS nodes."""
+
+    def test_release_clears_sn_and_sns(self) -> None:
+        """release_all_orphan_claims issues two SET queries and returns counts."""
+        gc = _mock_gc()
+        gc.query = MagicMock(
+            side_effect=[
+                [{"released": 3}],  # StandardName query
+                [{"released": 5}],  # StandardNameSource query
+            ]
+        )
+
+        with patch(
+            "imas_codex.standard_names.graph_ops.GraphClient",
+            return_value=gc,
+        ):
+            from imas_codex.standard_names.graph_ops import release_all_orphan_claims
+
+            result = release_all_orphan_claims()
+
+        assert result == {"sn": 3, "sns": 5}
+        assert gc.query.call_count == 2
+
+    def test_release_returns_zero_when_no_orphans(self) -> None:
+        """Empty result sets map to zero counts."""
+        gc = _mock_gc()
+        gc.query = MagicMock(return_value=[{"released": 0}])
+
+        with patch(
+            "imas_codex.standard_names.graph_ops.GraphClient",
+            return_value=gc,
+        ):
+            from imas_codex.standard_names.graph_ops import release_all_orphan_claims
+
+            result = release_all_orphan_claims()
+
+        assert result == {"sn": 0, "sns": 0}
