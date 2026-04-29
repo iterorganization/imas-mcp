@@ -199,10 +199,10 @@ _COMPOSE_PATCHES = {
     "imas_codex.standard_names.context.build_domain_vocabulary_preseed": lambda d: (
         f"vocab:{d}" if d else ""
     ),
-    "imas_codex.standard_names.review.themes.extract_reviewer_themes": lambda *a, **k: [],
-    "imas_codex.standard_names.graph_ops.persist_generated_name_batch": lambda *a, **k: (
-        len(a[0]) if a else 0
-    ),
+    "imas_codex.standard_names.review.themes.extract_reviewer_themes": lambda *a,
+    **k: [],
+    "imas_codex.standard_names.graph_ops.persist_generated_name_batch": lambda *a,
+    **k: (len(a[0]) if a else 0),
 }
 
 
@@ -689,3 +689,200 @@ class TestBatchProcessorReleasesClaimsOnException:
         # Verify the lease was released despite the exception
         lease = mgr.reserve.return_value
         lease.release_unused.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Test 8: on_event comment/description payloads are NOT pre-truncated
+# Regression for: https://github.com/Simon-McIntosh/imas-codex/issues/???
+# Worker was clipping comments[:80] before emitting on_event, preventing
+# terminal-aware clipping in the rich display from using the full width.
+# ---------------------------------------------------------------------------
+
+_LONG_COMMENT = "A" * 200  # 200-char comment — well beyond old 80-char clip
+
+
+def _mock_review_name_llm_result(long_comment: str) -> Any:
+    """Build a mock acall_llm_structured return for process_review_name_batch."""
+    from types import SimpleNamespace
+
+    result_obj = SimpleNamespace(
+        scores=SimpleNamespace(score=0.85, model_dump=lambda: {"score": 0.85}),
+        comments=None,
+        verdict="accept",
+        reasoning=long_comment,
+    )
+
+    class _LLMResult:
+        def __iter__(self):
+            return iter((result_obj, 0.01, 100))
+
+    return _LLMResult()
+
+
+def _mock_review_docs_llm_result(long_comment: str) -> Any:
+    """Build a mock acall_llm_structured return for process_review_docs_batch."""
+    from types import SimpleNamespace
+
+    result_obj = SimpleNamespace(
+        scores=SimpleNamespace(score=0.85, model_dump=lambda: {"score": 0.85}),
+        comments=None,
+        verdict="accept",
+        reasoning=long_comment,
+    )
+
+    class _LLMResult:
+        def __iter__(self):
+            return iter((result_obj, 0.01, 100))
+
+    return _LLMResult()
+
+
+def _mock_generate_docs_llm_result(long_desc: str) -> Any:
+    """Build a mock acall_llm_structured return for process_generate_docs_batch."""
+    from types import SimpleNamespace
+
+    result_obj = SimpleNamespace(
+        description=long_desc,
+        documentation="Full documentation text.",
+    )
+
+    class _LLMResult:
+        def __iter__(self):
+            return iter((result_obj, 0.01, 100))
+
+    return _LLMResult()
+
+
+def _mock_refine_docs_llm_result(long_desc: str) -> Any:
+    """Build a mock acall_llm_structured return for process_refine_docs_batch."""
+    from types import SimpleNamespace
+
+    result_obj = SimpleNamespace(
+        description=long_desc,
+        documentation="Full documentation text.",
+    )
+
+    class _LLMResult:
+        def __iter__(self):
+            return iter((result_obj, 0.01, 100))
+
+    return _LLMResult()
+
+
+class TestOnEventPayloadsNotTruncated:
+    """Regression: on_event payloads must carry full strings for terminal clipping."""
+
+    @pytest.mark.asyncio
+    async def test_review_name_comment_not_clipped(self) -> None:
+        """process_review_name_batch emits the full comment in on_event."""
+        from imas_codex.standard_names.workers import process_review_name_batch
+
+        items = [
+            {
+                "id": "magnetic_flux_density",
+                "description": "Magnetic flux density.",
+                "claim_token": "tok1",
+                "pipeline_status": "drafted",
+                "name_stage": "claimed_review_name",
+            }
+        ]
+        mgr = _mock_budget_manager()
+        stop = asyncio.Event()
+        events: list[dict] = []
+
+        llm_result = _mock_review_name_llm_result(_LONG_COMMENT)
+
+        with (
+            patch(
+                "imas_codex.discovery.base.llm.acall_llm_structured",
+                new_callable=AsyncMock,
+                return_value=llm_result,
+            ),
+            patch(
+                "imas_codex.settings.get_sn_review_names_models",
+                return_value=["test-model"],
+            ),
+            patch(
+                "imas_codex.llm.prompt_loader.render_prompt",
+                return_value="mock prompt",
+            ),
+            patch(
+                "imas_codex.standard_names.context._build_enum_lists",
+                return_value={},
+            ),
+            patch(
+                "imas_codex.standard_names.graph_ops.persist_reviewed_name",
+                return_value="accepted",
+            ),
+            patch(
+                "imas_codex.standard_names.graph_ops.release_review_names_failed_claims",
+            ),
+        ):
+            await process_review_name_batch(items, mgr, stop, on_event=events.append)
+
+        assert len(events) == 1, "Expected one on_event emission"
+        comment = events[0]["comment"]
+        assert len(comment) == len(_LONG_COMMENT), (
+            f"on_event comment was clipped to {len(comment)} chars "
+            f"(expected {len(_LONG_COMMENT)})"
+        )
+        assert comment == _LONG_COMMENT
+
+    @pytest.mark.asyncio
+    async def test_review_docs_comment_not_clipped(self) -> None:
+        """process_review_docs_batch emits the full comment in on_event."""
+        from imas_codex.standard_names.workers import process_review_docs_batch
+
+        items = [
+            {
+                "id": "magnetic_flux_density",
+                "description": "Magnetic flux density.",
+                "documentation": "Full docs.",
+                "claim_token": "tok2",
+                "pipeline_status": "drafted",
+                "docs_stage": "claimed_review_docs",
+                "reviewer_score_name": 75,
+                "reviewer_comments_name": "OK",
+            }
+        ]
+        mgr = _mock_budget_manager()
+        stop = asyncio.Event()
+        events: list[dict] = []
+
+        llm_result = _mock_review_docs_llm_result(_LONG_COMMENT)
+
+        with (
+            patch(
+                "imas_codex.discovery.base.llm.acall_llm_structured",
+                new_callable=AsyncMock,
+                return_value=llm_result,
+            ),
+            patch(
+                "imas_codex.settings.get_sn_review_docs_models",
+                return_value=["test-model"],
+            ),
+            patch(
+                "imas_codex.llm.prompt_loader.render_prompt",
+                return_value="mock prompt",
+            ),
+            patch(
+                "imas_codex.standard_names.context._build_enum_lists",
+                return_value={},
+            ),
+            patch(
+                "imas_codex.standard_names.graph_ops.persist_reviewed_docs",
+                return_value="accepted",
+            ),
+            patch(
+                "imas_codex.standard_names.graph_ops.release_review_docs_failed_claims",
+            ),
+        ):
+            await process_review_docs_batch(items, mgr, stop, on_event=events.append)
+
+        assert len(events) == 1, "Expected one on_event emission"
+        comment = events[0]["comment"]
+        assert len(comment) == len(_LONG_COMMENT), (
+            f"on_event comment was clipped to {len(comment)} chars "
+            f"(expected {len(_LONG_COMMENT)})"
+        )
+        assert comment == _LONG_COMMENT
