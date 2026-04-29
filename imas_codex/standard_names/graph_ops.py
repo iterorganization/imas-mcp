@@ -6627,6 +6627,7 @@ def persist_generated_docs(
                 sn.docs_chain_length = 0,
                 sn.docs_model       = $model,
                 sn.docs_generated_at = datetime(),
+                sn.generate_docs_count = coalesce(sn.generate_docs_count, 0) + 1,
                 sn.claim_token      = null,
                 sn.claimed_at       = null
             RETURN sn.docs_stage AS docs_stage
@@ -6883,6 +6884,7 @@ def persist_refined_docs(
                             sn.docs_chain_length = cur_chain + 1,
                             sn.docs_model        = $model,
                             sn.docs_generated_at = datetime(),
+                            sn.refine_docs_count = coalesce(sn.refine_docs_count, 0) + 1,
                             sn.claim_token       = null,
                             sn.claimed_at        = null,
                             // 5. Clear reviewer_*_docs — new docs need fresh review
