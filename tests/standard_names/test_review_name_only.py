@@ -206,3 +206,43 @@ def test_full_prompt_still_renders_six_dimensions() -> None:
     )
     assert "Documentation Quality" in rendered
     assert "0-120" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Regression: review_name_only prompt renders candidate (singular→plural fix)
+# ---------------------------------------------------------------------------
+
+
+def test_review_name_only_renders_candidate() -> None:
+    """The worker must pass ``items`` (plural list), not ``item`` (singular).
+
+    Before the fix, process_review_name_batch passed ``{"item": item}`` so
+    the ``{% for item in items %}`` loop found no candidates and the LLM saw
+    an empty prompt.  After the fix it should pass ``{"items": [item], ...}``.
+    """
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.standard_names.context import _build_enum_lists
+
+    item = {
+        "id": "electron_temperature",
+        "standard_name": "electron_temperature",
+        "source_id": "core_profiles/profiles_1d/electrons/temperature",
+        "unit": "eV",
+        "kind": "scalar",
+        "tags": ["transport"],
+        "grammar_fields": {},
+        "validation_issues": [],
+    }
+
+    ctx = {"items": [item], **_build_enum_lists()}
+    prompt = render_prompt("sn/review_name_only", ctx)
+
+    assert "electron_temperature" in prompt, (
+        "candidate standard_name missing from prompt"
+    )
+    assert "core_profiles/profiles_1d/electrons/temperature" in prompt, (
+        "source_id missing from prompt"
+    )
+
+    # Grammar vocabulary sections must be populated (not rendered as empty lists)
+    assert "electron" in prompt, "subjects vocab missing — grammar enums not passed"

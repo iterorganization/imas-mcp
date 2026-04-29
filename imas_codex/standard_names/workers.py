@@ -3396,8 +3396,11 @@ async def process_review_name_batch(
         claim_token = item.get("claim_token") or ""
 
         # ── Build prompt context ───────────────────────────────────────
+        from imas_codex.standard_names.context import _build_enum_lists
+
         prompt_context: dict[str, Any] = {
-            "item": item,
+            "items": [item],
+            **_build_enum_lists(),
         }
         try:
             user_prompt = render_prompt("sn/review_name_only", prompt_context)
@@ -3477,8 +3480,9 @@ async def process_review_name_batch(
 
             if new_stage:
                 processed += 1
-                # Stream per-item progress (name + score + first 80 chars of comment)
-                _comment_preview = (comments or "")[:80]
+                # Stream per-item progress — keep log preview short, pass full
+                # comment to on_event so terminal-aware clipping can use full width.
+                _comment_log = (comments or "")[:80]
                 _stage_color = {
                     "accepted": "green",
                     "exhausted": "red",
@@ -3489,7 +3493,7 @@ async def process_review_name_batch(
                     sn_id,
                     new_stage,
                     score,
-                    _comment_preview,
+                    _comment_log,
                 )
 
                 if on_event is not None:
@@ -3498,7 +3502,7 @@ async def process_review_name_batch(
                             "pool": "review_name",
                             "name": sn_id,
                             "score": score,
-                            "comment": _comment_preview,
+                            "comment": comments or "",
                             "stage": new_stage,
                             "model": model,
                             "cost": cost,
@@ -3639,11 +3643,13 @@ async def process_generate_docs_batch(
             processed += 1
 
             # ── Per-item progress ──────────────────────────────────────
-            desc_preview = result_obj.description[:100]
+            # Keep log preview short; pass full description to on_event so
+            # terminal-aware clipping can use the available display width.
+            _desc_log = result_obj.description[:100]
             logger.info(
                 "\033[32mgenerate_docs\033[0m: %s — %s",
                 sn_id,
-                desc_preview,
+                _desc_log,
             )
 
             if on_event is not None:
@@ -3651,7 +3657,7 @@ async def process_generate_docs_batch(
                     {
                         "pool": "generate_docs",
                         "name": sn_id,
-                        "description": desc_preview,
+                        "description": result_obj.description,
                         "model": model,
                         "cost": cost,
                     }
@@ -3825,8 +3831,9 @@ async def process_review_docs_batch(
 
             if new_stage:
                 processed += 1
-                # Stream per-item progress (name + score + first 80 chars of comment)
-                _comment_preview = (comments or "")[:80]
+                # Stream per-item progress — keep log preview short, pass full
+                # comment to on_event so terminal-aware clipping can use full width.
+                _comment_log = (comments or "")[:80]
                 _stage_color = {
                     "accepted": "green",
                     "exhausted": "red",
@@ -3837,7 +3844,7 @@ async def process_review_docs_batch(
                     sn_id,
                     new_stage,
                     score,
-                    _comment_preview,
+                    _comment_log,
                 )
 
                 if on_event is not None:
@@ -3846,7 +3853,7 @@ async def process_review_docs_batch(
                             "pool": "review_docs",
                             "name": sn_id,
                             "score": score,
-                            "comment": _comment_preview,
+                            "comment": comments or "",
                             "stage": new_stage,
                             "model": model,
                             "cost": cost,
@@ -4062,7 +4069,7 @@ async def process_refine_docs_batch(
                     {
                         "pool": "refine_docs",
                         "name": sn_id,
-                        "description": desc_preview,
+                        "description": result_obj.description,
                         "revision": docs_chain_length + 1,
                         "model": model,
                         "cost": cost,
