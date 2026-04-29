@@ -430,7 +430,7 @@ async def run_benchmark(
 
     context = build_compose_context()
     context["compose_scored_examples"] = []
-    system_prompt = render_prompt("sn/compose_system", context)
+    system_prompt = render_prompt("sn/generate_name_system", context)
 
     for model in config.models:
         logger.info("Benchmarking model: %s", model)

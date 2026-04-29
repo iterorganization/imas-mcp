@@ -16,9 +16,9 @@ from pathlib import Path
 # Prompt/config files that directly influence name generation quality.
 # Path is relative to the project root (two parents up from this file).
 PIPELINE_PROMPTS: list[Path] = [
-    Path("imas_codex/llm/prompts/sn/compose_system.md"),
-    Path("imas_codex/llm/prompts/sn/compose_dd.md"),
-    Path("imas_codex/llm/prompts/sn/compose_dd_names.md"),
+    Path("imas_codex/llm/prompts/sn/generate_name_system.md"),
+    Path("imas_codex/llm/prompts/sn/generate_name_dd.md"),
+    Path("imas_codex/llm/prompts/sn/generate_name_dd_names.md"),
     Path("imas_codex/llm/prompts/shared/sn/_grammar_reference.md"),
     Path("imas_codex/llm/prompts/shared/sn/_scoring_rubric.md"),
     Path("imas_codex/llm/config/sn_review_criteria.yaml"),

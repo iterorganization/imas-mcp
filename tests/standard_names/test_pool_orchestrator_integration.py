@@ -25,7 +25,7 @@ _BM = "imas_codex.standard_names.budget.BudgetManager"
 
 # Stub all 5 claim functions to return empty (no work).
 _CLAIM_PATCHES = {
-    "compose": f"{_GO}.claim_compose_seed_and_expand",
+    "compose": f"{_GO}.claim_generate_name_seed_and_expand",
     "enrich": f"{_GO}.claim_enrich_seed_and_expand",
     "review_names": f"{_GO}.claim_review_names_seed_and_expand",
     "review_docs": f"{_GO}.claim_review_docs_seed_and_expand",

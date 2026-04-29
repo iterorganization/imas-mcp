@@ -82,10 +82,10 @@ class TestSeedIsRandom:
     """Populate 100 candidate rows; run claim 10×; seeds must not be constant."""
 
     def test_compose_seed_is_random(self):
-        """claim_compose_seed_and_expand sends ORDER BY rand() and passes
+        """claim_generate_name_seed_and_expand sends ORDER BY rand() and passes
         through whichever seed the graph returns."""
         from imas_codex.standard_names.graph_ops import (
-            claim_compose_seed_and_expand,
+            claim_generate_name_seed_and_expand,
         )
 
         seen_ids: set[str] = set()
@@ -117,7 +117,7 @@ class TestSeedIsRandom:
                 ]
             )
             with _patch_gc(gc):
-                result = claim_compose_seed_and_expand(batch_size=1)
+                result = claim_generate_name_seed_and_expand(batch_size=1)
                 if result:
                     seen_ids.add(result[0]["id"])
 
@@ -514,11 +514,11 @@ class TestClaimTokenTwoStep:
 
     def test_compose_two_step(self):
         from imas_codex.standard_names.graph_ops import (
-            claim_compose_seed_and_expand,
+            claim_generate_name_seed_and_expand,
         )
 
         self._run_and_check_readback(
-            claim_compose_seed_and_expand,
+            claim_generate_name_seed_and_expand,
             [
                 [
                     {
@@ -637,7 +637,7 @@ class TestRetryOnDeadlockApplied:
     @pytest.mark.parametrize(
         "fn_name",
         [
-            "claim_compose_seed_and_expand",
+            "claim_generate_name_seed_and_expand",
             "claim_enrich_seed_and_expand",
             "claim_review_names_seed_and_expand",
             "claim_review_docs_seed_and_expand",
@@ -664,7 +664,7 @@ class TestEmptyPoolReturnsEmpty:
     @pytest.mark.parametrize(
         "fn_name",
         [
-            "claim_compose_seed_and_expand",
+            "claim_generate_name_seed_and_expand",
             "claim_enrich_seed_and_expand",
             "claim_review_names_seed_and_expand",
             "claim_review_docs_seed_and_expand",

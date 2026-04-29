@@ -1531,10 +1531,10 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     from imas_codex.settings import get_compose_lean
 
     compose_lean = get_compose_lean()
-    _compose_system_template = (
-        "sn/compose_system_lean" if compose_lean else "sn/compose_system"
+    _generate_name_system_template = (
+        "sn/generate_name_system_lean" if compose_lean else "sn/generate_name_system"
     )
-    system_prompt = render_prompt(_compose_system_template, context)
+    system_prompt = render_prompt(_generate_name_system_template, context)
 
     wlog.info(
         "Composing standard names for %d items in %d batches (model=%s)",
@@ -1644,7 +1644,9 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
         # System prompt and per-candidate L6/L7 logic are unchanged so
         # prompt caching and grammar safety stay intact.
         prompt_template = (
-            "sn/compose_dd_names" if batch.mode == "names" else "sn/compose_dd"
+            "sn/generate_name_dd_names"
+            if batch.mode == "names"
+            else "sn/generate_name_dd"
         )
         user_prompt = render_prompt(prompt_template, {**context, **user_context})
 
@@ -2043,7 +2045,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
         if candidates:
             from datetime import UTC, datetime
 
-            from imas_codex.standard_names.graph_ops import persist_composed_batch
+            from imas_codex.standard_names.graph_ops import persist_generated_name_batch
 
             # Pro-rata per-candidate cost/token attribution.  One LLM
             # batch call produces N candidates; divide cost and tokens
@@ -2080,7 +2082,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     c["regen_increment"] = True
 
             written = await asyncio.to_thread(
-                persist_composed_batch,
+                persist_generated_name_batch,
                 candidates,
                 compose_model=model,
                 dd_version=batch.dd_version,
@@ -2949,10 +2951,10 @@ async def _compose_batch_core(
     context["compose_scored_examples"] = compose_scored_examples
 
     # ── System prompt (cached per pool lifetime) ───────────────────────
-    _compose_system_template = (
-        "sn/compose_system_lean" if compose_lean else "sn/compose_system"
+    _generate_name_system_template = (
+        "sn/generate_name_system_lean" if compose_lean else "sn/generate_name_system"
     )
-    system_prompt = render_prompt(_compose_system_template, context)
+    system_prompt = render_prompt(_generate_name_system_template, context)
 
     # ── Enrich items with DD context ───────────────────────────────────
     def _enrich():
@@ -2996,7 +2998,7 @@ async def _compose_batch_core(
         "cocos_version": batch[0].get("cocos_version") if batch else None,
         "dd_version": batch[0].get("dd_version") if batch else None,
     }
-    user_prompt = render_prompt("sn/compose_dd", {**context, **user_context})
+    user_prompt = render_prompt("sn/generate_name_dd", {**context, **user_context})
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -3096,10 +3098,10 @@ async def _compose_batch_core(
 
         # ── Persist ────────────────────────────────────────────────────
         if candidates:
-            from imas_codex.standard_names.graph_ops import persist_composed_batch
+            from imas_codex.standard_names.graph_ops import persist_generated_name_batch
 
             written = await asyncio.to_thread(
-                persist_composed_batch,
+                persist_generated_name_batch,
                 candidates,
                 compose_model=model,
                 dd_version=batch[0].get("dd_version"),
@@ -3117,15 +3119,15 @@ async def _compose_batch_core(
             lease.release_unused()
 
 
-async def process_compose_batch(
+async def process_generate_name_batch(
     batch: list[dict],
     mgr: BudgetManager,
     stop_event: asyncio.Event,
 ) -> int:
-    """Pool-mode compose batch processor.
+    """Pool-mode generate-name batch processor.
 
     Takes pre-claimed source items (dicts from the graph claim query),
-    composes standard names via LLM, and persists results.
+    generates standard names via LLM, and persists results.
 
     Returns count of items successfully processed.
     """
@@ -3139,8 +3141,8 @@ async def process_regen_batch(
 ) -> int:
     """Pool-mode regen batch processor.
 
-    Same as :func:`process_compose_batch` but sets ``regen_increment``
-    on each candidate so :func:`persist_composed_batch` increments
+    Same as :func:`process_generate_name_batch` but sets ``regen_increment``
+    on each candidate so :func:`persist_generated_name_batch` increments
     ``regen_count`` on the :class:`StandardName` node.
 
     Returns count of items successfully processed.

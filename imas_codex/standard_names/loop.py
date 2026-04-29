@@ -609,13 +609,13 @@ def _build_pool_specs(
 
     from imas_codex.standard_names.enrich_workers import process_enrich_batch
     from imas_codex.standard_names.graph_ops import (
-        claim_compose_seed_and_expand,
         claim_enrich_seed_and_expand,
+        claim_generate_name_seed_and_expand,
         claim_regen_seed_and_expand,
         claim_review_docs_seed_and_expand,
         claim_review_names_seed_and_expand,
-        release_compose_claims,
         release_enrich_claims,
+        release_generate_name_claims,
         release_regen_claims,
         release_review_docs_claims,
         release_review_names_claims,
@@ -626,7 +626,7 @@ def _build_pool_specs(
         process_review_names_batch,
     )
     from imas_codex.standard_names.workers import (
-        process_compose_batch,
+        process_generate_name_batch,
         process_regen_batch,
     )
 
@@ -677,9 +677,9 @@ def _build_pool_specs(
     return [
         PoolSpec(
             name="generate",
-            claim=_make_claim_adapter(claim_compose_seed_and_expand),
-            process=_make_process_adapter(process_compose_batch),
-            release=_make_release_adapter(release_compose_claims),
+            claim=_make_claim_adapter(claim_generate_name_seed_and_expand),
+            process=_make_process_adapter(process_generate_name_batch),
+            release=_make_release_adapter(release_generate_name_claims),
             weight=0.30,
         ),
         PoolSpec(

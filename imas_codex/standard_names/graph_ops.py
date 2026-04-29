@@ -1827,7 +1827,7 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> list[dict[str,
 
 
 # =============================================================================
-# Immediate-persist helpers — graph-state-machine compose
+# Immediate-persist helpers — graph-state-machine generate_name
 # =============================================================================
 
 _GRAMMAR_FIELDS = (
@@ -1864,16 +1864,16 @@ SAFE_SCALAR_COCOS_UNITS: frozenset[str] = frozenset(
 )
 
 
-def persist_composed_batch(
+def persist_generated_name_batch(
     candidates: list[dict[str, Any]],
     *,
     compose_model: str,
     dd_version: str | None = None,
     cocos_version: int | None = None,
 ) -> int:
-    """Persist a single compose batch immediately to graph.
+    """Persist a single generate-name batch immediately to graph.
 
-    Called from within ``_compose_batch`` after LLM success.
+    Called from within ``_compose_batch_core`` after LLM success.
     Enriches candidates with provenance metadata, embeds the standard-name
     string, and extracts grammar fields before writing.
 
@@ -1882,6 +1882,12 @@ def persist_composed_batch(
     candidate, it is quarantined (``validation_status='quarantined'``,
     ``validation_issues=['embedding_failed']``) so downstream consumers
     know the vector is missing.
+
+    After writing the StandardName nodes via :func:`write_standard_names`,
+    atomically transitions each new SN to ``name_stage='drafted'`` and
+    ``docs_stage='pending'`` (chain lengths = 0) and clears the
+    ``StandardNameSource`` claim in a **single** Neo4j transaction — so that
+    either all stage/claim updates land or none do.
 
     Returns the number of nodes written.
     """
@@ -1942,7 +1948,82 @@ def persist_composed_batch(
                 existing = list(existing) + ["embedding_failed"]
             entry["validation_issues"] = existing
 
-    return write_standard_names(candidates)
+    written = write_standard_names(candidates)
+
+    # --- Atomically transition stage + clear source claim ---
+    # Build the batch excluding error-sibling candidates (no source node).
+    finalize_batch = [
+        {
+            "sn_id": entry["id"],
+            "sns_id": entry.get("source_id"),
+            "model": compose_model,
+        }
+        for entry in candidates
+        if entry.get("id") and entry.get("model") != "deterministic:dd_error_modifier"
+    ]
+    if finalize_batch:
+        _finalize_generated_name_stage(finalize_batch)
+
+    return written
+
+
+@retry_on_deadlock()
+def _finalize_generated_name_stage(
+    batch: list[dict[str, Any]],
+) -> None:
+    """Set stage fields on new SNs and clear source claims — single transaction.
+
+    Each item in *batch* must have ``sn_id`` (StandardName id), optionally
+    ``sns_id`` (StandardNameSource id), and ``model``.
+
+    In one transaction:
+    - ``name_stage = 'drafted'``, ``chain_length = 0``
+    - ``docs_stage = 'pending'``, ``docs_chain_length = 0``
+    - ``generated_at = datetime()``, ``model = <model>``
+    - Source: ``claim_token = null``, ``claimed_at = null``,
+      ``status = 'composed'``, ``composed_at = datetime()``,
+      ``produced_sn_id = sn.id``
+    - Edge: ``(sns)-[:PRODUCED_NAME]->(sn)``
+    """
+    if not batch:
+        return
+
+    with GraphClient() as gc:
+        with gc.session() as session:
+            tx = session.begin_transaction()
+            try:
+                tx.run(
+                    """
+                    UNWIND $batch AS b
+                    MATCH (sn:StandardName {id: b.sn_id})
+                    SET sn.name_stage       = 'drafted',
+                        sn.chain_length     = 0,
+                        sn.docs_stage       = 'pending',
+                        sn.docs_chain_length = 0,
+                        sn.generated_at     = datetime(),
+                        sn.model            = b.model
+                    WITH sn, b
+                    WHERE b.sns_id IS NOT NULL
+                    MATCH (sns:StandardNameSource {id: b.sns_id})
+                    SET sns.claim_token  = null,
+                        sns.claimed_at   = null,
+                        sns.status       = 'composed',
+                        sns.composed_at  = datetime(),
+                        sns.produced_sn_id = sn.id
+                    MERGE (sns)-[:PRODUCED_NAME]->(sn)
+                    """,
+                    batch=batch,
+                )
+                tx.commit()
+            except BaseException:
+                if tx.closed is False:
+                    tx.close()
+                raise
+
+    logger.debug(
+        "_finalize_generated_name_stage: finalized %d SNs",
+        len(batch),
+    )
 
 
 @retry_on_deadlock()
@@ -4926,16 +5007,16 @@ def _claim_sn_atomic(
     return items
 
 
-# -- compose (StandardNameSource) --------------------------------------------
+# -- generate_name (StandardNameSource) -------------------------------------
 
 
 @retry_on_deadlock()
-def claim_compose_seed_and_expand(
+def claim_generate_name_seed_and_expand(
     facility: str | None = None,
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:
-    """Claim StandardNameSource nodes (status='extracted') for composition.
+    """Claim StandardNameSource nodes (status='extracted') for name generation.
 
     Seed-and-expand: one random seed is claimed, then up to
     ``batch_size - 1`` additional sources sharing the same
@@ -5132,7 +5213,7 @@ def claim_compose_seed_and_expand(
                 raise
 
     logger.debug(
-        "claim_compose_seed_and_expand: claimed %d (token=%s)",
+        "claim_generate_name_seed_and_expand: claimed %d (token=%s)",
         len(items),
         token[:8],
     )
@@ -5286,11 +5367,11 @@ def claim_regen_seed_and_expand(
 
 
 @retry_on_deadlock()
-def release_compose_claims(ids: list[str]) -> int:
+def release_generate_name_claims(ids: list[str]) -> int:
     """Release StandardNameSource claims by id list.
 
     Clears ``claimed_at`` and ``claim_token`` so items become eligible for
-    re-claim.  Used by the generate pool's error-recovery path.
+    re-claim.  Used by the generate_name pool's error-recovery path.
     """
     if not ids:
         return 0

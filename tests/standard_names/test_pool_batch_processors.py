@@ -201,9 +201,8 @@ _COMPOSE_PATCHES = {
     ),
     "imas_codex.standard_names.review.themes.extract_reviewer_themes": lambda *a,
     **k: [],
-    "imas_codex.standard_names.graph_ops.persist_composed_batch": lambda *a, **k: (
-        len(a[0]) if a else 0
-    ),
+    "imas_codex.standard_names.graph_ops.persist_generated_name_batch": lambda *a,
+    **k: (len(a[0]) if a else 0),
 }
 
 
@@ -219,7 +218,7 @@ class TestComposeDomainContextFromBatch:
         assert the prompt includes all distinct domains via
         build_domain_vocabulary_preseed being called for each domain.
         """
-        from imas_codex.standard_names.workers import process_compose_batch
+        from imas_codex.standard_names.workers import process_generate_name_batch
 
         items = _make_batch_items(
             4,
@@ -269,7 +268,7 @@ class TestComposeDomainContextFromBatch:
                 return_value=[],
             ),
             patch(
-                "imas_codex.standard_names.graph_ops.persist_composed_batch",
+                "imas_codex.standard_names.graph_ops.persist_generated_name_batch",
                 return_value=4,
             ),
             patch(
@@ -289,7 +288,7 @@ class TestComposeDomainContextFromBatch:
                 "imas_codex.graph.client.GraphClient",
             ),
         ):
-            count = await process_compose_batch(items, mgr, stop)
+            count = await process_generate_name_batch(items, mgr, stop)
 
         # All three distinct domains should have been queried
         assert sorted(vocab_calls) == ["equilibrium", "magnetics", "transport"]
@@ -305,7 +304,7 @@ class TestComposeStopEvent:
     @pytest.mark.asyncio
     async def test_compose_stop_event_short_circuits(self) -> None:
         """Set stop_event before the LLM call; assert function returns 0."""
-        from imas_codex.standard_names.workers import process_compose_batch
+        from imas_codex.standard_names.workers import process_generate_name_batch
 
         items = _make_batch_items(3)
         mgr = _mock_budget_manager()
@@ -371,7 +370,7 @@ class TestComposeStopEvent:
                 "imas_codex.graph.client.GraphClient",
             ),
         ):
-            count = await process_compose_batch(items, mgr, stop)
+            count = await process_generate_name_batch(items, mgr, stop)
 
         # LLM should NOT have been called because stop was set
         mock_llm.assert_not_called()
@@ -674,7 +673,7 @@ class TestRegenProcessesBatch:
                 return_value=[],
             ),
             patch(
-                "imas_codex.standard_names.graph_ops.persist_composed_batch",
+                "imas_codex.standard_names.graph_ops.persist_generated_name_batch",
                 side_effect=_capture_persist,
             ),
             patch(
@@ -712,7 +711,7 @@ class TestBatchProcessorReleasesClaimsOnException:
     @pytest.mark.asyncio
     async def test_batch_processor_releases_claims_on_exception(self) -> None:
         """Raise from mock LLM; assert lease.release_unused was called."""
-        from imas_codex.standard_names.workers import process_compose_batch
+        from imas_codex.standard_names.workers import process_generate_name_batch
 
         items = _make_batch_items(2)
         mgr = _mock_budget_manager()
@@ -769,7 +768,7 @@ class TestBatchProcessorReleasesClaimsOnException:
             ),
         ):
             with pytest.raises(RuntimeError, match="LLM exploded"):
-                await process_compose_batch(items, mgr, stop)
+                await process_generate_name_batch(items, mgr, stop)
 
         # Verify the lease was released despite the exception
         lease = mgr.reserve.return_value
