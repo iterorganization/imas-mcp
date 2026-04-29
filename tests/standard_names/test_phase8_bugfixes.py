@@ -650,3 +650,171 @@ class TestSkeletonSweepNoUseAfterClose:
         assert all(sweep_query_called_while_open), (
             "sweep query was called on a closed client"
         )
+
+
+# ---------------------------------------------------------------------------
+# BUG-5: fairness deadlock when admitted pools have no claimable work
+# ---------------------------------------------------------------------------
+
+
+class TestFairnessDeadlockBreaker:
+    """consecutive_empty_claims excludes stalled pools from the admission gate.
+
+    Scenario: a pool has non-zero pending_count (display query uses loose
+    criteria) but claim() consistently returns None (strict eligibility, e.g.
+    confidence threshold).  After _EMPTY_CLAIM_EXCLUDE_THRESHOLD consecutive
+    admitted-but-empty cycles the pool is excluded from active_pools_fn so
+    productive pools can be admitted again.
+    """
+
+    @pytest.mark.asyncio
+    async def test_consecutive_empty_claims_increments_on_empty_claim(self) -> None:
+        """consecutive_empty_claims increments each time claim returns None."""
+        from imas_codex.standard_names.pools import PoolHealth
+
+        health = PoolHealth(pool="test")
+        assert health.consecutive_empty_claims == 0
+
+        # Simulate two admitted-but-empty cycles
+        health.consecutive_empty_claims += 1
+        health.consecutive_empty_claims += 1
+        assert health.consecutive_empty_claims == 2
+
+    @pytest.mark.asyncio
+    async def test_consecutive_empty_claims_resets_on_successful_claim(self) -> None:
+        """pool_loop resets consecutive_empty_claims when claim returns a batch."""
+        mgr = _mock_mgr()
+        stop = asyncio.Event()
+
+        successful_batch = {"items": [{"id": "sn-ok"}]}
+        # First two claims return None, third succeeds; capture counter at reset.
+        claims = [None, None, successful_batch]
+        counter_at_reset: list[int] = []
+
+        async def claim() -> dict | None:
+            return claims.pop(0) if claims else None
+
+        processed: list[dict] = []
+
+        async def process(batch: dict) -> int:
+            # After reset, consecutive_empty_claims must be 0 here.
+            counter_at_reset.append(spec.health.consecutive_empty_claims)
+            processed.append(batch)
+            return len(batch["items"])
+
+        spec = PoolSpec(name="generate", claim=claim, process=process)
+        spec.health.pending_count = 1
+        spec.backoff.base = 0.01
+        spec.backoff.cap = 0.02
+        spec.backoff.reset()
+
+        task = asyncio.create_task(
+            pool_loop(
+                spec,
+                mgr,
+                stop,
+                active_pools_fn=lambda: {"generate"},
+                admission_poll=0.01,
+            )
+        )
+        # Give enough time for 3 claim cycles + process
+        await asyncio.sleep(0.4)
+        stop.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+        # consecutive_empty_claims must be 0 at the moment process is called
+        # (i.e. after the reset, before any subsequent empty claims).
+        assert len(processed) >= 1, "process was never called"
+        assert counter_at_reset[0] == 0, (
+            f"consecutive_empty_claims={counter_at_reset[0]} inside process(); "
+            "expected 0 — reset must occur before process is called"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stalled_pool_excluded_from_active_pools(self) -> None:
+        """After threshold empty claims a pool leaves active_pools_fn result.
+
+        Two pools: 'enrich' always returns None; 'regen' returns a batch.
+        Without the fix, 'regen' gets blocked by 'enrich' hogging weight share.
+        With the fix, 'enrich' is excluded after _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+        consecutive empty claims, letting 'regen' run freely.
+        """
+        import asyncio
+
+        from imas_codex.standard_names.pools import (
+            _EMPTY_CLAIM_EXCLUDE_THRESHOLD,
+            PoolSpec,
+        )
+
+        # Build a minimal active_pools_fn that mirrors run_pools logic.
+        pools: list[PoolSpec] = []
+
+        def active_pools_fn() -> set[str]:
+            from imas_codex.standard_names.pools import _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+
+            return {
+                p.name
+                for p in pools
+                if p.health.pending_count > 0
+                and p.health.consecutive_empty_claims < _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+            }
+
+        # 'enrich' — non-zero pending_count but claim always returns None.
+        enrich_spec = PoolSpec(
+            name="enrich",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=0),
+        )
+        enrich_spec.health.pending_count = 100  # display says lots of work
+        enrich_spec.backoff.base = 0.01
+        enrich_spec.backoff.cap = 0.02
+        enrich_spec.backoff.reset()
+
+        pools.append(enrich_spec)
+
+        # Simulate _EMPTY_CLAIM_EXCLUDE_THRESHOLD consecutive empty claims.
+        for _ in range(_EMPTY_CLAIM_EXCLUDE_THRESHOLD):
+            enrich_spec.health.consecutive_empty_claims += 1
+
+        # After threshold: 'enrich' must NOT appear in active_pools.
+        active = active_pools_fn()
+        assert "enrich" not in active, (
+            f"'enrich' should be excluded from active_pools after "
+            f"{_EMPTY_CLAIM_EXCLUDE_THRESHOLD} consecutive empty claims, "
+            f"but active_pools={active}"
+        )
+
+    def test_below_threshold_pool_remains_active(self) -> None:
+        """Pool stays in active_pools_fn until threshold is reached."""
+        from imas_codex.standard_names.pools import (
+            _EMPTY_CLAIM_EXCLUDE_THRESHOLD,
+            PoolSpec,
+        )
+
+        pools: list[PoolSpec] = []
+
+        def active_pools_fn() -> set[str]:
+            from imas_codex.standard_names.pools import _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+
+            return {
+                p.name
+                for p in pools
+                if p.health.pending_count > 0
+                and p.health.consecutive_empty_claims < _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+            }
+
+        spec = PoolSpec(
+            name="review_docs",
+            claim=AsyncMock(return_value=None),
+            process=AsyncMock(return_value=0),
+        )
+        spec.health.pending_count = 50
+        pools.append(spec)
+
+        # One below threshold — pool must still be active.
+        spec.health.consecutive_empty_claims = _EMPTY_CLAIM_EXCLUDE_THRESHOLD - 1
+        assert "review_docs" in active_pools_fn()
+
+        # At threshold — pool must be excluded.
+        spec.health.consecutive_empty_claims = _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+        assert "review_docs" not in active_pools_fn()

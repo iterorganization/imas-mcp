@@ -65,6 +65,14 @@ POOL_WEIGHTS: dict[str, float] = {
 
 POOL_NAMES: tuple[str, ...] = tuple(POOL_WEIGHTS.keys())
 
+# Number of consecutive admitted-but-empty claim attempts before a pool
+# is temporarily excluded from the active-pools admission denominator.
+# This prevents fairness deadlocks when a pool has non-zero pending_count
+# (as reported by the display query) but its claim function consistently
+# returns nothing (different eligibility criteria, e.g. confidence gate).
+# Resets to zero on any successful claim.
+_EMPTY_CLAIM_EXCLUDE_THRESHOLD: int = 3
+
 
 @dataclass
 class _PoolBackoff:
@@ -101,6 +109,14 @@ class PoolHealth:
     batch persist.  ``pending_count`` is refreshed by the orchestrator
     via the pending-fn callback.  ``in_flight`` tracks claimed but
     not-yet-persisted batches for restart-safety reasoning.
+
+    ``consecutive_empty_claims`` counts successive admitted-but-empty
+    claim attempts.  The admission gate uses this to temporarily exclude
+    a pool from the active-pools denominator when it has pending work
+    recorded in the graph but consistently returns nothing from claim —
+    which happens when the display's pending query and the claim query
+    have different eligibility criteria (e.g. confidence threshold).
+    The counter resets on any successful claim.
     """
 
     pool: str
@@ -109,6 +125,7 @@ class PoolHealth:
     in_flight: int = 0
     error_count: int = 0
     last_error: str | None = None
+    consecutive_empty_claims: int = 0
 
     def mark_progress(self) -> None:
         self.last_progress_at = time.time()
@@ -211,6 +228,7 @@ async def pool_loop(
                 continue
 
         if batch is None:
+            spec.health.consecutive_empty_claims += 1
             sleep_for = spec.backoff.next_sleep()
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=sleep_for)
@@ -218,8 +236,9 @@ async def pool_loop(
             except TimeoutError:
                 continue
 
-        # Reset backoff after a successful claim.
+        # Reset backoff and empty-claim counter after a successful claim.
         spec.backoff.reset()
+        spec.health.consecutive_empty_claims = 0
         spec.health.in_flight += 1
 
         # ── Process ───────────────────────────────────────────────
@@ -306,11 +325,22 @@ async def run_pools(
     """
 
     def active_pools_fn() -> set[str]:
-        # A pool is "active" if its claim queue has pending work.
-        # PoolHealth.pending_count is updated externally (e.g. by the
-        # display's pending-fn callback that queries the graph).
-        # Pools with pending=0 forfeit their weight share to active pools.
-        return {p.name for p in pools if p.health.pending_count > 0}
+        # A pool is "active" if its claim queue has pending work AND it has
+        # not been repeatedly admitted but returned nothing from claim.
+        # ``consecutive_empty_claims`` tracks how many times in a row a pool
+        # was admitted but claim returned None — this happens when the display
+        # pending query and the claim eligibility query have different criteria
+        # (e.g. confidence threshold).  Excluding such pools from the denominator
+        # prevents a fairness deadlock where productive pools can never be
+        # admitted because pools with phantom pending counts occupy weight share.
+        # The counter resets on any successful claim, so pools re-enter when
+        # conditions change (e.g. after a stale-claim timeout expires).
+        return {
+            p.name
+            for p in pools
+            if p.health.pending_count > 0
+            and p.health.consecutive_empty_claims < _EMPTY_CLAIM_EXCLUDE_THRESHOLD
+        }
 
     tasks = [
         asyncio.create_task(
