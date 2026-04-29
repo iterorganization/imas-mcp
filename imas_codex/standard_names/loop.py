@@ -622,13 +622,13 @@ def _build_pool_specs(
     )
     from imas_codex.standard_names.pools import PoolSpec
     from imas_codex.standard_names.review.pipeline import (
-        process_review_docs_batch,
         process_review_names_batch,
     )
     from imas_codex.standard_names.workers import (
         process_generate_docs_batch,
         process_generate_name_batch,
         process_refine_name_batch,
+        process_review_docs_batch,
         process_review_name_batch,
     )
 
@@ -741,10 +741,7 @@ def _build_pool_specs(
         ),
         PoolSpec(
             name="review_docs",
-            claim=_make_claim_adapter(
-                claim_review_docs_seed_and_expand,
-                min_score=regen_score,
-            ),
+            claim=_make_claim_adapter(claim_review_docs_seed_and_expand),
             process=_make_process_adapter(process_review_docs_batch),
             release=_make_release_adapter(
                 release_review_docs_claims, ids_kwarg="sn_ids"

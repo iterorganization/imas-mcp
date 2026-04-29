@@ -5467,41 +5467,184 @@ def persist_reviewed_name(
     return target_stage
 
 
-# -- review docs (StandardName, reviewed_docs_at IS NULL) ---------------------
+# -- review_docs (Phase 8.1: docs_stage='drafted', claim only) ----------------
 
 
 @retry_on_deadlock()
 def claim_review_docs_seed_and_expand(
+    facility: str | None = None,
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
-    min_score: float = DEFAULT_MIN_SCORE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:
-    """Claim StandardName nodes for docs-axis review scoring.
+    """Claim StandardName nodes for docs review (Phase 8.1 stage machine).
 
-    Eligibility: ``reviewed_docs_at IS NULL`` AND docs already enriched
-    (``enriched_at IS NOT NULL``) AND name already reviewed
-    (``reviewed_name_at IS NOT NULL``).
+    Eligibility: ``docs_stage = 'drafted'`` AND ``claimed_at IS NULL``.
 
-    B3 exclusivity: names with ``reviewer_score_name < min_score`` are
-    reserved for the regen pool and excluded here.
+    Does NOT transition stage at claim time — stage remains ``'drafted'``
+    until :func:`persist_reviewed_docs` writes the final outcome.  Only
+    ``claim_token`` and ``claimed_at`` are set so the orphan sweep can
+    recover stuck claims.
+
+    Returns claimed items as dicts with keys:
+    ``id``, ``name``, ``description``, ``documentation``, ``kind``,
+    ``unit``, ``tags``, ``physics_domain``, ``docs_chain_length``,
+    ``claim_token``.
     """
-    where = (
-        "sn.reviewed_docs_at IS NULL"
-        " AND sn.enriched_at IS NOT NULL"
-        " AND sn.reviewed_name_at IS NOT NULL"
-        " AND coalesce(sn.reviewer_score_name, 1.0) >= $min_score"
-    )
+    where = "sn.docs_stage = 'drafted'"
+    if facility is not None:
+        where += " AND sn.facility = $facility"
+        query_params: dict[str, Any] = {"facility": facility}
+    else:
+        query_params = {}
     return _claim_sn_atomic(
         eligibility_where=where,
-        query_params={"min_score": min_score},
+        query_params=query_params,
         batch_size=batch_size,
         timeout_seconds=timeout_seconds,
         extra_return_fields=(
-            ", sn.reviewer_score_docs AS reviewer_score_docs"
-            ", sn.reviewed_docs_at AS reviewed_docs_at"
-            ", sn.enriched_at AS enriched_at"
+            ", sn.name AS name"
+            ", sn.tags AS tags"
+            ", coalesce(sn.docs_chain_length, 0) AS docs_chain_length"
+            ", sn.docs_stage AS docs_stage"
         ),
     )
+
+
+# -- persist_reviewed_docs (Phase 8.1: write review + docs_stage transition) --
+
+
+@retry_on_deadlock()
+def persist_reviewed_docs(
+    *,
+    sn_id: str,
+    claim_token: str,
+    score: float,
+    scores: dict[str, Any] | None = None,
+    comments: str | None = None,
+    comments_per_dim: dict[str, Any] | None = None,
+    verdict: str,
+    model: str,
+    min_score: float = DEFAULT_MIN_SCORE,
+    rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
+) -> str:
+    """Persist docs-review results and transition ``docs_stage``.
+
+    Single-transaction write:
+
+    1. Verify ``claim_token`` matches the stored token.
+    2. Compute target stage:
+       - ``'accepted'`` if ``verdict == 'accept'`` AND ``score >= min_score``
+       - ``'exhausted'`` if ``docs_chain_length >= rotation_cap - 1``
+         AND ``score < min_score`` (cap reached, no further refine)
+       - ``'reviewed'`` otherwise (eligible for refine_docs pickup)
+    3. SET reviewer_docs fields, ``docs_stage``, clear claim state.
+
+    Parameters
+    ----------
+    sn_id:
+        StandardName node id.
+    claim_token:
+        Token written at claim time — verified before any write.
+    score:
+        Normalised review score (0-1).
+    scores:
+        Per-dimension sub-scores dict (written as JSON to
+        ``reviewer_scores_docs``).
+    comments:
+        Free-text reviewer comments (written to ``reviewer_comments_docs``).
+    comments_per_dim:
+        Per-dimension comments dict (written as JSON to
+        ``reviewer_comments_per_dim_docs``).
+    verdict:
+        LLM verdict string (``'accept'``, ``'reject'``, or ``'revise'``).
+    model:
+        LLM model slug used for this review.
+    min_score:
+        Acceptance threshold.
+    rotation_cap:
+        Maximum chain depth before exhaustion (same value used by
+        :func:`claim_refine_docs_seed_and_expand`).
+
+    Returns
+    -------
+    str
+        The new ``docs_stage`` value (``'accepted'``, ``'reviewed'``, or
+        ``'exhausted'``).  Returns ``''`` when the token did not match
+        (no-op).
+    """
+    import json as _json
+
+    # Read current docs_chain_length — needed for exhaustion check.
+    with GraphClient() as gc:
+        rows = gc.query(
+            """
+            MATCH (sn:StandardName {id: $id})
+            WHERE sn.claim_token = $token
+            RETURN coalesce(sn.docs_chain_length, 0) AS docs_chain_length
+            """,
+            id=sn_id,
+            token=claim_token,
+        )
+
+    if not rows:
+        logger.debug(
+            "persist_reviewed_docs: token mismatch for %s (token=%s) — no-op",
+            sn_id,
+            claim_token[:8],
+        )
+        return ""
+
+    docs_chain_length: int = int(rows[0]["docs_chain_length"])
+
+    # ── Stage decision ────────────────────────────────────────────────
+    if verdict == "accept" and score >= min_score:
+        target_stage = "accepted"
+    elif docs_chain_length >= rotation_cap - 1 and score < min_score:
+        target_stage = "exhausted"
+    else:
+        target_stage = "reviewed"
+
+    scores_json = _json.dumps(scores) if scores is not None else None
+    comments_per_dim_json = (
+        _json.dumps(comments_per_dim) if comments_per_dim is not None else None
+    )
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (sn:StandardName {id: $id})
+            WHERE sn.claim_token = $token
+            SET sn.reviewer_score_docs        = $score,
+                sn.reviewer_scores_docs       = $scores_json,
+                sn.reviewer_comments_docs     = $comments,
+                sn.reviewer_comments_per_dim_docs = $comments_per_dim_json,
+                sn.reviewer_verdict_docs      = $verdict,
+                sn.reviewer_model_docs        = $model,
+                sn.reviewed_docs_at           = datetime(),
+                sn.docs_stage                 = $target_stage,
+                sn.claim_token                = null,
+                sn.claimed_at                 = null
+            """,
+            id=sn_id,
+            token=claim_token,
+            score=score,
+            scores_json=scores_json,
+            comments=comments,
+            comments_per_dim_json=comments_per_dim_json,
+            verdict=verdict,
+            model=model,
+            target_stage=target_stage,
+        )
+
+    logger.info(
+        "persist_reviewed_docs: %s → docs_stage=%s (score=%.3f, chain=%d/%d)",
+        sn_id,
+        target_stage,
+        score,
+        docs_chain_length,
+        rotation_cap,
+    )
+    return target_stage
 
 
 # -- refine_name (StandardName, reviewed + low score + chain < cap) -----------

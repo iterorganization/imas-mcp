@@ -3620,3 +3620,199 @@ async def process_generate_docs_batch(
                 )
 
     return processed
+
+
+async def process_review_docs_batch(
+    batch: list[dict[str, Any]],
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+) -> int:
+    """Process a batch of drafted StandardNames for docs review (Phase 8.1).
+
+    For each item in the batch:
+
+    1. Build a docs review prompt via ``render_prompt("sn/review_docs_user", ...)``.
+    2. Call LLM using the primary model from ``[sn.review.docs].models[0]``,
+       falling back to ``[sn.review.names].models[0]`` then ``get_model("language")``.
+    3. Persist via :func:`~imas_codex.standard_names.graph_ops.persist_reviewed_docs`,
+       which transitions ``docs_stage`` to ``'accepted'``, ``'reviewed'``, or
+       ``'exhausted'`` in a single transaction.
+    4. On LLM error: release the claim via
+       :func:`~imas_codex.standard_names.graph_ops.release_review_docs_failed_claims`.
+
+    Returns count of items successfully reviewed.
+    """
+    import asyncio as _asyncio
+
+    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.settings import (
+        get_model,
+        get_sn_review_docs_models,
+        get_sn_review_names_models,
+    )
+    from imas_codex.standard_names.budget import LLMCostEvent
+    from imas_codex.standard_names.defaults import (
+        DEFAULT_MIN_SCORE,
+        DEFAULT_REFINE_ROTATIONS,
+    )
+    from imas_codex.standard_names.graph_ops import (
+        persist_reviewed_docs,
+        release_review_docs_failed_claims,
+    )
+    from imas_codex.standard_names.models import StandardNameQualityReviewDocs
+
+    # ── Resolve primary review model ───────────────────────────────────
+    try:
+        review_models = get_sn_review_docs_models()
+        model = review_models[0] if review_models else None
+    except (ValueError, IndexError):
+        model = None
+
+    if model is None:
+        try:
+            fallback_models = get_sn_review_names_models()
+            model = fallback_models[0] if fallback_models else None
+        except (ValueError, IndexError):
+            model = None
+
+    if model is None:
+        model = get_model("language")
+
+    processed = 0
+
+    for item in batch:
+        if stop_event.is_set():
+            break
+
+        sn_id = item["id"]
+        claim_token = item.get("claim_token") or ""
+
+        # ── Build prompt context ───────────────────────────────────────
+        prompt_context: dict[str, Any] = {
+            "item": item,
+        }
+        try:
+            user_prompt = render_prompt("sn/review_docs_user", prompt_context)
+        except Exception:
+            logger.debug("review_docs: prompt render failed for %s", sn_id)
+            user_prompt = (
+                f"Review the documentation for standard name: {item.get('id', sn_id)}\n"
+                f"Description: {item.get('description', '')}\n"
+                f"Documentation: {item.get('documentation', '')}"
+            )
+
+        _system_prompt = "You are a quality reviewer for IMAS standard name documentation in fusion plasma physics."
+
+        # ── Budget reservation ─────────────────────────────────────────
+        estimated = 0.05
+        lease = mgr.reserve(estimated, phase="review_docs")
+
+        # ── LLM call ──────────────────────────────────────────────────
+        try:
+            llm_out = await acall_llm_structured(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_model=StandardNameQualityReviewDocs,
+                service="standard-names",
+            )
+
+            if isinstance(llm_out, tuple):
+                result_obj, cost, _tokens = llm_out
+            else:
+                result_obj = llm_out
+                cost = 0.0
+
+            # Charge cost to lease
+            if lease:
+                _event = LLMCostEvent(
+                    model=model,
+                    tokens_in=0,
+                    tokens_out=0,
+                    tokens_cached_read=0,
+                    tokens_cached_write=0,
+                    sn_ids=(sn_id,),
+                    phase="review_docs",
+                    service="standard-names",
+                )
+                lease.charge_event(cost, _event)
+
+            # ── Extract scores ─────────────────────────────────────────
+            score: float = float(result_obj.scores.score)
+            scores_dict: dict[str, Any] | None = None
+            try:
+                scores_dict = result_obj.scores.model_dump()
+            except Exception:
+                pass
+
+            comments: str | None = result_obj.reasoning
+            comments_per_dim: dict[str, Any] | None = None
+            if result_obj.comments is not None:
+                try:
+                    comments_per_dim = result_obj.comments.model_dump()
+                except Exception:
+                    pass
+
+            verdict: str = str(result_obj.verdict)
+
+            # ── Persist ───────────────────────────────────────────────
+            new_stage = await _asyncio.to_thread(
+                persist_reviewed_docs,
+                sn_id=sn_id,
+                claim_token=claim_token,
+                score=score,
+                scores=scores_dict,
+                comments=comments,
+                comments_per_dim=comments_per_dim,
+                verdict=verdict,
+                model=model,
+                min_score=DEFAULT_MIN_SCORE,
+                rotation_cap=DEFAULT_REFINE_ROTATIONS,
+            )
+
+            if new_stage:
+                processed += 1
+                # Stream per-item progress (name + score + first 80 chars of comment)
+                _comment_preview = (comments or "")[:80]
+                _stage_color = {
+                    "accepted": "green",
+                    "exhausted": "red",
+                    "reviewed": "yellow",
+                }.get(new_stage, "white")
+                logger.info(
+                    "review_docs: %s → %s (score=%.3f) %s",
+                    sn_id,
+                    new_stage,
+                    score,
+                    _comment_preview,
+                )
+            else:
+                logger.debug("review_docs: %s persist no-op (token mismatch?)", sn_id)
+
+        except Exception:
+            logger.exception("review_docs failed for %s", sn_id)
+            if lease:
+                try:
+                    lease.release_unused()
+                except Exception:
+                    pass
+            token = item.get("claim_token") or ""
+            if token:
+                try:
+                    await _asyncio.to_thread(
+                        release_review_docs_failed_claims,
+                        sn_ids=[sn_id],
+                        claim_token=token,
+                        from_stage="drafted",
+                        to_stage="drafted",
+                    )
+                except Exception:
+                    logger.debug(
+                        "release_review_docs_failed_claims also failed for %s",
+                        sn_id,
+                    )
+
+    return processed
