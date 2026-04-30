@@ -1446,6 +1446,22 @@ cd /home/mcintos/Code/imas-codex
 git merge --no-ff $WORKTREE_HEAD -m "merge: worktree changes for <description>"
 git push origin main```
 
+### Sub-Agent Model Selection
+
+For sub-agent dispatches via the `task` tool, choose the model to match the cognitive load of the work. **Default to `claude-opus-4.6` or `claude-opus-4.7` for any complex reasoning task** — multi-file architectural changes, root-cause investigations, design audits, solver/numerics analysis, EFIT++ / JT-60SA campaign work, rubber-duck reviews of non-trivial designs, and any task where a wrong answer is expensive to detect or revert.
+
+| Task profile | Model | When |
+|---|---|---|
+| Complex reasoning, design, deep investigation, numerics/physics analysis | `claude-opus-4.7` (preferred) or `claude-opus-4.6` | EFIT++ campaigns, solver behaviour, schema redesigns, cross-cutting refactors, rubber-duck on non-trivial plans |
+| Standard implementation with clear scope | `claude-sonnet-4.6` (default agent default) | Bug fixes, well-specified features, test additions |
+| Bulk mechanical work, simple lookups | `claude-haiku-4.5` | File enumeration, log scraping, single-file reads |
+
+**Rules:**
+- Pass `model: "claude-opus-4.7"` (or `claude-opus-4.6`) explicitly on the `task` tool call when the work is non-trivial. Do not rely on defaults for high-stakes investigations.
+- Rubber-duck reviews of complex designs MUST use opus — a weak critic produces weak critiques.
+- For the JT-60SA EFIT++ campaign and any solver/basin-selection work, **always use opus 4.6/4.7** regardless of dispatched agent type (engineer, architect, rubber-duck).
+- LLM-pipeline model choices (standard names, DD enrichment, etc.) are governed by `pyproject.toml` `[tool.imas-codex.*]` sections — that policy is independent of the sub-agent model policy here.
+
 ### Parallel Agents
 
 Multiple agents may be working on this repository simultaneously on the same `main` branch. Assume another agent could be editing files or committing right now.
