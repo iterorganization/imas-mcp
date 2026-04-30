@@ -3,9 +3,9 @@
 Verifies that:
 1. The shared `_coordinate_conventions.md` fragment forbids citing COCOS-N
    numbers in description / documentation prose.
-2. Both `generate_name_system.md` and `enrich_system.md` (which include the fragment)
+2. Both `generate_name_system.md` and `generate_docs_system.md` (which include the fragment)
    render the COCOS-N prohibition.
-3. The "See also:" trailer pattern is explicitly forbidden in `enrich_system.md`
+3. The "See also:" trailer pattern is explicitly forbidden in `generate_docs_system.md`
    PR-3 (cross-references must be inline, not appended as a trailing block).
 4. Stale anti-pattern examples ("under COCOS-11", "see also electron_temperature")
    no longer appear in the prompts.
@@ -75,12 +75,12 @@ class TestCoordinateConventionsFragment:
 
 
 # ---------------------------------------------------------------------------
-# enrich_system.md — See also trailer prohibition
+# generate_docs_system.md — See also trailer prohibition
 # ---------------------------------------------------------------------------
 
 
-class TestEnrichSystemSeeAlsoProhibition:
-    PATH = "sn/enrich_system.md"
+class TestGenerateDocsSystemSeeAlsoProhibition:
+    PATH = "sn/generate_docs_system.md"
 
     def test_pr3_section_present(self) -> None:
         raw = _load(self.PATH)
@@ -132,12 +132,12 @@ class TestEnrichSystemSeeAlsoProhibition:
 
 
 # ---------------------------------------------------------------------------
-# enrich_system.md — sign-convention example must not cite COCOS-N
+# generate_docs_system.md — sign-convention example must not cite COCOS-N
 # ---------------------------------------------------------------------------
 
 
-class TestEnrichSystemSignConventionExample:
-    PATH = "sn/enrich_system.md"
+class TestGenerateDocsSystemSignConventionExample:
+    PATH = "sn/generate_docs_system.md"
 
     def test_old_cocos11_example_removed(self) -> None:
         raw = _load(self.PATH)
@@ -186,7 +186,7 @@ class TestComposeSystemDocSectionsRemoved:
 
 
 # ---------------------------------------------------------------------------
-# Smoke test: rendered enrich_system prompt contains the new rules
+# Smoke test: rendered generate_docs_system prompt contains the new rules
 # ---------------------------------------------------------------------------
 
 
@@ -195,12 +195,12 @@ class TestRenderedPromptIncludesCocosProhibition:
     conventions fragment, the COCOS-N prohibition is present in the final text.
     """
 
-    def test_enrich_system_render_includes_prohibition(self) -> None:
-        # enrich_system.md `{% include %}`s the fragment; rendering should
+    def test_generate_docs_system_render_includes_prohibition(self) -> None:
+        # generate_docs_system.md `{% include %}`s the fragment; rendering should
         # interpolate it.
         from imas_codex.llm.prompt_loader import render_prompt
 
-        rendered = render_prompt("sn/enrich_system", {})
+        rendered = render_prompt("sn/generate_docs_system", {})
         normalized = re.sub(r"\s+", " ", rendered)
         assert "COCOS Convention" in rendered
         assert "MUST NEVER appear" in normalized
