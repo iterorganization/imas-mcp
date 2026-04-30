@@ -243,6 +243,19 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 
 {% endfor %}
 
+## Description — MANDATORY
+
+For **every** candidate, include a `description` field: a single-line
+plain-English summary of the physical quantity (≤120 characters). This
+description is used for embedding, search, and human review. Examples:
+
+- `"Electron temperature measured in the plasma core"`
+- `"Toroidal component of the magnetic field"`
+- `"Safety factor at the 95% poloidal flux surface"`
+
+Do NOT repeat the standard name verbatim — add context that helps a reader
+understand what the quantity represents physically.
+
 ## Grammar Fields — MANDATORY
 
 For **every** candidate you emit, populate the `grammar_fields` map with the

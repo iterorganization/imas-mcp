@@ -17,6 +17,10 @@ class StandardNameCandidate(BaseModel):
 
     source_id: str = Field(description="Source entity ID (DD path or signal ID)")
     standard_name: str = Field(description="Composed standard name in snake_case")
+    description: str = Field(
+        default="",
+        description="1-line ≤120 char summary of the physical quantity",
+    )
     kind: Literal["scalar", "vector", "metadata"] = Field(
         default="scalar", description="Entry kind"
     )

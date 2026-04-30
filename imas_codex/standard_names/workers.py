@@ -3148,6 +3148,7 @@ async def _compose_batch_core(
                 "id": name_id,
                 "source_types": ["dd"],
                 "source_id": c.source_id,
+                "description": c.description or "",
                 "kind": c.kind,
                 "source_paths": [
                     encode_source_path("dd", p) for p in (c.dd_paths or [])
