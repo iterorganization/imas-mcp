@@ -140,30 +140,37 @@ class TestToolPayloadSize:
 
 
 class TestIncludeStandardNames:
-    """Standard name tools must only be registered when --include-standard-names is set."""
+    """Standard name tools register by default; opt-out via include_standard_names=False."""
 
-    def test_sn_tools_absent_by_default(self):
-        """Standard name tools must NOT appear unless include_standard_names=True."""
+    def test_sn_tools_present_by_default(self):
+        """Standard name tools must register by default (include_standard_names=True)."""
+        server = AgentsServer(dd_only=True)
+        names = _tool_names(server)
+        missing = SN_TOOLS - names
+        assert not missing, (
+            f"Standard name tools missing under default (should be opt-out): {missing}"
+        )
+
+    def test_sn_tools_present_in_rw_server(self):
+        """Standard name tools must register in the default read-write server."""
+        server = AgentsServer(read_only=False, dd_only=False)
+        names = _tool_names(server)
+        missing = SN_TOOLS - names
+        assert not missing, (
+            f"Standard name tools missing in default rw server: {missing}"
+        )
+
+    def test_sn_tools_absent_when_opted_out(self):
+        """Standard name tools must NOT register when include_standard_names=False."""
         server = AgentsServer(dd_only=True, include_standard_names=False)
         names = _tool_names(server)
         present = SN_TOOLS & names
         assert not present, (
-            f"Standard name tools registered by default (should be opt-in): {present}"
-        )
-
-    def test_sn_tools_absent_in_rw_server(self):
-        """Standard name tools must NOT appear in the default read-write server."""
-        server = AgentsServer(
-            read_only=False, dd_only=False, include_standard_names=False
-        )
-        names = _tool_names(server)
-        present = SN_TOOLS & names
-        assert not present, (
-            f"Standard name tools registered by default (should be opt-in): {present}"
+            f"Standard name tools registered with opt-out flag: {present}"
         )
 
     def test_sn_tools_present_when_flag_set(self):
-        """All three standard name tools must be registered when include_standard_names=True."""
+        """All standard name tools must be registered when include_standard_names=True."""
         server = AgentsServer(dd_only=True, include_standard_names=True)
         names = _tool_names(server)
         missing = SN_TOOLS - names

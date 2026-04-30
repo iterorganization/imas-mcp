@@ -1765,7 +1765,7 @@ class AgentsServer:
     read_only: bool = False
     dd_only: bool | None = None
     no_embed: bool = False
-    include_standard_names: bool = False
+    include_standard_names: bool = True
     mcp: FastMCP = field(init=False, repr=False)
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
     _started_at: float = field(init=False, repr=False)

@@ -54,10 +54,9 @@ logger = logging.getLogger(__name__)
     help="Allow startup without embedding server. Semantic search tools will error at call time.",
 )
 @click.option(
-    "--include-standard-names",
-    is_flag=True,
-    default=False,
-    help="Expose standard-name MCP tools (off by default; tools under development)",
+    "--include-standard-names/--no-include-standard-names",
+    default=True,
+    help="Expose standard-name MCP tools (on by default; pass --no-include-standard-names to suppress)",
 )
 def serve(
     transport: str,
