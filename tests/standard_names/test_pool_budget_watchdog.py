@@ -44,7 +44,7 @@ def _make_idle_spec(name: str) -> PoolSpec:
 
 
 class TestBudgetWatchdogSetsStopEvent:
-    """Watchdog must set stop_event within ~10 s when mgr.exhausted() is True."""
+    """Watchdog must set stop_event within ~10 s when mgr.hard_exhausted() is True."""
 
     @pytest.mark.asyncio
     async def test_budget_watchdog_sets_stop_event_when_exhausted(self) -> None:
@@ -63,7 +63,10 @@ class TestBudgetWatchdogSetsStopEvent:
         # Schedule exhaustion after a short delay so pools have time to start.
         async def exhaust_after_delay() -> None:
             await asyncio.sleep(0.2)
-            mgr._pool = -0.01  # force exhausted() → True
+            # Simulate actual spend reaching the budget limit.
+            # hard_exhausted() checks _spent >= _total, so we set _spent
+            # directly (the watchdog now uses hard_exhausted, not exhausted).
+            mgr._spent = 5.01  # force hard_exhausted() → True
 
         exhaust_task = asyncio.create_task(exhaust_after_delay())
 
@@ -87,8 +90,8 @@ class TestBudgetWatchdogSetsStopEvent:
             "stop_event must be set after budget exhaustion; "
             "watchdog may not have fired"
         )
-        # mgr must still report exhausted (no side-effects that reset it).
-        assert mgr.exhausted()
+        # mgr must still report hard-exhausted (no side-effects that reset it).
+        assert mgr.hard_exhausted()
 
 
 # ---------------------------------------------------------------------------

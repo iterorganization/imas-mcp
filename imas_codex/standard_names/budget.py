@@ -663,6 +663,19 @@ class BudgetManager:
         with self._lock:
             return self._pool <= EPSILON
 
+    def hard_exhausted(self) -> bool:
+        """Return ``True`` when committed spend has reached the cost limit.
+
+        Unlike :meth:`exhausted`, which triggers when the pool is drained
+        (including by active reservations that may later be partially
+        refunded), this predicate fires only when *actual spend* has
+        consumed the budget.  Use for global-shutdown decisions (watchdog,
+        final stop-reason) where a transient reservation spike should NOT
+        terminate the run.
+        """
+        with self._lock:
+            return self._spent >= self._total - EPSILON
+
     # ------------------------------------------------------------------
     # Graph-aware reads
     # ------------------------------------------------------------------

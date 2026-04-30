@@ -1118,7 +1118,7 @@ async def run_sn_pools(
         # Check exhaustion before stop_event: the budget watchdog sets
         # stop_event when exhausted, so checking stop_event first would
         # misclassify budget-exhausted runs as "interrupted".
-        if shared_mgr.exhausted():
+        if shared_mgr.hard_exhausted():
             summary.stop_reason = "budget_exhausted"
         elif stop_event.is_set():
             summary.stop_reason = "interrupted"

@@ -289,19 +289,22 @@ async def _budget_watchdog(
     stop_event: asyncio.Event,
     poll: float = 5.0,
 ) -> None:
-    """Poll ``mgr.exhausted()`` and set ``stop_event`` when budget runs out.
+    """Poll ``mgr.hard_exhausted()`` and set ``stop_event`` when budget runs out.
 
-    This ensures the pools receive a clean shutdown signal even in headless
-    mode where the Rich display ticker never updates ``PoolHealth.pending_count``
-    (which was the root cause of the live smoke run's 10.5× overshoot).
+    Uses ``hard_exhausted()`` (committed spend ≥ cost limit) instead of
+    ``exhausted()`` (pool ≤ 0) so that a large in-flight reservation does
+    not trigger a premature global shutdown.  Reservations that are later
+    partially refunded would otherwise cause a false positive.
 
     The function terminates as soon as ``stop_event`` is set — whether by
     this watchdog itself or by an external signal — so it never outlives the
     pool tasks.
     """
     while not stop_event.is_set():
-        if mgr.exhausted():
-            logger.info("run_pools: budget exhausted — signalling graceful shutdown")
+        if mgr.hard_exhausted():
+            logger.info(
+                "run_pools: budget exhausted (spend >= limit) — signalling graceful shutdown"
+            )
             stop_event.set()
             return
         try:
