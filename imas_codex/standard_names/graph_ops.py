@@ -2206,10 +2206,13 @@ def persist_generated_name_batch(
     for entry in candidates:
         entry.setdefault("model", compose_model)
         entry.setdefault("pipeline_status", "named")
-        # Default to 'valid' for pool mode: candidates reaching persist have
-        # already passed ISN grammar parse (skeleton placeholders are swept
-        # pre-persist); embedding-failure flips to 'quarantined' below.
-        # The legacy linear validate_worker is only wired in pipeline.py.
+        # validation_status is set upstream by audit logic (run_audits +
+        # _is_quarantined) in the pool path or validate_worker in the
+        # legacy linear path.  When neither has run (e.g. dry-run paths
+        # that bypass audits, or callers that build candidates manually),
+        # default to 'valid' here so the column is never NULL and
+        # downstream filters keep working.  Embedding-failure flips to
+        # 'quarantined' below.
         entry.setdefault("validation_status", "valid")
         entry.setdefault("generated_at", now)
         # Strip private markers used only during in-batch attribution.
