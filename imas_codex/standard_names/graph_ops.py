@@ -5211,7 +5211,7 @@ def update_sn_per_phase_costs(run_id: str) -> int:
 # Compose targets StandardNameSource; the other four target StandardName.
 # =============================================================================
 
-_DEFAULT_SEED_EXPAND_BATCH = 15
+_DEFAULT_SEED_EXPAND_BATCH = 25
 
 
 def _claim_sn_atomic(
