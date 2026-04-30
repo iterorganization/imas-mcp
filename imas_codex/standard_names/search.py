@@ -1045,23 +1045,42 @@ def _lineage_counts(gc: Any, physical_base: str) -> dict[str, int]:
 
 
 def search_standard_names_vector(
-    query: str, k: int = 5, *, gc: Any = None
+    query: str,
+    k: int = 5,
+    *,
+    gc: Any = None,
+    include_superseded: bool = False,
 ) -> list[dict[str, Any]]:
     """Pure-vector SN search returning the legacy result schema.
 
     Replaces :func:`search_similar_names`. Uses the encoder + Neo4j
     vector index, filters out problematic lifecycle states, and returns
     ``[{id, description, kind, unit, score}, …]``.
+
+    Parameters
+    ----------
+    gc:
+        Optional pre-opened :class:`GraphClient`. When provided it is
+        re-used (no new session opened, no close); when ``None`` the
+        function opens its own short-lived session. Plan 39 §3.6 (a):
+        the catalog runners pass the refine-cycle's ``gc`` so a single
+        refine cycle never instantiates more than one ``GraphClient``.
+    include_superseded:
+        When ``True``, drop the ``pipeline_status='superseded'``
+        exclusion. Used by cycle-2 refine fan-out to surface the
+        just-superseded cycle-1 name as a comparator. Default ``False``
+        preserves existing behaviour for all other callers.
     """
     if not query or not query.strip():
         return []
 
     own_gc = False
+    _gc_ctx: Any = None
     if gc is None:
         try:
             from imas_codex.graph.client import GraphClient
 
-            _gc_ctx: Any = GraphClient()
+            _gc_ctx = GraphClient()
             gc = _gc_ctx.__enter__() if hasattr(_gc_ctx, "__enter__") else _gc_ctx
             own_gc = True
         except Exception:
@@ -1072,17 +1091,25 @@ def search_standard_names_vector(
         embedding = _embed(query)
         if embedding is None:
             return []
+        # Build the lifecycle WHERE clause; superseded is conditionally dropped.
+        lifecycle_clauses = [
+            "sn.id IS NOT NULL",
+            "coalesce(sn.validation_status, '') <> 'quarantined'",
+            "coalesce(sn.name_stage, '') <> 'exhausted'",
+        ]
+        if not include_superseded:
+            lifecycle_clauses.insert(
+                2, "coalesce(sn.pipeline_status, '') <> 'superseded'"
+            )
+        where_clause = " AND ".join(lifecycle_clauses)
         rows = (
             gc.query(
-                """
+                f"""
                 CALL db.index.vector.queryNodes(
                     'standard_name_desc_embedding', $k, $embedding
                 )
                 YIELD node AS sn, score
-                WHERE sn.id IS NOT NULL
-                  AND coalesce(sn.validation_status, '') <> 'quarantined'
-                  AND coalesce(sn.pipeline_status, '') <> 'superseded'
-                  AND coalesce(sn.name_stage, '') <> 'exhausted'
+                WHERE {where_clause}
                 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
                 RETURN sn.id AS id,
                        sn.description AS description,

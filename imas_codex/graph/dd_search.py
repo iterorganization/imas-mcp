@@ -7,6 +7,22 @@ and cross-IDS relationship discovery from
 
 Both MCP tools and the SN generation pipeline call these pure functions
 — the MCP tools add only formatting layers.
+
+Plan 39 fan-out catalog symbols (post Phase 0):
+
+- :func:`hybrid_dd_search` — DD path hybrid search (``search_dd_paths``).
+- :func:`related_dd_search` — cross-IDS relationship discovery
+  (``find_related_dd_paths``).
+- :func:`cluster_search` — slim sync semantic-cluster lookup
+  (``search_dd_clusters``).
+- :func:`imas_codex.standard_names.search.search_standard_names_vector`
+  — pure-vector StandardName search (``search_existing_names``); kept
+  in :mod:`imas_codex.standard_names.search` per plan 40's
+  canonical-source-of-truth invariant.
+
+All four take ``gc`` as a parameter and never instantiate their own
+:class:`GraphClient`, so a single refine cycle reuses one session
+across the entire fan-out (plan 39 §10.1).
 """
 
 from __future__ import annotations
@@ -811,3 +827,163 @@ def related_dd_search(
         relationship_types=relationship_types,
         hits=all_hits,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Cluster search — slim sync helper for fan-out catalog (plan 39 §3.6 c)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class ClusterHit:
+    """A single semantic-cluster hit from :func:`cluster_search`.
+
+    The slim catalog-facing dataclass intentionally exposes only the
+    fields the fan-out renderer needs.  The full MCP-tool result schema
+    (``GraphClustersTool.search_dd_clusters``) carries additional
+    presentation fields and stays in :mod:`imas_codex.tools.graph_search`.
+    """
+
+    id: str
+    """Cluster id (graph node id)."""
+
+    label: str = ""
+    """Cluster label (often a short physics phrase)."""
+
+    description: str = ""
+    """Cluster description."""
+
+    scope: str = "global"
+    """Cluster scope: 'global', 'domain', or 'ids'."""
+
+    ids_names: list[str] = field(default_factory=list)
+    """IDS names whose paths participate in this cluster."""
+
+    paths: list[str] = field(default_factory=list)
+    """Sample of member IMAS paths (capped)."""
+
+    score: float = 0.0
+    """Relevance score (vector similarity for semantic; 1.0 for path lookup)."""
+
+
+def cluster_search(
+    gc: GraphClient,
+    query: str,
+    *,
+    scope: str | None = None,
+    k: int = 8,
+    dd_version: int | None = None,
+) -> list[ClusterHit]:
+    """Find semantic clusters matching *query*.
+
+    Slim sync helper consumed by the structured fan-out catalog
+    (plan 39 §3.6 c).  Mirrors the **semantic** (vector) and
+    **path-lookup** branches of :class:`GraphClustersTool.search_dd_clusters`
+    without the MCP-presentation glue or short-physics-term expansion.
+    The MCP tool's full feature set (text-supplement search, summary
+    filtering, label derivation) remains in :mod:`imas_codex.tools.graph_search`
+    — this helper is a fan-out-friendly subset.
+
+    Args:
+        gc: Active :class:`GraphClient` (caller-owned; no session
+            opened or closed).
+        query: Natural-language phrase or exact IMAS path.  When the
+            query contains ``/`` and no whitespace it is treated as a
+            path lookup (cluster membership of the given path).
+        scope: Optional cluster-scope filter (``"global"`` /
+            ``"domain"`` / ``"ids"``).  ``None`` returns all scopes.
+        k: Maximum hits to return.
+        dd_version: Filter cluster members by DD major version.
+
+    Returns:
+        List of :class:`ClusterHit`, ordered by relevance score
+        descending (or by scope name for path lookups).
+    """
+    if not query or not query.strip():
+        return []
+
+    query_str = query.strip()
+    is_path = "/" in query_str and " " not in query_str
+
+    from imas_codex.tools.graph_search import _dd_version_clause
+
+    scope_clause = "AND c.scope = $scope" if scope else ""
+    params: dict[str, Any] = {}
+    if scope:
+        params["scope"] = scope
+
+    if is_path:
+        # Path lookup — find clusters containing this exact IMAS path.
+        params["path"] = query_str
+        member_params: dict[str, Any] = dict(params)
+        dd_clause = _dd_version_clause("member", dd_version, member_params)
+        rows = (
+            gc.query(
+                f"""
+                MATCH (p:IMASNode {{id: $path}})-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+                WHERE true {scope_clause}
+                OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(c)
+                WHERE true {dd_clause}
+                WITH c, collect(DISTINCT member.id)[..50] AS paths
+                RETURN c.id AS id, c.label AS label, c.description AS description,
+                       c.scope AS scope, c.ids_names AS ids_names, paths
+                ORDER BY c.scope
+                LIMIT $k
+                """,
+                k=k,
+                **member_params,
+            )
+            or []
+        )
+        return [
+            ClusterHit(
+                id=r["id"],
+                label=r.get("label") or "",
+                description=r.get("description") or "",
+                scope=r.get("scope") or "global",
+                ids_names=list(r.get("ids_names") or []),
+                paths=list(r.get("paths") or []),
+                score=1.0,
+            )
+            for r in rows
+        ]
+
+    # Semantic vector search over cluster_label_embedding.
+    try:
+        embedding = _embed(query_str)
+    except Exception:
+        logger.debug("Cluster vector embed failed", exc_info=True)
+        return []
+
+    params["embedding"] = embedding
+    params["k"] = k
+    rows = (
+        gc.query(
+            f"""
+            CALL db.index.vector.queryNodes(
+                'cluster_label_embedding', $k, $embedding
+            )
+            YIELD node AS c, score
+            WHERE true {scope_clause}
+            OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(c)
+            WITH c, score, collect(DISTINCT member.id)[..50] AS paths
+            RETURN c.id AS id, c.label AS label, c.description AS description,
+                   c.scope AS scope, c.ids_names AS ids_names, paths, score
+            ORDER BY score DESC
+            """,
+            **params,
+        )
+        or []
+    )
+    return [
+        ClusterHit(
+            id=r["id"],
+            label=r.get("label") or "",
+            description=r.get("description") or "",
+            scope=r.get("scope") or "global",
+            ids_names=list(r.get("ids_names") or []),
+            paths=list(r.get("paths") or []),
+            score=float(r.get("score") or 0.0),
+        )
+        for r in rows
+    ]
