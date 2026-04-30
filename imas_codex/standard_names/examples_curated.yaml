@@ -1,0 +1,889 @@
+# Curated StandardName examples for W2 prompt engineering
+# Extracted before sn clear -- do not manually edit, regenerate via snapshot.
+# Score tiers: outstanding>=0.95, good>=0.80, adequate>=0.65, inadequate>=0.40, poor<0.40
+
+outstanding:
+- id: internal_inductance
+  reviewer_score_name: 1.0
+  description: Internal inductance represents the normalized internal magnetic energy associated with the plasma current profile
+    in toroidal confinement devices. It characterizes the peakedness of the current distribution within the plasma cross-section.
+  documentation: 'In magnetic confinement fusion, the internal inductance $l_i$ measures the energy stored in the poloidal
+    magnetic field within the plasma volume relative to the magnetic energy that would result from a uniform current distribution.
+    It is defined as the ratio of the volume-integrated magnetic energy density to the surface magnetic field contribution:
+    $$l_i = \frac{2}{\mu_0 I^2 R_0} \int \frac{B_p^2}{2\mu_0} dV$$ where $B_p$ is the poloidal magnetic field, $I$ is the
+    plasma current, and $R_0$ is the major radius. Typical values in tokamak plasmas range from 0.5 to 1.5, where lower values
+    correspond to broader current profiles and higher values indicate peaked current profiles. This parameter is critical
+    for assessing MHD stability, such as the onset of sawteeth or disruptions. Internal inductance is commonly determined
+    through magnetic equilibrium reconstruction codes like EFIT, which utilize external magnetic diagnostics such as flux
+    loops and Rogowski coils. It is closely related to [plasma_current](name:plasma_current) and [poloidal_magnetic_field](name:poloidal_magnetic_field).'
+  kind: scalar
+  unit: '1'
+  physics_domain:
+  - transport
+  reviewer_comments_name: '''internal_inductance'' is a well-established, unambiguous term in fusion plasma physics referring
+    to the normalized internal inductance (li). It parses correctly as a standalone physical_base, is semantically accurate
+    for a dimensionless scalar, follows all naming conventions, and requires no additional segments for completeness.'
+  reviewer_verdict_name: accept
+- id: effective_charge
+  reviewer_score_name: 1.0
+  description: The effective charge is a dimensionless parameter that characterizes the average charge state of a plasma,
+    weighted by the square of the ion charges. It serves as a measure of the cumulative effect of ion-electron Coulomb collisions
+    on plasma transport properties such as resistivity and bremsstrahlung emission.
+  documentation: 'The effective charge, denoted by $Z_{\mathrm{eff}}$, accounts for the presence of multiple ion species in
+    a plasma and their respective contributions to particle transport and radiation processes. It is defined by the relation:
+
+
+    $$Z_{\mathrm{eff}} = \frac{\sum_{i} n_i Z_i^2}{n_e}$$
+
+
+    where $n_i$ is the number density of ion species $i$ with charge state $Z_i$, and $n_e$ is the electron density. In a
+    pure hydrogen plasma, $Z_{\mathrm{eff}}$ is 1, while higher values indicate the presence of impurities or multiple-ion
+    species that significantly enhance electron-ion scattering rates. Typical values in laboratory fusion devices for hydrogenic
+    plasmas range between 1 and 3, depending on the impurity concentration. This quantity is commonly measured via visible
+    bremsstrahlung spectroscopy, where the intensity of the emission is proportional to the product $n_e^2 Z_{\mathrm{eff}}$.
+    It is a critical parameter for calculating the neoclassical resistivity, which is often expressed as $\eta \propto Z_{\mathrm{eff}}
+    T_e^{-3/2}$. Related standard names include [electron_density](name:electron_density) and [ion_number_density](name:ion_number_density).'
+  kind: scalar
+  unit: '1'
+  physics_domain:
+  - transport
+  reviewer_comments_name: '''effective_charge'' is a concise, unambiguous standard name for the plasma effective charge (Z_eff).
+    It parses correctly as a single physical_base compound, is semantically precise, follows all naming conventions, and requires
+    no additional segments for completeness. Unit and kind are correct.'
+  reviewer_verdict_name: accept
+- id: time
+  reviewer_score_name: 1.0
+  description: The elapsed physical time coordinate, represented as a scalar value, acting as the independent variable for
+    the temporal evolution of plasma state variables. It typically indexes snapshots in a sequence of time slices within a
+    plasma discharge.
+  documentation: The variable $t$ (time) serves as the primary coordinate for temporal indexing in plasma physics simulations
+    and experimental data acquisition. In the context of Integrated Data Structures (IDS), it represents the absolute or relative
+    time elapsed since the initiation of a pulse or discharge. Typical values range from $0$ to $10^{3}$ seconds, depending
+    on the machine duty cycle. This coordinate is essential for interpolating time-dependent profiles such as $n_e(r, t)$
+    or $T_i(r, t)$ and ensuring causality and synchronization across diagnostic subsystems.
+  kind: scalar
+  unit: s
+  physics_domain:
+  - transport
+  reviewer_comments_name: '''time'' is a fundamental, universally understood physical_base that parses correctly, is semantically
+    accurate, follows all conventions, and requires no additional segments for completeness. It scores maximally across all
+    dimensions.'
+  reviewer_verdict_name: accept
+- id: normalized_toroidal_flux_coordinate
+  reviewer_score_name: 1.0
+  description: The normalized toroidal flux coordinate is a dimensionless radial coordinate used to label magnetic surfaces
+    in toroidal plasma confinement devices. It is typically defined to be zero at the magnetic axis and unity at the plasma
+    boundary or the last closed magnetic surface.
+  documentation: The normalized toroidal flux coordinate, often denoted as $\rho_{tor}$ or $s$, is defined as the square root
+    of the normalized toroidal magnetic flux. It is calculated using the relation $\rho_{tor} = \sqrt{\Phi / \Phi_{edge}}$,
+    where $\Phi$ is the toroidal magnetic flux enclosed by a magnetic surface and $\Phi_{edge}$ is the flux at the plasma
+    boundary. This coordinate provides a monotonic radial mapping suitable for 1D transport modeling and equilibrium analysis
+    in tokamaks and stellarators. Values range from 0 at the magnetic axis to 1 at the specified plasma edge. It is closely
+    related to [toroidal_flux](name:toroidal_flux) and is frequently used to normalize profile data such as [electron_temperature](name:electron_temperature)
+    or [ion_density](name:ion_density). Measurement is typically derived from magnetic equilibrium reconstructions using codes
+    like EFIT, which invert external magnetic sensor data and pressure profiles to determine the flux surface geometry.
+  kind: scalar
+  unit: '1'
+  physics_domain:
+  - transport
+  reviewer_comments_name: This is a textbook geometric_base entry from the restricted vocabulary. It parses correctly as a
+    standalone geometric_base with no additional segments needed. Semantically it precisely describes the normalized toroidal
+    flux coordinate used ubiquitously in tokamak physics. Convention adherence is perfect, and the entry is complete for a
+    dimensionless scalar coordinate.
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    coordinate: normalized_toroidal
+- id: ion_temperature
+  reviewer_score_name: 1.0
+  description: The mean kinetic energy of the bulk ion population in a plasma, representing the average thermal state of the
+    ions. It is expressed in units of energy per particle, equivalent to the product of Boltzmann constant and the ion temperature.
+  documentation: The ion thermal energy represents the average kinetic energy associated with the random motion of individual
+    ions within a plasma population. Under the assumption of a Maxwellian velocity distribution, this energy is related to
+    the ion temperature $T_i$ by the expression $E_i = \frac{3}{2} k_B T_i$, where $k_B$ is the Boltzmann constant. In non-equilibrium
+    or fusion-relevant plasmas, this value provides a fundamental measure of the collisionless thermal state of the ion species.
+    Typical values range from 1 eV to 100 eV in the edge plasma and scrape-off layer, and can reach tens of keV in the core
+    of magnetic confinement devices. Measurement techniques include active charge exchange recombination spectroscopy (CXRS),
+    Doppler broadening of impurity emission lines, and retarding field analyzers (RFA) in the edge region. Related quantities
+    include [ion_temperature](ion_temperature) and [electron_thermal_energy](electron_thermal_energy).
+  kind: scalar
+  unit: eV
+  physics_domain:
+  - transport
+  - edge_plasma_physics
+  reviewer_comments_name: This is a textbook standard name in fusion plasma physics. Grammar is valid (subject=ion, physical_base=temperature).
+    Semantically precise and unambiguous. Follows all naming conventions. Complete for a scalar thermal quantity.
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: ion
+- id: plasma_current
+  reviewer_score_name: 1.0
+  description: Total toroidal current flowing within the plasma column. It is the superposition of current driven by inductive
+    electric fields, the bootstrap effect due to pressure gradients, and non-inductive auxiliary current drive.
+  documentation: The plasma current, denoted as $I_p$, represents the integrated toroidal current density flowing through
+    the plasma cross-section. It is defined as $I_p = \int J_{\phi} dA$, where $J_{\phi}$ is the toroidal current density.
+    This value is a fundamental global quantity in tokamak operation, influencing the magnetic equilibrium, energy confinement,
+    and plasma stability. The total current is composed of 1) the inductive (ohmic) component, 2) the bootstrap current arising
+    from neoclassical transport, and 3) auxiliary non-inductive components generated by neutral beam injection (NBI) or radio-frequency
+    (RF) waves. By convention, $I_p$ is defined as positive for an anti-clockwise direction when viewed from above the torus.
+    Typical values range from kiloamperes (kA) in small experimental devices to mega-amperes (MA) in large-scale reactors.
+  kind: scalar
+  unit: A
+  physics_domain:
+  - transport
+  reviewer_comments_name: This is a textbook standard name in fusion plasma physics. It parses correctly as a single physical_base
+    compound, semantically maps perfectly to the total plasma current (measured in amperes), follows all naming conventions,
+    and is complete without needing additional segments.
+  reviewer_verdict_name: accept
+- id: ion_density
+  reviewer_score_name: 1.0
+  description: This quantity represents the number of ions per unit volume within a plasma or fluid medium. It is a fundamental
+    scalar field used to characterize the local concentration of charged particles in transport processes.
+  documentation: 'The ion number density, denoted by $n_i$, is defined as the integral of the velocity distribution function
+    $f_i(\mathbf{v})$ over all velocity space: $n_i = \int f_i(\mathbf{v}) d^3v$. It describes the concentration of positive
+    or negative ions present in a given region of space regardless of their specific chemical species. In typical laboratory
+    plasmas, $n_i$ may range from $10^{16}$ to $10^{22}$ per cubic meter, while space plasmas exhibit much lower concentrations.
+    Measurement methods include Langmuir probes, laser-induced fluorescence, or mass spectrometry. This quantity is closely
+    related to [electron_number_density](name:electron_number_density) and is a primary input for calculating the plasma frequency
+    and Debye length.'
+  kind: scalar
+  unit: m^-3
+  physics_domain:
+  - transport
+  reviewer_comments_name: 'Grammar: parses correctly with subject=ion, physical_base=density; no decomposition defects. Semantic:
+    accurately describes ion number density consistent with m^-3 units. Convention: canonical snake_case ordering, no ambiguity.
+    Completeness: all necessary segments present for a scalar ion density quantity.'
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: ion
+- id: thermal_ion_density
+  reviewer_score_name: 1.0
+  description: The number density of thermal ions refers to the volumetric concentration of the bulk ion population within
+    a plasma. This specific measure excludes non-thermal contributions such as fast ions generated via auxiliary heating or
+    high-energy fusion reaction products.
+  documentation: Thermal ion density represents the number of ions per unit volume with velocities concentrated near the bulk
+    distribution, typically characterized by a Maxwellian velocity distribution. It is defined by the integral $n_i = \int
+    f_i(\mathbf{v}) d^3\mathbf{v}$, where $f_i(\mathbf{v})$ is the thermal ion velocity distribution function. In magnetic
+    confinement fusion devices, this value is critical for determining the total plasma pressure and the rate of fusion reactions.
+    Typical values range from $10^{19}$ to $10^{21}$ particles per cubic meter in tokamaks. Measurement methods include Thomson
+    scattering, microwave interferometry, and charge-exchange recombination spectroscopy. Related quantities include [electron_density](name:electron_density)
+    and [fast_ion_density](name:fast_ion_density).
+  kind: scalar
+  unit: m^-3
+  physics_domain:
+  - transport
+  reviewer_comments_name: The name 'thermal_ion_density' is grammatically valid with subject='thermal_ion' from the closed
+    vocabulary and physical_base='density'. Semantically it correctly represents the number density of thermal ions. It follows
+    all naming conventions with proper snake_case and canonical ordering. It is complete for a scalar quantity with appropriate
+    unit m^-3.
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: thermal_ion
+- id: thermal_neutral_density
+  reviewer_score_name: 1.0
+  description: The thermal neutral density is the number density of neutral particles with kinetic energy distributions dictated
+    by the local thermal equilibrium temperature. This defines the population of neutral species coupled to the background
+    thermal environment, distinct from non-thermal or high-energy beam populations.
+  documentation: Thermal neutral density refers to the number density of neutral atoms or molecules whose velocity distribution
+    follows the Maxwell-Boltzmann distribution at the local thermal temperature $T$. It is defined as $n = \int f(v) dv$,
+    where $f(v)$ is the Maxwellian velocity distribution function. This quantity is crucial for understanding collision-dominated
+    processes such as charge exchange, elastic scattering, and thermalization rates in plasma physics and atmospheric sciences.
+    Typical values in the terrestrial thermosphere range from $10^{13}$ to $10^{19}$ particles per unit volume, while in fusion
+    plasmas, this density is often several orders of magnitude lower. It is commonly measured using neutral particle analyzers,
+    laser-induced fluorescence, or mass spectrometry. This quantity is related to [neutral_density](name:neutral_density)
+    and [plasma_density](name:plasma_density), providing context on the partitioning between charged and neutral states in
+    a gas or plasma. The determination of this value assumes the neutral gas has achieved thermal equilibrium with the surrounding
+    medium.
+  kind: scalar
+  unit: m^-3
+  physics_domain:
+  - transport
+  reviewer_comments_name: The name 'thermal_neutral_density' correctly uses the closed-vocabulary subject 'thermal_neutral'
+    combined with physical_base 'density'. It parses cleanly, is semantically accurate for a thermal neutral particle number
+    density, follows all naming conventions, and is complete for a scalar quantity with unit m^-3.
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: thermal_neutral
+- id: ion_pressure
+  reviewer_score_name: 1.0
+  description: The ion pressure represents the scalar kinetic pressure exerted by the ion species within a plasma. It is defined
+    as the isotropic component of the ion pressure tensor and contributes significantly to the total plasma kinetic pressure.
+  documentation: Ion pressure represents the average kinetic energy density of the ion population in a plasma. It is defined
+    as the isotropic part of the ion pressure tensor, denoted by $P_i$, and is typically related to the ion number density
+    $n_i$ and the ion temperature $T_i$ by the equation $P_i = n_i k_B T_i$, where $k_B$ is the Boltzmann constant. In fusion
+    devices like tokamaks, typical ion pressures range from several kilopascals to over a megapascal in the core. Measurements
+    of ion pressure are commonly derived from charge exchange recombination spectroscopy or via kinetic analysis of ion distribution
+    functions obtained from neutral particle analyzers. It is related to other thermodynamic quantities such as [electron_pressure](name:electron_pressure)
+    and the total plasma pressure. This value is fundamentally scalar and represents the microscopic momentum transfer of
+    ions, independent of directed fluid flow.
+  kind: scalar
+  unit: Pa
+  physics_domain:
+  - transport
+  - edge_plasma_physics
+  reviewer_comments_name: The name 'ion_pressure' cleanly decomposes into subject='ion' + physical_base='pressure'. It round-trips
+    through the grammar, is semantically accurate for ion pressure in Pa, follows all naming conventions, and includes all
+    necessary segments for a scalar pressure quantity.
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: ion
+good:
+- id: fast_neutral_density
+  reviewer_score_name: 0.9375
+  description: The fast neutral density represents the number density of neutral particles with kinetic energies significantly
+    higher than the ambient thermal population. These particles primarily result from charge-exchange processes or external
+    beam injection in plasmas.
+  documentation: 'Fast neutral density refers to the population of neutral particles in a plasma that are not in thermal equilibrium
+    with the background gas. These neutrals are produced when ions undergo charge-exchange reactions with the background neutral
+    gas, adopting the energy and momentum of the ion population. The governing transport can be described by the Boltzmann-like
+    kinetic equation for the distribution function $f_n(\mathbf{r}, \mathbf{v}, t)$:
+
+
+    $$\frac{\partial f_n}{\partial t} + \mathbf{v} \cdot \nabla f_n = S_{cx}(\mathbf{r}, \mathbf{v}, t) - \nu_{loss}f_n$$
+
+
+    where $S_{cx}$ represents the source term from charge-exchange collisions. In magnetic confinement fusion devices, typical
+    values for fast neutral density can reach $10^{14}$ to $10^{17}$ particles per cubic meter depending on neutral beam injection
+    power and plasma density. Measurement methods include Charge Exchange Recombination Spectroscopy (CXRS) and Neutral Particle
+    Analyzers (NPA). Related standard names include [neutral_density](name:neutral_density) for the bulk thermal population.'
+  kind: scalar
+  unit: m^-3
+  physics_domain:
+  - transport
+  reviewer_comments_name: 'The name ''fast_neutral_density'' correctly decomposes into subject=''fast_neutral'' and physical_base=''density''.
+    It follows grammar rules, is semantically accurate for number density of energetic neutrals, adheres to naming conventions,
+    and is complete for a scalar quantity. Total score: 75/80.'
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: fast_neutral
+- id: fast_electron_density
+  reviewer_score_name: 0.9375
+  description: The fast electron number density represents the concentration of electrons in a plasma possessing kinetic energies
+    substantially higher than the bulk thermal energy. It characterizes the suprathermal component of the electron distribution
+    function that often drives non-equilibrium transport processes.
+  documentation: 'The fast electron number density, denoted by $n_f$, is defined as the integral of the electron velocity
+    distribution function $f_e(\mathbf{v})$ over the region of velocity space corresponding to suprathermal energies: $n_f
+    = \int_{v > v_{th}} f_e dv$. These electrons typically comprise a small fraction of the total plasma density but exert
+    a disproportionate influence on transport coefficients, heating rates, and wave-particle interactions. Physical values
+    depend heavily on the environment, ranging from $10^{15} \text{ m}^{-3}$ in dilute astrophysical plasmas to $10^{20} \text{
+    m}^{-3}$ or higher in experimental magnetic confinement fusion devices. Measurement techniques include electrostatic probes
+    for lower density regimes, laser-induced fluorescence, Thomson scattering, and X-ray spectroscopy to resolve the non-Maxwellian
+    tail of the distribution. This quantity is closely related to [electron_number_density](name:electron_number_density)
+    and [electron_temperature](name:electron_temperature).'
+  kind: scalar
+  unit: m^-3
+  physics_domain:
+  - transport
+  reviewer_comments_name: 'Grammar: ''fast_electron'' is in the subject vocabulary and ''density'' is a valid open-vocabulary
+    physical_base. The name round-trips correctly. Semantic: accurately describes the number density of fast electrons. Convention:
+    follows all naming conventions with proper segment ordering. Completeness: all necessary segments are present for a scalar
+    density quantity.'
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: fast_electron
+- id: co_passing_fast_particle_density
+  reviewer_score_name: 0.9375
+  description: Number density of fast (suprathermal) particles whose parallel velocity is co-directed with the plasma current,
+    executing passing (non-trapped) orbits.
+  documentation: The co-passing fast particle density $n_{\mathrm{fast,co}}$ counts the number of energetic ions per unit
+    volume that travel along field lines in the same direction as the plasma current and whose pitch-angle parameter $\lambda
+    = v_\parallel / v$ places them outside the trapped-particle region defined by the local mirror ratio. These particles
+    are generated primarily by tangential neutral beam injection (NBI) aimed co-current and, to a lesser extent, by ion cyclotron
+    resonance heating (ICRH) with appropriate wave-particle resonance geometry. The co-passing population drives significant
+    non-inductive current and contributes to the bootstrap and beam-driven current profile; it also produces anisotropic pressure
+    that enters the Grad–Shafranov equilibrium through $p_\parallel \neq p_\perp$. In tokamak plasmas with co-directed NBI,
+    $n_{\mathrm{fast,co}}$ can reach $10^{17}$–$10^{18}\;\mathrm{m^{-3}}$ in the core, representing 1–10% of the total ion
+    density depending on beam power and plasma parameters. The quantity is computed from the fast-ion distribution function
+    $f_{\mathrm{fast}}(E, \lambda, \psi)$ by integrating over energy $E$ and restricting the pitch-angle domain to $\lambda
+    > \lambda_{\mathrm{tp}}(\psi)$, where $\lambda_{\mathrm{tp}}$ is the trapped–passing boundary. Diagnostics sensitive to
+    $n_{\mathrm{fast,co}}$ include fast-ion $D_\alpha$ (FIDA) spectroscopy, neutral particle analyzers (NPA), and neutron
+    cameras with sightline weighting that preferentially samples co-going orbits. The complementary population is [counter_passing_fast_particle_density](name:counter_passing_fast_particle_density),
+    while [trapped_fast_particle_density](name:trapped_fast_particle_density) accounts for banana-orbit ions. The total fast-ion
+    content satisfies $n_{\mathrm{fast}} = n_{\mathrm{fast,co}} + n_{\mathrm{fast,ctr}} + n_{\mathrm{fast,trapped}}$.
+  kind: scalar
+  unit: m^-3
+  physics_domain:
+  - transport
+  reviewer_comments_name: The name is grammatically valid with 'co_passing_fast_particle' being a recognized subject in the
+    closed vocabulary. Semantically it accurately represents the number density of co-passing fast particles. Convention adherence
+    is strong with proper snake_case and canonical ordering. Completeness is adequate for a scalar density quantity with appropriate
+    units.
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: co_passing_fast_particle
+- id: toroidal_flux_coordinate_of_separatrix
+  reviewer_score_name: 0.9375
+  description: The toroidal flux coordinate at the separatrix represents the value of the flux label that identifies the magnetic
+    separatrix in a toroidal plasma configuration. This coordinate defines the boundary between closed and open magnetic field
+    lines in magnetic confinement devices.
+  documentation: 'This standard name refers to the value of the toroidal flux label, denoted as $\psi$ or $\Phi$, evaluated
+    specifically at the magnetic separatrix. In many magnetic confinement systems, the separatrix defines the interface between
+    the confined plasma and the scrape-off layer. The toroidal flux is defined by the integral of the magnetic field over
+    the cross-section of a nested magnetic surface: $$\Phi = \int_{S} \mathbf{B} \cdot d\mathbf{S}$$ In systems where normalized
+    coordinates are used, this value is often defined such that the separatrix corresponds to $\hat{\psi} = 1$, though in
+    absolute units it reflects the total magnetic flux enclosed by the separatrix. This value is determined through equilibrium
+    reconstruction codes that fit measured magnetic probe data and internal diagnostic observations. Related quantities include
+    [toroidal_flux_profile](name:toroidal_flux_profile) and [magnetic_separatrix_position](name:magnetic_separatrix_position).'
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: The name correctly uses the geometric_base 'toroidal_flux_coordinate' from the closed vocabulary
+    with position 'separatrix'. It parses cleanly, is semantically appropriate for describing where the separatrix sits in
+    flux-coordinate space, follows naming conventions, and has all necessary segments for a scalar quantity. Minor semantic
+    question about whether this is truly informative (normalized tor
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    coordinate: toroidal
+    object: separatrix
+- id: co_passing_fast_particle_pressure
+  reviewer_score_name: 0.9375
+  description: Pressure contribution from fast (suprathermal) particles whose parallel velocity is co-directed with the plasma
+    current, constituting the co-passing subset of the fast-ion distribution.
+  documentation: 'The co-passing fast particle pressure $p_{\mathrm{fast,co}}$ is defined as the second velocity-space moment
+    of the fast-particle distribution function $f_{\mathrm{fast}}$ restricted to particles with $v_\parallel > 0$ (co-current)
+    and $|v_\parallel| > |v_\perp|$ (passing orbit topology): $$p_{\mathrm{fast,co}} = \frac{m}{3} \int_{\mathrm{co\text{-}passing}}
+    v^2 \, f_{\mathrm{fast}}(\mathbf{v}) \, d^3v,$$ where $m$ is the fast-particle mass, $v$ is the speed, and the integration
+    domain covers co-passing orbits in velocity space. This quantity is relevant for neutral-beam-driven plasmas where anisotropic
+    fast-ion populations modify MHD equilibrium and stability; co-passing fractions dominate in tangentially injected NBI
+    scenarios. In large tokamaks, $p_{\mathrm{fast,co}}$ can reach 10–100 kPa in the core, representing a significant fraction
+    of the total plasma beta. The partitioning into co-passing and counter-passing components is essential for assessing beam-driven
+    current, toroidal rotation drive, and fishbone/TAE stability thresholds. Computed from Monte Carlo orbit-following codes
+    (e.g., NUBEAM, ASCOT) or from analytic slowing-down models with pitch-angle scattering. The total fast-particle pressure
+    is the sum of [co_passing_fast_particle_pressure](name:co_passing_fast_particle_pressure), counter-passing, and trapped
+    contributions, linking directly to the anisotropic pressure tensor used in extended MHD equilibrium solvers.'
+  kind: scalar
+  unit: J.m^-3
+  physics_domain:
+  - transport
+  reviewer_comments_name: 'Grammar: The name correctly parses with subject=''co_passing_fast_particle'' (a valid subject from
+    the vocabulary) and physical_base=''pressure''. No decomposition defects. Semantic: Pressure of co-passing fast particles
+    is a standard kinetic moment quantity in fusion transport studies. Convention: Canonical segment ordering, proper snake_case,
+    no redundancy or ambiguity. Completeness: All relevant se'
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: co_passing_fast_particle
+- id: parallel_component_of_ion_momentum_flux
+  reviewer_score_name: 0.9375
+  description: Projection of the ion momentum flux tensor along the magnetic field direction, representing field-aligned ion
+    momentum transport.
+  documentation: The parallel component of the ion momentum flux $\Pi_{\parallel,i}$ quantifies the transport of field-aligned
+    ion momentum across flux surfaces or along field lines, depending on context. In neoclassical theory it includes the parallel
+    viscous stress $\langle \mathbf{B} \cdot \nabla \cdot \boldsymbol{\pi}_i \rangle$ where $\boldsymbol{\pi}_i$ is the ion
+    viscosity tensor and $\mathbf{B}$ is the magnetic field. In turbulent transport it captures the Reynolds-stress-driven
+    parallel momentum redistribution. Values in the tokamak pedestal are of order $10^{-2}$–$10^{0}$ kg m$^{-1}$ s$^{-2}$
+    and govern parallel flow profiles in the SOL and divertor. This quantity is closely related to [radial_component_of_ion_momentum_flux](name:radial_component_of_ion_momentum_flux)
+    (the cross-field counterpart) and to [ion_temperature](name:ion_temperature), which sets the thermal speed scale entering
+    viscous closures.
+  kind: vector
+  unit: kg.m^-1.s^-2
+  physics_domain:
+  - transport
+  - edge_plasma_physics
+  reviewer_comments_name: 'Grammar: Fully compliant vNext decomposition with correctly placed projection prefix, qualifier,
+    and well-formed base token. Semantic: Accurately captures parallel ion momentum flux with unit consistency. Convention:
+    Canonical ordering, no abbreviations or model identifiers. Completeness: All necessary segments present; minor kind metadata
+    mismatch is not a naming issue.'
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    component: parallel
+    subject: ion
+- id: diamagnetic_energy
+  reviewer_score_name: 0.9375
+  description: Plasma thermal energy inferred from the diamagnetic effect, quantifying the volume-integrated perpendicular
+    pressure contribution to the equilibrium.
+  documentation: The diamagnetic energy $W_\mathrm{dia}$ represents the total thermal energy content of the plasma as inferred
+    from diamagnetic flux measurements. It is defined as $$W_\mathrm{dia} = \frac{3}{2} \int p_\perp \, dV$$ where $p_\perp$
+    is the perpendicular plasma pressure and $V$ is the plasma volume. In an isotropic plasma ($p_\perp = p_\parallel$), $W_\mathrm{dia}$
+    equals the total stored thermal energy $W_\mathrm{th}$; in anisotropic conditions (e.g., with significant neutral beam
+    or ICRH fast-ion populations), it deviates from the MHD stored energy obtained from equilibrium reconstruction. The diamagnetic
+    energy is measured using diamagnetic loops — flux loops positioned to detect the change in toroidal flux caused by the
+    plasma's diamagnetic and paramagnetic currents relative to the vacuum field. Values range from 0.1–1 MJ in medium-size
+    tokamaks (ASDEX Upgrade, DIII-D) and are expected to reach 300–400 MJ in ITER burning-plasma scenarios. The measurement
+    is sensitive to eddy currents in surrounding conducting structures, requiring careful compensation. The ratio of $W_\mathrm{dia}$
+    to the volume-averaged toroidal magnetic-field energy defines the volume-averaged [poloidal beta](name:poloidal_beta)
+    $\beta_p$. Differences between $W_\mathrm{dia}$ and the MHD stored energy from equilibrium reconstruction indicate pressure
+    anisotropy driven by fast-ion populations. The perpendicular and parallel pressure profiles underlying this integral connect
+    to [electron_pressure](name:electron_pressure) and [ion_pressure](name:ion_pressure) through species summation.
+  kind: scalar
+  unit: J
+  physics_domain:
+  - transport
+  reviewer_comments_name: The name 'diamagnetic_energy' is a well-established fusion plasma physics term representing plasma
+    stored energy measured via diamagnetic methods. It parses correctly as a compound physical_base, follows naming conventions,
+    and is semantically appropriate with proper units (J). All dimensions score well.
+  reviewer_verdict_name: accept
+- id: lower_uncertainty_of_diamagnetic_energy
+  reviewer_score_name: 0.925
+  description: Lower bound of the asymmetric uncertainty interval on the plasma diamagnetic energy, quantifying the downward
+    error bar from the reported value.
+  documentation: The lower uncertainty of the diamagnetic energy $W_{\mathrm{dia}}$ defines the magnitude of the negative
+    error bar such that the true value is expected to lie within $[W_{\mathrm{dia}} - \Delta W^{-}, W_{\mathrm{dia}} + \Delta
+    W^{+}]$, where $\Delta W^{-}$ is this quantity. The [diamagnetic_energy](name:diamagnetic_energy) itself is derived from
+    the diamagnetic flux measurement $\Delta\Phi_{\mathrm{dia}}$ via $W_{\mathrm{dia}} = (3/2) \cdot (4\pi / \mu_0) \cdot
+    B_0 \Delta\Phi_{\mathrm{dia}} \cdot V / R$, where $B_0$ is the vacuum toroidal field, $V$ is the plasma volume, $R$ is
+    the major radius, and $\mu_0$ is the vacuum permeability. Uncertainty sources include integrator drift, vessel-current
+    compensation errors, and equilibrium-shape assumptions used in the geometric correction factor. In present-day tokamaks,
+    relative uncertainties on $W_{\mathrm{dia}}$ range from 5–15% depending on plasma $\beta$ and the quality of the diamagnetic-loop
+    signal compensation.
+  kind: scalar
+  unit: J
+  physics_domain:
+  - transport
+  reviewer_comments_name: 'Grammar: The name correctly uses the ''lower_uncertainty'' transformation with ''diamagnetic_energy''
+    as the physical_base, connected by ''_of_''. It parses and round-trips without issue. Semantic: Diamagnetic energy is
+    a standard plasma physics observable and ''lower_uncertainty'' correctly represents the lower uncertainty bound. Convention:
+    Follows all naming conventions including snake_case, proper seg'
+  reviewer_verdict_name: accept
+- id: thermal_electron_pressure
+  reviewer_score_name: 0.925
+  description: Scalar pressure of the thermal electron population, related to density and temperature by $p_e = n_e k_B T_e$.
+  documentation: The thermal electron pressure $p_e$ characterizes the isotropic kinetic pressure exerted by the bulk (Maxwellian)
+    electron population on a given flux surface. It is defined as $p_e = n_e k_B T_e$, where $n_e$ is the electron density
+    and $T_e$ is the electron temperature. In tokamak core plasmas, values range from a few kPa in low-performance discharges
+    to $\sim$100 kPa in high-performance H-mode scenarios; in the scrape-off layer, $p_e$ drops to 1–100 Pa. The quantity
+    is routinely derived from Thomson scattering profiles and is a key ingredient in MHD equilibrium reconstruction via the
+    force-balance relation $\nabla p = \mathbf{j} \times \mathbf{B}$. In edge transport codes, the thermal electron pressure
+    enters the energy balance and determines the electron diamagnetic drift velocity $v_{*e} = -(\nabla p_e \times \mathbf{B})
+    / (n_e e B^2)$.
+  kind: scalar
+  unit: Pa
+  physics_domain:
+  - transport
+  - edge_plasma_physics
+  reviewer_comments_name: The name 'thermal_electron_pressure' correctly uses the closed-vocabulary subject 'thermal_electron'
+    with the physical_base 'pressure'. It parses cleanly, is semantically accurate for the scalar pressure of thermal electrons,
+    follows naming conventions, and is complete for a scalar quantity measured in Pa.
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: thermal_electron
+- id: neutral_energy_flux
+  reviewer_score_name: 0.925
+  description: Energy carried per unit area per unit time by neutral particles crossing a surface in the plasma, quantifying
+    the neutral contribution to the total energy transport.
+  documentation: The neutral energy flux $\Gamma_E^n = \int \frac{1}{2} m_n v^2 \, v \, f_n(\mathbf{v}) \, d^3v$ represents
+    the kinetic energy transported by neutral atoms or molecules across a given surface, where $m_n$ is the neutral particle
+    mass, $v$ is the speed, and $f_n(\mathbf{v})$ is the neutral velocity distribution function. This quantity is central
+    to edge and divertor transport modeling, where charge-exchange and recombination processes generate energetic neutrals
+    that redistribute power from the confined plasma to the vessel walls. Neutral energy fluxes are computed by kinetic neutral
+    transport codes (e.g., EIRENE, DEGAS2) or estimated from spectroscopic measurements of Balmer-series emission combined
+    with neutral density reconstructions. In high-recycling divertor conditions, the neutral energy flux at the target can
+    reach $1$–$10\;\mathrm{MW\,m^{-2}}$, while in the upstream scrape-off layer it is usually one to two orders of magnitude
+    lower. The relationship $\Gamma_E^n = \frac{3}{2} T_n \Gamma_n + q_n^{\rm kin}$ decomposes the flux into a convective
+    part proportional to [neutral_temperature](name:neutral_temperature) and particle flux, plus a kinetic heat-flux correction
+    $q_n^{\rm kin}$. Accurate evaluation of this quantity is essential for predicting power loading on plasma-facing components
+    and for assessing the effectiveness of [neutral_density](name:neutral_density) fueling and detachment scenarios.
+  kind: scalar
+  unit: m^-2.W
+  physics_domain:
+  - transport
+  reviewer_comments_name: 'Grammar: valid parse with subject=''neutral'' and physical_base=''energy_flux'', round-trips correctly.
+    Semantic: accurately represents energy flux of neutral species, consistent with the given unit. Convention: proper snake_case,
+    canonical ordering, no ambiguity. Completeness: all necessary segments present for a scalar energy flux quantity.'
+  reviewer_verdict_name: accept
+  grammar_decomposition:
+    subject: neutral
+adequate:
+- id: maximum_ion_charge_state_number
+  reviewer_score_name: 0.7875
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: 'Grammar: ''ion_charge_state'' is a recognized position token in the closed vocabulary, yet it is
+    partially absorbed into physical_base as ''charge_state_number''. This is a decomposition defect (-4). Semantically the
+    intent is clear but the construction is suboptimal. Convention: embedding closed-vocab tokens into physical_base is discouraged.
+    Completeness: adequate for a scalar dimensionless quantity'
+  reviewer_verdict_name: revise
+- id: toroidal_angular_momentum_density
+  reviewer_score_name: 0.7875
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: 'Grammar: ''toroidal'' is a closed-vocab component token absorbed into physical_base, costing 4
+    points. Semantic: the physical meaning is clear but decomposition is suboptimal. Convention: mostly good but the component
+    should be a separate segment. Completeness: the unit ''1'' is inconsistent with angular momentum density dimensions, and
+    no subject is specified.'
+  reviewer_verdict_name: revise
+  grammar_decomposition:
+    coordinate: toroidal
+- id: total_ion_density
+  reviewer_score_name: 0.7875
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: 'Grammar: The name parses correctly with subject=''total_ion'' and physical_base=''density'', both
+    valid. Semantic: ''total_ion_density'' is a well-known plasma physics quantity, but the dimensionless unit ''1'' is inconsistent
+    with a density (expected m^-3), raising doubt about the intended quantity. Convention: Clean snake_case, canonical ordering,
+    no issues. Completeness: The unit mismatch is a signific'
+  reviewer_verdict_name: revise
+  grammar_decomposition:
+    subject: total_ion
+- id: toroidal_angular_momentum
+  reviewer_score_name: 0.7875
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: 'Grammar: ''toroidal'' is a closed-vocab component token absorbed into physical_base (-4 points).
+    Semantic: reasonable physical concept but unit mismatch raises concern. Convention: generally good snake_case naming.
+    Completeness: missing subject and inconsistent unit indicate incomplete specification.'
+  reviewer_verdict_name: revise
+  grammar_decomposition:
+    coordinate: toroidal
+- id: toroidal_orbit_frequency
+  reviewer_score_name: 0.7875
+  description: Angular frequency at which a charged particle orbit completes one full toroidal transit around the torus.
+  documentation: The toroidal orbit frequency $\omega_\phi$ quantifies how rapidly a confined particle's guiding center precesses
+    in the toroidal direction. For a trapped particle executing banana orbits, the toroidal precession frequency is given
+    by $\omega_\phi = \frac{q v_d}{r}$, where $q$ is the [safety_factor](name:safety_factor), $v_d$ is the magnetic drift
+    speed, and $r$ is the minor radius of the flux surface. For passing particles, $\omega_\phi \approx v_\parallel / (q R)$,
+    where $v_\parallel$ is the parallel velocity component and $R$ is the major radius. This frequency is central to neoclassical
+    transport theory and resonant wave-particle interaction analysis; bounce-averaged kinetic codes (e.g., HAGIS, ORBIT) compute
+    $\omega_\phi$ as part of the constants of motion $(E, \mu, P_\phi)$ characterization. In tokamak fusion plasmas, energetic
+    alpha particles with 3.5 MeV birth energy exhibit toroidal orbit frequencies of order $10^4$–$10^5$ rad/s, while thermal
+    ions have values of order $10^3$–$10^4$ rad/s depending on plasma current and field geometry. Resonance between $\omega_\phi$
+    and the frequency of toroidal Alfvén eigenmodes can drive energetic-particle-driven instabilities. The toroidal orbit
+    frequency is closely related to the [toroidal_component_of_rotation_frequency_of_plasma](name:toroidal_component_of_rotation_frequency_of_plasma)
+    of the bulk plasma, since departures between the single-particle orbit frequency and the bulk rotation indicate finite
+    orbit-width effects important for momentum transport.
+  kind: scalar
+  unit: rad.s^-1
+  physics_domain:
+  - transport
+  reviewer_comments_name: 'Grammar: ''toroidal'' is a closed-vocab component token absorbed into physical_base — decomposition
+    defect (−4). Semantic: physically meaningful but ambiguous without species. Convention: generally good snake_case, canonical
+    ordering. Completeness: missing subject for the orbit frequency.'
+  reviewer_verdict_name: revise
+  grammar_decomposition:
+    coordinate: toroidal
+- id: normalized_atomic_abundance
+  reviewer_score_name: 0.7875
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: 'Grammar: The name round-trips through parse/compose with transformation=''normalized'' and physical_base=''atomic_abundance'',
+    so it is grammatically valid. Minor concern that ''abundance'' is not standard IMAS terminology. Semantic: The concept
+    is plausible for a dimensionless fractional quantity, but ''abundance'' is ambiguous in fusion contexts — ''fraction''
+    is more precise. Convention: No violations of'
+  reviewer_verdict_name: revise
+- id: flux_surface_averaged_toroidal_current_density
+  reviewer_score_name: 0.7875
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: 'Grammar: ''toroidal'' is a valid component token from the closed vocabulary that should be decomposed
+    out of the physical_base. The name should parse as transformation=flux_surface_averaged, component=toroidal, physical_base=current_density.
+    Docking 4 points for one decomposition defect (toroidal absorbed into physical_base). Also the unit ''1'' is incorrect
+    for current density (should be A/m²). Seman'
+  reviewer_verdict_name: revise
+- id: turbulent_particle_flux
+  reviewer_score_name: 0.7875
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: 'Grammar: ''particle'' from the closed subject vocabulary is absorbed into physical_base as part
+    of ''particle_flux''. This is a borderline case since ''particle_flux'' could be considered a lexicalized compound (like
+    ''poloidal_flux''), but the grammar would be cleaner with subject=''particle'' and physical_base=''flux''. Semantic: physically
+    meaningful but ambiguous without species. Convention: follows stand'
+  reviewer_verdict_name: revise
+- id: gap_vector_angle_from_radial_direction
+  reviewer_score_name: 0.7875
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: 'Grammar: The name round-trips as a valid open-vocabulary physical_base compound, so grammar is
+    valid. Semantic: The concept is physically reasonable but ''gap_vector_angle'' is somewhat ambiguous without context.
+    Convention: The name doesn''t follow the more established patterns like ''gap_angle_of_plasma_boundary'' and the ''from_radial_direction''
+    suffix is non-standard phrasing. Completeness: Missing '
+  reviewer_verdict_name: revise
+- id: mean_square_ion_charge
+  reviewer_score_name: 0.7875
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: 'Grammar: ''ion'' is a closed-vocab subject token absorbed into physical_base (-4 points). Semantically
+    the quantity is clear as <Z²> for ions. Convention is acceptable but the compound physical_base could be better decomposed.
+    Completeness is slightly lacking as the type of averaging is unspecified.'
+  reviewer_verdict_name: revise
+inadequate:
+- id: poloidal_diffusion_coefficient_of_ion_particles
+  reviewer_score_name: 0.6375
+  description: Effective diffusivity governing cross-field ion particle transport in the poloidal direction within edge-plasma
+    models.
+  documentation: The poloidal ion particle diffusion coefficient $D_{\theta,i}$ quantifies the rate at which ion density gradients
+    along the poloidal coordinate drive particle flux on a given flux surface. In the fluid description of edge plasmas, the
+    poloidal ion particle flux is modeled as $\Gamma_{\theta,i} = -D_{\theta,i} \nabla_\theta n_i$, where $n_i$ is the ion
+    density and $\nabla_\theta$ denotes the poloidal gradient. This coefficient is an input parameter in 2-D edge-transport
+    codes (e.g., SOLPS-ITER, EDGE2D) and is often prescribed empirically or derived from turbulence simulations. Values in
+    the scrape-off layer range from $0.1$ to $5\;\mathrm{m^2\,s^{-1}}$ depending on the turbulence regime and proximity to
+    the separatrix. It complements the [poloidal momentum diffusion coefficient](name:poloidal_diffusion_coefficient_of_momentum)
+    and is related to the [neutral particle diffusion coefficient](name:poloidal_diffusion_coefficient_of_neutral_particles)
+    for charge-exchange-dominated regimes.
+  kind: scalar
+  unit: m^2.s^-1
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: 'Grammar (12/20): `poloidal` absorbed into base rather than in its own group (decomposition defect,
+    -4). `_of_ion_particles` misuses the locus `_of_` preposition for a species/transported-quantity relationship, and `particles`
+    is redundant. Semantic (13/20): The physical concept is reasonable but the decomposition is unconventional — `ion_particles`
+    is the transported species, not a locus, and the '
+  reviewer_verdict_name: revise
+  grammar_decomposition:
+    coordinate: poloidal
+- id: edge_plasma_particle_velocity
+  reviewer_score_name: 0.6375
+  description: The rate of displacement of plasma particles per unit time within the edge region of a fusion device.
+  kind: vector
+  unit: m.s^-1
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: 'Grammar: ''particle'' is a closed-vocab subject token absorbed into physical_base (-4 points).
+    Semantic: ''edge_plasma'' is ambiguous as a qualifier; domain experts would likely separate subject and position. Convention:
+    non-canonical use of ''edge_plasma'' rather than a recognized position term; segment ordering is non-standard. Completeness:
+    missing explicit position segment for edge location; no comp'
+  reviewer_verdict_name: revise
+- id: poloidal_component_of_pfirsch_schlueter_current_density
+  reviewer_score_name: 0.6375
+  description: Projection of the Pfirsch-Schlüter current density onto the poloidal direction, arising from the divergence-free
+    condition on currents within toroidal geometry.
+  documentation: The Pfirsch-Schlüter current density $\mathbf{j}_{\mathrm{PS}}$ is the parallel current required to maintain
+    $\nabla \cdot \mathbf{j} = 0$ in toroidal geometry when diamagnetic currents alone cannot close on a flux surface. Its
+    poloidal component $j_{\mathrm{PS},\theta} = \mathbf{j}_{\mathrm{PS}} \cdot \hat{\theta}$ captures the portion flowing
+    in the poloidal plane. In the large-aspect-ratio limit the Pfirsch-Schlüter current scales as $j_{\mathrm{PS}} \sim 2
+    (\nabla p \times \hat{\phi}) \cdot \hat{b} / (B_\theta)$, where $\nabla p$ is the pressure gradient, $\hat{\phi}$ is the
+    toroidal unit vector, $\hat{b}$ is the magnetic-field unit vector, and $B_\theta$ is the poloidal magnetic-field magnitude.
+    In medium-size tokamak edge plasmas, typical magnitudes of the poloidal Pfirsch-Schlüter current density range from $10^3$
+    to $10^5$ A m$^{-2}$, depending on the local pressure gradient and magnetic geometry. This current contributes to neoclassical
+    transport and modifies the radial electric field in the pedestal region; it is computed by neoclassical transport codes
+    (e.g., NCLASS, NEO) or extracted from fluid edge codes solving the full current-continuity equation. The Pfirsch-Schlüter
+    current connects conceptually to the [bootstrap current density](name:parallel_component_of_bootstrap_current_density)
+    as both arise from neoclassical effects, and its evaluation requires knowledge of the local [pressure gradient](name:radial_component_of_pressure_gradient)
+    and the [poloidal magnetic field](name:poloidal_component_of_magnetic_field).
+  kind: vector
+  unit: A.m^-2
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: 'Grammar: ''poloidal'' (component) and ''pfirsch_schlueter'' (subject) are both closed-vocabulary
+    tokens absorbed into the physical_base compound. Each costs 4 points (total -8 from 16 baseline = 8, though starting from
+    20 gives 12, capped at -8 gives 12... applying -4 each = 20-8=12, but given the ''component_of'' phrasing also suggests
+    structural issues, scoring 8). Semantic: The physical meaning is cl'
+  reviewer_verdict_name: revise
+  grammar_decomposition:
+    subject: pfirsch_schlueter
+    component: poloidal
+- id: poloidal_diffusion_coefficient_of_neutral_momentum
+  reviewer_score_name: 0.6375
+  description: Effective diffusivity governing poloidal transport of neutral-species momentum in edge-plasma fluid models.
+  documentation: The poloidal neutral momentum diffusion coefficient $D_{\theta,n}^{\mathrm{mom}}$ parameterizes the viscous-like
+    diffusive spreading of neutral momentum along the poloidal coordinate in the fluid neutral approximation used by edge
+    transport codes. The momentum flux takes the form $\Pi_{\theta,n} = -D_{\theta,n}^{\mathrm{mom}} \nabla_\theta (n_n m_n
+    v_n)$, where $n_n$ is the neutral density, $m_n$ the neutral mass, and $v_n$ the neutral flow velocity. This approximation
+    is valid in high-collisionality regimes (detached or partially detached divertor) where charge-exchange and elastic collisions
+    render the neutral mean free path much shorter than the poloidal gradient scale length. In such regimes, $D_{\theta,n}^{\mathrm{mom}}
+    \approx \lambda_{\mathrm{cx}} v_{\mathrm{th},n} / 3$, where $\lambda_{\mathrm{cx}}$ is the charge-exchange mean free path.
+    It complements the [neutral energy diffusivity](name:poloidal_diffusion_coefficient_of_neutral_energy) and [neutral particle
+    diffusivity](name:poloidal_diffusion_coefficient_of_neutral_particles).
+  kind: scalar
+  unit: m^2.s^-1
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: 'Grammar (12/20): `poloidal` is absorbed into the base rather than occupying its own group — a decomposition
+    error, though debatable for a scalar coefficient. The `_of_neutral_momentum` suffix misuses the locus `_of_` preposition
+    for a transported-quantity relationship. Semantic (13/20): The physical concept is reasonable for edge neutral transport,
+    but the decomposition is unconventional — `neutra'
+  reviewer_verdict_name: revise
+  grammar_decomposition:
+    coordinate: poloidal
+- id: radial_component_of_ion_energy_flux
+  reviewer_score_name: 0.6375
+  kind: vector
+  unit: '1'
+  reviewer_comments_name: 'Grammar: The name absorbs closed-vocabulary tokens ''radial'' (component) and ''ion'' (subject)
+    into the physical_base compound, representing two decomposition defects (-8 points). Semantic: Correctly identifies the
+    radial ion energy flux quantity. Convention: Non-canonical segment ordering; should follow [subject][component][physical_base]
+    pattern. Completeness: Unit and kind metadata appear inconsis'
+  reviewer_verdict_name: revise
+  grammar_decomposition:
+    component: radial
+    subject: ion
+- id: ion_collisional_heating_power_from_fast_particles
+  reviewer_score_name: 0.6375
+  kind: scalar
+  unit: '1'
+  reviewer_comments_name: 'Grammar: The compound physical_base absorbs ''fast_particle'' (a closed-vocab subject variant)
+    — dock 4 points. The process dimension (''collisions''/''thermalization_of_fast_particles'') is also embedded rather than
+    extracted from the process segment. Semantic: The physics intent is understandable but poorly decomposed. Convention:
+    Segment ordering is not canonical; process and source subject are embed'
+  reviewer_verdict_name: revise
+  grammar_decomposition:
+    subject: ion
+- id: lower_uncertainty_of_poloidal_component_of_magnetic_field
+  reviewer_score_name: 0.6375
+  description: The lower bound value of the asymmetric uncertainty interval representing the measurement or statistical error
+    of the poloidal component of the magnetic field. This represents the magnitude of the negative deviation from the nominal
+    poloidal magnetic field strength.
+  documentation: This standard name represents the absolute magnitude of the lower bound of an asymmetric uncertainty interval
+    for the poloidal component of the magnetic field vector, denoted as $B_{\theta}$. If the uncertainty interval for the
+    poloidal magnetic field is expressed as $[B_{\theta} - \sigma_{low}, B_{\theta} + \sigma_{high}]$, this quantity corresponds
+    to $\sigma_{low}$. It is used in edge plasma physics to quantify the precision and reliability of magnetic diagnostics
+    such as magnetic probes (Mirnov coils) or polarimetry measurements. Typical values for tokamak edge plasma vary significantly
+    depending on the magnetic configuration and diagnostic method, and it must be non-negative, expressed in units of Tesla
+    (T). This field is distinct from the standard deviation and is typically derived from the error propagation of raw diagnostic
+    signals.
+  kind: vector
+  unit: T
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: 'Mirrors the upper_uncertainty candidate exactly in all structural respects. The same escalator
+    reasoning applies: grammar score of 8 for a genuine closed-registry operator violation (between the two prior reviewers''
+    extremes of 0 and 16), convention score of 10 for the non-canonical prefix pattern, semantic 17 and completeness 16 for
+    accurate but structurally imperfect encoding. Total of 51 clears'
+  reviewer_verdict_name: revise
+- id: lower_uncertainty_of_radial_component_of_momentum_flux_limiter
+  reviewer_score_name: 0.6312
+  description: Represents the lower bound of the asymmetric uncertainty interval assigned to the radial component of the momentum
+    flux limiter coefficient. This value quantifies the magnitude of the negative deviation from the nominal coefficient value.
+  documentation: The radial component of the momentum flux limiter, often denoted as $\alpha_r$, is used in edge plasma transport
+    models to prevent non-physical particle or energy flows. The uncertainty is expressed as an asymmetric interval $[\alpha_r
+    - \delta^-, \alpha_r + \delta^+]$, where $\delta^-$ represents the `lower_uncertainty_of_radial_component_of_momentum_flux_limiter`.
+    This scalar value is non-negative and represents the lower confidence bound of the coefficient. Typical values depend
+    on the specific flux limiter formulation (e.g., Koren, van Leer) and the underlying transport model physics. It is expressed
+    as a dimensionless ratio of the radial component flux.
+  kind: vector
+  unit: '1'
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: '[Primary] Grammar: `lower_uncertainty` not registered (8/20). Semantic: accurate (16/20). Convention:
+    double `_of_` chain (10/20). Completeness: adequate (16/20). Revision needed.
+
+    [Secondary] This entry has the same pattern as the other uncertainty companions: good semantic targeting of the DD path,
+    but a structural problem in the uncertainty encoding. Grammar and convention are both reduced becau'
+  reviewer_verdict_name: revise
+- id: lower_uncertainty_of_poloidal_component_of_momentum_flux_limiter
+  reviewer_score_name: 0.6312
+  description: Lower bound of the asymmetric uncertainty interval on the poloidal momentum flux limiter coefficient.
+  documentation: This quantity represents the negative (downward) deviation from the nominal value of the [poloidal momentum
+    flux limiter](name:poloidal_component_of_momentum_flux_limiter), defining the lower edge of its asymmetric uncertainty
+    envelope. In edge-plasma transport sensitivity analyses, the lower uncertainty captures how much the limiter coefficient
+    can decrease before the code solution departs significantly from the baseline. It is dimensionless and non-negative; the
+    actual lower bound of the confidence interval is $\alpha - \delta_{\mathrm{low}}$, where $\alpha$ is the nominal limiter
+    value and $\delta_{\mathrm{low}}$ is this quantity. Combined with the [upper uncertainty](name:upper_uncertainty_of_poloidal_component_of_momentum_flux_limiter),
+    the full asymmetric interval is defined.
+  kind: vector
+  unit: '1'
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: '[Primary] Grammar: `lower_uncertainty` not registered — same violation pattern as calibrated at
+    8/20. Semantic: accurate for DD path. Convention: double `_of_` chain, scored 10/20 per calibration. Completeness: adequate.
+
+    [Secondary] The candidate mirrors the previously calibrated lower-uncertainty issue: the semantic intent is good, but
+    the grammar uses a closed-segment uncertainty prefix that is '
+  reviewer_verdict_name: revise
+- id: lower_uncertainty_of_parallel_component_of_electric_field
+  reviewer_score_name: 0.625
+  description: Lower bound of the asymmetric uncertainty interval on the electric-field component projected along the local
+    magnetic-field direction.
+  documentation: The lower uncertainty quantifies the negative-side error bar on the parallel electric field $E_\parallel
+    = \mathbf{E} \cdot \hat{b}$, where $\hat{b} = \mathbf{B}/|\mathbf{B}|$ is the unit vector along the magnetic field. Asymmetric
+    uncertainties arise when the measurement or reconstruction error distribution is non-Gaussian, e.g. due to systematic
+    offsets in Langmuir-probe characteristics or limitations in kinetic reconstruction of the parallel Ohm's law. The parallel
+    electric field drives parallel current and governs electron runaway dynamics; core values are of order $10^{-3}$–$10^{-1}$
+    V m$^{-1}$ in steady-state tokamak operation but can reach several V m$^{-1}$ during disruptions. This quantity represents
+    the magnitude of the deviation below the best-estimate value, so the physical value lies in the interval $[E_\parallel
+    - \delta E_\parallel^{-},\, E_\parallel + \delta E_\parallel^{+}]$, where $\delta E_\parallel^{-}$ is the present quantity.
+    The [parallel_component_of_electric_field](name:parallel_component_of_electric_field) drives neoclassical resistivity
+    and is related to the loop voltage through the magnetic geometry.
+  kind: vector
+  unit: m^-1.V
+  physics_domain:
+  - transport
+  reviewer_comments_name: 'Grammar: The name does not follow canonical segment ordering. The transformation ''lower_uncertainty''
+    should precede the component ''parallel'' which should precede the physical_base ''electric_field'' without ''of'' connectors.
+    The word ''component'' is redundant. Semantic: The physical meaning is clear and correct. Convention: Non-canonical use
+    of ''of'' prepositions and inclusion of redundant ''component'' '
+  reviewer_verdict_name: revise
+poor:
+- id: mhd_linear_toroidal_mode_plasma_b_field_perturbed_coordinate1_real
+  reviewer_score_name: 0.3875
+  description: The real part of the first coordinate component of the perturbed magnetic field in a linear MHD plasma toroidal
+    mode.
+  kind: scalar
+  unit: '1'
+  physics_domain: []
+  reviewer_comments_name: 'Grammar: The name absorbs multiple closed-vocabulary tokens (toroidal as component, perturbed as
+    transformation) into an undifferentiated physical_base compound. The abbreviation ''b_field'' violates conventions. ''mhd_linear''
+    embeds methodology. ''coordinate1_real'' is non-standard for expressing real_part of a coordinate component. Semantic:
+    The physical intent is recoverable but poorly encoded. Conv'
+  reviewer_verdict_name: reject
+- id: parallel_viscosity_current_density_due_to_diamagnetic_drift
+  reviewer_score_name: 0.3875
+  description: The current density contribution arising from the divergence of the parallel viscous stress tensor, specifically
+    that portion driven by diamagnetic flows in drift-ordered fluid plasma models. It represents a neoclassical correction
+    to the current density that contributes to poloidal flow damping in collisional edge plasmas.
+  documentation: 'In drift-ordered fluid models of edge plasma, the total current density is augmented by contributions from
+    the divergence of the parallel viscous stress tensor $\boldsymbol{\pi}_{\parallel}$. The parallel viscosity current density
+    due to diamagnetic drift represents the component $j_{\pi_{\parallel}}^{\mathrm{dia}}$ arising from the coupling of diamagnetic
+    fluxes to magnetic field geometry (curvature and $\nabla B$). It is formally related to the parallel projection of the
+    viscous stress divergence: $j_{\pi_{\parallel}}^{\mathrm{dia}} \approx \frac{B}{B^2} \cdot \nabla \cdot \boldsymbol{\pi}_{\parallel}^{\mathrm{dia}}$.
+    This term is significant in the Pfirsch-Schlüter and plateau collisionality regimes, where it plays a critical role in
+    damping poloidal flows and modifying the bootstrap current. Typical numerical values in tokamak edge simulations range
+    from $10^1$ to $10^4 \text{ A m}^{-2}$, depending on the ion collisionality $\nu^* = \nu_{ii} q R / v_{\text{th},i}$.
+    Sign convention follows the projection along the magnetic field line $\mathbf{b} = \mathbf{B}/B$.'
+  kind: scalar
+  unit: A.m^-2
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: 'Grammar (6/20): The compound base `parallel_viscosity_current_density` absorbs `parallel` (a registered
+    component/projection token) and `viscosity` (a separate physics concept) into the physical_base slot, each constituting
+    a decomposition defect (−4 each, cumulative −8). Only the `_due_to_diamagnetic_drift` postfix is correctly formed. Semantic
+    (8/20): ''Parallel viscosity current density'' is not '
+  reviewer_verdict_name: reject
+  grammar_decomposition:
+    process: diamagnetic_drift
+    coordinate: parallel
+- id: upper_uncertainty_of_parallel_viscosity_current_density_due_to_diamagnetic_drift
+  reviewer_score_name: 0.3875
+  description: Upper bound of the asymmetric uncertainty on the parallel viscosity current density driven by diamagnetic drift.
+  documentation: This quantity gives the positive-side confidence bound on the [parallel viscosity current density due to
+    diamagnetic drift](name:parallel_viscosity_current_density_due_to_diamagnetic_drift). Uncertainties propagate primarily
+    from collisionality-dependent parallel viscosity coefficients and from upstream profile gradients. In edge transport modeling,
+    the parallel viscous closure is sensitive to the assumed ion-ion collision frequency and to the completeness of the neoclassical
+    viscosity matrix. The upper uncertainty indicates how far above the best-estimate value the true current density may lie.
+  kind: scalar
+  unit: A.m^-2
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: 'Grammar (6/20): Two major defects — `upper_uncertainty` is an unregistered operator (−4) and the
+    compound base `parallel_viscosity_current_density` absorbs `parallel` (projection group) and `viscosity` (separate concept)
+    into the physical_base slot (−4 each, capped at −8 total on decomposition, plus −4 for unregistered operator, total docked
+    exceeds dimension floor so score is 6). The `_due_to_dia'
+  reviewer_verdict_name: reject
+  grammar_decomposition:
+    process: diamagnetic_drift
+- id: upper_uncertainty_of_vertical_component_of_momentum_flux_limiter
+  reviewer_score_name: 0.375
+  description: Upper bound of the asymmetric uncertainty interval on the vertical component of the momentum flux limiter coefficient.
+  documentation: This quantity represents the positive (upward) deviation from the nominal value of the [vertical component
+    of the momentum flux limiter](name:vertical_component_of_momentum_flux_limiter), defining the upper edge of its asymmetric
+    uncertainty envelope. The momentum flux limiter is a dimensionless coefficient that caps numerical momentum fluxes in
+    edge-plasma transport solvers to prevent unphysical overshoots; its vertical component acts on the $Z$-directed momentum
+    flux in the right-handed cylindrical $(R, \phi, Z)$ frame. When combined with the [lower uncertainty](name:lower_uncertainty_of_vertical_component_of_momentum_flux_limiter),
+    the full confidence interval is reconstructed as $[\alpha_Z - \delta_{\mathrm{low}},\; \alpha_Z + \delta_{\mathrm{up}}]$,
+    where $\alpha_Z$ is the nominal vertical limiter value, $\delta_{\mathrm{low}}$ is the lower uncertainty, and $\delta_{\mathrm{up}}$
+    is this quantity. Being a bound on a dimensionless coefficient, it is itself dimensionless and non-negative.
+  kind: vector
+  unit: '1'
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: 'Grammar: The name includes literal ''component'' and ''of'' connectors that do not conform to canonical
+    segment ordering. The correct composition would be ''upper_uncertainty_vertical_momentum_flux_limiter''. The word ''component''
+    is not a grammar token - it''s an artifact of incorrect name construction. Semantic: Momentum flux at a limiter is plausible
+    but the unit (dimensionless) is inconsistent with ph'
+  reviewer_verdict_name: reject
+- id: upper_uncertainty_of_poloidal_component_of_momentum_flux_limiter
+  reviewer_score_name: 0.375
+  description: Upper bound of the asymmetric uncertainty interval on the poloidal momentum flux limiter coefficient.
+  documentation: This quantity represents the positive (upward) deviation from the nominal value of the [poloidal momentum
+    flux limiter](name:poloidal_component_of_momentum_flux_limiter), defining the upper edge of its asymmetric uncertainty
+    envelope. In sensitivity studies of edge-plasma transport codes, the upper uncertainty quantifies how much the limiter
+    coefficient can increase before a statistically significant change in the solution is observed. It is dimensionless and
+    shares the same $[0, 1]$ domain as the parent limiter. When combined with the [lower uncertainty](name:lower_uncertainty_of_poloidal_component_of_momentum_flux_limiter),
+    the full confidence interval on the limiter is reconstructed as $[\alpha - \delta_{\mathrm{low}},\; \alpha + \delta_{\mathrm{up}}]$,
+    where $\alpha$ is the nominal limiter value, $\delta_{\mathrm{low}}$ is the lower uncertainty, and $\delta_{\mathrm{up}}$
+    is this quantity.
+  kind: vector
+  unit: '1'
+  physics_domain:
+  - edge_plasma_physics
+  reviewer_comments_name: 'Grammar: The name absorbs closed-vocab tokens ''poloidal'' (component) and ''limiter'' (position)
+    into what would be the physical_base compound, resulting in at least two decomposition defects (-8 points). The proper
+    decomposition should separate these into their respective grammar slots. Semantic: The physical meaning is ambiguous and
+    the unit ''1'' is inconsistent with momentum flux. Convention: Segme'
+  reviewer_verdict_name: reject
