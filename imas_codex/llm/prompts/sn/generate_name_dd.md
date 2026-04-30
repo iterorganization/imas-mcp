@@ -96,22 +96,6 @@ These names already exist in the catalog. Reuse them if they match your source, 
 {% endfor %}
 {% endif %}
 
-{% if reference_exemplars %}
-## REFERENCE EXEMPLARS — match this style and grammar usage
-
-These validated standard names from the catalog are semantically similar to items
-in this batch. Match their naming style, description format, and grammar field usage:
-
-{% for ex in reference_exemplars %}
-### `{{ ex.name }}`
-- **Description:** {{ ex.description }}
-- **Unit:** {{ ex.unit }}
-{% if ex.grammar_fields %}- **Grammar:** {% for seg, tok in ex.grammar_fields.items() %}{% if tok %}`{{ seg }}={{ tok }}` {% endif %}{% endfor %}{% endif %}
-{% if ex.documentation %}- **Documentation (excerpt):** {{ ex.documentation[:500] }}{% endif %}
-
-{% endfor %}
-{% endif %}
-
 ## DD Paths to Name
 
 {% for item in items %}

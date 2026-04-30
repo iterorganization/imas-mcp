@@ -1,15 +1,14 @@
 {% if compose_scored_examples %}
-## SCORED EXAMPLES
+## SCORED EXAMPLES — calibrate your output quality
 
-Previously reviewed standard names demonstrating the target quality range.
-Use these to calibrate your output quality.
+Previously reviewed standard names spanning the quality spectrum.
+**Emulate** Outstanding/Good examples; **avoid** the patterns in Threshold/Inadequate ones.
 
 {% for ex in compose_scored_examples %}
-### Example ({{ ex.reviewer_verdict }}, score {{ "%.2f"|format(ex.reviewer_score) }})
+### {{ ex.reviewer_verdict }} example (score {{ "%.2f"|format(ex.reviewer_score) }}, band {{ "%.2f"|format(ex.target_score) }}){% if ex.target_score >= 0.80 %} ✅ EMULATE{% else %} ⚠️ AVOID{% endif %}
 
 **`{{ ex.id }}`** [{{ ex.unit or 'dimensionless' }}, kind={{ ex.kind }}]
 Description: {{ ex.description }}
-{% if ex.documentation %}Documentation: {{ ex.documentation }}{% endif %}
 
 Per-dimension scores:
 {% for dim, score in ex.scores.items() %}
