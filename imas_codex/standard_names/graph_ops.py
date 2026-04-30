@@ -2225,12 +2225,18 @@ def persist_generated_name_batch(
             entry["cocos_transformation_type"] = "one_like"
 
     # --- Batch-embed standard-name strings ---
-    # Embed the name (id) field in a single batch call for efficiency.
-    # The id IS the standard-name string (e.g. "electron_temperature").
+    # Prefer "name — description" for richer embedding basis when
+    # description is available; fall back to name-only for candidates
+    # without one (backward-compatible with existing name-only embeddings).
+    for entry in candidates:
+        name = entry.get("id") or ""
+        desc = entry.get("description") or ""
+        entry["_embed_text"] = f"{name} — {desc}" if desc else name
+
     try:
         from imas_codex.embeddings.description import embed_descriptions_batch
 
-        embed_descriptions_batch(candidates, text_field="id")
+        embed_descriptions_batch(candidates, text_field="_embed_text")
     except Exception:
         logger.warning(
             "Embedding server unavailable — all %d candidates quarantined",
@@ -2240,6 +2246,10 @@ def persist_generated_name_batch(
         # Total failure — mark all as quarantined
         for entry in candidates:
             entry["embedding"] = None
+
+    # Clean up transient field
+    for entry in candidates:
+        entry.pop("_embed_text", None)
 
     # Set embedded_at for successful embeddings; quarantine failures
     for entry in candidates:

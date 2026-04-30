@@ -1589,8 +1589,23 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     async def _compose_batch_body(
         batch: ExtractionBatch, lease: BudgetLease | None
     ) -> list[dict]:
-        # Search for nearby existing names to help avoid duplicates
-        nearby = _search_nearby_names(batch.context or batch.group_key)
+        # Search for nearby existing names (per-item for better relevance)
+        _nearby_seen: set[str] = set()
+        nearby: list[dict] = []
+        _PER_ITEM_K = 5
+        _NEARBY_CAP = 30
+        for item in batch.items:
+            hint = item.get("description") or item.get("path", "")
+            item_results = _search_nearby_names(hint, k=_PER_ITEM_K)
+            for nr in item_results:
+                nid = nr.get("id", "")
+                if nid and nid not in _nearby_seen:
+                    _nearby_seen.add(nid)
+                    nearby.append(nr)
+                    if len(nearby) >= _NEARBY_CAP:
+                        break
+            if len(nearby) >= _NEARBY_CAP:
+                break
 
         # IDS-level context — collect for each IDS present in batch
         ids_names = sorted(
@@ -3037,9 +3052,28 @@ async def _compose_batch_core(
 
     await asyncio.to_thread(_enrich)
 
-    # ── Search nearby existing names ───────────────────────────────────
+    # ── Search nearby existing names (per-item) ──────────────────────────
+    # For each batch item, search using the item's description (or path
+    # leaf) to get semantically relevant nearby names.  Deduplicate across
+    # items and cap at 30 total to keep prompt size bounded.
     group_key = batch[0].get("path", "").split("/")[0] if batch else ""
-    nearby = _search_nearby_names(group_key)
+    _nearby_seen: set[str] = set()
+    nearby: list[dict] = []
+    _PER_ITEM_K = 5
+    _NEARBY_CAP = 30
+    for item in batch:
+        # Prefer item description for embedding query; fall back to path
+        hint = item.get("description") or item.get("path", "")
+        item_results = _search_nearby_names(hint, k=_PER_ITEM_K)
+        for nr in item_results:
+            nid = nr.get("id", "")
+            if nid and nid not in _nearby_seen:
+                _nearby_seen.add(nid)
+                nearby.append(nr)
+                if len(nearby) >= _NEARBY_CAP:
+                    break
+        if len(nearby) >= _NEARBY_CAP:
+            break
 
     # ── IDS context ────────────────────────────────────────────────────
     ids_names = sorted(

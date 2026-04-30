@@ -19,6 +19,11 @@ def search_similar_names(query: str, k: int = 5) -> list[dict[str, Any]]:
     Uses :class:`~imas_codex.embeddings.encoder.Encoder` to embed the query,
     then runs a vector search on the ``standard_name_desc_embedding`` index.
 
+    Excludes names with problematic lifecycle states:
+    - ``validation_status='quarantined'``
+    - ``pipeline_status='superseded'``
+    - ``name_stage='exhausted'``
+
     Returns a list of dicts with keys: ``id``, ``description``, ``kind``,
     ``unit``, ``score``.
 
@@ -36,6 +41,9 @@ def search_similar_names(query: str, k: int = 5) -> list[dict[str, Any]]:
         result = encoder.embed_texts([query])[0]
         embedding = result.tolist() if hasattr(result, "tolist") else list(result)
 
+        # Fetch extra to compensate for filtered-out nodes
+        fetch_k = k + 10
+
         with GraphClient() as gc:
             rows = gc.query(
                 """
@@ -44,6 +52,9 @@ def search_similar_names(query: str, k: int = 5) -> list[dict[str, Any]]:
                 )
                 YIELD node AS sn, score
                 WHERE sn.id IS NOT NULL
+                  AND coalesce(sn.validation_status, '') <> 'quarantined'
+                  AND coalesce(sn.pipeline_status, '') <> 'superseded'
+                  AND coalesce(sn.name_stage, '') <> 'exhausted'
                 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
                 RETURN sn.id AS id,
                        sn.description AS description,
@@ -53,9 +64,10 @@ def search_similar_names(query: str, k: int = 5) -> list[dict[str, Any]]:
                 ORDER BY score DESC
                 """,
                 embedding=embedding,
-                k=k,
+                k=fetch_k,
             )
-            return [dict(r) for r in rows] if rows else []
+            results = [dict(r) for r in rows] if rows else []
+            return results[:k]
     except Exception:
         logger.debug("Similar name search unavailable", exc_info=True)
         return []
