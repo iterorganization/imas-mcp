@@ -66,6 +66,21 @@ class LLMCostEvent:
     tokens_cached_write: int = 0
     sn_ids: tuple[str, ...] = ()
     batch_id: str | None = None
+    """Generic correlation id linking related ``LLMCost`` rows.
+
+    Two callers stamp this field today:
+
+    - **B2 grammar-retry** (``workers.py``): writes
+      ``f"{group_key}-grammar-retry"`` so the original-vs-retry pair
+      can be joined in analytics.
+    - **Plan 39 structured fan-out** (``fanout/dispatcher.py``):
+      writes the ``fanout_run_id`` (uuid4) onto the proposer charge,
+      and call-sites stamp the same id onto their synthesizer charge,
+      enabling the ``Fanout`` ↔ ``LLMCost`` join (plan 39 §8.3).
+
+    The field is intentionally unstructured — callers pick the
+    encoding that suits their analytics query.
+    """
     cycle: str | None = None  # e.g. "c0", "c1", "c2"
     phase: str = ""  # generate|regen|enrich|review_names|review_docs
     service: str = "standard-names"

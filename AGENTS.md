@@ -914,6 +914,30 @@ models = [
 `BudgetLease.reserve()`, then charges per cycle. This prevents secondary-cost leaks
 even when mid-cycle crashes occur.
 
+### Structured fan-out (plan 39)
+
+`imas_codex/standard_names/fanout/` implements bounded Proposer → Executor →
+Synthesizer fan-out for the `refine_name` worker. The Proposer LLM emits a
+closed-catalog `FanoutPlan` (Pydantic discriminated union on `fn_id`, all
+bounds enforced at parse time); a pure-Python executor runs the plan in
+parallel via `asyncio.to_thread`; the call-site's existing LLM call ingests
+the rendered evidence block. No agentic loop, no runtime function generation.
+
+- **Default off**: `enabled=False` in `[tool.imas-codex.sn.fanout]` makes
+  `run_fanout()` a true no-op — returns `""`, writes no `Fanout` graph node,
+  emits no metrics, never calls the Proposer LLM.
+- **One `GraphClient` per refine cycle**: the worker passes its `gc` into
+  `run_fanout(..., gc=gc, ...)` and the dispatcher propagates it to every
+  catalog runner. Runners must never instantiate their own client.
+- **Cost ownership**: the Proposer call is charged to the caller's
+  `BudgetLease` as a sub-event with `batch_id=fanout_run_id`. Callers stamp
+  the same id onto their Synthesizer charge so the `Fanout` ↔ `LLMCost`
+  graph join works (plan 39 §8.3).
+- **Telemetry-only `Fanout` node**: written runtime-only (like `LLMCost`),
+  exempt from LinkML schema management — see plan 39 §8.2.
+- **Phase-2 gate**: future fan-out expansion plans must cite
+  `plans/features/standard-names/39-fanout-phase1-telemetry.md` (CI-enforced).
+
 ### StandardName Lifecycle
 
 Three lifecycle axes tracked on each `StandardName` node:

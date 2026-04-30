@@ -422,6 +422,41 @@ compose-models = [
 # Must be a strong reasoning model — evaluates 5 dimensions (0-100).
 reviewer-model = "anthropic/claude-opus-4.6"
 
+[tool.imas-codex.sn.fanout]
+# Plan 39 — Structured fan-out for the SN compose pipeline.
+# Master switch.  Default off until Phase 1 telemetry rollout.
+enabled = false
+# Hard cap on Stage A query count (parse-time bound).
+max-fan-degree = 3
+# Per-runner and total Stage B timeouts.
+function-timeout-s = 5.0
+total-timeout-s = 12.0
+# Per-result hit cap (renderer truncates each FanoutResult.hits).
+result-hit-cap = 8
+# Total evidence-block token caps (renderer truncates total evidence).
+evidence-token-cap-baseline = 2000
+evidence-token-cap-escalation = 800
+# Stage A LLM model + sampling.
+proposer-model = "openrouter/anthropic/claude-haiku-4.5"
+proposer-temperature = 0.1
+# Cost padding added to the parent lease at refine-cycle start (tiered, plan §7.3).
+fanout-cost-estimate-baseline = 0.005
+fanout-cost-estimate-escalation = 0.05
+# Per-cycle hard cap on cumulative fan-out sub-event spend (tiered, plan §7.3).
+fanout-max-charge-per-cycle-baseline = 0.02
+fanout-max-charge-per-cycle-escalation = 0.10
+# Refine trigger predicate.
+refine-trigger-keywords = ["unclear", "ambiguous", "duplicate", "consider", "compare"]
+# Reviewer-comment dim allow-list for the trigger predicate (plan §5.1 I3).
+refine-trigger-comment-dims = ["clarity", "disambiguation"]
+# Comment excerpt total length cap (plan §5.1 S3).
+refine-trigger-comment-chars = 800
+
+[tool.imas-codex.sn.fanout.sites]
+# Per-site enable flags.  Phase 1 flips refine_name to true after 1B
+# wires the worker; the master `enabled` switch above gates everything.
+refine_name = false
+
 [tool.imas-codex.llm]
 # LiteLLM proxy settings. Port base = 18400, offset by location index.
 # Runs on login node (needs outbound HTTPS for OpenRouter/Anthropic).
