@@ -672,6 +672,14 @@ def _build_pool_specs(
             items = await asyncio.to_thread(claim_fn, **kwargs)
             if not items:
                 return None
+            # Alias source_id → path for DD items so compose/grouping helpers
+            # that key on `item["path"]` (a legacy convention from the
+            # extract-time batch shape) work uniformly with claim-shaped items.
+            for it in items:
+                if it.get("source_type") == "dd" and "path" not in it:
+                    sid = it.get("source_id")
+                    if sid:
+                        it["path"] = sid
             return {"items": items}
 
         return _adapter
@@ -896,6 +904,7 @@ async def _seed_domain_sources(
                     "description": item.get("description")
                     or item.get("documentation")
                     or "",
+                    "physics_domain": item.get("physics_domain"),
                 }
             )
 

@@ -3824,10 +3824,12 @@ def merge_standard_name_sources(
                 sns.batch_key = src.batch_key,
                 sns.status = src.status,
                 sns.description = src.description,
+                sns.physics_domain = src.physics_domain,
                 sns.attempt_count = 0
             ON MATCH SET
                 sns.batch_key = src.batch_key,
                 sns.description = coalesce(src.description, sns.description),
+                sns.physics_domain = coalesce(src.physics_domain, sns.physics_domain),
                 sns.status = CASE
                     WHEN $force THEN 'extracted'
                     WHEN sns.status = 'stale' THEN 'extracted'
@@ -5632,11 +5634,14 @@ def claim_generate_name_seed_and_expand(
                         """
                         MATCH (sns:StandardNameSource
                                {claim_token: $token})
+                        OPTIONAL MATCH (sns)-[:FROM_DD_PATH]->(im:IMASNode)
+                        OPTIONAL MATCH (sns)-[:FROM_SIGNAL]->(fs:FacilitySignal)
                         RETURN sns.id AS id,
                                sns.source_id AS source_id,
                                sns.source_type AS source_type,
                                sns.batch_key AS batch_key,
                                sns.description AS description,
+                               coalesce(sns.physics_domain, im.physics_domain, fs.physics_domain) AS physics_domain,
                                sns.claim_token AS claim_token
                         """,
                         token=token,
