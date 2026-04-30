@@ -143,8 +143,8 @@ class TestIncludeStandardNames:
     """Standard name tools register by default; opt-out via include_standard_names=False."""
 
     def test_sn_tools_present_by_default(self):
-        """Standard name tools must register by default (include_standard_names=True)."""
-        server = AgentsServer(dd_only=True)
+        """Standard name tools must register by default when not in dd_only mode."""
+        server = AgentsServer(dd_only=False)
         names = _tool_names(server)
         missing = SN_TOOLS - names
         assert not missing, (
@@ -170,8 +170,8 @@ class TestIncludeStandardNames:
         )
 
     def test_sn_tools_present_when_flag_set(self):
-        """All standard name tools must be registered when include_standard_names=True."""
-        server = AgentsServer(dd_only=True, include_standard_names=True)
+        """All standard name tools must be registered when include_standard_names=True (and not dd_only)."""
+        server = AgentsServer(dd_only=False, include_standard_names=True)
         names = _tool_names(server)
         missing = SN_TOOLS - names
         assert not missing, f"Expected standard name tools not registered: {missing}"

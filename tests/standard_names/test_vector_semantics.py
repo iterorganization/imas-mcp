@@ -133,7 +133,9 @@ def _embed(encoder: Any, text: str) -> list[float]:
     return vec.tolist() if hasattr(vec, "tolist") else list(vec)
 
 
-def _vector_search_sn(gc: Any, embedding: list[float], k: int) -> list[dict]:
+def _vector_search_standard_names(
+    gc: Any, embedding: list[float], k: int
+) -> list[dict]:
     rows = gc.query(
         """
         CALL db.index.vector.queryNodes(
@@ -196,7 +198,7 @@ def test_sn_semantic_search_surfaces_expected_concept(
     """Each concept query must surface at least one id containing the
     expected keyword token within the top-10 results."""
     embedding = _embed(encoder, query)
-    rows = _vector_search_sn(gc, embedding, k=10)
+    rows = _vector_search_standard_names(gc, embedding, k=10)
     assert rows, "Expected non-empty vector search result"
 
     ids = [r["id"] for r in rows]
@@ -231,7 +233,7 @@ def test_sn_semantic_search_domain_coherence(
     case_id = request.node.callspec.id if hasattr(request.node, "callspec") else ""
 
     embedding = _embed(encoder, query)
-    rows = _vector_search_sn(gc, embedding, k=5)
+    rows = _vector_search_standard_names(gc, embedding, k=5)
     domains = [r.get("physics_domain") for r in rows if r.get("physics_domain")]
     assert domains, f"No physics_domain values in top-5 for {query!r}"
 

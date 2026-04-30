@@ -2,6 +2,12 @@
 
 Functions are prefixed with ``_`` — they are registered as MCP tools
 in ``server.py`` via ``@self.mcp.tool()``.
+
+Plan 40 Phase 3 — wrappers delegate to the backing functions in
+:mod:`imas_codex.standard_names.search` (single source of truth). Old
+private function names (``_segment_filter_search_sn``, ``_vector_search_sn``,
+``_keyword_search_sn``) are retained as aliases for one release; new
+canonical names are ``_*_search_standard_names``.
 """
 
 from __future__ import annotations
@@ -12,6 +18,11 @@ from neo4j.exceptions import ServiceUnavailable
 
 from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
 from imas_codex.graph.client import GraphClient
+from imas_codex.standard_names.search import (
+    check_names as _check_names_backing,
+    find_related as _find_related_backing,
+    summarise_family as _summarise_family_backing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +118,11 @@ def _search_standard_names(
 
     try:
         if segment_filters:
-            rows = _segment_filter_search_sn(gc, query, k, segment_filters)
+            rows = _segment_filter_search_standard_names(gc, query, k, segment_filters)
         elif has_embedding:
-            rows = _vector_search_sn(gc, embedding, k)
+            rows = _vector_search_standard_names(gc, embedding, k)
         else:
-            rows = _keyword_search_sn(gc, query, k)
+            rows = _keyword_search_standard_names(gc, query, k)
     except ServiceUnavailable:
         return NEO4J_NOT_RUNNING_MSG
     except Exception as e:
@@ -134,7 +145,7 @@ def _search_standard_names(
     return _format_search_report(query, rows)
 
 
-def _segment_filter_search_sn(
+def _segment_filter_search_standard_names(
     gc: GraphClient,
     query: str,
     k: int,
@@ -156,7 +167,7 @@ def _segment_filter_search_sn(
             ``{"physical_base": "temperature", "subject": "electron"}``.
 
     Returns:
-        List of dicts matching the column schema of :func:`_keyword_search_sn`.
+        List of dicts matching the column schema of :func:`_keyword_search_standard_names`.
     """
     # Map segment names to their typed edge labels
     _edge_label: dict[str, str] = {
@@ -202,7 +213,9 @@ LIMIT $k
     return gc.query(cypher, **params)
 
 
-def _vector_search_sn(gc: GraphClient, embedding: list[float], k: int) -> list[dict]:
+def _vector_search_standard_names(
+    gc: GraphClient, embedding: list[float], k: int
+) -> list[dict]:
     """Run vector search on StandardName nodes."""
     cypher = """
 CALL db.index.vector.queryNodes('standard_name_desc_embedding', $k, $embedding)
@@ -221,7 +234,7 @@ ORDER BY score DESC
     return gc.query(cypher, embedding=embedding, k=k)
 
 
-def _keyword_search_sn(gc: GraphClient, query: str, k: int) -> list[dict]:
+def _keyword_search_standard_names(gc: GraphClient, query: str, k: int) -> list[dict]:
     """Run keyword search on StandardName nodes."""
     cypher = """
 MATCH (sn:StandardName)
@@ -239,6 +252,16 @@ RETURN sn.id AS name, sn.description AS description,
 LIMIT $k
 """
     return gc.query(cypher, keyword=query, k=k)
+
+
+# ---------------------------------------------------------------------------
+# Plan 40 §17 — back-compat private aliases for the old SN-suffix names.
+# Removed in the release after Phase 4.
+# ---------------------------------------------------------------------------
+
+_segment_filter_search_sn = _segment_filter_search_standard_names
+_vector_search_sn = _vector_search_standard_names
+_keyword_search_sn = _keyword_search_standard_names
 
 
 def _format_search_report(query: str, rows: list[dict]) -> str:
@@ -601,3 +624,243 @@ def _list_grammar_vocabulary(
     for tok in sorted_tokens:
         lines.append(f"| {tok} |")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# _find_related_standard_names (plan 40 §7.2.3)
+# ---------------------------------------------------------------------------
+
+
+def _find_related_standard_names(
+    name: str,
+    *,
+    relationship_types: str = "all",
+    max_results: int = 20,
+    gc: GraphClient | None = None,
+) -> str:
+    """Find standard names related to *name* across multiple relationships.
+
+    Args:
+        name: StandardName.id to centre the discovery on.
+        relationship_types: Comma-separated list or ``"all"``. Recognised
+            tokens: ``grammar, unit, cocos, cluster, lineage, source``.
+        max_results: Maximum results per bucket.
+
+    Returns:
+        Bucketed markdown report (plan 40 §7.2.3). Empty buckets suppressed;
+        deterministic order via ``RELATED_BUCKET_ORDER``.
+    """
+    try:
+        if gc is None:
+            gc = GraphClient()
+    except ServiceUnavailable:
+        return NEO4J_NOT_RUNNING_MSG
+    except Exception as e:
+        return f"Error connecting to graph: {e}"
+
+    try:
+        buckets = _find_related_backing(
+            name,
+            relationship_types=relationship_types,
+            max_results=max_results,
+            gc=gc,
+        )
+    except ServiceUnavailable:
+        return NEO4J_NOT_RUNNING_MSG
+    except Exception as e:
+        return f"find_related failed: {_neo4j_error_message(e)}"
+
+    if not buckets:
+        return f"## Related Standard Names — `{name}`\n\nNo related names found."
+
+    total = sum(len(rows) for rows in buckets.values())
+    lines = [
+        f"## Related Standard Names — `{name}` ({total} hits)",
+        "",
+    ]
+    for bucket, rows in buckets.items():
+        lines.append(f"### {bucket} ({len(rows)})")
+        lines.append("")
+        for r in rows:
+            related_name = r.get("name") or ""
+            desc = r.get("description") or ""
+            if desc and len(desc) > 120:
+                desc = desc[:117] + "..."
+            if desc:
+                lines.append(f"- **{related_name}** — {desc}")
+            else:
+                lines.append(f"- **{related_name}**")
+        lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# _check_standard_names (plan 40 §7.2.6)
+# ---------------------------------------------------------------------------
+
+
+def _check_standard_names(
+    names: str,
+    *,
+    gc: GraphClient | None = None,
+) -> str:
+    """Validate names against the catalogue with Levenshtein suggestions.
+
+    Args:
+        names: Space- or comma-separated StandardName ids.
+
+    Returns:
+        Markdown table with columns ``name | exists | suggestion | reason``.
+    """
+    try:
+        if gc is None:
+            gc = GraphClient()
+    except ServiceUnavailable:
+        return NEO4J_NOT_RUNNING_MSG
+    except Exception as e:
+        return f"Error connecting to graph: {e}"
+
+    import re
+
+    name_list = [n.strip() for n in re.split(r"[,\s]+", names) if n.strip()]
+    if not name_list:
+        return "No names provided."
+
+    try:
+        results = _check_names_backing(name_list, gc=gc)
+    except ServiceUnavailable:
+        return NEO4J_NOT_RUNNING_MSG
+    except Exception as e:
+        return f"check_names failed: {_neo4j_error_message(e)}"
+
+    if not results:
+        return "## Standard-Name Validation\n\nNo results."
+
+    n_missing = sum(1 for r in results if not r.get("exists"))
+    lines = [
+        f"## Standard-Name Validation ({len(results)} checked, {n_missing} missing)",
+        "",
+        "| Name | Exists | Suggestion | Reason |",
+        "|------|:------:|------------|--------|",
+    ]
+    for r in results:
+        nm = r.get("name") or ""
+        exists = "✓" if r.get("exists") else "✗"
+        sugg = r.get("suggestion") or ""
+        reason = r.get("reason") or ""
+        lines.append(f"| `{nm}` | {exists} | `{sugg}` | {reason} |")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# _get_standard_name_summary (plan 40 §7.2.7)
+# ---------------------------------------------------------------------------
+
+
+def _get_standard_name_summary(
+    physical_base: str,
+    *,
+    gc: GraphClient | None = None,
+) -> str:
+    """Family overview for *physical_base*.
+
+    Args:
+        physical_base: The Tier-1 anchor segment value (e.g. ``"temperature"``).
+
+    Returns:
+        Markdown report with member count, distinct segment values per
+        secondary segment, units, COCOS types, physics domains, sample
+        names, and lineage counts.
+    """
+    try:
+        if gc is None:
+            gc = GraphClient()
+    except ServiceUnavailable:
+        return NEO4J_NOT_RUNNING_MSG
+    except Exception as e:
+        return f"Error connecting to graph: {e}"
+
+    try:
+        summary = _summarise_family_backing(physical_base, gc=gc)
+    except ServiceUnavailable:
+        return NEO4J_NOT_RUNNING_MSG
+    except Exception as e:
+        return f"summarise_family failed: {_neo4j_error_message(e)}"
+
+    count = summary.get("count", 0)
+    if count == 0:
+        return (
+            f"## Family Summary — `physical_base = {physical_base}`\n\n"
+            f"No standard names with this physical_base."
+        )
+
+    lines = [
+        f"## Family Summary — `physical_base = {physical_base}` ({count} members)",
+        "",
+    ]
+
+    seg_distinct = summary.get("segment_distinct") or {}
+    if seg_distinct:
+        lines.append("### Segment Diversity")
+        lines.append("")
+        lines.append("| Segment | Distinct Values |")
+        lines.append("|---------|-----------------|")
+        for seg, vals in seg_distinct.items():
+            shown = ", ".join(vals[:8]) + (
+                f" *(+{len(vals) - 8} more)*" if len(vals) > 8 else ""
+            )
+            lines.append(f"| {seg} | {shown or '—'} |")
+        lines.append("")
+
+    units = summary.get("unit_distinct") or []
+    if units:
+        lines.append(f"### Units ({len(units)})")
+        lines.append("")
+        lines.append(", ".join(f"`{u}`" for u in units[:20]))
+        if len(units) > 20:
+            lines.append(f" *(+{len(units) - 20} more)*")
+        lines.append("")
+
+    cocos = summary.get("cocos_distinct") or []
+    if cocos:
+        lines.append("### COCOS Transformations")
+        lines.append("")
+        lines.append(", ".join(f"`{c}`" for c in cocos))
+        lines.append("")
+
+    domains = summary.get("physics_domain_distinct") or []
+    if domains:
+        lines.append("### Physics Domains")
+        lines.append("")
+        lines.append(", ".join(f"`{d}`" for d in domains))
+        lines.append("")
+
+    samples = summary.get("sample_names") or []
+    if samples:
+        lines.append("### Sample Members")
+        lines.append("")
+        for nm in samples:
+            lines.append(f"- `{nm}`")
+        lines.append("")
+
+    lineage = summary.get("lineage") or {}
+    if lineage:
+        lines.append("### Lineage Counts")
+        lines.append("")
+        lines.append("| Relation | Members | Max Chain Depth |")
+        lines.append("|----------|--------:|-----------------:|")
+        lines.append(
+            f"| Predecessors | {lineage.get('predecessors_count', 0)} | "
+            f"{lineage.get('predecessors_max_depth', 0)} |"
+        )
+        lines.append(
+            f"| Successors | {lineage.get('successors_count', 0)} | "
+            f"{lineage.get('successors_max_depth', 0)} |"
+        )
+        lines.append(
+            f"| Refined-from | {lineage.get('refined_from_count', 0)} | "
+            f"{lineage.get('refined_from_max_depth', 0)} |"
+        )
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"

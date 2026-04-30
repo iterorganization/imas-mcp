@@ -56,7 +56,8 @@ class TestSearchNoGrammarArgs:
     def test_returns_all_without_filters(self, mock_gc, monkeypatch):
         rows = self._make_rows()
         monkeypatch.setattr(
-            "imas_codex.llm.sn_tools._keyword_search_sn", lambda *a, **kw: rows
+            "imas_codex.llm.sn_tools._keyword_search_standard_names",
+            lambda *a, **kw: rows,
         )
         monkeypatch.setattr(
             "imas_codex.embeddings.encoder.Encoder.embed_texts",
@@ -71,7 +72,8 @@ class TestSearchNoGrammarArgs:
         rows[0]["kind"] = "scalar"
         rows[1]["kind"] = "vector"
         monkeypatch.setattr(
-            "imas_codex.llm.sn_tools._keyword_search_sn", lambda *a, **kw: rows
+            "imas_codex.llm.sn_tools._keyword_search_standard_names",
+            lambda *a, **kw: rows,
         )
         monkeypatch.setattr(
             "imas_codex.embeddings.encoder.Encoder.embed_texts",

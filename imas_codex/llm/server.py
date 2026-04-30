@@ -3081,7 +3081,7 @@ class AgentsServer:
         # Standard Name tools
         # =====================================================================
 
-        if self.include_standard_names:
+        if self.include_standard_names and not self.dd_only:
 
             @self.mcp.tool()
             def search_standard_names(
@@ -3330,6 +3330,88 @@ class AgentsServer:
                         f"{str(submitted)[:19]} |"
                     )
                 return "\n".join(lines)
+
+            @self.mcp.tool()
+            def find_related_standard_names(
+                name: str,
+                relationship_types: str = "all",
+                max_results: int = 20,
+            ) -> str:
+                """Find standard names related to *name* across multiple relationships.
+
+                Combines several relationship signals: shared grammar
+                (physical_base, subject), unit companions, COCOS
+                companions, cluster siblings, lineage edges
+                (predecessors, successors, refined-from), and source
+                paths/signals.
+
+                Args:
+                    name: StandardName id to centre the discovery on.
+                    relationship_types: Which relationship classes to
+                        include — comma-separated subset of
+                        ``"grammar, unit, cocos, cluster, lineage, source"``
+                        or ``"all"`` (default).
+                    max_results: Maximum results per bucket (default 20).
+
+                Returns:
+                    Bucketed markdown report with deterministic bucket
+                    order. Empty buckets are suppressed.
+                """
+                from imas_codex.llm.sn_tools import (
+                    _find_related_standard_names as _frsn,
+                )
+
+                return _frsn(
+                    name,
+                    relationship_types=relationship_types,
+                    max_results=max_results,
+                )
+
+            @self.mcp.tool()
+            def check_standard_names(names: str) -> str:
+                """Validate names against the standard-name catalogue.
+
+                For each input, reports whether the name exists. If not,
+                returns a Levenshtein-closest suggestion with a grammar-
+                share tiebreak when distances are equal.
+
+                Args:
+                    names: Space- or comma-separated standard name IDs
+                        to validate.
+
+                Returns:
+                    Markdown table with columns
+                    ``name | exists | suggestion | reason``.
+                """
+                from imas_codex.llm.sn_tools import (
+                    _check_standard_names as _csn,
+                )
+
+                return _csn(names)
+
+            @self.mcp.tool()
+            def get_standard_name_summary(physical_base: str) -> str:
+                """Summarise a standard-name family keyed on ``physical_base``.
+
+                Returns family-level statistics: member count, distinct
+                values per secondary segment (subject, transformation,
+                component, position, process, geometric_base), distinct
+                units, COCOS transformation types, physics domains,
+                sample member names, and lineage counts (predecessors,
+                successors, refined-from with max chain depth).
+
+                Args:
+                    physical_base: The Tier-1 anchor segment value
+                        (e.g. ``"temperature"``, ``"pressure"``).
+
+                Returns:
+                    Markdown report with the family overview.
+                """
+                from imas_codex.llm.sn_tools import (
+                    _get_standard_name_summary as _gsns,
+                )
+
+                return _gsns(physical_base)
 
         if not self.read_only:
             # =====================================================================
