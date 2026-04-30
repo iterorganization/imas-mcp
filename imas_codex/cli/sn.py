@@ -1183,7 +1183,7 @@ def sn_run(
     log_print("")
 
     from imas_codex.standard_names.budget import BudgetManager
-    from imas_codex.standard_names.pipeline import run_sn_pipeline
+    from imas_codex.standard_names.pool_adapter import run_explicit_paths
     from imas_codex.standard_names.state import StandardNameBuildState
 
     # Build progress display
@@ -1242,7 +1242,7 @@ def sn_run(
     async def _run(stop_event, service_monitor):
         if service_monitor:
             state.service_monitor = service_monitor
-        await run_sn_pipeline(
+        await run_explicit_paths(
             state,
             stop_event=stop_event,
             on_worker_status=display.on_worker_status if display else None,

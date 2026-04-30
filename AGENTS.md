@@ -782,7 +782,7 @@ Azure Web App has continuous deployment enabled on ACR. When a new image appears
 
 **Acceptance always overrides cap:** even at `chain_length == cap − 1`, an `accepted` verdict wins (no forced exhaustion on a good result). **Escalation:** on the final refine attempt (`chain_length == cap − 1`), the pool switches to `DEFAULT_ESCALATION_MODEL` (default `openrouter/anthropic/claude-opus-4.6`). **Backlog throttle:** when refine_name backlog > 0.5 × generate_name backlog, `BudgetManager.pool_admit` dampens generate_name effective weight by 0.5×.
 
-**EXTRACT → VALIDATE → CONSOLIDATE → PERSIST** sub-pipeline runs inside GENERATE_NAME: DD paths queried (filtered by `SN_SOURCE_CATEGORIES`), classified, clustered, batched; ISN 3-layer validation (Pydantic → semantic → description) + grammar round-trip; cross-batch dedup; conflict-detecting Neo4j writes.
+**EXTRACT → COMPOSE** sub-pipeline runs inside GENERATE_NAME (pool path) or via `pool_adapter.run_explicit_paths()` (single-pass path): DD paths queried (filtered by `SN_SOURCE_CATEGORIES`), classified, clustered, batched; ISN 3-layer validation (Pydantic → semantic → description) + grammar round-trip; cross-batch dedup; conflict-detecting Neo4j writes.
 
 **Key modules:**
 
@@ -792,7 +792,8 @@ Azure Web App has continuous deployment enabled on ACR. When a new image appears
 | `imas_codex/standard_names/enrichment.py` | Primary cluster selection (IDS > domain > global scope), grouping cluster selection (global > domain > IDS), global grouping by (cluster × unit) |
 | `imas_codex/standard_names/consolidation.py` | Cross-batch dedup, 5 conflict checks, coverage gap accounting |
 | `imas_codex/standard_names/graph_ops.py` | Neo4j read/write with unit conflict detection + StandardNameSource CRUD (merge, claim, mark, reconcile) |
-| `imas_codex/standard_names/pipeline.py` | Six-pool loop orchestrator (`run_sn_pools()`); `_build_pool_specs`, `POOL_WEIGHTS`, backlog throttle |
+| `imas_codex/standard_names/pool_adapter.py` | Routes `--paths`/`--single-pass` through pool compose (replaced linear `pipeline.py`) |
+| `imas_codex/standard_names/loop.py` | Six-pool loop orchestrator (`run_sn_pools()`); `_build_pool_specs`, `POOL_WEIGHTS`, backlog throttle |
 | `imas_codex/standard_names/workers.py` | Claim/process/persist functions for all six pools; orphan sweep (`orphan_sweep.py`) |
 | `imas_codex/standard_names/defaults.py` | Central constants: `DEFAULT_MIN_SCORE`, `DEFAULT_REFINE_ROTATIONS`, `DEFAULT_ESCALATION_MODEL`, backlog caps |
 | `imas_codex/standard_names/models.py` | Pydantic response models (`StandardNameComposeBatch`, `StandardNameAttachment`) |
@@ -821,7 +822,7 @@ The LLM never provides the unit field.
 | `sn sync-grammar` | Seed/refresh ISN grammar vocabulary (ISNGrammarVersion + GrammarSegment + GrammarToken + GrammarTemplate) in the graph | `--dry-run` |
 | `sn benchmark` | Benchmark LLM models on standard name generation quality | `--models`, `--ids`, `--reviewer-model`, `--max-candidates` |
 
-**`sn run` scope routing:** Without `--paths`, `sn run` runs the 6-pool completion loop across all eligible work (no domain rotation in the default path — all pools run concurrently). With `--paths`, it runs a single-pass pipeline on the explicit paths. `--single-pass` forces single-pass regardless of scope. `--only <phase>` runs a single phase in isolation (e.g. `--only reconcile` to mark stale sources).
+**`sn run` scope routing:** Without `--paths`, `sn run` runs the 6-pool completion loop across all eligible work (no domain rotation in the default path — all pools run concurrently). With `--paths`, it routes through `pool_adapter.run_explicit_paths()` which seeds `StandardNameSource` nodes and calls `compose_batch` directly for a one-shot compose pass. `--single-pass` forces single-pass regardless of scope. `--only <phase>` runs a single phase in isolation (e.g. `--only reconcile` to mark stale sources).
 
 ### Benchmark
 

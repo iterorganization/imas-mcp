@@ -890,38 +890,11 @@ class TestConsolidateWorkerGraphPrimary:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline should_stop_fn tests
+# Pipeline should_stop_fn tests (removed)
 # ---------------------------------------------------------------------------
-
-
-class TestPipelineShouldStopFn:
-    """Verify downstream workers use stop_requested, not budget."""
-
-    def test_downstream_workers_have_should_stop_fn(self):
-        """Validate/consolidate/persist should ignore budget exhaustion."""
-        import inspect
-
-        from imas_codex.standard_names.pipeline import run_sn_pipeline
-
-        source = inspect.getsource(run_sn_pipeline)
-        assert "should_stop_fn" in source
-        assert "_downstream_should_stop" in source
-
-    def test_engine_stop_fn_ignores_budget(self):
-        """Supervised loop must use stop_requested, not budget_exhausted.
-
-        Without this, the supervised loop exits on cost-limit and cancel_all()
-        kills downstream workers before they process composed names.
-        """
-        import inspect
-
-        from imas_codex.standard_names.pipeline import run_sn_pipeline
-
-        source = inspect.getsource(run_sn_pipeline)
-        # Must pass stop_fn to run_discovery_engine
-        assert "stop_fn=" in source
-        # stop_fn must check stop_requested only, not should_stop (budget)
-        assert "stop_fn=lambda: state.stop_requested" in source
+# The linear pipeline (pipeline.py) has been deleted.  --paths / --single-pass
+# are now routed through pool_adapter.run_explicit_paths().  The should_stop_fn
+# invariants no longer apply.
 
 
 # ---------------------------------------------------------------------------

@@ -231,7 +231,7 @@ async def _run_generate_phase(
     """Run the generate (or regen) pipeline phase.
 
     Constructs a :class:`StandardNameBuildState` and invokes
-    :func:`run_sn_pipeline` — the same function that ``sn run``
+    :func:`run_explicit_paths` — the same function that ``sn run``
     delegates to. When ``regen=True`` the state is configured to
     select existing reviewed names whose ``reviewer_score`` is below
     ``cfg.min_score``.
@@ -258,7 +258,7 @@ async def _run_generate_phase(
         )
 
     from imas_codex.standard_names.budget import BudgetManager
-    from imas_codex.standard_names.pipeline import run_sn_pipeline
+    from imas_codex.standard_names.pool_adapter import run_explicit_paths
     from imas_codex.standard_names.state import StandardNameBuildState
 
     # Use shared budget pool (from run_sn_loop) when available — this ensures
@@ -302,7 +302,7 @@ async def _run_generate_phase(
 
     t0 = time.monotonic()
     try:
-        await run_sn_pipeline(state, stop_event=cfg.stop_event)
+        await run_explicit_paths(state, stop_event=cfg.stop_event)
     except Exception as exc:
         logger.error("Phase %s failed: %s", phase_name, exc, exc_info=True)
         return PhaseResult(

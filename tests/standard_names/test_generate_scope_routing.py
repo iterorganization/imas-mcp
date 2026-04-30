@@ -1,6 +1,6 @@
 """Tests for ``sn generate`` scope-routing rules.
 
-Validates that the CLI routes to the rotator or single-pass pipeline
+Validates that the CLI routes to the rotator or pool adapter
 based on the presence/absence of ``--paths`` and ``--single-pass``.
 
 No LLM calls — all external dependencies are mocked.
@@ -23,10 +23,10 @@ def runner():
 
 # Patch target for the rotator entrypoint in the CLI module.
 _ROTATOR = "imas_codex.cli.sn._run_sn_loop_cmd"
-# The single-pass path reaches ``run_sn_pipeline`` via a local import
-# inside the CLI function.  Patching the source module also blocks it
+# The single-pass path reaches ``run_explicit_paths`` via a local import
+# inside the CLI function.  Patching the source module blocks it
 # effectively because the import resolves each invocation.
-_SINGLE_PASS = "imas_codex.standard_names.pipeline.run_sn_pipeline"
+_SINGLE_PASS = "imas_codex.standard_names.pool_adapter.run_explicit_paths"
 
 
 async def _async_noop(*args, **kwargs):  # pragma: no cover - test helper
@@ -43,7 +43,7 @@ class TestScopeRouting:
             assert mock_rot.called, f"Rotator not called. Output: {result.output}"
 
     def test_paths_routes_to_single_pass(self, runner):
-        """--paths supplied → single-pass pipeline (not rotator)."""
+        """--paths supplied → pool adapter (not rotator)."""
         with (
             patch(_ROTATOR) as mock_rot,
             patch(_SINGLE_PASS, side_effect=_async_noop) as mock_sp,
@@ -60,8 +60,8 @@ class TestScopeRouting:
                 ],
             )
             assert not mock_rot.called, "Rotator should NOT be called with --paths"
-            # Single-pass engine is expected to be invoked
-            assert mock_sp.called, "Single-pass engine should be called with --paths"
+            # Pool adapter is expected to be invoked
+            assert mock_sp.called, "Pool adapter should be called with --paths"
 
     def test_physics_domain_routes_to_rotator(self, runner):
         """--physics-domain without --paths → rotator (scoped single-domain)."""
@@ -94,7 +94,7 @@ class TestScopeRouting:
             )
 
     def test_signals_source_routes_to_single_pass(self, runner):
-        """--source signals → single-pass (rotator is DD-only)."""
+        """--source signals → pool adapter (rotator is DD-only)."""
         with patch(_ROTATOR) as mock_rot, patch(_SINGLE_PASS, side_effect=_async_noop):
             runner.invoke(
                 sn,

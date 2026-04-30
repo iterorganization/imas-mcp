@@ -373,10 +373,10 @@ class TestPipelineWiring:
         assert state.validate_phase.done
 
     def test_pipeline_has_no_review_step(self):
-        """Generate pipeline should not include a review worker."""
+        """Pool adapter should not include a review worker."""
         import importlib
 
-        mod = importlib.import_module("imas_codex.standard_names.pipeline")
+        mod = importlib.import_module("imas_codex.standard_names.pool_adapter")
         source = importlib.util.find_spec(mod.__name__).origin
         with open(source) as f:
             content = f.read()
