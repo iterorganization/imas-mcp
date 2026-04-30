@@ -62,7 +62,7 @@ def _render(template_path: str) -> str:
 
 def test_compose_dd_renders_previous_documentation():
     """compose_dd.md must surface review_feedback.previous_documentation."""
-    rendered = _render("sn/compose_dd")
+    rendered = _render("sn/generate_name_dd")
     assert _PRIOR_DOC_MARKER in rendered, (
         "previous_documentation absent from compose_dd.md — regen composer "
         "cannot see what was wrong with the prior documentation"
@@ -74,7 +74,7 @@ def test_compose_dd_renders_previous_documentation():
 
 def test_compose_dd_names_renders_previous_documentation():
     """compose_dd_names.md (lean naming prompt) must also surface prior doc."""
-    rendered = _render("sn/compose_dd_names")
+    rendered = _render("sn/generate_name_dd_names")
     assert _PRIOR_DOC_MARKER in rendered, (
         "previous_documentation absent from compose_dd_names.md"
     )
@@ -87,7 +87,7 @@ def test_compose_dd_names_renders_per_dimension_scores():
     free-form comments — it cannot target the specific failing rubric
     dimension (grammar/semantic/convention/completeness).
     """
-    rendered = _render("sn/compose_dd_names")
+    rendered = _render("sn/generate_name_dd_names")
     # All four dimensions from the test fixture must appear with their scores
     for dim, score in (
         ("grammar", 12),
@@ -105,6 +105,6 @@ def test_compose_dd_names_renders_per_dimension_scores():
 
 def test_compose_dd_per_dim_scores_still_render():
     """Regression guard: the existing compose_dd.md per-dim block must keep working."""
-    rendered = _render("sn/compose_dd")
+    rendered = _render("sn/generate_name_dd")
     assert "grammar" in rendered and "12" in rendered
     assert "semantic" in rendered and "10" in rendered

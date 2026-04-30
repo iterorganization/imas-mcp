@@ -24,13 +24,13 @@ kind, unit, tags, or any other identity field.
 {% if item.reviewer_verdict_name %}
 - **Reviewer verdict:** {{ item.reviewer_verdict_name }}
 {% endif %}
-{% if item.reviewer_score_name is not none %}
+{% if item.reviewer_score_name is defined and item.reviewer_score_name is not none %}
 - **Reviewer score:** {{ "%.2f"|format(item.reviewer_score_name) }}
 {% endif %}
 {% if item.reviewer_comments_name %}
 - **Reviewer comments:** {{ item.reviewer_comments_name }}
 {% endif %}
-{% if not item.reviewer_verdict_name and item.reviewer_score_name is none and not item.reviewer_comments_name %}
+{% if not item.reviewer_verdict_name and (item.reviewer_score_name is not defined or item.reviewer_score_name is none) and not item.reviewer_comments_name %}
 _(no reviewer feedback available)_
 {% endif %}
 
@@ -44,7 +44,7 @@ to understand what the name represents and how reviewers refined it.
 {% for h in item.chain_history %}
 ### Predecessor {{ loop.index }}: `{{ h.name }}`
 {% if h.description %}- Description: {{ h.description }}{% endif %}
-{% if h.reviewer_score_name is not none %}- Reviewer score: {{ "%.2f"|format(h.reviewer_score_name) }}{% endif %}
+{% if h.reviewer_score_name is defined and h.reviewer_score_name is not none %}- Reviewer score: {{ "%.2f"|format(h.reviewer_score_name) }}{% endif %}
 {% if h.reviewer_comments_per_dim_name %}- Reviewer comments: {{ h.reviewer_comments_per_dim_name }}{% endif %}
 {% endfor %}
 {% endif %}

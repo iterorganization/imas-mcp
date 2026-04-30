@@ -43,7 +43,7 @@ class TestRetryReasonRendering:
     """The retry_reason block should appear only when retry_reason is set."""
 
     def test_no_retry_reason_no_block(self) -> None:
-        rendered = render_prompt("sn/compose_dd", _min_context([_min_item()]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([_min_item()]))
         assert "Retry Context" not in rendered
 
     def test_retry_reason_renders(self) -> None:
@@ -53,7 +53,7 @@ class TestRetryReasonRendering:
             "produce a different name."
         )
         ctx = _min_context([_min_item()], retry_reason=reason)
-        rendered = render_prompt("sn/compose_dd", ctx)
+        rendered = render_prompt("sn/generate_name_dd", ctx)
 
         assert "Retry Context" in rendered
         assert "grammar round-trip failed" in rendered
@@ -64,7 +64,7 @@ class TestRetryReasonRendering:
         """Retry block should appear before Unit Policy section."""
         reason = "Previous attempt failed: grammar round-trip failed for x."
         ctx = _min_context([_min_item()], retry_reason=reason)
-        rendered = render_prompt("sn/compose_dd", ctx)
+        rendered = render_prompt("sn/generate_name_dd", ctx)
 
         retry_pos = rendered.index("Retry Context")
         unit_pos = rendered.index("Unit Policy")

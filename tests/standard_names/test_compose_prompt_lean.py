@@ -1,10 +1,10 @@
 """Tests for the lean compose system prompt (Phase A of plan 43).
 
-Validates that compose_system_lean.md:
+Validates that generate_name_system_lean.md:
   - Exists and renders under 24,000 chars (≈8K tokens at chars/3 heuristic)
   - Preserves the BANNED PREFIXES table and INSTRUMENT LOCUS rule
   - Preserves all 5 ANTI-PATTERN GALLERY entries (dropped violations 7→2 in EMW pilot)
-  - Leaves the legacy compose_system.md unchanged when compose_lean=False
+  - Leaves the legacy generate_name_system.md unchanged when compose_lean=False
 
 See plans/features/standard-names/43-pipeline-rd-fix.md (Phase A).
 """
@@ -23,8 +23,8 @@ from imas_codex.llm.prompt_loader import PROMPTS_DIR, render_prompt
 # Paths
 # ---------------------------------------------------------------------------
 
-LEAN_PROMPT_PATH = PROMPTS_DIR / "sn" / "compose_system_lean.md"
-LEGACY_PROMPT_PATH = PROMPTS_DIR / "sn" / "compose_system.md"
+LEAN_PROMPT_PATH = PROMPTS_DIR / "sn" / "generate_name_system_lean.md"
+LEGACY_PROMPT_PATH = PROMPTS_DIR / "sn" / "generate_name_system.md"
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ def _render_lean_minimal() -> str:
     schema_needs: [] in the frontmatter means no ISN context is loaded
     automatically — rendering succeeds without graph/ISN dependencies.
     """
-    return render_prompt("sn/compose_system_lean", context={})
+    return render_prompt("sn/generate_name_system_lean", context={})
 
 
 def _raw_lean() -> str:
@@ -57,11 +57,13 @@ def _raw_legacy() -> str:
 class TestLeanPromptExists:
     def test_lean_prompt_file_exists(self) -> None:
         assert LEAN_PROMPT_PATH.exists(), (
-            f"compose_system_lean.md not found at {LEAN_PROMPT_PATH}"
+            f"generate_name_system_lean.md not found at {LEAN_PROMPT_PATH}"
         )
 
     def test_legacy_prompt_still_exists(self) -> None:
-        assert LEGACY_PROMPT_PATH.exists(), "compose_system.md was accidentally deleted"
+        assert LEGACY_PROMPT_PATH.exists(), (
+            "generate_name_system.md was accidentally deleted"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +167,9 @@ class TestAntiPatternGalleryPresent:
 
     These entries dropped EMW-pilot violations from 7 to 2 — they must not
     be lost in any size-reduction pass.
+
+    The lean prompt uses entry labels EMW-1, EMW-2, W38-A1, W38-A2, W38-A3
+    (renamed from Entry 1…5 in the original compose_system_lean.md).
     """
 
     def test_gallery_section_heading(self) -> None:
@@ -173,28 +178,28 @@ class TestAntiPatternGalleryPresent:
 
     def test_entry_1_instrument_prefix(self) -> None:
         raw = _raw_lean()
-        assert "Entry 1" in raw
+        assert "EMW-1" in raw
         assert "polarimeter_laser_wavelength" in raw
 
     def test_entry_2_state_prefix(self) -> None:
         raw = _raw_lean()
-        assert "Entry 2" in raw
+        assert "EMW-2" in raw
         assert "initial_ellipticity_of_polarimeter_channel_beam" in raw
 
     def test_entry_3_state_prefix_vocab_gap(self) -> None:
         raw = _raw_lean()
-        assert "Entry 3" in raw
-        assert "initial_polarization_of_polarimeter_channel_beam" in raw
+        assert "W38-A1" in raw
+        assert "x_ray_crystal_spectrometer_pixel_photon_energy_lower_bound" in raw
 
     def test_entry_4_compound_locus(self) -> None:
         raw = _raw_lean()
-        assert "Entry 4" in raw
-        assert "ellipticity_of_polarimeter_channel_beam" in raw
+        assert "W38-A2" in raw
+        assert "halo_region_parallel_energy_due_to_heat_flux" in raw
 
     def test_entry_5_instrument_locus(self) -> None:
         raw = _raw_lean()
-        assert "Entry 5" in raw
-        assert "polarization_of_polarimeter_channel_beam" in raw
+        assert "W38-A3" in raw
+        assert "z_coordinate_of_sensor_direction_unit_vector" in raw
 
     def test_gallery_in_render(self) -> None:
         rendered = _render_lean_minimal()
@@ -297,7 +302,7 @@ class TestNoGGDSuffixRule:
 
 
 class TestLegacyPromptUnchanged:
-    """compose_lean=False must still select the original compose_system.md."""
+    """compose_lean=False must still select the original generate_name_system.md."""
 
     def test_legacy_template_name_when_flag_false(self) -> None:
         """Verify workers select legacy template when compose_lean=False."""
@@ -325,7 +330,7 @@ class TestLegacyPromptUnchanged:
         assert result is True
 
     def test_legacy_prompt_raw_not_modified(self) -> None:
-        """compose_system.md must still contain its full HARD PRE-EMIT CHECK header."""
+        """generate_name_system.md must still contain its full HARD PRE-EMIT CHECK header."""
         raw = _raw_legacy()
         assert "HARD PRE-EMIT CHECKS" in raw
         # Verify the legacy file still has Jinja sections we removed from lean

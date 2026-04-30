@@ -101,7 +101,7 @@ class TestSystemPromptW38Placement:
         raw = _load("generate_name_system.md")
         # W38 must appear after the prelude includes; trailing tail includes
         # (e.g. _coordinate_conventions.md) may legitimately appear later.
-        prelude_end = raw.index('{% include "sn/_compose_scored_examples.md" %}')
+        prelude_end = raw.index('{% include "sn/_exemplars_name_only.md" %}')
         w38_pos = raw.index("W38-A1")
         assert w38_pos > prelude_end
 

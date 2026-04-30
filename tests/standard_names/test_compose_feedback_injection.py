@@ -42,7 +42,7 @@ class TestReviewFeedbackInjection:
     """The feedback block should appear only when item.review_feedback is set."""
 
     def test_block_absent_without_feedback(self) -> None:
-        rendered = render_prompt("sn/compose_dd", _min_context([_min_item()]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([_min_item()]))
         assert "Prior reviewer feedback" not in rendered
         assert "Reviewer critique" not in rendered
 
@@ -68,7 +68,7 @@ class TestReviewFeedbackInjection:
             "validation_status": "valid",
         }
         item = _min_item(review_feedback=fb)
-        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([item]))
 
         # Header marker
         assert "Prior reviewer feedback" in rendered
@@ -95,7 +95,7 @@ class TestReviewFeedbackInjection:
             "validation_status": "valid",
         }
         item = _min_item(review_feedback=fb)
-        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([item]))
         assert "Prior reviewer feedback" in rendered
         assert "old_name" in rendered
         assert "Needs sharper definition." in rendered
@@ -114,7 +114,7 @@ class TestReviewFeedbackInjection:
             },
         )
         rendered = render_prompt(
-            "sn/compose_dd", _min_context([clean_item, flagged_item])
+            "sn/generate_name_dd", _min_context([clean_item, flagged_item])
         )
         # Feedback block appears exactly once
         assert rendered.count("Prior reviewer feedback") == 1
@@ -125,7 +125,7 @@ class TestRelatedNeighboursInjection:
     """The related-neighbours block renders when item.related_neighbours is set."""
 
     def test_block_absent_without_related(self) -> None:
-        rendered = render_prompt("sn/compose_dd", _min_context([_min_item()]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([_min_item()]))
         assert "Graph-relationship neighbours" not in rendered
 
     def test_block_present_with_related(self) -> None:
@@ -144,7 +144,7 @@ class TestRelatedNeighboursInjection:
             },
         ]
         item = _min_item(related_neighbours=related)
-        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([item]))
 
         assert "Graph-relationship neighbours" in rendered
         assert "core_profiles/profiles_1d/grid/psi" in rendered
@@ -174,7 +174,7 @@ class TestRelatedNeighboursInjection:
             }
         ]
         item = _min_item(hybrid_neighbours=hybrid, related_neighbours=related)
-        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([item]))
 
         assert "Hybrid-search neighbours" in rendered
         assert "Graph-relationship neighbours" in rendered
@@ -184,7 +184,7 @@ class TestErrorFieldsInjection:
     """The error-companions block renders when item.error_fields is set."""
 
     def test_block_absent_without_error_fields(self) -> None:
-        rendered = render_prompt("sn/compose_dd", _min_context([_min_item()]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([_min_item()]))
         assert "DD error companions" not in rendered
 
     def test_block_present_with_error_fields(self) -> None:
@@ -193,7 +193,7 @@ class TestErrorFieldsInjection:
             "equilibrium/time_slice/profiles_1d/psi_error_lower",
         ]
         item = _min_item(error_fields=error_fields)
-        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([item]))
 
         assert "DD error companions" in rendered
         assert "psi_error_upper" in rendered
@@ -202,7 +202,7 @@ class TestErrorFieldsInjection:
 
     def test_block_absent_with_empty_error_fields(self) -> None:
         item = _min_item(error_fields=[])
-        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([item]))
         assert "DD error companions" not in rendered
 
 
@@ -210,7 +210,7 @@ class TestIdentifierValuesInjection:
     """The identifier enum values block renders when item.identifier_values is set."""
 
     def test_block_absent_without_identifier_values(self) -> None:
-        rendered = render_prompt("sn/compose_dd", _min_context([_min_item()]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([_min_item()]))
         assert "Identifier enum values" not in rendered
 
     def test_block_present_with_identifier_values(self) -> None:
@@ -228,7 +228,7 @@ class TestIdentifierValuesInjection:
             {"name": "toroidal", "index": 3, "description": "Toroidal coordinates"},
         ]
         item = _min_item(identifier_values=values)
-        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([item]))
 
         assert "Identifier enum values" in rendered
         assert "rectangular" in rendered
@@ -240,7 +240,7 @@ class TestIdentifierValuesInjection:
 
     def test_block_absent_with_empty_identifier_values(self) -> None:
         item = _min_item(identifier_values=[])
-        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([item]))
         assert "Identifier enum values" not in rendered
 
     def test_identifier_values_after_identifier_schema(self) -> None:
@@ -250,7 +250,7 @@ class TestIdentifierValuesInjection:
             identifier_schema="interpolation_type",
             identifier_values=values,
         )
-        rendered = render_prompt("sn/compose_dd", _min_context([item]))
+        rendered = render_prompt("sn/generate_name_dd", _min_context([item]))
         assert "interpolation_type" in rendered
         assert "Identifier enum values" in rendered
         schema_pos = rendered.index("interpolation_type")

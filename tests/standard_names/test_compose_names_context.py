@@ -1,6 +1,6 @@
 """Regression: names-mode user prompt MUST render per-item DD context.
 
-Background: ``compose_dd_names.md`` is the user prompt selected when
+Background: ``generate_name_dd_names.md`` is the user prompt selected when
 ``--target names`` is set. Until W36 it silently dropped ALL per-item context
 that ``workers._enrich_items`` computes (hybrid_neighbours, related_neighbours,
 error_fields, identifier_values, clusters, cross_ids_paths, sibling_fields,
@@ -20,8 +20,8 @@ import pytest
 
 from imas_codex.llm.prompt_loader import PROMPTS_DIR, render_prompt
 
-NAMES_TEMPLATE = "sn/compose_dd_names"
-NAMES_TEMPLATE_PATH = PROMPTS_DIR / "sn" / "compose_dd_names.md"
+NAMES_TEMPLATE = "sn/generate_name_dd_names"
+NAMES_TEMPLATE_PATH = PROMPTS_DIR / "sn" / "generate_name_dd_names.md"
 
 
 def _full_item() -> dict:
@@ -148,7 +148,7 @@ def test_names_mode_renders_per_item_context(marker: str) -> None:
     rendered = _render_names_prompt()
     assert marker in rendered, (
         f"Names-mode prompt missing context marker '{marker}'. "
-        f"This is the W36 regression: compose_dd_names.md silently strips "
+        f"This is the W36 regression: generate_name_dd_names.md silently strips "
         f"per-item DD context. Re-port the relevant Jinja block from "
         f"compose_dd.md."
     )

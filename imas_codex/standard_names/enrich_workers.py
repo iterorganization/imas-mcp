@@ -925,7 +925,7 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
 
     For each batch of contextualised StandardName items:
 
-    1. Render system/user prompts from ``sn/enrich_system`` and ``sn/enrich_user``.
+    1. Render system/user prompts from ``sn/generate_docs_system`` and ``sn/generate_docs_user``.
     2. Call ``acall_llm_structured`` to produce ``StandardNameEnrichBatch``.
     3. Merge enriched fields back onto items, preserving read-only DD fields
        (``unit``, ``physics_domain``).
@@ -996,7 +996,7 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
             enrich_domains or "all",
         )
     system_prompt = render_prompt(
-        "sn/enrich_system", {"compose_scored_examples": compose_scored_examples}
+        "sn/generate_docs_system", {"compose_scored_examples": compose_scored_examples}
     )
 
     # Fetch set of existing SN ids once for link-validation in the sanitizer.
@@ -1030,11 +1030,12 @@ async def enrich_document_worker(state: StandardNameEnrichState, **_kwargs) -> N
         for item in items:
             item.setdefault("name", item["id"])
 
-        # Render per-batch user prompt
-        user_prompt = render_prompt(
-            "sn/enrich_user",
-            {"batch": batch, "items": items},
-        )
+        # generate_docs_user.md is a per-item template; render each item
+        # separately and concatenate for a single batch LLM call.
+        item_prompts = [
+            render_prompt("sn/generate_docs_user", {"item": _it}) for _it in items
+        ]
+        user_prompt = "\n\n---\n\n".join(item_prompts)
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -1901,7 +1902,7 @@ async def process_enrich_batch(
 
     compose_scored_examples = await _asyncio.to_thread(_load_scored)
     system_prompt = render_prompt(
-        "sn/enrich_system", {"compose_scored_examples": compose_scored_examples}
+        "sn/generate_docs_system", {"compose_scored_examples": compose_scored_examples}
     )
 
     # Fetch existing SN ids for link validation
@@ -1916,11 +1917,12 @@ async def process_enrich_batch(
         return 0
 
     # ── Render user prompt ─────────────────────────────────────────────
-    batch_dict = {"items": batch, "batch_index": 0}
-    user_prompt = render_prompt(
-        "sn/enrich_user",
-        {"batch": batch_dict, "items": batch},
-    )
+    # generate_docs_user.md is a per-item template; render each item
+    # separately and concatenate for a single batch LLM call.
+    item_prompts = [
+        render_prompt("sn/generate_docs_user", {"item": _it}) for _it in batch
+    ]
+    user_prompt = "\n\n---\n\n".join(item_prompts)
 
     messages = [
         {"role": "system", "content": system_prompt},
