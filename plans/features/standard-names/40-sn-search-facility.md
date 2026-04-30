@@ -1,6 +1,18 @@
 # Plan 40 — Grammar-aware SN Search & Fetch Facility
 
-> **Status**: DRAFT v1 — plan only; no code in this task.
+> **Status**: DRAFT v2 — RD findings F1–F9 addressed; plan only; no code in this task.
+> **Version history**:
+> - v1 — initial draft.
+> - **v2 (this revision)** — addresses RD critique F1–F9: free-text grammar
+>   stream via tokenisation fallback (F1); per-segment streams replace
+>   weighted-count fusion so RRF naturally weighs `physical_base` higher
+>   (F2); idempotent self-backfill in Phase 1 deploy (F3); explicit
+>   parser-narrowing test (F4); `mode={"hybrid","vector"}` kwarg on
+>   `search_similar_names` to preserve plan-39 collision-avoidance
+>   semantics (F5); `grammar_parse_fallback` flag for `group_by_base`
+>   audits (F6); concurrent stream execution + early-return (F7);
+>   schema-compliance assertion clarified to re-parse, not read schema
+>   (F8); confirm `StandardNameAttachment` payload coexistence (F9).
 > **Branch**: `main`
 > **Owner area**: Standard Names — read & write paths around grammar decomposition.
 > **Parent / context**: AGENTS.md "Standard Names" → "Schema", "MCP Tools", "Write Semantics".
@@ -321,22 +333,39 @@ def _write_grammar_decomposition(gc: GraphClient, name_ids: list[str]) -> list[V
             continue
 
         # Phase A: column row (always written, even on parse-fallback).
+        # F6: detect parse-fallback so group_by_base can exclude these
+        # from the orphan-flag bucket.  Definition: physical_base equals
+        # the whole sn_id AND every other segment is None — i.e. the
+        # parser found no closed-vocab token to peel.
+        is_fallback = (
+            parsed.physical_base == sn_id
+            and all(
+                getattr(parsed, seg) is None
+                for seg in (
+                    "subject", "transformation", "component", "coordinate",
+                    "process", "position", "region", "device",
+                    "geometric_base", "object", "geometry",
+                    "secondary_base", "binary_operator",
+                )
+            )
+        )
         parser_rows.append({
             "id": sn_id,
-            "grammar_physical_base":   parsed.physical_base,    # may be raw open-vocab
-            "grammar_subject":         parsed.subject,
-            "grammar_transformation":  parsed.transformation,
-            "grammar_component":       parsed.component,
-            "grammar_coordinate":      parsed.coordinate,
-            "grammar_process":         parsed.process,
-            "grammar_position":        parsed.position,
-            "grammar_region":          parsed.region,
-            "grammar_device":          parsed.device,
-            "grammar_geometric_base":  parsed.geometric_base,
-            "grammar_object":          parsed.object,
-            "grammar_geometry":        parsed.geometry,
-            "grammar_secondary_base":  parsed.secondary_base,
-            "grammar_binary_operator": parsed.binary_operator,
+            "grammar_physical_base":    parsed.physical_base,    # may be raw open-vocab
+            "grammar_subject":          parsed.subject,
+            "grammar_transformation":   parsed.transformation,
+            "grammar_component":        parsed.component,
+            "grammar_coordinate":       parsed.coordinate,
+            "grammar_process":          parsed.process,
+            "grammar_position":         parsed.position,
+            "grammar_region":           parsed.region,
+            "grammar_device":           parsed.device,
+            "grammar_geometric_base":   parsed.geometric_base,
+            "grammar_object":           parsed.object,
+            "grammar_geometry":         parsed.geometry,
+            "grammar_secondary_base":   parsed.secondary_base,
+            "grammar_binary_operator":  parsed.binary_operator,
+            "grammar_parse_fallback":   is_fallback,             # F6
         })
 
         # Phase B: edge specs (closed-vocab only — open-vocab segments
@@ -368,7 +397,8 @@ def _write_grammar_decomposition(gc: GraphClient, name_ids: list[str]) -> list[V
                 sn.grammar_object           = r.grammar_object,
                 sn.grammar_geometry         = r.grammar_geometry,
                 sn.grammar_secondary_base   = r.grammar_secondary_base,
-                sn.grammar_binary_operator  = r.grammar_binary_operator
+                sn.grammar_binary_operator  = r.grammar_binary_operator,
+                sn.grammar_parse_fallback   = r.grammar_parse_fallback
             """,
             rows=parser_rows,
         )
@@ -393,6 +423,27 @@ The compose worker's `StandardNameAttachment.grammar_fields` field
 remains in the Pydantic model for now (LLM still emits it; we just
 stop persisting it).  Removing it from the model is a follow-up.
 
+**F9 — verify Pydantic payload coexistence.** Before Phase 1 lands,
+confirm `StandardNameAttachment.model_config.extra` (and the parent
+`StandardNameComposeBatch`) do not raise on the now-orphaned field:
+the field stays declared on the model so existing payloads validate;
+production read paths do not consume `grammar_fields` (confirmed in
+§3.1 — only `benchmark.py` reads it, which is offline tooling, and
+the `workers.py` references are write-side propagation that this plan
+removes).  The verification is a one-grep + one-test step in Phase 1
+and is non-blocking: if a downstream reader is found, it is migrated
+to read from the new columns in the same commit.
+
+**Schema slot for `grammar_parse_fallback` (F6).** This is a new
+boolean property on `StandardName`.  It is added to
+`imas_codex/schemas/standard_name.yaml` as a single boolean slot
+(no relationship, no enum).  Schema rebuild happens in Phase 1; the
+auto-generated `models.py` and `schema-reference.md` rebuild
+automatically and are NOT staged manually (per AGENTS.md "Schema
+System").  This is a legitimate schema addition (storing real
+provenance), not a test-driven crutch addition (per AGENTS.md
+"Schema-Driven Testing").
+
 ### 4.3 Open vs closed segment handling
 
 The decision matrix in the new writer:
@@ -412,16 +463,22 @@ is sourced at module load from
 
 ### 4.4 Idempotency
 
-- Phase A: `MATCH … SET` is naturally idempotent.  Re-running on the
-  same `sn_id` overwrites with the same parser output.
+- Phase A: `MATCH … SET prop = r.prop` is naturally idempotent.
+  Re-running on the same `sn_id` overwrites with the same parser
+  output.  **Critical Cypher semantics (F4):** `SET prop = null`
+  *removes* the property, so when a parser-narrowing event leaves a
+  segment unset (e.g. ISN rotation reclassifies `'electron'` from
+  `subject` to `species`), re-running the writer **clears stale
+  columns**.  This is the desired behaviour and is asserted by the
+  Phase 1 test suite (§9.1, `test_writer_clears_segments_when_parser_narrows`).
 - Phase B: existing DELETE-then-MERGE pattern preserved; idempotent by
   construction.
-- Parse-fallback case (parser returns whole-string `physical_base`) is
-  **stable across re-runs** as long as the ISN version is unchanged —
-  the parser is deterministic.  ISN version rotation may shift segment
-  assignments; that is expected and handled by the pipeline's existing
-  rotation workflow (AGENTS.md "Vocabulary Rotation: ISN Fork RC
-  Workflow").
+- Parse-fallback case (parser returns whole-string `physical_base` and
+  no other segments) is **stable across re-runs** as long as the ISN
+  version is unchanged — the parser is deterministic.  ISN version
+  rotation may shift segment assignments; that is expected and handled
+  by the pipeline's existing rotation workflow (AGENTS.md "Vocabulary
+  Rotation: ISN Fork RC Workflow").
 
 A re-run on a graph with stale `grammar_fields` blobs leaves the blobs
 untouched (they continue to live as orphaned data) until the follow-up
@@ -433,34 +490,89 @@ MATCH (sn:StandardName) REMOVE sn.grammar_fields
 
 (That cleanup is **not** in this plan; see §13.)
 
+**Self-backfill on Phase 1 deploy (F3).** Because the writer is
+idempotent and lossless, the Phase 1 deploy script invokes it once
+over **every existing SN id** as the *first* step:
+
+```python
+# scripts/sn_deploy_phase1.py (single-shot, runs once during deploy)
+with GraphClient() as gc:
+    all_ids = [r["id"] for r in gc.query("MATCH (sn:StandardName) RETURN sn.id AS id")]
+    _write_grammar_decomposition(gc, all_ids)
+```
+
+This replaces "backfill" (which the plan declines as a separate
+operation) with "rerun the canonical writer" — same code path, same
+guarantees, no new logic.  After this runs, **every** SN has its
+columns populated regardless of when it was originally written.  The
+Phase 1 acceptance gate (§11 A1) then checks that no active-stage SN
+has `grammar_physical_base IS NULL` after parse succeeded; if it does,
+the deploy fails loudly instead of silently degrading the new search
+features.
+
 ---
 
 ## 5. Search redesign (read side)
 
 ### 5.1 Query parsing (deterministic ISN call, no LLM)
 
-Add a thin helper in `imas_codex/standard_names/search.py`:
+Two helpers in `imas_codex/standard_names/search.py`:
 
 ```python
 def parse_query_segments(query: str) -> dict[str, str]:
-    """Best-effort decomposition of *query* into ISN grammar segments.
+    """Best-effort grammar decomposition of *query*.
 
-    Returns an empty dict if the query is plainly natural language
-    (e.g. contains spaces, punctuation other than '_', or is shorter
-    than 3 chars).  Otherwise calls
-    ``imas_standard_names.grammar.parse_standard_name`` and returns the
+    Calls ``imas_standard_names.grammar.parse_standard_name`` when the
+    query *looks like* an SN candidate
+    (``re.fullmatch(r"[a-z][a-z0-9_]+", query.strip())``).  Returns the
     populated segments only (drops None).
 
     Pure / deterministic.  Never raises — parse failures yield {}.
+    Callers may force a parse with ``as_candidate=True``.
+    """
+
+def tokenise_query(query: str) -> list[str]:
+    """Lowercase token list for the free-text grammar fallback (F1).
+
+    ``re.findall(r"[a-z][a-z0-9]+", query.lower())``.  Stopwords are
+    NOT filtered — the grammar columns themselves are the filter; a
+    spurious token like "of" simply finds no column match.
     """
 ```
 
-The "is this an SN candidate?" predicate is intentionally cheap — we
-only invoke the parser when the query *looks like* a candidate
-(`re.fullmatch(r"[a-z][a-z0-9_]+", query.strip())`).  Callers may
-override with `as_candidate=True` to force a parse.
+**Free-text grammar fallback (F1).** When `parse_query_segments(query)
+== {}` the grammar stream does **not** go dark.  It falls back to a
+*token-against-any-column* match using `tokenise_query`:
 
-### 5.2 Three streams
+```cypher
+// Free-text fallback — query = "plasma stored thermal energy"
+// tokens = ["plasma", "stored", "thermal", "energy"]
+MATCH (sn:StandardName)
+WHERE sn.grammar_physical_base   IN $tokens
+   OR sn.grammar_subject         IN $tokens
+   OR sn.grammar_component        IN $tokens
+   OR sn.grammar_coordinate       IN $tokens
+   OR sn.grammar_geometric_base   IN $tokens
+   OR sn.grammar_secondary_base   IN $tokens
+   OR sn.grammar_process          IN $tokens
+   OR sn.grammar_position         IN $tokens
+   OR sn.grammar_region           IN $tokens
+   OR sn.grammar_device           IN $tokens
+   OR sn.grammar_transformation   IN $tokens
+   OR sn.grammar_object           IN $tokens
+   OR sn.grammar_geometry         IN $tokens
+   OR sn.grammar_binary_operator  IN $tokens
+RETURN sn
+LIMIT $k
+```
+
+This is the meaningful difference between "keyword grep on description"
+(which the keyword stream already does) and **"keyword match against
+parsed grammar tokens"** which is the user's headline ask.  Multi-word
+free-text queries now exercise the grammar stream; SN-shaped queries
+exercise the per-segment streams (see §5.2).
+
+### 5.2 Streams (per-segment grammar streams + vector + keyword)
 
 Each stream is an independently-bounded helper that returns
 `list[StreamHit]`:
@@ -472,59 +584,90 @@ class StreamHit(BaseModel):
     raw:     float | None  # native score (vector cosine, count, …)
 ```
 
-| Stream | Helper | Source | k_default |
+**Per-segment streams replace weighted-count fusion (F2).**  Instead of
+one grammar stream that orders by a weighted hit-count (where the
+weights collapse to tie-breakers under RRF and are lost to alphabetical
+tie-breaks in a small corpus), we submit **one stream per parsed
+segment** to the fusion layer.  RRF then naturally weighs SNs that
+match multiple segments higher (more streams ⇒ more RRF mass), and an
+SN that matches the high-signal `physical_base` gets the same RRF mass
+per stream as any other — but matching `physical_base` typically
+co-occurs with matching `subject` for siblings, so siblings naturally
+rise to the top via accumulated mass across multiple streams.  This is
+the standard RRF idiom.
+
+| Stream family | Helper | Source | k_default |
 |---|---|---|---|
 | **Vector** | `_vector_stream(gc, query, k)` | `db.index.vector.queryNodes('standard_name_desc_embedding', …)` (existing) | 20 |
-| **Grammar** | `_grammar_stream(gc, segments, k)` | `MATCH (sn:StandardName) WHERE sn.grammar_physical_base = $val OR …` over the **column properties** | 20 |
+| **Per-segment grammar** (one stream per non-null parsed segment) | `_segment_stream(gc, segment, value, k)` | `MATCH (sn:StandardName) WHERE sn.grammar_<segment> = $value RETURN sn` | 20 |
+| **Free-text grammar** (only when parsed = {}) | `_freetext_grammar_stream(gc, tokens, k)` | the IN-any-column query in §5.1 | 20 |
 | **Keyword** | `_keyword_stream(gc, query, k)` | `WHERE toLower(sn.id) CONTAINS $q OR toLower(sn.description) CONTAINS $q` (existing logic) | 20 |
 
-The grammar stream is **column-based, not edge-based**, so it surfaces
-SNs across open-vocab tokens too.  Concretely:
+Stream selection rule:
+
+```
+parsed = parse_query_segments(query)         # may be {}
+streams = {"vector": _vector_stream(...), "keyword": _keyword_stream(...)}
+if parsed:
+    for segment, value in parsed.items():
+        streams[f"grammar:{segment}"] = _segment_stream(gc, segment, value, k)
+else:
+    tokens = tokenise_query(query)
+    if tokens:
+        streams["grammar:freetext"] = _freetext_grammar_stream(gc, tokens, k)
+```
+
+**Per-segment Cypher** (`_segment_stream`):
 
 ```cypher
-// Worked example — query = "parallel_current_density_weight" parses to
-// physical_base='current_density', component='parallel', secondary_base='weight'
-// (if parser produces that decomposition).
 MATCH (sn:StandardName)
-WHERE sn.grammar_physical_base = $physical_base
-   OR sn.grammar_component     = $component
-   OR sn.grammar_secondary_base = $secondary_base
-WITH sn,
-     (CASE WHEN sn.grammar_physical_base    = $physical_base    THEN 3 ELSE 0 END +
-      CASE WHEN sn.grammar_component        = $component        THEN 1 ELSE 0 END +
-      CASE WHEN sn.grammar_secondary_base   = $secondary_base   THEN 1 ELSE 0 END) AS hits
-WHERE hits > 0
-RETURN sn.id AS sn_id, hits AS raw
-ORDER BY hits DESC, sn.id ASC
+WHERE sn.grammar_<segment> = $value
+RETURN sn.id AS sn_id
+ORDER BY sn.id ASC
 LIMIT $k
 ```
 
-Per-segment weighting (1 / 1 / 3 / 1 …) is encoded in the helper as
-a constant dict, **not** in user-tunable settings.  The sort tie-breaker
-is `sn.id ASC` for determinism.
+Cheap, deterministic, single-property predicate (indexable).  The
+`<segment>` interpolation is built from a hard-coded `Literal[...]`
+allow-list — never user-supplied.
 
-`physical_base` carries weight 3 because it is the most discriminating
-slot empirically (open-vocab values are highly distinctive: only one
-SN has `physical_base='temperature_electron_average'`, etc.).
-`subject` carries weight 2; all others 1.  Final weights chosen for
-plan 40:
+**Why this delivers the user's headline goal.**  For a query
+`"electron temperature"` (free-text):
 
-```
-physical_base    : 3
-subject          : 2
-component        : 1
-coordinate       : 1
-geometric_base   : 1
-secondary_base   : 1
-process          : 1
-position         : 1
-region           : 1
-device           : 1
-transformation   : 1
-object           : 1
-geometry         : 1
-binary_operator  : 1
-```
+1. `parse_query_segments` → `{}`.
+2. `tokenise_query` → `["electron", "temperature"]`.
+3. `grammar:freetext` stream finds every SN whose
+   `grammar_subject == "electron"` OR `grammar_physical_base == "temperature"`
+   etc.  All `electron_*_temperature` siblings appear with rank 1..N.
+4. Vector stream surfaces semantically-similar names (e.g. `electron_pressure`).
+5. Keyword stream catches description-text matches.
+6. RRF fuses all streams — siblings sharing both tokens accumulate mass
+   from both the freetext grammar match *and* the vector match,
+   landing them above non-grammar-matched semantic neighbours.
+
+For an SN-shaped query `"parallel_current_density_weight"`:
+
+1. `parse_query_segments` → e.g. `{"physical_base": "current_density",
+   "component": "parallel", "secondary_base": "weight"}`.
+2. Three separate per-segment streams submitted: `grammar:physical_base`,
+   `grammar:component`, `grammar:secondary_base`.
+3. An SN sharing all three (a true sibling) accumulates RRF mass from
+   all three streams plus vector and keyword — landing it at the top
+   without any weight tuning.
+
+**Bound on empty-segments case (F7).**  When `parsed == {}` AND
+`tokenise_query(query) == []` (e.g. caller passes `""` or pure
+punctuation), the grammar stream returns `[]` immediately without a
+graph round-trip.  Search degrades to vector + keyword as before; this
+is the documented fallback.
+
+**Concurrent execution (F7).**  All streams are dispatched concurrently
+via `asyncio.gather` against an async Cypher wrapper (`gc.aquery`) when
+available, otherwise via `concurrent.futures.ThreadPoolExecutor` against
+the sync `gc.query`.  Per-stream timeout is 2 s; on timeout the stream
+contributes `[]` and search continues with the streams that returned.
+The 22-SN dev graph completes all streams in well under 50 ms; this
+matters at corpus scale.
 
 ### 5.3 RRF fusion math
 
@@ -560,17 +703,25 @@ def rrf_fuse(streams: dict[str, list[StreamHit]]) -> list[FusedHit]:
 AGENTS.md "Configuration" — defaults bake in when there's no operator
 need to tune them).
 
-**Worked unit-test fixture (used in §9):**
+**Worked unit-test fixture (used in §9).**  Query
+`"parallel_current_density_weight"` parses to three segments, so the
+streams submitted are: `vector`, `grammar:physical_base`,
+`grammar:component`, `grammar:secondary_base`, `keyword` (5 streams).
 
-| sn_id   | vector rank | grammar rank | keyword rank | RRF score        |
-|---------|:-----------:|:------------:|:------------:|------------------|
-| `electron_temperature`   | 1 | 1 | 2 | 1/61 + 1/61 + 1/62 ≈ 0.0489 |
-| `ion_temperature`        | 2 | 1 | 4 | 1/62 + 1/61 + 1/64 ≈ 0.0481 |
-| `temperature`            | 5 | 1 | 1 | 1/65 + 1/61 + 1/61 ≈ 0.0482 |
+| sn_id   | vector | g:phys_base | g:component | g:secondary_base | keyword | streams matched | RRF score (sum 1/(60+rank)) |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|---|
+| `parallel_current_density_weight` (true sibling) | 1 | 1 | 1 | 1 | 1 | 5 | 5/61 ≈ 0.0820 |
+| `current_density` (shares phys_base only)        | 5 | 2 | — | — | 3 | 3 | 1/65+1/62+1/63 ≈ 0.0476 |
+| `electron_pressure` (semantic neighbour)         | 2 | — | — | — | — | 1 | 1/62 ≈ 0.0161 |
+| `parallel_velocity` (shares component only)      | — | — | 2 | — | — | 1 | 1/62 ≈ 0.0161 |
 
-Order: `electron_temperature` > `temperature` > `ion_temperature`.  All
-three streams contribute; the test asserts the order and the per-hit
-provenance.
+Order: true sibling > phys_base sharer > semantic/component-only.  The
+test asserts the order and the per-hit `stream_ranks` provenance.
+
+The §5.3 RRF math is unchanged; what changes is that **`physical_base`
+no longer needs an explicit weight** — it earns its prominence by
+being a distinct stream, plus correlating with other streams (true
+siblings hit multiple per-segment streams).
 
 ### 5.4 Output schema (hits with stream provenance)
 
@@ -588,9 +739,10 @@ class HybridSearchReport(BaseModel):
     hits:         list[FusedHit]
 ```
 
-The MCP-tool string formatter renders `stream_ranks` as `[V:1 G:3 K:-]`
-inline next to each hit — short, scannable, and makes the new behaviour
-visible to the operator.
+The MCP-tool string formatter renders `stream_ranks` as
+`[V:1 Gphys:1 Gcomp:1 Gsec:1 K:1]` inline next to each hit (or short
+forms like `[V:- Gphys:2 K:3]` when streams miss) — short, scannable,
+and makes the per-segment fusion behaviour visible to the operator.
 
 ### 5.5 Siblings mode signature
 
@@ -640,51 +792,90 @@ def group_by_base(
     *,
     physics_domain: str | None = None,
     min_group_size: int = 1,
+    include_fallback: bool = False,
 ) -> list[BaseGroup]:
     """Return SN groups keyed by (physical_base, subject).
 
     Used by catalog audits to surface families and to spot orphans
     (groups of size 1 are likely candidates for renaming or for a
     new sibling).
+
+    *include_fallback* (F6): when False (default), rows with
+    ``sn.grammar_parse_fallback = true`` are returned in a separate
+    ``unparseable`` bucket (not as singleton "orphans") to avoid
+    parser-fallback strings masquerading as data.  See §4.2.2 for
+    how the flag is set on write.
     """
+
+class BaseGroup(BaseModel):
+    base: str
+    subject: str
+    members: list[str]
+    n: int
+    is_fallback_bucket: bool = False  # True for the unparseable bucket
 ```
 
-Cypher:
+Cypher (two-bucket form):
 
 ```cypher
+// Bucket 1 — parsed groups
 MATCH (sn:StandardName)
 WHERE ($pd IS NULL OR sn.physics_domain = $pd)
   AND sn.grammar_physical_base IS NOT NULL
+  AND coalesce(sn.grammar_parse_fallback, false) = false
 WITH sn.grammar_physical_base AS base,
      coalesce(sn.grammar_subject, '') AS subject,
      collect(sn.id) AS members
 WHERE size(members) >= $min_group_size
-RETURN base, subject, members, size(members) AS n
+RETURN base, subject, members, size(members) AS n, false AS is_fallback_bucket
 ORDER BY n DESC, base ASC, subject ASC
+
+// Bucket 2 — fallback rows (returned only when include_fallback OR as
+// a separate pass invoked by the caller)
+MATCH (sn:StandardName)
+WHERE coalesce(sn.grammar_parse_fallback, false) = true
+RETURN '<unparseable>' AS base, '' AS subject, collect(sn.id) AS members,
+       count(sn) AS n, true AS is_fallback_bucket
 ```
 
 ### 5.7 Worked end-to-end example
 
-Query `parallel_current_density_weight` (a hypothetical SN candidate
-the reviewer is considering):
+Two query shapes — both must work.
+
+**Shape 1: SN-shaped query** `parallel_current_density_weight`:
 
 1. **Parse**: `physical_base='current_density'`, `component='parallel'`,
    `secondary_base='weight'` (assuming parser supports the suffix).
-2. **Vector stream**: top-20 from
-   `standard_name_desc_embedding` against the raw query string.
-3. **Grammar stream** (column-MATCH, weighted):
-   - hits SNs sharing `physical_base='current_density'` (weight 3 each),
-   - hits SNs sharing `component='parallel'` (weight 1),
-   - hits SNs sharing `secondary_base='weight'` (weight 1).
-4. **Keyword stream**: substring on the raw string.
-5. **RRF fuse** the three streams.
+2. **Streams submitted**: `vector`, `grammar:physical_base`,
+   `grammar:component`, `grammar:secondary_base`, `keyword` (5 streams).
+3. Each per-segment stream is a single indexed `=` predicate on a
+   column property.
+4. **RRF fuse** — see the worked fixture in §5.3.
 
-A pre-existing SN `equilibrium_reconstruction_parallel_current_density_weight`
-that did not embed well (under-described in `description`) but shares
-the `physical_base` and `component` is now visible — pre-plan-40 it
-would have been invisible to a vector-only search and the segment
-filter would have required the operator to type
-`physical_base=current_density&component=parallel` by hand.
+A pre-existing SN
+`equilibrium_reconstruction_parallel_current_density_weight` that did
+not embed well (under-described in `description`) but shares
+`physical_base`, `component`, *and* `secondary_base` accumulates RRF
+mass across three grammar streams plus keyword — landing it at the top
+without any weight tuning.
+
+**Shape 2: Free-text query** `"plasma stored thermal energy"` (the §11
+A4 acceptance test):
+
+1. **Parse**: `parse_query_segments(query) == {}` (multi-word).
+2. **Tokenise** (F1): `["plasma", "stored", "thermal", "energy"]`.
+3. **Streams submitted**: `vector`, `grammar:freetext`, `keyword`.
+4. The `grammar:freetext` stream finds every SN whose
+   `grammar_physical_base ∈ tokens` OR `grammar_subject ∈ tokens` …
+   — matches on `physical_base='thermal_energy'` /
+   `physical_base='stored_energy'` / etc., plus any SN whose
+   `subject='plasma'`.
+5. **RRF fuse** — multi-word free-text queries now exercise grammar
+   matching, not just description-substring grep.
+
+Pre-plan-40 v2, the F1 critique held: the parser-only path gated on
+`re.fullmatch(r"[a-z][a-z0-9_]+", …)` would have bypassed grammar
+entirely for shape 2.  Post-v2, both shapes reach the grammar layer.
 
 ---
 
@@ -811,8 +1002,8 @@ namespace is empty is worthwhile and cheap.
 
 | Phase | Scope | Verification gate |
 |-------|-------|---------------------|
-| **1. Writer fix** | §4 — rename + rewrite `_write_segment_edges` → `_write_grammar_decomposition`; replace the inline column SET in `catalog_import.py`; remove `grammar_fields=` propagation from `compose_worker`. | Unit: parser → column round-trip; integration: `sn run --paths` on a 5-SN seed produces 5 SNs with all parser-emitted columns populated; `sns_with_grammar_col == sns_total`. |
-| **2. Read-side** | §5 — `parse_query_segments`, three stream helpers, `rrf_fuse`, refactor `_search_standard_names` to call them; add `siblings_by_segment` and `group_by_base` Python helpers. | Unit: RRF math test (worked fixture from §5.3); unit: stream helpers return deterministic order; integration: hybrid search on a seeded 10-SN graph surfaces siblings that vector-only misses. |
+| **1. Writer fix + self-backfill** | §4 — rename + rewrite `_write_segment_edges` → `_write_grammar_decomposition` (with `grammar_parse_fallback` flag, F6); replace inline column SET in `catalog_import.py`; remove `grammar_fields=` propagation from `compose_worker`; add the deploy hook that calls the writer over all existing SN ids (F3). | Unit: parser → column round-trip, idempotency, parser-narrowing clears columns (F4), fallback flag set; integration: deploy hook leaves zero active-stage SNs with NULL `grammar_physical_base` after parse succeeded. |
+| **2. Read-side** | §5 — `parse_query_segments`, `tokenise_query`, `_segment_stream`, `_freetext_grammar_stream` (F1), `_vector_stream`, `_keyword_stream`, concurrent dispatch (F7), `rrf_fuse`, refactor `_search_standard_names`; add `siblings_by_segment` and `group_by_base` (with fallback bucket, F6) Python helpers; add `mode={"hybrid","vector"}` kwarg to `search_similar_names` (F5). | Unit: RRF math, per-segment-stream natural ranking (F2), tokenise edges, mode kwarg behaviour; integration: free-text and SN-shaped queries both reach grammar layer; siblings surface across vector misses. |
 | **3. MCP exposure** | §7 — verify registration truth-table; add `siblings_by_segment` MCP tool; `with_grammar` / `with_neighbours` kwargs on `fetch_standard_names`. | Tool-availability test (asserts the four SN tools register under non-dd-only mode); end-to-end manual smoke against the dev `imas-codex` MCP server. |
 
 Each phase commits and pushes independently.  Phase 2 hard-depends on
@@ -824,8 +1015,12 @@ first).  Phase 3 has only soft dependencies.
 ## 9. Test strategy (per AGENTS.md "Schema-Driven Testing")
 
 **Discipline reminder:** AGENTS.md forbids adding LinkML schema
-declarations *just to make tests green*.  The slots used in this plan
-already exist in the schema (§4.1).  No schema additions.
+declarations *just to make tests green*.  The column slots used here
+already exist in the schema (§4.1).  The one schema addition —
+`grammar_parse_fallback` (boolean) — stores legitimate provenance
+(F6); it is **not** added to make a test pass.  The fallback test in
+§9.1 asserts the boolean's behaviour; it does not depend on the slot
+declaration.
 
 ### 9.1 Phase 1 — writer
 
@@ -834,6 +1029,9 @@ already exist in the schema (§4.1).  No schema additions.
 | `test_write_grammar_columns_populated` | `tests/standard_names/test_graph_ops.py` | unit (mocked `gc.query`) | every parser-emitted segment lands on the SET payload |
 | `test_open_vocab_physical_base_kept` | same | unit | `physical_base="major_radius"` (no GrammarToken) survives to `sn.grammar_physical_base` |
 | `test_writer_idempotent` | same | unit | running twice with same input produces identical SET payloads |
+| `test_writer_clears_segments_when_parser_narrows` (F4) | same | unit (live test graph or mocked) | seed an SN with `grammar_subject='electron'`; re-run with a parser fixture that yields no `subject`; assert `sn.grammar_subject IS NULL` after the second write — proves `SET prop = null` removes the property |
+| `test_grammar_parse_fallback_set` (F6) | same | unit | seed `plasma_geometric_axis_vertical_centroid_position` (whole-string fallback); assert `sn.grammar_parse_fallback = true`; seed `electron_temperature` (clean parse); assert `sn.grammar_parse_fallback = false` |
+| `test_phase1_self_backfill` (F3) | `tests/integration/test_compose_persistence.py` | integration | seed graph with 5 SNs that have no grammar columns (simulate legacy state); call the deploy hook; assert all 5 now have non-null `grammar_physical_base` |
 | `test_grammar_columns_e2e_compose` | `tests/integration/test_compose_persistence.py` | integration (live test graph) | after `compose_batch` of 5 fixtures, `MATCH (sn) WHERE sn.grammar_physical_base IS NULL RETURN count(sn) → 0` |
 | `test_no_grammar_fields_blob_on_new_writes` | same | integration | `sn.grammar_fields IS NULL` for all newly-persisted SNs |
 
@@ -842,10 +1040,15 @@ already exist in the schema (§4.1).  No schema additions.
 | Test | File | Kind | Asserts |
 |------|------|------|---------|
 | `test_parse_query_segments` | `tests/standard_names/test_search.py` | unit | natural-language queries → `{}`; SN-shaped queries → parsed dict |
+| `test_tokenise_query` (F1) | same | unit | `"plasma stored thermal energy"` → `["plasma","stored","thermal","energy"]`; punctuation-only input → `[]` |
+| `test_freetext_grammar_stream` (F1) | same | unit (mocked or fixture graph) | seed SNs with `grammar_subject='plasma'` and `grammar_physical_base='thermal_energy'`; multi-word query returns both via `grammar:freetext` |
 | `test_rrf_fuse_worked_example` | same | unit | the §5.3 fixture produces exact ordering and scores within 1e-6 |
-| `test_grammar_stream_column_match` | same | unit (mocked `gc.query`) | weighted hit count matches §5.2 weights |
+| `test_per_segment_streams_naturally_rank_siblings` (F2) | same | unit (mocked) | true sibling matching 3 segments outranks an SN matching 1 segment via accumulated RRF mass — no explicit weights |
 | `test_siblings_by_segment` | same | unit | column-MATCH Cypher template renders for each allowed segment |
+| `test_streams_run_concurrently` (F7) | same | unit (timed) | 3-stream dispatch returns within wall-time < sum of per-stream sleeps (proves concurrent execution); empty-tokens path makes 0 grammar round-trips |
+| `test_search_similar_names_mode_kwarg` (F5) | same | unit | `mode="vector"` returns vector-only results; `mode="hybrid"` returns RRF-fused results; default is `"hybrid"` |
 | `test_hybrid_search_surfaces_siblings` | `tests/integration/test_search.py` | integration | seeded graph: 5 SNs share `physical_base='temperature'`, only 1 has a strong vector hit; hybrid returns all 5 |
+| `test_hybrid_search_freetext_query` (F1, A4-companion) | same | integration | seeded graph; query `"plasma stored thermal energy"` returns ≥ 1 SN via the `grammar:freetext` stream that vector + keyword would not have surfaced |
 
 ### 9.3 Phase 3 — MCP
 
@@ -859,13 +1062,23 @@ already exist in the schema (§4.1).  No schema additions.
 
 `tests/graph/test_schema_compliance.py` already asserts that every
 property declared in the LinkML schema for `StandardName` is either
-`None` or a string on persisted nodes.  After Phase 1, the
-column-population assertion strengthens to: for SNs with `name_stage IN
-('drafted', 'accepted', 'reviewed', 'superseded')`, every parser-emitted
-segment column is non-null when the parser emits a value for it.
+`None` or a string on persisted nodes.  After Phase 1, an additional
+assertion is added (in the existing test module, not as a schema
+declaration):
 
-This is a **derived assertion**, not a new schema declaration — it
-respects the AGENTS.md ban on using schema as a test crutch.
+> For each persisted SN with `name_stage IN ('drafted', 'accepted',
+> 'reviewed', 'superseded')`, the test re-parses `sn.id` with
+> `imas_standard_names.grammar.parse_standard_name` *inside the test
+> body*, then asserts that for every segment where the parser yields a
+> non-None value, the corresponding `sn.grammar_<segment>` column is
+> equal to that value.
+
+**F8 clarification:** the predicate "parser emits a value" is
+established by **calling the parser inside the assertion**, not by
+reading a schema declaration.  No schema lookup is used as oracle —
+this respects the AGENTS.md "Schema-Driven Testing" ban on schema-as-
+test-crutch.  The parser is the source of truth; the schema only
+declares storage shape.
 
 ---
 
@@ -893,14 +1106,17 @@ The plan is "done" when **all** of the following hold against the live
 of ≥ 30 SNs spanning at least 3 distinct `grammar_physical_base`
 values:
 
-1. **A1.** `MATCH (sn:StandardName) WHERE sn.grammar_physical_base IS NULL RETURN count(sn)` → `0` for SNs whose parser emitted a `physical_base`.
+1. **A1.** `MATCH (sn:StandardName) WHERE sn.grammar_physical_base IS NULL RETURN count(sn)` → `0` for SNs whose parser emitted a `physical_base`.  **F3 deploy gate:** the Phase 1 deploy script (§4.4) self-backfills via `_write_grammar_decomposition(gc, all_sn_ids)`; if any active-stage SN remains NULL after that, the deploy fails loudly.
 2. **A2.** `MATCH (sn:StandardName) WHERE sn.grammar_fields IS NOT NULL RETURN count(sn)` → `0` (new writes do not emit the legacy blob).
 3. **A3.** Calling `siblings_by_segment(value="temperature", segment="physical_base")` returns ≥ 2 rows (assuming the seed has them).
-4. **A4.** A vector-only search for `"plasma stored thermal energy"` and a hybrid search for the same string both succeed; the hybrid result includes ≥ 1 SN sharing the candidate's `physical_base` that is **not** in the vector top-20 (proven by per-stream rank provenance).
+4. **A4 (F1).** **Both** SN-shaped and free-text queries reach the grammar layer:
+    - SN-shaped: `_search_standard_names("parallel_current_density_weight")` produces hits whose `stream_ranks` include at least one `grammar:<segment>` key.
+    - Free-text: `_search_standard_names("plasma stored thermal energy")` produces hits whose `stream_ranks` include `grammar:freetext`, and at least one returned SN was matched **only** via the grammar stream (i.e. absent from a vector-only top-20 over the same query).
 5. **A5.** `fetch_standard_names("electron_temperature", with_neighbours=True)` returns a sibling count derived from the column lookup, not from the typed-edge fallback.
 6. **A6.** `tests/graph/test_schema_compliance.py` and the new tests in §9 all pass.
-7. **A7.** Running `_write_grammar_decomposition` twice on the same `name_ids` produces no graph diff.
+7. **A7.** Running `_write_grammar_decomposition` twice on the same `name_ids` produces no graph diff; running it on an SN whose ISN-rotated parse narrows a segment **clears** the stale column (F4).
 8. **A8.** Server-registration test asserts the four SN tools register under `dd_only=False` and none under `dd_only=True`.
+9. **A9 (F6).** `group_by_base()` segregates parse-fallback rows into the `unparseable` bucket; a singleton `physical_base='plasma_geometric_axis_vertical_centroid_position'` does **not** appear as an "orphan" group.
 
 ---
 
@@ -910,10 +1126,17 @@ Per the user's policy (AGENTS.md "Reset and Clear Semantics" + the
 direct guidance: *"we have a non-backward compatible policy to reduce
 code clutter"*):
 
-- **No backfill.**  The graph is small (22 SNs) and will be cleared
-  via `sn clear` before this lands.
+- **Self-backfill on deploy (F3).**  No bespoke backfill script.
+  Instead, the Phase 1 deploy hook calls
+  `_write_grammar_decomposition(gc, all_sn_ids)` once.  Because the
+  writer is idempotent and lossless, this transforms "backfill" into
+  "rerun the canonical writer" — same code path, same guarantees.
+  See §4.4 for the snippet.  This removes the foot-gun where a
+  forgotten `sn clear` would silently degrade the new search features
+  on the existing 22 SNs.
 - **`sn clear` continues to work** (it deletes all SNs anyway; no
-  change required).
+  change required).  Operators may still run `sn clear` if they
+  prefer; the deploy hook is a no-op against an empty graph.
 - **`grammar_fields` blob removal** lives in a follow-up cleanup
   commit on the same feature branch:
   ```cypher
@@ -988,11 +1211,25 @@ Plan 39 owns:
 **Plan 40 underwrites plan 39's `search_existing_names` runner.**
 After plan 40 lands:
 
-- `search_existing_names(query, k, *, gc=None, …)` calls into
-  `search.py::search_similar_names`, which is *itself* enhanced by
-  plan 40 to route through the new hybrid pipeline (vector + grammar +
-  keyword) when the query parses as an SN candidate.  The signature is
-  unchanged; only the internals improve.
+- `search_similar_names(query, k, *, gc=None, mode="hybrid")` gains an
+  explicit **mode kwarg (F5)**:
+  - `mode="hybrid"` (default) — RRF-fused vector + per-segment grammar +
+    keyword.  This is what plan 39's `search_existing_names` runner
+    receives.
+  - `mode="vector"` — strict vector nearest-neighbour (current
+    behaviour).  Reserved for **collision-avoidance call sites** in
+    `compose_worker` that pre-write a candidate against the embedding
+    index and need stable, unfused semantics.  No grammar bias, no
+    description-substring noise.
+  Default `"hybrid"` gives plan 39 the win for free; `"vector"` is the
+  escape hatch for any caller whose mental model is "this is the
+  vector helper".
+- Plan-39 `fn_id`-to-mode mapping (documented here for reference;
+  plan 39's catalog table is the authoritative spec):
+  - `search_existing_names` → `mode="hybrid"` (the runner the proposer
+    LLM aims its query at — wants grammar awareness).
+  - Compose-worker pre-write collision check (not in plan 39's
+    catalog; lives in `compose_worker`) → `mode="vector"`.
 - The fan-out planner doesn't need a new `fn_id` — `search_existing_names`
   is now grammar-aware "for free".
 - The fan-out hits-shape (`FanoutHit.payload`) gains an optional
@@ -1010,10 +1247,14 @@ pilot).  Phase 3 (MCP) is order-independent.
 
 ## 16. Open questions for further RD review
 
-1. **Per-segment weight tuning** (§5.2): the 3 / 2 / 1 weighting is
-   ergonomic but unmeasured.  Once telemetry shows the grammar-stream
-   contribution distribution, we may tune.  Defer until Phase 2 lands
-   and produces real ranks.
+1. **Per-segment weighting under RRF**: v2 dropped the explicit 3/2/1
+   weights (F2) in favour of submitting one stream per parsed segment,
+   so RRF mass accumulates naturally for SNs matching multiple
+   segments.  If telemetry shows that `physical_base`-only matches are
+   still under-ranked relative to vector neighbours, a future
+   refinement may re-introduce per-segment **stream multipliers**
+   (e.g. count `physical_base` mass twice in RRF) — but only with
+   measurement to back the choice.
 2. **Multi-token segments**: ISN v0.7 is single-token-per-segment.  If
    v0.8 introduces multi-token segments (e.g. multiple `process`
    prefixes), the column type becomes `list[str]` and the grammar
@@ -1024,7 +1265,16 @@ pilot).  Phase 3 (MCP) is order-independent.
 4. **Decommissioning the typed edges entirely**: once the column path
    has stable telemetry, the typed edges become pure overhead.  A
    future plan may delete them.  Not in scope here.
+5. **Stopword filtering in `tokenise_query` (F1)**: v2 deliberately
+   does **not** filter stopwords — the grammar columns themselves are
+   the filter (a token like `"of"` finds no column match).  If
+   telemetry shows pathological IN-column scans on common stopwords,
+   add a tiny stopword set (`{"of", "the", "and", "a", "in", "on"}`)
+   in a follow-up; defer until measured.
+6. **Nice-to-have items adopted in v2 vs deferred**: F4, F6, F7, F8,
+   F9 were all adopted (no nice-to-haves skipped).  No deferrals to
+   note here.
 
 ---
 
-*End of plan 40.*
+*End of plan 40 v2.*
