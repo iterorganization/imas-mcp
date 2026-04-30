@@ -3249,41 +3249,139 @@ async def compose_batch(
     ]
 
     # ── Budget reservation ─────────────────────────────────────────────
-    estimated = len(batch) * 0.20
+    # B12: reserve for retry_attempts + 1 LLM calls (re-enrichment retry)
+    _max_retries = _retry_attempts()
+    estimated = len(batch) * 0.20 * (_max_retries + 1)
     phase_tag = "regen" if regen else "generate_name"
     lease = mgr.reserve(estimated, phase=phase_tag)
     # Soft-stop: proceed even without lease (untracked)
 
     try:
-        llm_out = await acall_llm_structured(
-            model=model,
-            messages=messages,
-            response_model=StandardNameComposeBatch,
-            service="standard-names",
-        )
-        result, cost, tokens = llm_out
+        # ── B12: bounded retry loop for failed compositions ────────────
+        # Mirror of the linear path's Delta H retry: on grammar parse
+        # failure across any candidate, re-enrich items with expanded DD
+        # context and re-prompt.  Bounded by _retry_attempts().
+        _total_compose_cost = 0.0
+        _total_tokens_in = 0
+        _total_tokens_out = 0
+        _total_cache_read = 0
+        _total_cache_creation = 0
 
-        # ── Charge cost ────────────────────────────────────────────────
-        # B8: full token breakdown for per-candidate cost attribution.
-        tokens_in = getattr(llm_out, "input_tokens", 0) or 0
-        tokens_out = getattr(llm_out, "output_tokens", 0) or 0
-        tokens_cache_r = getattr(llm_out, "cache_read_tokens", 0) or 0
-        tokens_cache_w = getattr(llm_out, "cache_creation_tokens", 0) or 0
-        if lease:
-            _event = LLMCostEvent(
+        for _compose_attempt in range(_max_retries + 1):
+            llm_out = await acall_llm_structured(
                 model=model,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                tokens_cached_read=tokens_cache_r,
-                tokens_cached_write=tokens_cache_w,
-                sn_ids=tuple(
-                    c.standard_name for c in (result.candidates if result else [])
-                ),
-                batch_id=group_key,
-                phase=phase_tag,
+                messages=messages,
+                response_model=StandardNameComposeBatch,
                 service="standard-names",
             )
-            lease.charge_event(cost, _event)
+            result, cost, tokens = llm_out
+
+            # Accumulate token/cost totals across retries
+            _total_compose_cost += cost
+            _attempt_tokens_in = getattr(llm_out, "input_tokens", 0) or 0
+            _attempt_tokens_out = getattr(llm_out, "output_tokens", 0) or 0
+            _attempt_cache_r = getattr(llm_out, "cache_read_tokens", 0) or 0
+            _attempt_cache_w = getattr(llm_out, "cache_creation_tokens", 0) or 0
+            _total_tokens_in += _attempt_tokens_in
+            _total_tokens_out += _attempt_tokens_out
+            _total_cache_read += _attempt_cache_r
+            _total_cache_creation += _attempt_cache_w
+
+            # Charge this attempt's cost immediately
+            if lease:
+                _event = LLMCostEvent(
+                    model=model,
+                    tokens_in=_attempt_tokens_in,
+                    tokens_out=_attempt_tokens_out,
+                    tokens_cached_read=_attempt_cache_r,
+                    tokens_cached_write=_attempt_cache_w,
+                    sn_ids=tuple(
+                        c.standard_name for c in (result.candidates if result else [])
+                    ),
+                    batch_id=group_key,
+                    phase=phase_tag,
+                    service="standard-names",
+                )
+                lease.charge_event(cost, _event)
+
+            # Quick grammar round-trip check on all candidates
+            _grammar_failures: list[str] = []
+            try:
+                from imas_standard_names.grammar import parse_standard_name
+
+                for c in result.candidates:
+                    try:
+                        parse_standard_name(c.standard_name)
+                    except Exception:
+                        _grammar_failures.append(c.standard_name)
+            except ImportError:
+                pass  # ISN not installed — skip check
+
+            if not _grammar_failures or _compose_attempt >= _max_retries:
+                break
+
+            # Re-enrich items with expanded hybrid search for retry
+            logger.info(
+                "Pool %s: composition retry %d/%d: %d grammar failures (%s) "
+                "— re-composing with expanded DD context",
+                phase_tag,
+                _compose_attempt + 1,
+                _max_retries,
+                len(_grammar_failures),
+                ", ".join(_grammar_failures[:3]),
+            )
+
+            def _re_enrich_expanded():
+                from imas_codex.graph.client import GraphClient
+
+                with GraphClient() as gc:
+                    batch_tuples = [
+                        (
+                            item.get("path"),
+                            item.get("description"),
+                            item.get("physics_domain"),
+                        )
+                        for item in batch
+                        if item.get("path")
+                    ]
+                    if batch_tuples:
+                        hybrid_results = _hybrid_search_neighbours_batch(
+                            gc,
+                            batch_tuples,
+                            search_k=_retry_k_expansion(),
+                        )
+                        item_idx = 0
+                        for item in batch:
+                            if not item.get("path"):
+                                continue
+                            if hybrid_results[item_idx]:
+                                item["hybrid_neighbours"] = hybrid_results[item_idx]
+                            item_idx += 1
+
+            await asyncio.to_thread(_re_enrich_expanded)
+
+            _retry_reason = (
+                f"Previous attempt failed: grammar round-trip failed for "
+                f"{', '.join(_grammar_failures[:3])}. Consider expanded "
+                f"neighbour context and produce a different name."
+            )
+            retry_render_ctx = {
+                **context,
+                **user_context,
+                "retry_reason": _retry_reason,
+            }
+            user_prompt = render_prompt("sn/generate_name_dd", retry_render_ctx)
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+        # Use accumulated totals for per-candidate cost attribution
+        cost = _total_compose_cost
+        tokens_in = _total_tokens_in
+        tokens_out = _total_tokens_out
+        tokens_cache_r = _total_cache_read
+        tokens_cache_w = _total_cache_creation
 
         # ── Build candidates ───────────────────────────────────────────
         candidates: list[dict] = []
