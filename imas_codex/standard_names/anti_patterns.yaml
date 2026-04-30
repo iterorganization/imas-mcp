@@ -1,0 +1,203 @@
+# Curated decomposition-failure anti-patterns for SN composer prompts.
+#
+# Source: W0 snapshot (examples_curated.yaml — `inadequate` + `poor` tiers)
+# combined with the verbatim reviewer comment recorded on the Neo4j graph
+# before the W2-clear sweep.
+#
+# Each entry shows the LLM how a closed-vocabulary token (component, subject,
+# coordinate, position, process, transformation) was wrongly absorbed into the
+# `physical_base` slot, why the reviewer docked points, and the canonical
+# rewriting that places the absorbed token in its correct grammar segment.
+#
+# This file is the single source of truth for the "Anti-Pattern Gallery —
+# decomposition failure" section of the system prompt.  Keep it tight: 6–10
+# entries chosen to span every closed segment.
+#
+# Schema (validated by tests/standard_names/test_anti_patterns_yaml.py):
+#
+#   - bad_name: <string>
+#     issue_category: decomposition_failure
+#     reviewer_comment: <string, ≤400 chars, copied verbatim from the
+#         W0 reviewer comment corpus — never paraphrased>
+#     correct_decomposition: <mapping of grammar_segment → token>
+#     rewritten_name: <string, the canonical replacement>
+#     absorbed_tokens:
+#       - token: <string>
+#         segment: <component|subject|coordinate|position|process|
+#                   transformation|geometric_base|object|geometry|
+#                   region|device>
+
+- bad_name: poloidal_diffusion_coefficient_of_ion_particles
+  issue_category: decomposition_failure
+  reviewer_comment: >-
+    `poloidal` absorbed into base rather than in its own group (decomposition
+    defect, -4). `_of_ion_particles` misuses the locus `_of_` preposition for
+    a species/transported-quantity relationship, and `particles` is redundant.
+  absorbed_tokens:
+    - token: poloidal
+      segment: component
+    - token: ion
+      segment: subject
+  correct_decomposition:
+    component: poloidal
+    subject: ion
+    physical_base: diffusion_coefficient
+  rewritten_name: poloidal_component_of_ion_diffusion_coefficient
+
+- bad_name: radial_ion_energy_flux
+  issue_category: decomposition_failure
+  reviewer_comment: >-
+    The name absorbs closed-vocabulary tokens 'radial' (component) and 'ion'
+    (subject) into the physical_base compound, representing two decomposition
+    defects (-8 points). Convention: Non-canonical segment ordering; should
+    follow [subject][component][physical_base] pattern.
+  absorbed_tokens:
+    - token: radial
+      segment: component
+    - token: ion
+      segment: subject
+  correct_decomposition:
+    component: radial
+    subject: ion
+    physical_base: energy_flux
+  rewritten_name: radial_component_of_ion_energy_flux
+
+- bad_name: parallel_viscosity_current_density_due_to_diamagnetic_drift
+  issue_category: decomposition_failure
+  reviewer_comment: >-
+    The compound base `parallel_viscosity_current_density` absorbs `parallel`
+    (a registered component/projection token) and `viscosity` (a separate
+    physics concept) into the physical_base slot, each constituting a
+    decomposition defect (-4 each, cumulative -8). Only the
+    `_due_to_diamagnetic_drift` postfix is correctly formed.
+  absorbed_tokens:
+    - token: parallel
+      segment: component
+  correct_decomposition:
+    component: parallel
+    physical_base: viscosity_current_density
+    process: diamagnetic_drift
+  rewritten_name: parallel_component_of_viscosity_current_density_due_to_diamagnetic_drift
+
+- bad_name: poloidal_pfirsch_schlueter_current_density
+  issue_category: decomposition_failure
+  reviewer_comment: >-
+    'poloidal' (component) and 'pfirsch_schlueter' (subject) are both
+    closed-vocabulary tokens absorbed into the physical_base compound. Each
+    costs 4 points. The current density is well-defined; rename so the
+    subject and component sit in their own grammar slots.
+  absorbed_tokens:
+    - token: poloidal
+      segment: component
+    - token: pfirsch_schlueter
+      segment: subject
+  correct_decomposition:
+    component: poloidal
+    subject: pfirsch_schlueter
+    physical_base: current_density
+  rewritten_name: poloidal_component_of_pfirsch_schlueter_current_density
+
+- bad_name: edge_plasma_particle_velocity
+  issue_category: decomposition_failure
+  reviewer_comment: >-
+    'particle' is a closed-vocab subject token absorbed into physical_base
+    (-4 points). 'edge_plasma' is ambiguous as a qualifier; domain experts
+    would likely separate subject and position (edge region). Convention:
+    non-canonical use of 'edge_plasma' rather than a recognized region term.
+  absorbed_tokens:
+    - token: particle
+      segment: subject
+  correct_decomposition:
+    region: edge_region
+    subject: particle
+    physical_base: velocity
+  rewritten_name: particle_velocity_over_edge_region
+
+- bad_name: ion_heating_power_from_fast_particles
+  issue_category: decomposition_failure
+  reviewer_comment: >-
+    The qualifier 'from' is not a registered preposition. The mechanism by
+    which fast particles transfer energy to the bulk ions is collisions
+    ('thermalization'), which belongs in the process segment via
+    `_due_to_collisions`. Use the locus `_with_` only inside the process
+    qualifier of `_due_to_`.
+  absorbed_tokens:
+    - token: ion
+      segment: subject
+  correct_decomposition:
+    subject: ion
+    physical_base: heating_power
+    process: collisions
+  rewritten_name: ion_heating_power_due_to_collisions_with_fast_particles
+
+- bad_name: mhd_linear_toroidal_mode_plasma_b_field_perturbed_coordinate1_real
+  issue_category: decomposition_failure
+  reviewer_comment: >-
+    The name absorbs multiple closed-vocabulary tokens (toroidal as
+    component, perturbed as transformation) into an undifferentiated
+    physical_base compound. The abbreviation 'b_field' violates conventions.
+    'mhd_linear' embeds methodology. 'coordinate1_real' is non-standard for
+    expressing real_part of a coordinate component.
+  absorbed_tokens:
+    - token: toroidal
+      segment: component
+    - token: perturbed
+      segment: transformation
+  correct_decomposition:
+    component: radial
+    physical_base: perturbed_magnetic_field
+  rewritten_name: radial_component_of_perturbed_magnetic_field_real_part_per_toroidal_mode
+
+- bad_name: poloidal_diffusion_coefficient_of_neutral_momentum
+  issue_category: decomposition_failure
+  reviewer_comment: >-
+    `poloidal` is absorbed into the base rather than occupying its own group
+    — a decomposition error. The `_of_neutral_momentum` suffix misuses the
+    locus `_of_` preposition for a transported-quantity relationship; the
+    `neutral` subject and `momentum` head noun belong in their own slots.
+  absorbed_tokens:
+    - token: poloidal
+      segment: component
+    - token: neutral
+      segment: subject
+  correct_decomposition:
+    component: poloidal
+    subject: neutral
+    physical_base: momentum_diffusion_coefficient
+  rewritten_name: poloidal_component_of_neutral_momentum_diffusion_coefficient
+
+- bad_name: upper_uncertainty_of_poloidal_component_of_momentum_flux_limiter
+  issue_category: decomposition_failure
+  reviewer_comment: >-
+    The name absorbs closed-vocab tokens 'poloidal' (component) and
+    'limiter' (position) into what would be the physical_base compound,
+    resulting in at least two decomposition defects (-8 points). Segment
+    ordering is non-canonical and the trailing `_limiter` is a position
+    qualifier that must use `_of_limiter`.
+  absorbed_tokens:
+    - token: poloidal
+      segment: component
+    - token: limiter
+      segment: position
+  correct_decomposition:
+    component: poloidal
+    physical_base: momentum_flux
+    position: limiter
+  rewritten_name: upper_uncertainty_of_poloidal_component_of_momentum_flux_of_limiter
+
+- bad_name: thermal_electron_pressure_volume_averaged
+  issue_category: decomposition_failure
+  reviewer_comment: >-
+    Aggregator tokens (`volume_averaged`, `flux_surface_averaged`,
+    `line_averaged`) are unary prefix operators and require explicit `_of_`
+    scope; trailing them after the base collapses the operator into the
+    physical_base. The subject/component chain is correct but the
+    transformation must lead.
+  absorbed_tokens:
+    - token: volume_averaged
+      segment: transformation
+  correct_decomposition:
+    transformation: volume_averaged
+    subject: thermal_electron
+    physical_base: pressure
+  rewritten_name: volume_averaged_of_thermal_electron_pressure

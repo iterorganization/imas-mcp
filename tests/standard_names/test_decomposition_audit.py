@@ -219,3 +219,87 @@ class TestAgainstRealISNVocabulary:
             )
         )
         assert ("electron", "subject") in pairs
+
+
+# ---------------------------------------------------------------------------
+# W2: integration — decomposition_audit_check inside the audits framework
+# ---------------------------------------------------------------------------
+
+
+class TestDecompositionAuditCheck:
+    """End-to-end behaviour of ``audits.decomposition_audit_check``."""
+
+    def test_clean_name_returns_no_issues(self):
+        from imas_codex.standard_names.audits import decomposition_audit_check
+
+        candidate = {
+            "id": "safety_factor",
+            "description": "Safety factor q on a flux surface.",
+        }
+        assert decomposition_audit_check(candidate) == []
+
+    def test_toroidal_torque_flags_component(self):
+        from imas_codex.standard_names.audits import decomposition_audit_check
+
+        issues = decomposition_audit_check({"id": "toroidal_torque"})
+        joined = " | ".join(issues)
+        assert "audit:decomposition_audit:" in joined
+        assert "toroidal" in joined
+        assert "component" in joined
+
+    def test_pfirsch_schlueter_subject_flagged(self):
+        from imas_codex.standard_names.audits import decomposition_audit_check
+
+        issues = decomposition_audit_check(
+            {"id": "poloidal_component_of_pfirsch_schlueter_current_density"}
+        )
+        joined = " | ".join(issues)
+        assert "pfirsch_schlueter" in joined
+        # pfirsch_schlueter is a closed-vocab subject token
+        assert "subject" in joined
+
+    def test_volume_averaged_transformation_flagged(self):
+        from imas_codex.standard_names.audits import decomposition_audit_check
+
+        issues = decomposition_audit_check(
+            {"id": "volume_averaged_electron_temperature"}
+        )
+        joined = " | ".join(issues)
+        assert "volume_averaged" in joined or "electron" in joined
+        # Must surface a non-critical audit tag
+        assert all(i.startswith("audit:decomposition_audit:") for i in issues)
+
+    def test_audit_is_not_critical(self):
+        """The decomposition audit must NOT be in the critical-failure set."""
+        from imas_codex.standard_names.audits import (
+            CRITICAL_CHECKS,
+            has_critical_audit_failure,
+        )
+
+        assert "decomposition_audit" not in CRITICAL_CHECKS
+        # A bare decomposition issue must NOT trip the critical-failure gate
+        issues = [
+            "audit:decomposition_audit: name 'toroidal_torque' contains "
+            "closed-vocab token 'toroidal' (segment={component, coordinate}) "
+            "absorbed into the name body."
+        ]
+        assert has_critical_audit_failure(issues) is False
+
+    def test_run_audits_invokes_decomposition_check(self):
+        """``run_audits`` wires the new check into the global audit suite."""
+        from imas_codex.standard_names.audits import run_audits
+
+        candidate = {
+            "id": "toroidal_torque",
+            "description": "Toroidal torque on the plasma column.",
+            "documentation": "Toroidal torque",
+            "unit": "N.m",
+        }
+        all_issues = run_audits(candidate)
+        decomposition_issues = [
+            i for i in all_issues if i.startswith("audit:decomposition_audit:")
+        ]
+        assert decomposition_issues, (
+            "run_audits must surface decomposition_audit issues for "
+            "names with absorbed closed-vocab tokens"
+        )

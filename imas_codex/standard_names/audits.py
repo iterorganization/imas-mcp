@@ -2249,6 +2249,81 @@ def process_qualifier_check(candidate: dict[str, Any]) -> list[str]:
     return issues
 
 
+def decomposition_audit_check(candidate: dict[str, Any]) -> list[str]:
+    """Detect closed-vocabulary tokens absorbed into the candidate name.
+
+    Uses :func:`imas_codex.standard_names.decomposition.find_absorbed_closed_tokens`
+    to scan the candidate's full ``id`` for any closed-vocab segment token
+    that appears as an underscore-delimited substring.  Such tokens almost
+    always indicate the candidate failed grammar decomposition — the token
+    should occupy its closed segment slot rather than be absorbed into
+    ``physical_base``.
+
+    This audit is deliberately **non-critical** (NOT in ``CRITICAL_CHECKS``)
+    because:
+
+    1. The token may legitimately belong to a lexicalised compound such as
+       ``poloidal_flux``, ``minor_radius``, ``cross_sectional_area``,
+       ``safety_factor``, where ``find_absorbed_closed_tokens`` already has
+       a static whitelist.
+    2. The reviewer rubric (I4.6 in ``review_names.md``) handles the
+       judgement call between genuine decomposition failures and accepted
+       atomic terms.
+    3. Auto-quarantining on this audit would mass-reject early-pipeline
+       candidates and overwhelm the review queue.
+
+    Issues are still surfaced on every candidate so reviewers and the LLM
+    self-revision loop have a structured signal to act on.
+
+    Returns tagged issue strings of the form::
+
+        "audit:decomposition_audit: physical_base contains closed-vocab token"
+        " '<token>' (segment={<segments>}); place it in its segment slot."
+    """
+    name = (candidate.get("id") or "").strip()
+    if not name:
+        return []
+
+    try:
+        from imas_standard_names.grammar.constants import SEGMENT_TOKEN_MAP
+
+        from imas_codex.standard_names.decomposition import find_absorbed_closed_tokens
+    except ImportError:
+        return []
+
+    # Build the closed-vocab dict.  Skip aliased segments and ``physical_base``
+    # (open by definition).  Skip empty segments.
+    aliases = {"coordinate", "object", "position"}
+    closed_vocab: dict[str, list[str]] = {}
+    for seg, toks in SEGMENT_TOKEN_MAP.items():
+        if seg in aliases or seg == "physical_base" or not toks:
+            continue
+        closed_vocab[seg] = list(toks)
+
+    if not closed_vocab:
+        return []
+
+    absorbed = find_absorbed_closed_tokens(name, closed_vocab)
+    if not absorbed:
+        return []
+
+    # Group (token, segment) pairs by token so each token is reported once.
+    grouped: dict[str, list[str]] = {}
+    for tok, seg in absorbed:
+        grouped.setdefault(tok, []).append(seg)
+
+    issues: list[str] = []
+    for tok in sorted(grouped):
+        seg_str = ", ".join(sorted(grouped[tok]))
+        issues.append(
+            f"audit:decomposition_audit: name '{name}' contains closed-vocab "
+            f"token '{tok}' (segment={{{seg_str}}}) absorbed into the name "
+            f"body. Place it in its segment slot rather than letting it "
+            f"leak into physical_base."
+        )
+    return issues
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -2313,6 +2388,7 @@ def run_audits(
     all_issues.extend(instrument_stokes_bind_check(candidate))
     all_issues.extend(position_redundancy_check(candidate))
     all_issues.extend(process_qualifier_check(candidate))
+    all_issues.extend(decomposition_audit_check(candidate))
 
     return all_issues
 

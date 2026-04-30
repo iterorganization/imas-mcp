@@ -15,20 +15,31 @@ Do **not** penalise entries for missing or terse `description`/`documentation`. 
 
 {% include "sn/_exemplars.md" %}
 
-## `physical_base` is OPEN vocabulary
+## `physical_base` is the SINGLE open grammar segment — every OTHER segment is closed
 
-`physical_base` is the ONE open grammar segment. New tokens are tracked
-automatically as VocabGap entries for ISN review — they are **NOT**
-grammar defects and you must **NOT** dock grammar points for them. Only
-flag a name as defective on `physical_base` when the token is genuinely
-malformed (mixed casing, contains digits, or is otherwise unparseable).
+`physical_base` is the only open segment of the grammar. New `physical_base`
+tokens are tracked automatically as VocabGap entries for ISN review — a
+well-formed novel `physical_base` token is **not** a grammar defect on its
+own. Dock grammar points only when the token is malformed (mixed casing,
+digits, unparseable).
 
-Compound `physical_base` tokens like `poloidal_flux` or `minor_radius` are
-valid registered atoms; treat them as single entries.
+**Critical:** because `physical_base` is open, the dominant failure mode is
+LLMs **absorbing closed-vocabulary tokens into `physical_base`** rather than
+placing them in their correct closed segment (e.g. `toroidal_torque` instead
+of decomposing as `component=toroidal` + `physical_base=torque`). Apply the
+**[I4.6] Decomposition audit** below aggressively — this is the single
+highest-leverage check in the rubric.
 
-All OTHER segments (subject, component, position, coordinate, process,
-operator, statistic, reference) remain CLOSED. Flag `vocab_gap` and dock
-points only when those segments use unregistered tokens.
+Compound `physical_base` tokens like `poloidal_flux`, `minor_radius`,
+`cross_sectional_area`, `safety_factor`, `polarization_angle`,
+`internal_inductance` are valid lexicalised atomic physics terms; treat them
+as single entries even if a substring resembles a closed-vocab token.
+
+All OTHER segments (subject, component, position, coordinate, geometry,
+device, region, process, transformation, geometric_base) remain CLOSED. Flag
+`vocab_gap` and dock points whenever those segments would require an
+unregistered token, and **never** allow such tokens to migrate into
+`physical_base` to "escape" the closed registry.
 
 ## Scoring Dimensions
 

@@ -95,6 +95,19 @@ def build_compose_context() -> dict[str, Any]:
     ctx["examples"] = _load_curated_examples()
     ctx["tokamak_ranges"] = _load_tokamak_ranges()
 
+    # W2: full closed-vocabulary token map (per-segment) — injected verbatim
+    # into the prompt so the LLM never has to guess whether a token is a
+    # closed-vocab member.  This is the primary defence against decomposition
+    # failures (closed tokens absorbed into physical_base).
+    ctx["closed_vocab_full"] = _load_closed_vocab_full()
+
+    # W2: curated examples + anti-patterns from the W0 snapshot YAMLs.  These
+    # are static, cacheable, and survive `sn clear`; the graph-driven
+    # `compose_scored_examples` injection still complements them at runtime
+    # once the graph repopulates.
+    ctx["w0_curated_examples"] = _load_w0_curated_examples()
+    ctx["decomposition_anti_patterns"] = _load_decomposition_anti_patterns()
+
     # Physics domain enum (for prompt context — LLM doesn't set it but
     # needs domain awareness for better naming decisions)
     from imas_codex.core.physics_domain import PhysicsDomain
@@ -145,6 +158,145 @@ def _load_curated_examples() -> list[dict[str, Any]]:
 
     logger.info("Loaded %d curated standard name examples", len(examples))
     return examples
+
+
+# ---------------------------------------------------------------------------
+# W2: Full closed-vocabulary injection
+# ---------------------------------------------------------------------------
+
+# Aliased segments in the ISN SEGMENT_TOKEN_MAP that share an identical token
+# list — emit only the canonical name to avoid duplicating ~400 tokens in the
+# rendered prompt (and to keep the cached system prompt deterministic).
+_SEGMENT_ALIASES: dict[str, str] = {
+    # alias -> canonical
+    "coordinate": "component",
+    "object": "device",
+    "position": "geometry",
+}
+
+
+@lru_cache(maxsize=1)
+def _load_closed_vocab_full() -> list[dict[str, Any]]:
+    """Return every closed-vocabulary segment with its FULL token list.
+
+    The returned structure is a list of dicts ordered for stable, cache-friendly
+    rendering::
+
+        [
+          {"segment": "component", "aliases": ["coordinate"],
+           "tokens": ["binormal", "normal", ..., "z"]},
+          ...
+        ]
+
+    Tokens within a segment are sorted alphabetically.  Open segments
+    (``physical_base`` and any other segment with an empty token list) are
+    omitted because their content is by-design free-form — listing them
+    would mislead the LLM into treating them as closed.
+
+    The data source is :data:`imas_standard_names.grammar.constants.SEGMENT_TOKEN_MAP`
+    which is the single source of truth used by the parser, the
+    ``is_known_token`` primitive, and the decomposition audit.  When the
+    package is unavailable an empty list is returned so prompt rendering
+    degrades gracefully rather than raising.
+    """
+    try:
+        from imas_standard_names.grammar.constants import SEGMENT_TOKEN_MAP
+    except ImportError:
+        logger.warning("imas_standard_names not available — closed_vocab_full empty")
+        return []
+
+    # Group aliased segments under their canonical name.
+    canonical_to_aliases: dict[str, list[str]] = {}
+    for segment in SEGMENT_TOKEN_MAP:
+        canonical = _SEGMENT_ALIASES.get(segment, segment)
+        if canonical == segment:
+            canonical_to_aliases.setdefault(canonical, [])
+        else:
+            canonical_to_aliases.setdefault(canonical, []).append(segment)
+
+    out: list[dict[str, Any]] = []
+    for segment in sorted(canonical_to_aliases):
+        tokens = SEGMENT_TOKEN_MAP.get(segment) or ()
+        if not tokens:
+            continue  # skip open segments
+        out.append(
+            {
+                "segment": segment,
+                "aliases": sorted(canonical_to_aliases[segment]),
+                "tokens": sorted(tokens),
+            }
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# W2: W0 snapshot — curated examples + decomposition anti-patterns
+# ---------------------------------------------------------------------------
+
+
+def _w0_examples_path() -> Path:
+    return Path(__file__).parent / "examples_curated.yaml"
+
+
+def _anti_patterns_path() -> Path:
+    return Path(__file__).parent / "anti_patterns.yaml"
+
+
+@lru_cache(maxsize=1)
+def _load_w0_curated_examples() -> dict[str, list[dict[str, Any]]]:
+    """Load the W0 snapshot ``examples_curated.yaml`` for prompt injection.
+
+    Returns a dict keyed by tier — ``outstanding``, ``good``, ``adequate``,
+    ``inadequate``, ``poor`` — each mapping to a list of example entries with
+    ``id``, ``description``, ``documentation``, ``reviewer_comments_name``,
+    ``grammar_decomposition``, etc.  When the YAML file is absent or
+    malformed an empty dict is returned.
+
+    The compose system prompt template selects the strongest entries
+    (top of ``outstanding`` and ``good``) for the cacheable
+    "EXEMPLAR DECOMPOSITIONS" section.
+    """
+    path = _w0_examples_path()
+    if not path.exists():
+        logger.warning("W0 curated examples not found at %s", path)
+        return {}
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, dict):
+            return {}
+        return {
+            tier: [e for e in (entries or []) if isinstance(e, dict)]
+            for tier, entries in data.items()
+            if isinstance(entries, list)
+        }
+    except Exception:
+        logger.exception("Failed to load W0 curated examples from %s", path)
+        return {}
+
+
+@lru_cache(maxsize=1)
+def _load_decomposition_anti_patterns() -> list[dict[str, Any]]:
+    """Load ``anti_patterns.yaml`` — curated decomposition-failure exemplars.
+
+    Each entry contains ``bad_name``, ``issue_category``, ``reviewer_comment``,
+    ``absorbed_tokens``, ``correct_decomposition``, and ``rewritten_name``.
+    See ``imas_codex/standard_names/anti_patterns.yaml`` for the schema and
+    ``tests/standard_names/test_anti_patterns_yaml.py`` for the validator.
+    """
+    path = _anti_patterns_path()
+    if not path.exists():
+        logger.warning("Decomposition anti-patterns YAML missing at %s", path)
+        return []
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, list):
+            return []
+        return [e for e in data if isinstance(e, dict) and e.get("bad_name")]
+    except Exception:
+        logger.exception("Failed to load decomposition anti-patterns from %s", path)
+        return []
 
 
 # ---------------------------------------------------------------------------

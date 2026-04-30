@@ -355,6 +355,46 @@ concept; drop intermediate hardware tokens.
   name describe the underlying physical concept (`direction_unit_vector`,
   `winding_number`, `electrode_voltage`).
 
+{% if decomposition_anti_patterns %}
+### W2 DECOMPOSITION-FAILURE GALLERY — closed-vocab tokens absorbed into `physical_base`
+
+These are real names from the W0 reviewer corpus where the dominant failure
+mode (closed-vocab tokens absorbed into `physical_base` instead of placed in
+their grammar slot) was flagged.  Each entry shows the bad name, the verbatim
+expert critique, the correct slot for each absorbed token, and the rewritten
+canonical name.  Apply the **Decomposition Checklist** in
+`_grammar_reference.md` to every name before emitting it.
+
+{% for ap in decomposition_anti_patterns %}
+**W2-D{{ loop.index }} — {{ ap.bad_name }}**
+
+- ❌ `{{ ap.bad_name }}`
+- *Critic:* "{{ ap.reviewer_comment | trim }}"
+- *Absorbed tokens:*
+{% for at in ap.absorbed_tokens %}  - `{{ at.token }}` belongs in `{{ at.segment }}`
+{% endfor %}
+- *Correct grammar fields:*
+{% for seg, tok in ap.correct_decomposition.items() %}  - `{{ seg }}` = `{{ tok }}`
+{% endfor %}
+- ✅ `{{ ap.rewritten_name }}`
+
+{% endfor %}
+{% endif %}
+
+{% if w0_curated_examples and w0_curated_examples.outstanding %}
+### W2 EXEMPLAR DECOMPOSITIONS — top-tier W0 reviewer-validated names
+
+Reference these high-scoring examples for canonical 5-group decomposition.
+Each entry shows the verbatim reviewer assessment of *why* the name worked.
+
+{% for ex in w0_curated_examples.outstanding[:8] %}
+**W2-E{{ loop.index }} — `{{ ex.id }}`**{% if ex.reviewer_comments_name %}
+- *Critic:* "{{ ex.reviewer_comments_name | trim | truncate(280) }}"{% endif %}{% if ex.grammar_decomposition %}
+- *Decomposition:* {% for seg, tok in ex.grammar_decomposition.items() %}{% if tok %}`{{ seg }}={{ tok }}` {% endif %}{% endfor %}{% endif %}
+
+{% endfor %}
+{% endif %}
+
 {% if field_guidance.naming_guidance %}
 ## Naming Guidance
 
