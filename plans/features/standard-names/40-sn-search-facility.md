@@ -1,9 +1,21 @@
-# Plan 40 — Standard-Name Search & Fetch Facility (v3.1)
+# Plan 40 — Standard-Name Search & Fetch Facility (v3.2)
 
-> **Status:** v3.1 — incorporates `include_standard_names=True` default flip from main commit `33514f2a`. No structural rewrite vs. v3.
-> **Supersedes:** v3 (initial draft, SHA `9668afeb`, 765 lines), v2 (SHA `3d412c77`, 1280 lines), v1 (SHA `3048413e`, 1030 lines).
+> **Status:** v3.2 — RD review patch on top of v3.1.
+> **Supersedes:** v3.1 (SHA `07366d8c`), v3 (SHA `9668afeb`), v2 (SHA `3d412c77`), v1 (SHA `3048413e`).
 > **Sibling plan:** [39 — Structured-Fanout Standard-Name Discovery](39-structured-fanout.md).
 > **Owner boundary:** plan 39 owns the **dispatcher / discovery loop**; plan 40 owns the **search & fetch internals** (writer fix, retrieval, MCP palette, naming, backing-function unification).
+>
+> ### What changed v3.1 → v3.2 (RD review)
+>
+> - **B1.** Phase-4 audit scope corrected: real callers of the soon-to-be-renamed `search_similar_names` / `search_similar_sns_with_full_docs` are in `standard_names/workers.py`, `standard_names/review/audits.py`, and `standard_names/review/enrichment.py` — not `enrich_workers.py`. §7.4, §8.4, and §17 updated; Phase-4 exit grep extended to catch the deprecated symbol names.
+> - **I1.** A13 grep replaced with an AST-walking test (delegates to §9.11) instead of a substring grep that would falsely flag `stale_token_sn`, `max_per_sn`, `_sn_ids`, etc.
+> - **I2.** §17 grew a "Retain — out of rename scope" subsection enumerating private locals, Cypher aliases, and the public callers of the renamed `fetch_docs_review_feedback_for_sns` symbol.
+> - **I3.** Tier-2 eligibility gate tightened: requires Tier-1 hit **AND** (vector OR keyword) co-occurrence. Pure vector/keyword evidence no longer carries a Tier-2 candidate alone. §5.4 updated; §5.4.1 worked example reflects the tighter gate with rank arithmetic.
+> - **I4.** A14 narrowed to construction-time `dd_only=True`. Background `_detect_dd_only` flip emits warning only (FastMCP cannot unregister); §16 records the auto-suppression follow-up.
+> - **I5.** A3 mapped to a named test (`test_open_vocab_physical_base_surfaces_in_top_3` in §9.4).
+> - **I6.** `find_related_standard_names` empty-bucket behaviour pinned: empty buckets suppressed, deterministic order, hit count in heading.
+> - **I7.** Alias-bridge window (Phase 3 → Phase 4) explicitly documented in §15.
+> - **N1.** k_rrf=60 / tier ratio justification added to §5.3, §5.4. **N2.** §16 renumbered. **N3.** Lineage counts added to `get_standard_name_summary` in §7.2.7. **N4.** `check_standard_names` tiebreak rule pinned in §7.2.6.
 >
 > ### What changed v3 → v3.1
 >
@@ -279,57 +291,100 @@ For free-text queries the engine fans out three concurrent streams (asyncio.gath
 
 Final ranking: standard RRF with `k_rrf = 60`, summed across streams, ties broken by vector score.
 
+> **N1 — Why `k_rrf = 60`.** This is the value used in the seminal RRF study (Cormack, Clarke & Buettcher, *Reciprocal rank fusion outperforms Condorcet and individual rank learning methods*, SIGIR 2009). It dampens top-rank dominance so that an item ranked 1 in one stream and 60 in another still gets meaningfully blended. Lower `k` over-rewards top-1 hits; higher `k` flattens the signal. `60` is a defensible default — see §16 Q2 for tuning policy.
+
 ### 5.4 Tiered grammar policy (NEW in v3)
 
 The grammar stream is itself a fan-out over per-segment column matches. Token `t` from `tokenise_query(query)` matches a SN if `t IN [physical_base, subject, component, …]` for that SN. v2 treated all 12 segments equally; that lets a query like `x_component_of_magnetic_field_at_outboard_midplane` produce per-token streams in which `x → component=x` matches every x-component SN in the catalog (often hundreds) and dominates RRF aggregation.
 
 v3 partitions segments into three tiers and applies tier-dependent RRF weights:
 
-| Tier | Segments                                        | RRF weight | Eligibility                                                        |
-|------|-------------------------------------------------|------------|--------------------------------------------------------------------|
-| 1    | `physical_base`, `subject`, `geometric_base`    | 1.0        | Always contributes to fusion. May solely surface a result.         |
-| 2    | `transformation`, `component`, `position`, `process` | 0.5   | Contributes only when at least one Tier-1 segment also hit for the same SN, OR when the candidate also appears in the vector or keyword stream. |
-| 3    | `coordinate`, `geometry`, `region`, `device`, `object` | 0.25 | Modifier only. Never solely surfaces a result; adds a tie-break boost when fused with Tier-1 or vector/keyword evidence. |
+| Tier | Segments                                        | RRF weight | Eligibility (v3.2 — tightened)                                                        |
+|------|-------------------------------------------------|------------|----------------------------------------------------------------------------------------|
+| 1    | `physical_base`, `subject`, `geometric_base`    | 1.0        | Always contributes to fusion. May solely surface a result.                             |
+| 2    | `transformation`, `component`, `position`, `process` | 0.5   | Contributes only when **both**: (a) at least one Tier-1 segment also hits for the same SN, **and** (b) the candidate also appears in the vector or keyword stream. Pure vector/keyword evidence is **not** sufficient on its own to admit a Tier-2 hit. |
+| 3    | `coordinate`, `geometry`, `region`, `device`, `object` | 0.25 | Modifier only. Never solely surfaces a result; adds a tie-break boost when fused with Tier-1 evidence (vector/keyword alone is insufficient).                |
 
-**Mechanism in code:**
+> **N1 — Why {1.0, 0.5, 0.25}.** Tier ratios are chosen so that — at worst-case — one Tier-1 hit at vector/keyword rank 1 outranks an unbounded flood of Tier-2/3-only hits. Concretely: a Tier-1 hit ranked first in any one stream contributes `1.0 / (60 + 1) ≈ 0.0164` of RRF mass; the entire Tier-2 segment-stream-only contribution for any single SN is bounded by `0.5 / (60 + 1) ≈ 0.0082`. So a Tier-1-bearing target survives even if 200 decoys saturate Tier-2. (See §5.4.1 for the worked arithmetic.) §16 Q2 owns the empirical tuning question.
+
+**Mechanism in code (v3.2):**
 
 ```python
-def grammar_stream(tokens: list[str], gc) -> list[ScoredCandidate]:
+def grammar_stream(tokens: list[str], gc,
+                   vector_hits: set[str], keyword_hits: set[str]
+                   ) -> list[ScoredCandidate]:
     per_segment = {}
     for seg in TIER1 | TIER2 | TIER3:
         per_segment[seg] = gc.query(
             "MATCH (sn:StandardName) WHERE sn[$seg] IN $tokens RETURN sn.id AS id",
             seg=seg, tokens=tokens,
         )
-    candidates = {}
-    for seg, rows in per_segment.items():
-        weight = TIER_WEIGHT[tier_of(seg)]
-        for rank, row in enumerate(rows):
-            candidates.setdefault(row["id"], []).append((seg, rank, weight))
 
-    # Eligibility: drop Tier-2/3-only candidates whose SN does not also appear
-    # in the vector OR keyword stream, AND has no Tier-1 segment hit.
-    return _filter_by_tier_policy(candidates, vector_hits, keyword_hits)
+    # Index hits by candidate, by tier
+    by_id: dict[str, dict[int, list[tuple[str, int, float]]]] = {}
+    for seg, rows in per_segment.items():
+        tier = tier_of(seg)
+        weight = TIER_WEIGHT[tier]
+        for rank, row in enumerate(rows):
+            by_id.setdefault(row["id"], {}).setdefault(tier, []).append(
+                (seg, rank, weight)
+            )
+
+    return _filter_by_tier_policy(by_id, vector_hits, keyword_hits)
+
+
+def _filter_by_tier_policy(by_id, vector_hits, keyword_hits):
+    """Tier eligibility (v3.2):
+       - Tier-1 hits: always admitted.
+       - Tier-2 hits: admitted iff the same SN ALSO has a Tier-1 hit
+         AND ALSO appears in vector_hits OR keyword_hits.
+       - Tier-3 hits: admitted iff the same SN ALSO has a Tier-1 hit.
+         (Vector/keyword co-occurrence is insufficient for Tier-3.)
+    """
+    out = []
+    for sn_id, tiers in by_id.items():
+        has_t1 = 1 in tiers
+        in_vk = sn_id in vector_hits or sn_id in keyword_hits
+        if has_t1:
+            out.append(sn_id)            # always
+        elif 2 in tiers and in_vk:
+            # v3.2: require Tier-1 anchor; pure vector/keyword no longer admits
+            continue
+        # else: dropped
+    return out
 ```
 
 Eligibility filter lives in `_filter_by_tier_policy`; it is the only place tiers couple to the other streams. The result is fused into the global RRF as a single grammar-stream rank list.
 
-### 5.4.1 Worked example
+### 5.4.1 Worked example (v3.2 — with rank arithmetic)
 
 Query: `x_component_of_magnetic_field_at_outboard_midplane`
 
 `tokenise_query` → `["x", "component", "of", "magnetic", "field", "at", "outboard", "midplane"]` → after stopword drop → `["x", "component", "magnetic", "field", "outboard", "midplane"]`.
 
-Per-segment matches against the 22-name graph:
+Per-segment matches against a populated catalog:
 
-- `physical_base ∋ {magnetic_field}` → 1 candidate (Tier 1, weight 1.0).
-- `component ∋ {x}` → ~200 candidates in a fully-populated catalog (Tier 2, weight 0.5).
-- `position ∋ {outboard_midplane}` → 3 candidates (Tier 2, weight 0.5).
+- `physical_base ∋ {magnetic_field}` → **1 Tier-1 candidate** (the target SN).
+- `component ∋ {x}` → ~200 Tier-2 candidates.
+- `position ∋ {outboard_midplane}` → **3 Tier-2 candidates** (target + 2 siblings).
 - All other tokens → no segment matches.
 
-**v2 behaviour (no tiers):** `component=x` floods the grammar stream with ~200 ranks, RRF aggregation pushes the right physical-base hit out of the top-`k`.
+**Vector + keyword streams** independently rank the target near the top because its description literally contains "x component", "magnetic field", "outboard midplane". Suppose target is rank-1 in both vector and keyword.
 
-**v3 behaviour (tiered):** the magnetic_field hit gets full Tier-1 weight; the 200 `component=x` hits are kept but filtered to those that *also* appear in the vector or keyword stream OR also match a Tier-1 segment for this query. The `outboard_midplane` Tier-2 hits survive (3 total, manageable). The right SN — `x_component_of_magnetic_field_at_outboard_midplane` — wins because it scores in **all** of: vector, keyword, Tier-1 (physical_base=magnetic_field), Tier-2 (component=x, position=outboard_midplane).
+**v3.2 eligibility (tightened gate):** of the ~200 `component=x` decoys, only those that *also* have a Tier-1 hit on this query survive. Of the ~200, **only the target** also has `physical_base=magnetic_field` (a Tier-1 hit on token "magnetic_field"). The other 199 decoys are dropped before RRF.
+
+**RRF arithmetic:**
+
+| SN                                         | Vector rank | Keyword rank | Grammar rank | RRF mass (k=60)                            |
+|--------------------------------------------|-------------|--------------|--------------|---------------------------------------------|
+| target (`x_component_of_magnetic_field…`)  | 1           | 1            | 1            | 1/61 + 1/61 + 1/61 ≈ **0.0492**             |
+| sibling A (`x_component_of_magnetic_field_at_inboard_midplane`) | 5 | 8 | 2 | 1/65 + 1/68 + 1/62 ≈ 0.0463 |
+| sibling B (`x_component_of_electric_field_at_outboard_midplane`)| 12 | 20 | 3 | 1/72 + 1/80 + 1/63 ≈ 0.0427 |
+| Tier-2-only decoy (any other `component=x`)| (rank N or absent) | (rank N or absent) | **dropped** | bounded above by 1/61 ≈ 0.0164 from vector alone |
+
+The target wins because it is the only SN scoring in all three streams. With v3.2's tighter gate, a hypothetical decoy that happens to vector-rank 1 (e.g. an unrelated SN whose description mentions "x component") cannot be propped up by Tier-2 grammar evidence alone — the Tier-1 anchor is required for its grammar contribution to count.
+
+**Worst case to consider:** what if a decoy has a Tier-1 hit on a *different* token (e.g. `subject=electron` for query token "electron" if the user typed it)? Then it is admitted; its grammar score depends on how many tokens it matches. The target — with *more* Tier-1 + Tier-2 hits than any single decoy — still wins by RRF aggregation. The eligibility gate prevents Tier-2 floods; final ordering is then standard RRF.
 
 ### 5.5 `mode` kwarg (carried from v2 F5)
 
@@ -459,6 +514,24 @@ def find_related_standard_names(
 
 Output mirrors `find_related_dd_paths`'s `## … / ### Bucket / bullets` shape (§3.7). `relationship_types="all"|"grammar"|"unit"|"cocos"|"cluster"|"lineage"|"source"` selects which buckets render.
 
+**Empty-bucket and ordering rules (v3.2 — I6):**
+
+- **Empty buckets are suppressed** entirely from the markdown — no `### Grammar Family\n*(none)*` rendering. (Mirrors `find_related_dd_paths`.)
+- **Bucket order is deterministic and fixed**, regardless of which buckets contain results:
+  1. Grammar Family
+  2. Subject Companions
+  3. Unit Companions
+  4. COCOS Companions
+  5. Cluster Siblings
+  6. Predecessors
+  7. Successors
+  8. Refined-From
+  9. Source Paths
+  10. Source Signals
+- **Hit count appears in the bucket heading**: `### Grammar Family (5)` — mirroring DD format. The top-level heading also carries an aggregate count: `## Related to electron_temperature (12 across 4 buckets)`.
+- **Within a bucket**, items are ordered by descending RRF score where applicable, then by `name` ascending as tiebreaker.
+- If `relationship_types != "all"` selects a bucket that ends up empty, the tool still emits the top-level heading with a `*No related names found in selected relationship types.*` footer (mirrors DD's empty-result behaviour).
+
 #### 7.2.4 `list_standard_names` *(rename + keep)*
 
 Existing tool; rename verifies. No behaviour change beyond the naming-alignment audit.
@@ -481,6 +554,16 @@ def check_standard_names(names: str) -> str:
 
 Returns markdown table with columns `name | exists | suggestion | reason`.
 
+**Tiebreak rule (v3.2 — N4):** Levenshtein distance is the **primary** ranking signal. Grammar-share (matching `physical_base` of the parsed input) is **only** a tiebreaker when two candidates have equal Levenshtein distance. Specifically:
+
+1. Compute Levenshtein distance from `name` to every `StandardName.id`.
+2. Take the top-`5` smallest distances.
+3. **If the top distances are all distinct**, return the smallest-distance candidate as the suggestion (Levenshtein wins outright; grammar share is irrelevant).
+4. **If multiple candidates tie at the smallest distance**, prefer the one whose parsed `physical_base` matches the parsed `physical_base` of the input (when input parses). If still tied, fall back to lexicographic order of the candidate id.
+5. The `reason` column annotates which rule fired: `"levenshtein"` (rule 3), `"levenshtein+grammar_tiebreak"` (rule 4 with grammar match), or `"levenshtein+lex_tiebreak"` (rule 4 fallback).
+
+This means a query like `electron_temperatre` (typo) suggests `electron_temperature` purely on edit distance, even though grammar parsing of the typo would fail. A query like `field_e_x` ties at distance 4 with both `field_e_y` and `field_b_x`; grammar-aware suggestion picks `field_e_y` (same `physical_base=electric_field`, parsed from the original).
+
 #### 7.2.7 `get_standard_name_summary` *(NEW)*
 
 ```python
@@ -492,10 +575,28 @@ def get_standard_name_summary(physical_base: str) -> str:
       - distinct values of each Tier-1/Tier-2 segment within the family
       - representative names (sample of 5)
       - distinct units, COCOS types, physics domains
+      - lineage counts (v3.2): predecessors, successors, refined-from depth
     """
 ```
 
 Mirrors `get_ids_summary` shape but for SN families.
+
+**Lineage-count subsection (v3.2 — N3).** Below the segment / unit / COCOS sections, the output includes:
+
+```markdown
+### Lineage
+
+- Predecessors: 3 SNs in this family have ≥1 `HAS_PREDECESSOR` edge (max chain depth: 2)
+- Successors:   1 SN in this family has  ≥1 `HAS_SUCCESSOR` edge (max chain depth: 1)
+- Refined-from: 5 SNs in this family have ≥1 `REFINED_FROM` edge (max chain depth: 3)
+- Total lineage edges incident on this family: 14
+```
+
+Where:
+
+- **Counts** are the number of *distinct SNs in the family* (sharing `physical_base`) that have ≥1 outbound edge of the given type.
+- **Max chain depth** is the longest BFS depth following the relationship transitively from any SN in the family. Computed via Cypher `MATCH path = (sn:StandardName)-[:HAS_PREDECESSOR*1..]->(p:StandardName) WHERE sn.physical_base = $pb RETURN max(length(path))`.
+- **Total lineage edges** is the sum across all three types — useful as a single cardinality signal.
 
 ### 7.3 Per-tool registration sketches
 
@@ -526,17 +627,19 @@ if self.include_standard_names and not self.dd_only:
 
 ### 7.4 Backing-function unification mapping
 
-| MCP tool                        | Thin wrapper in `sn_tools.py`     | Pure backing function in `standard_names/search.py` | Pipeline call sites (plan 39)                        |
+| MCP tool                        | Thin wrapper in `sn_tools.py`     | Pure backing function in `standard_names/search.py` | Pipeline call sites (verified v3.2)                  |
 |---------------------------------|-----------------------------------|-----------------------------------------------------|------------------------------------------------------|
-| `search_standard_names`         | `_search_standard_names`          | `search_standard_names`                             | `enrich_workers._dispatch_similarity_lookup`         |
-| `fetch_standard_names`          | `_fetch_standard_names`           | `fetch_standard_names`                              | `enrich_workers._fetch_target_for_review`            |
-| `find_related_standard_names`   | `_find_related_standard_names`*   | `find_related`*                                     | `enrich_workers._fetch_nearby_standard_names` (renamed) |
+| `search_standard_names`         | `_search_standard_names`          | `search_standard_names`                             | `standard_names/workers.py:516` (calls `search_similar_names`); `standard_names/review/audits.py:521,524,528`; `standard_names/review/enrichment.py:282,305,320` |
+| `fetch_standard_names`          | `_fetch_standard_names`           | `fetch_standard_names`                              | `standard_names/workers.py:1364,1380,1753,1768` (calls `search_similar_sns_with_full_docs`) |
+| `find_related_standard_names`   | `_find_related_standard_names`*   | `find_related`*                                     | `enrich_workers._fetch_nearby_sns` (renamed → `_fetch_nearby_standard_names`) |
 | `list_standard_names`           | `_list_standard_names`            | (CRUD; bypasses search.py)                          | `vocab.list_existing`                                |
 | `list_grammar_vocabulary`       | `_list_grammar_vocabulary`        | (CRUD; bypasses search.py)                          | `vocab.list_grammar_tokens`                          |
 | `check_standard_names`*         | `_check_standard_names`*          | `check_names`*                                      | `enrich_workers._validate_predecessor_links`         |
 | `get_standard_name_summary`*    | `_get_standard_name_summary`*     | `summarise_family`*                                 | (none today; available for plan-39 audits)           |
 
 `*` = new in v3.
+
+> **B1 correction (v3.2).** v3 / v3.1 listed `enrich_workers.py` as the sole pipeline caller for the search pair. The actual public callers of `search_similar_names` and `search_similar_sns_with_full_docs` are spread across `standard_names/workers.py` (5 sites), `standard_names/review/audits.py` (3 sites), and `standard_names/review/enrichment.py` (3 sites). `enrich_workers.py` calls a *different* renamed helper (`_fetch_nearby_sns`) — captured in the `find_related_standard_names` row. All eleven sites are migration targets in §8.4.
 
 The discipline: **every cell in the "Pure backing function" column is the only place graph queries live.** Wrappers format. Pipeline imports the same functions. No private duplicates.
 
@@ -596,15 +699,33 @@ Private dict-key strings (`"stale_token_sn"`, `max_per_sn` kwarg) are retained: 
 
 **Exit criterion:** A10–A13 satisfied (§11).
 
-### 8.4 Phase 4 — Pipeline call-site migration (1 PR) *(NEW in v3)*
+### 8.4 Phase 4 — Pipeline call-site migration (1 PR) *(NEW in v3, scope-corrected v3.2)*
 
-1. Audit `imas_codex/standard_names/enrich_workers.py` and any other caller of the old private helpers (`_segment_filter_search_sn`, `_vector_search_sn`, `_keyword_search_sn`, `_fetch_nearby_sns`).
-2. Replace with imports from `imas_codex.standard_names.search`.
-3. Delete the old private helpers entirely (no aliases — they were never importable from outside `sn_tools.py`).
+1. **Audit complete migration list** (verified v3.2 via `grep -rn "search_similar_names\|search_similar_sns_with_full_docs" imas_codex/`):
+
+   | File                                        | Lines                            | Symbol                                  |
+   |---------------------------------------------|----------------------------------|-----------------------------------------|
+   | `imas_codex/standard_names/workers.py`      | 516                              | `search_similar_names`                  |
+   | `imas_codex/standard_names/workers.py`      | 1364, 1380, 1753, 1768           | `search_similar_sns_with_full_docs`     |
+   | `imas_codex/standard_names/review/audits.py`| 521, 524, 528                    | `search_similar_names`                  |
+   | `imas_codex/standard_names/review/enrichment.py` | 282, 305, 320               | `search_similar_names`                  |
+   | `imas_codex/standard_names/enrich_workers.py` | (`_fetch_nearby_sns` callsites) | `_fetch_nearby_sns` → renamed in §17    |
+
+   Plus internal-only renames of `_segment_filter_search_sn`, `_vector_search_sn`, `_keyword_search_sn` per §17.
+
+2. Replace each callsite with imports from `imas_codex.standard_names.search` using the **new** names (`search_standard_names_vector` / `search_standard_names_with_documentation`).
+
+3. Keep the deprecation aliases `search_similar_names` / `search_similar_sns_with_full_docs` for **one release** as no-op wrappers that call the new symbols (the alias-bridge — §15). Mark with `DeprecationWarning`.
+
 4. Re-run plan-39 dispatcher tests; ensure `mode="vector"` is wired through where pure semantic similarity is required.
+
 5. Update plan 39 docs to point at the unified surface.
 
-**Exit criterion:** `grep "_segment_filter_search_sn\|_vector_search_sn\|_keyword_search_sn\|_fetch_nearby_sns" imas_codex/` returns zero hits outside the deletion commits.
+**Exit criterion:**
+```
+grep -rEn "search_similar_names|search_similar_sns_with_full_docs|_segment_filter_search_sn|_vector_search_sn|_keyword_search_sn|_fetch_nearby_sns" imas_codex/
+```
+returns zero hits *outside* the deletion commits and the deprecation-shim file (which itself is removed in the release after Phase 4).
 
 ---
 
@@ -627,6 +748,8 @@ Private dict-key strings (`"stale_token_sn"`, `max_per_sn` kwarg) are retained: 
 - `…::test_tier1_only_match_surfaces_alone` — query parses to physical_base=X, no other tokens; expect that SN in top-k.
 - `…::test_tier3_only_match_does_not_surface_alone` — query parses to coordinate=z only; expect tier-3-only candidate filtered out unless vector or keyword stream also hit.
 - `…::test_x_component_query_does_not_flood` — exact §5.4.1 example; expect `x_component_of_magnetic_field_at_outboard_midplane` ranked first, with all other `component=x` SNs not displacing the physical-base hit.
+- `…::test_tier2_requires_tier1_anchor_and_vk_cooccurrence` — *(v3.2 — I3)* candidate that hits Tier-2 only and appears in vector_hits is dropped (no Tier-1 anchor); candidate that hits Tier-2 + Tier-1 but is absent from vector AND keyword is also dropped (tighter AND-gate).
+- `…::test_open_vocab_physical_base_surfaces_in_top_3` — *(v3.2 — I5, maps to A3)* free-text query `electron_temperature` against a graph whose `GrammarToken` vocabulary lacks `electron_temperature` returns the matching SN in top-3 because `physical_base` carries the open-vocab string from grammar parsing of the SN itself (writer fix from Phase 1). Verifies the writer-side open-vocab population without requiring vocabulary pre-registration.
 
 ### 9.5 RRF
 
@@ -648,8 +771,9 @@ Private dict-key strings (`"stale_token_sn"`, `max_per_sn` kwarg) are retained: 
 `tests/core/test_cli.py::test_serve_default_options` and `test_serve_read_only` already assert the CLI default propagates as `include_standard_names=True`.
 
 **New tests this plan adds** (`tests/llm/test_sn_tool_registration.py`):
-- `test_sn_tools_absent_under_dd_only` — `dd_only=True, include_standard_names=True` → 0 SN tools registered (covers the gate tightening in §8.3 step 1).
+- `test_sn_tools_absent_under_dd_only` — server constructed with `dd_only=True, include_standard_names=True` → 0 SN tools registered (covers the construction-time gate tightening in §8.3 step 1).
 - `test_sn_tools_present_when_dd_only_false_and_include_true` — explicit positive baseline mirroring the FACILITY_TOOLS pattern.
+- `test_background_dd_only_flip_emits_warning_only` — *(v3.2 — I4)* simulate `_background_detect_dd_only` flipping `self.dd_only=True` *after* server construction. Assert: (a) a `WARNING` log is emitted naming the limitation; (b) already-registered SN tools remain callable (FastMCP cannot unregister post-startup). This documents the construction-time-only nature of A14.
 - *(Optional, only if §8.3 step 6 lands in this plan.)* `test_palette_auto_detected_against_sn_graph` — `_detect_has_standard_names()` returns True against a graph populated with `:StandardName`.
 
 ### 9.8 `find_related_standard_names` buckets *(NEW in v3)*
@@ -703,8 +827,8 @@ No new YAML keys. Existing `imas_codex/schemas/standard_name.yaml` extended (§4
 - **A10.** *(VERIFIED PRECONDITION, credit `33514f2a`.)* All 5 existing SN tools register by default in a stock `imas-codex serve` deployment; `tests/llm/test_tool_schemas.py::TestIncludeStandardNames` already enforces this on main. Plan 40 inherits and does not regress.
 - **A11.** *(NEW)* Query `x_component_of_magnetic_field_at_outboard_midplane` ranks the matching SN first; no `component=x` flood pushes it out of the top-k (tested in a fixture catalog with ≥ 50 `component=x` decoy SNs).
 - **A12.** *(NEW)* `find_related_standard_names("electron_temperature")` returns ≥ 3 distinct buckets in the markdown output.
-- **A13.** *(NEW)* `grep -r "_sn\|_sns" imas_codex/standard_names/ imas_codex/llm/sn_tools.py` matches no public symbols (private dict-keys/kwargs may remain).
-- **A14.** *(NEW)* Under `dd_only=True`, no SN tools are registered even with `include_standard_names=True` — covered by the new `test_sn_tools_absent_under_dd_only` test (§9.7).
+- **A13.** *(NEW, v3.2 wording — I1)* No public symbol exported from `imas_codex.standard_names` or `imas_codex.llm.sn_tools` ends with the suffix `_sn` or `_sns`. **Enforced via the AST-walking test `tests/standard_names/test_public_api_naming.py::test_no_sn_or_sns_suffix_in_public_symbols` (§9.11), not via grep.** A grep over the source tree would falsely flag dict keys (`"stale_token_sn"`), private locals (`_sn_ids`), kwargs (`max_per_sn`), and Cypher aliases (`total_sn`, `orphan_sn`); these are explicitly out of rename scope per §17. The test walks the public namespaces with `ast` and asserts no `def` / `class` / module-level binding without a leading underscore matches `r'(_sn|_sns)$'`.
+- **A14.** *(NEW, v3.2 wording — I4)* When the server is **constructed** with `dd_only=True`, no SN tools are registered, even if `include_standard_names=True`. Covered by `test_sn_tools_absent_under_dd_only` (§9.7). **Limitation:** FastMCP does not support unregistering tools after startup; therefore a runtime/background `_background_detect_dd_only` flip from False→True only emits a warning log (covered by `test_background_dd_only_flip_emits_warning_only`). True post-startup auto-suppression is out of scope for plan 40 — see §16 Q1.
 
 ---
 
@@ -744,14 +868,25 @@ Plan 39 owns the **structured-fanout dispatcher**: queue, claims, worker pool, r
 
 Phase 4 (§8.4) is the explicit hand-off: plan-39 workers stop importing `_segment_filter_search_sn`/`_vector_search_sn`/`_keyword_search_sn` and start importing `search_standard_names` (mode="vector") plus `fetch_standard_names`. The dispatcher logic in plan 39 is unchanged.
 
+### 15.1 Phase 3 → Phase 4 alias-bridge window *(v3.2 — I7)*
+
+Phase 3 lands the new MCP palette and the new public functions in `standard_names/search.py`. Phase 4 migrates the eleven call-sites enumerated in §8.4 step 1 from `search_similar_names` / `search_similar_sns_with_full_docs` to the new symbols. **Between the two PRs, the project is in an "alias-bridge window":**
+
+- Both the deprecated symbols (`search_similar_names`, `search_similar_sns_with_full_docs`, `_fetch_nearby_sns`, …) and the new symbols are importable.
+- Deprecated symbols are *thin wrappers* that delegate to the new function in `search.py` and emit a `DeprecationWarning` on first call. They are **not** independent re-implementations — there is one source of truth even during the window.
+- During the window, the §11 invariant "every cell in the Pure backing function column is the only place graph queries live" *holds* (the wrappers don't query the graph; they delegate). What temporarily exists is two **import paths** for the same function.
+- The window closes when Phase 4 lands and deletes the wrappers. The release immediately after Phase 4 may also delete the deprecation-shim file entirely.
+
+If Phase 3 and Phase 4 *can* be landed in the same release cycle (no external consumers depend on the old import paths), we MAY collapse them into a single PR and skip the bridge window. The split exists primarily to keep individual PRs reviewable.
+
 ---
 
 ## 16. Open Questions
 
-1. **Auto-detect for SN registration (§8.3 step 6).** Should plan 40 also add `_detect_has_standard_names()` mirroring `_detect_dd_only()`, or defer? Default-on flag already covers UX; auto-detect is purely "DD-only graph shouldn't even need `--no-include-standard-names`". Recommend defer.
-2. **Tier weights {1.0, 0.5, 0.25}.** Magic numbers seeded from the worked example; should we instead tune from a held-out query set? Defer — a separate plan once we have query traffic to learn from.
-4. **`group_by_base` semantics across mode="vector"`.** Group-by-base is meaningful only when grammar is populated; for vector-only queries, `group_by_base=True` should error (or silently no-op). Suggest error with explicit message.
-5. **`fetch` `return_fields` vs `include_*` precedence.** When both `return_fields` and `include_documentation` are set, which wins? Suggest `return_fields` is the final whitelist; `include_*` are convenience macros that expand into the whitelist.
+1. **Auto-detect for SN registration (§8.3 step 6, A14 limitation).** Should plan 40 also add `_detect_has_standard_names()` mirroring `_detect_dd_only()`, *plus* a mechanism for FastMCP to unregister tools when the background detector flips? Default-on flag already covers UX; the gap is purely "DD-only graph that flips state mid-process should auto-suppress SN tools". Recommend defer — true post-startup unregistration is a FastMCP-feature ask; warning-only behaviour (A14 limitation) is acceptable in the interim.
+2. **Tier weights {1.0, 0.5, 0.25} and `k_rrf=60`.** Magic numbers seeded from RRF literature (Cormack et al. 2009) and worst-case rank arithmetic (§5.4 N1 footnote); should we instead tune from a held-out query set? Defer — a separate plan once we have query traffic to learn from.
+3. **`group_by_base` semantics across `mode="vector"`.** Group-by-base is meaningful only when grammar is populated; for vector-only queries, `group_by_base=True` should error (or silently no-op). Suggest error with explicit message.
+4. **`fetch` `return_fields` vs `include_*` precedence.** When both `return_fields` and `include_documentation` are set, which wins? Suggest `return_fields` is the final whitelist; `include_*` are convenience macros that expand into the whitelist.
 
 ---
 
@@ -781,6 +916,28 @@ Phase 4 (§8.4) is the explicit hand-off: plan-39 workers stop importing `_segme
 | `imas_codex/cli/serve.py`                           | `--include-standard-names`              | `--include-standard-names`                       | public     | **keep** (default flipped to True in `33514f2a`) |
 | `imas_codex/llm/server.py`                          | `include_standard_names: bool = True`   | `include_standard_names: bool = True`            | public     | **keep**; gate becomes `and not self.dd_only`    |
 
+### 17.1 Retained — out of rename scope *(v3.2 — I2)*
+
+The following identifiers contain the substring `sn` or `sns` but are **not** API surfaces. They are explicitly out of the rename scope, and the A13 AST test (§9.11) is constructed to ignore them:
+
+| Path                                           | Identifier                                       | Why retained                              |
+|------------------------------------------------|--------------------------------------------------|-------------------------------------------|
+| `imas_codex/standard_names/enrich_workers.py:836` | `_sn_ids` (local var)                         | Private function-scoped local; not exported. |
+| `imas_codex/standard_names/enrich_workers.py:692,696,697,698,707` | `seen_per_sn` (local var) | Private function-scoped local; not exported. |
+| `imas_codex/standard_names/enrich_workers.py:827,836` | `fetch_docs_review_feedback_for_sns` (callsites) | Will be renamed at the **definition** site (`graph_ops.py`, §17 main table) with a 1-release alias; callsite update lands in Phase 4 alongside the search-pair migration. Not a separate rename. |
+| `imas_codex/standard_names/enrich_workers.py:836` | `max_per_sn` (kwarg)                          | Private kwarg of an internal helper; not exported. |
+| `imas_codex/standard_names/orphan_sweep.py`    | `"stale_token_sn"` (dict key string literal)     | String literal in a structured log payload; not an identifier. Renaming would silently break log consumers. |
+| `imas_codex/cli/sn.py:1802-1831`               | Cypher aliases `total_sn`, `orphan_sn`, `orphan_src` | Cypher RETURN-clause aliases scoped to a single query; not Python identifiers. The aliases are consumed inline a few lines below. |
+| Various                                        | `:StandardName` Neo4j label                      | Already correctly named; the label itself is not abbreviated. |
+
+**A13 test scope (§9.11).** The `test_no_sn_or_sns_suffix_in_public_symbols` test walks `imas_codex.standard_names` and `imas_codex.llm.sn_tools` with `ast.parse`, collects only:
+
+- module-level `def` / `async def` whose name does not start with `_`
+- module-level `class` whose name does not start with `_`
+- module-level assignment targets (`__all__` entries, public constants)
+
+It then asserts none of those names match `r'(_sn|_sns)$'`. Local variables, function arguments, dict keys, string literals, and Cypher aliases are **not** in the AST node types the test inspects, so they cannot trigger A13.
+
 ---
 
-*End of plan 40 v3.1 — incorporates `33514f2a` `include_standard_names=True` default flip. Updated sections: §1 (changes header), §7.1, §8.3, §9.7, §10, §11 (A10/A14), §12, §14, §16, §17.*
+*End of plan 40 v3.2 — RD-review patch on top of v3.1. Updated sections: §1 (v3.2 changes header), §5.3 (k_rrf footnote), §5.4 (tier-2 AND-gate, ratio footnote), §5.4.1 (rank arithmetic), §7.2.3 (empty-bucket / ordering), §7.2.6 (tiebreak rule), §7.2.7 (lineage counts), §7.4 (callsite correction), §8.4 (full migration list), §9.4 (Tier-2 + open-vocab tests), §9.7 (background-flip warning test), §11 (A13 AST, A14 limitation), §15.1 (alias-bridge window), §16 (renumbered Q1–Q4), §17.1 (retained identifiers).*
