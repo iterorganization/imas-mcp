@@ -48,7 +48,7 @@ def _call_write(names: list[dict], mock_gc: MagicMock) -> int:
                 side_effect=lambda n, **kw: (n, []),
             ),
             patch(
-                "imas_codex.standard_names.graph_ops._write_segment_edges",
+                "imas_codex.standard_names.graph_ops._write_grammar_decomposition",
                 return_value=[],
             ),
         ):

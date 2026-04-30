@@ -920,6 +920,18 @@ def fetch_docs_review_feedback_for_sns(
     return mapping
 
 
+# Plan 40 §17 — public rename. Canonical name is
+# ``fetch_docs_review_feedback_for_standard_names``; the legacy
+# ``fetch_docs_review_feedback_for_sns`` alias is retained for one
+# release with a DeprecationWarning. Phase 4 callsite migration has
+# moved package-internal callers to the canonical name.
+def fetch_docs_review_feedback_for_standard_names(
+    sn_ids: list[str] | set[str] | None,
+) -> dict[str, dict[str, Any]]:
+    """Canonical alias of :func:`fetch_docs_review_feedback_for_sns`."""
+    return fetch_docs_review_feedback_for_sns(sn_ids)
+
+
 def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
     """Emit all structural edges for a batch of StandardName nodes.
 
@@ -1452,8 +1464,8 @@ def write_standard_names(
                 batch=cocos_batch,
             )
 
-        # Create HAS_SEGMENT relationships: StandardName → GrammarToken
-        token_miss_gaps = _write_segment_edges(gc, [n["id"] for n in names])
+        # Create grammar decomposition: typed edges + per-segment columns
+        token_miss_gaps = _write_grammar_decomposition(gc, [n["id"] for n in names])
 
         # Emit structural edges: HAS_ARGUMENT, HAS_ERROR, HAS_PREDECESSOR,
         # HAS_SUCCESSOR, IN_CLUSTER, HAS_PHYSICS_DOMAIN.
@@ -1973,27 +1985,58 @@ def _resolve_grammar_token_version(gc: GraphClient, isn_version: str) -> str | N
     return None
 
 
-def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> list[dict[str, str]]:
-    """Write HAS_SEGMENT edges from StandardName nodes to GrammarToken nodes.
+#: 12 ISN grammar segments stored as bare-name columns on StandardName nodes.
+#: Order matches `imas_standard_names.grammar.parser` model fields.
+_GRAMMAR_SEGMENT_COLUMNS = (
+    "physical_base",
+    "subject",
+    "transformation",
+    "component",
+    "coordinate",
+    "process",
+    "position",
+    "region",
+    "device",
+    "geometric_base",
+    "object",
+    "geometry",
+)
 
-    For each name, parses via ISN grammar, resolves segment tokens, and
-    MERGEs ``(sn:StandardName)-[:HAS_SEGMENT {position, segment}]->(t:GrammarToken)``.
 
-    Idempotent: existing HAS_SEGMENT edges are deleted before re-writing.
-    Parse failures are logged and skipped — the SN node remains intact.
-    Token-miss (vocabulary drift) is detected, warned, and returned.
+def _coerce_segment_value(value: Any) -> str | None:
+    """Coerce a parser segment value (str / Enum / None) to a graph-safe scalar."""
+    if value is None:
+        return None
+    # Enum → its .value
+    val = getattr(value, "value", value)
+    if val is None:
+        return None
+    return str(val)
 
-    The GrammarToken version used for resolution is the installed ISN
-    version when available, otherwise the latest synced version (see
-    :func:`_resolve_grammar_token_version`).
+
+def _write_grammar_decomposition(
+    gc: GraphClient, name_ids: list[str]
+) -> list[dict[str, str]]:
+    """Write per-segment columns and typed grammar edges on StandardName nodes.
+
+    Plan 40 Phase 1 — replaces ``_write_segment_edges``. Always populates
+    bare-name per-segment columns (``sn.physical_base``, ``sn.subject``, …)
+    from the ISN parser, regardless of whether a closed-vocabulary
+    GrammarToken exists for the value. Conditionally writes typed edges
+    only when a GrammarToken does exist; on parser error sets
+    ``sn.grammar_parse_fallback = true`` and clears columns.
+
+    Idempotent: re-running on existing nodes overwrites columns and
+    refreshes typed edges. Missing segments are written as ``null`` so
+    re-writing a name whose grammar narrowed clears stale columns.
 
     Args:
-        gc: Open GraphClient session (caller manages the context manager).
+        gc: Open GraphClient session.
         name_ids: List of StandardName.id values to process.
 
     Returns:
-        List of detected token-miss gaps, each a dict with keys:
-        ``sn_id``, ``segment``, ``needed_token``.
+        List of token-miss gaps detected against the closed vocabulary,
+        each a dict with keys ``sn_id``, ``segment``, ``needed_token``.
     """
     all_gaps: list[dict[str, str]] = []
 
@@ -2002,32 +2045,92 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> list[dict[str,
         from imas_standard_names.grammar import parse_standard_name
         from imas_standard_names.graph.spec import segment_edge_specs
     except ImportError:
-        logger.debug("ISN grammar not available — skipping HAS_SEGMENT edges")
+        logger.debug("ISN grammar not available — skipping grammar decomposition")
         return all_gaps
 
-    # Resolve the best available GrammarToken version
+    # Token version is required for typed-edge writing only; column-write
+    # path runs even when no GrammarToken nodes exist.
     token_version = _resolve_grammar_token_version(gc, isn_version)
-    if token_version is None:
-        logger.debug("No GrammarToken nodes in graph — skipping HAS_SEGMENT edges")
-        return all_gaps
+
+    # Constant column-clear template — used both on parse error and as the
+    # idempotent reset before re-applying segment values.
+    null_columns = dict.fromkeys(_GRAMMAR_SEGMENT_COLUMNS)
 
     for sn_id in name_ids:
         try:
             parsed = parse_standard_name(sn_id)
+        except Exception:
+            logger.warning("Grammar parse failed for '%s' — recording fallback", sn_id)
+            # Clear columns + typed/segment edges, set fallback=true
+            gc.query(
+                """
+                MATCH (sn:StandardName {id: $sn_id})
+                OPTIONAL MATCH (sn)-[r:HAS_SEGMENT|HAS_PHYSICAL_BASE|HAS_SUBJECT|HAS_TRANSFORMATION|HAS_COMPONENT|HAS_COORDINATE|HAS_PROCESS|HAS_POSITION|HAS_REGION|HAS_DEVICE|HAS_GEOMETRIC_BASE]->(:GrammarToken)
+                DELETE r
+                WITH sn
+                SET sn.physical_base = null,
+                    sn.subject = null,
+                    sn.transformation = null,
+                    sn.component = null,
+                    sn.coordinate = null,
+                    sn.process = null,
+                    sn.position = null,
+                    sn.region = null,
+                    sn.device = null,
+                    sn.geometric_base = null,
+                    sn.object = null,
+                    sn.geometry = null,
+                    sn.grammar_parse_fallback = true
+                """,
+                sn_id=sn_id,
+            )
+            continue
+
+        # ---- Always-on column write (open-vocab capture) ------------------
+        column_values = {**null_columns}
+        parsed_dump = (
+            parsed.model_dump() if hasattr(parsed, "model_dump") else dict(parsed)
+        )
+        for seg in _GRAMMAR_SEGMENT_COLUMNS:
+            column_values[seg] = _coerce_segment_value(parsed_dump.get(seg))
+
+        gc.query(
+            """
+            MATCH (sn:StandardName {id: $sn_id})
+            SET sn.physical_base = $physical_base,
+                sn.subject = $subject,
+                sn.transformation = $transformation,
+                sn.component = $component,
+                sn.coordinate = $coordinate,
+                sn.process = $process,
+                sn.position = $position,
+                sn.region = $region,
+                sn.device = $device,
+                sn.geometric_base = $geometric_base,
+                sn.object = $object,
+                sn.geometry = $geometry,
+                sn.grammar_parse_fallback = false
+            """,
+            sn_id=sn_id,
+            **column_values,
+        )
+
+        # ---- Conditional typed-edge write (closed-vocab) ------------------
+        if token_version is None:
+            # No GrammarToken corpus — column write is enough; skip edges.
+            continue
+
+        try:
             edge_specs = segment_edge_specs(parsed)
         except Exception:
-            logger.warning(
-                "Grammar parse failed for '%s' — skipping HAS_SEGMENT edges",
+            logger.debug(
+                "segment_edge_specs failed for '%s' — columns set, skipping edges",
                 sn_id,
                 exc_info=True,
             )
             continue
 
-        if not edge_specs:
-            continue
-
-        # Idempotent: delete old HAS_SEGMENT and all 10 typed segment edges
-        # before re-writing so repeated calls leave exactly one edge per type.
+        # Idempotent: drop existing typed/segment edges before re-writing.
         gc.query(
             """
             MATCH (sn:StandardName {id: $sn_id})-[r:HAS_SEGMENT|HAS_PHYSICAL_BASE|HAS_SUBJECT|HAS_TRANSFORMATION|HAS_COMPONENT|HAS_COORDINATE|HAS_PROCESS|HAS_POSITION|HAS_REGION|HAS_DEVICE|HAS_GEOMETRIC_BASE]->(:GrammarToken)
@@ -2036,7 +2139,9 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> list[dict[str,
             sn_id=sn_id,
         )
 
-        # Write new HAS_SEGMENT edges via OPTIONAL MATCH to detect token-miss
+        if not edge_specs:
+            continue
+
         edges_param = [
             {
                 "position": s.position,
@@ -2103,7 +2208,6 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> list[dict[str,
             or []
         )
 
-        # Detect token-miss (vocabulary gaps)
         missing = [
             f"{r['segment']}:{r['token']}"
             for r in results
@@ -2128,6 +2232,21 @@ def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> list[dict[str,
                     )
 
     return all_gaps
+
+
+# Deprecation alias — Phase 1 retains old name for one release. Callers
+# inside the package have been migrated; external pipeline code may still
+# import this symbol. Removed in the release after Phase 4.
+def _write_segment_edges(gc: GraphClient, name_ids: list[str]) -> list[dict[str, str]]:
+    """Deprecated alias for :func:`_write_grammar_decomposition`."""
+    import warnings
+
+    warnings.warn(
+        "_write_segment_edges is deprecated; use _write_grammar_decomposition.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _write_grammar_decomposition(gc, name_ids)
 
 
 # =============================================================================

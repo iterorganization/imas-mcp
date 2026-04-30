@@ -411,14 +411,14 @@ class TestAmbiguityClassification:
 
 class TestPersistBatchTokenMissGaps:
     """write_standard_names calls write_vocab_gaps for token misses detected
-    during _write_segment_edges."""
+    during _write_grammar_decomposition."""
 
     def test_token_miss_creates_vocab_gap_nodes(self):
-        """When _write_segment_edges detects unmatched tokens, VocabGap nodes are created."""
+        """When _write_grammar_decomposition detects unmatched tokens, VocabGap nodes are created."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
-        # Simulate _write_segment_edges returning a token miss
+        # Simulate _write_grammar_decomposition returning a token miss
         token_miss_gaps = [
             {
                 "sn_id": "electron_temperature",
@@ -439,7 +439,7 @@ class TestPersistBatchTokenMissGaps:
         with (
             patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC,
             patch(
-                "imas_codex.standard_names.graph_ops._write_segment_edges",
+                "imas_codex.standard_names.graph_ops._write_grammar_decomposition",
                 return_value=token_miss_gaps,
             ),
             patch(
@@ -466,7 +466,7 @@ class TestPersistBatchTokenMissGaps:
         assert call_args[1]["source_type"] == "dd"
 
     def test_no_token_miss_skips_write_vocab_gaps(self):
-        """When _write_segment_edges returns no gaps, write_vocab_gaps is not called."""
+        """When _write_grammar_decomposition returns no gaps, write_vocab_gaps is not called."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
@@ -482,7 +482,7 @@ class TestPersistBatchTokenMissGaps:
         with (
             patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC,
             patch(
-                "imas_codex.standard_names.graph_ops._write_segment_edges",
+                "imas_codex.standard_names.graph_ops._write_grammar_decomposition",
                 return_value=[],
             ),
             patch(
@@ -523,7 +523,7 @@ class TestPersistBatchTokenMissGaps:
         with (
             patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC,
             patch(
-                "imas_codex.standard_names.graph_ops._write_segment_edges",
+                "imas_codex.standard_names.graph_ops._write_grammar_decomposition",
                 return_value=token_miss_gaps,
             ),
             patch(
@@ -584,12 +584,12 @@ class TestResolveGrammarTokenVersion:
 
 
 # ---------------------------------------------------------------------------
-# Test 7: _write_segment_edges version fallback integration
+# Test 7: _write_grammar_decomposition version fallback integration
 # ---------------------------------------------------------------------------
 
 
 class TestWriteSegmentEdgesVersionFallback:
-    """_write_segment_edges uses version fallback to avoid false-positive
+    """_write_grammar_decomposition uses version fallback to avoid false-positive
     VocabGap nodes when GrammarToken nodes are stale."""
 
     def test_no_grammar_tokens_skips_entirely(self):
@@ -600,9 +600,9 @@ class TestWriteSegmentEdgesVersionFallback:
             "imas_codex.standard_names.graph_ops._resolve_grammar_token_version",
             return_value=None,
         ):
-            from imas_codex.standard_names.graph_ops import _write_segment_edges
+            from imas_codex.standard_names.graph_ops import _write_grammar_decomposition
 
-            gaps = _write_segment_edges(mock_gc, ["electron_temperature"])
+            gaps = _write_grammar_decomposition(mock_gc, ["electron_temperature"])
 
         assert gaps == []
 
@@ -631,9 +631,9 @@ class TestWriteSegmentEdgesVersionFallback:
             mock_spec.token = "electron"
             mock_specs.return_value = [mock_spec]
 
-            from imas_codex.standard_names.graph_ops import _write_segment_edges
+            from imas_codex.standard_names.graph_ops import _write_grammar_decomposition
 
-            gaps = _write_segment_edges(mock_gc, ["electron_temperature"])
+            gaps = _write_grammar_decomposition(mock_gc, ["electron_temperature"])
 
         # No gaps — token was matched via fallback version
         assert gaps == []

@@ -1017,6 +1017,16 @@ classes:
           staleness checks when the grammar parser is upgraded.
           ``null`` means parse has not been run with the vNext API.
         range: string
+      grammar_parse_fallback:
+        description: >-
+          True iff the ISN grammar parser raised when writing this name.
+          When true, per-segment columns and typed grammar edges are
+          absent and downstream grammar-aware retrieval treats the SN as
+          unparseable. Set by ``_write_grammar_decomposition`` (plan 40
+          Phase 1). ``null`` means the writer has not yet processed this
+          name with the new grammar-decomposition path.
+        range: boolean
+        required: false
       validation_diagnostics_json:
         description: >-
           JSON-serialised list of parser diagnostics from the last vNext
