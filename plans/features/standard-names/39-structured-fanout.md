@@ -1,16 +1,20 @@
 # Plan 39 — Structured Fan-Out for SN Compose Pipeline
 
-> **Status**: DRAFT v2 — RD-revised.  Plan-only; no code in this task.
+> **Status**: DRAFT v3 — Opus 4.7 RD-revised.  Plan-only; no code in this task.
 > **Branch**: `main`
 > **Version history**:
-> - v1 (initial draft) — superseded.
-> - **v2 (this revision)** — addresses RD review: trimmed MVP catalog,
->   discriminated-union schemas, parent-lease cost ownership, deterministic
->   generate-site dup guard (no fan-out), granular failure modes, telemetry
->   gate before Phase 2, dropped `max_depth` knob.
-> **Parent / context**: Plan 32 Phase 2 prototyped agentic tool-calling
-> (`sn/generate_name_dd_tool_calling.md`).  This plan is the structured
-> (non-agentic) successor.
+> - v1 — initial draft, superseded.
+> - v2 — gpt-5.4 RD pass: trimmed catalog, discriminated union, parent-lease
+>   cost ownership, deterministic generate-site dup guard, granular failure
+>   modes, dropped `max_depth` knob.
+> - **v3 (this revision)** — Opus 4.7 RD pass: adds Phase 0 helper-extraction
+>   prerequisite (B1); fixes async/sync mismatch with `asyncio.to_thread`
+>   wrappers (B2); tiers cost estimate by escalation and rewrites budget
+>   invariant (I1); within-cohort A/B for Phase-2 gate (I2); pins reviewer
+>   dim allow-list (I3); hashes fully rendered prompt (I4); explicit
+>   GraphClient lifecycle (I5); `Fanout` telemetry node + `batch_id`
+>   linkage (I6); plus six small refinements (S1–S6).
+> **Parent / context**: Plan 32 Phase 2 prototyped agentic tool-calling.
 > **Related**: Plan 31 (compose retry chain B12), Plan 43 (compose prompt
 > reduction), Plan 26 (review pipeline).
 
@@ -18,13 +22,11 @@
 
 ## 1. Executive summary
 
-The SN compose pipeline currently front-loads *all* DD context into the
-compose prompt.  Plan 43 trimmed the static block; Plan 32 prototyped
-free LLM tool-calling.  Free tool-calling is **rejected** for production:
-unbounded depth/fan and high tail cost.
-
-This plan specifies a **structured** fan-out pattern that preserves
-information-on-demand with **hard bounds enforced at Pydantic parse time**:
+Structured (non-agentic) fan-out for the SN compose pipeline.  The LLM
+emits a **bounded, schema-validated** list of search queries from a closed
+catalog of backing functions; we execute them in parallel; results feed
+the next LLM call.  Bounds are enforced at Pydantic parse time — there is
+no agentic loop.
 
 | Property                | Free tool-calling     | Structured fan-out (this plan)            |
 |-------------------------|-----------------------|-------------------------------------------|
@@ -33,18 +35,17 @@ information-on-demand with **hard bounds enforced at Pydantic parse time**:
 | Chain depth             | Unbounded             | Architecturally fixed at 1                |
 | Round-trips             | 1 + N×tool turns      | Exactly **2** LLM calls                   |
 | Cost ownership          | Implicit              | Parent call-site lease, sub-event tagged  |
-| Failure mode            | Mid-loop stall        | Granular modes, true no-op on failures    |
+| Failure mode            | Mid-loop stall        | Granular modes, true no-op                |
 
 Pattern: **(A) Query Proposer LLM → (B) Pure-Python parallel executor →
-(C) Synthesizer LLM**.
+(C) Synthesizer LLM (the call-site's existing call)**.
 
 **Phased rollout, gated on telemetry**:
 
-- **Phase 1 (only true fan-out pilot)**: refine_name plug-in.
-- **Phase 1.5 (deterministic, no fan-out)**: name-key dup guard before
-  persist in generate.
-- **Phase 2/3**: deferred — gated on Phase 1 telemetry showing positive
-  lift after ≥1 week of production data.
+- **Phase 0** — backing-helper extractions (prerequisites for Phase 1).
+- **Phase 1** — refine_name fan-out (only true fan-out pilot).
+- **Phase 1.5** — deterministic name-key dup guard (no fan-out, no LLM).
+- **Phase 2/3** — deferred; gated on Phase 1 within-cohort A/B telemetry.
 
 ---
 
@@ -52,72 +53,63 @@ Pattern: **(A) Query Proposer LLM → (B) Pure-Python parallel executor →
 
 ### Goals
 
-- Add `imas_codex/standard_names/fanout/` module implementing the
-  (Proposer → Executor → Synthesizer) pattern with **discriminated-union
-  schema** for queries.
-- Define a closed, MVP-sized function catalog wrapping existing graph
-  helpers — no new graph queries.
-- Plug into `refine_name` only, gated by config (default off).
-- Cost charged to the **parent call-site's `BudgetLease`** as a sub-event,
-  so caps already in force on the parent pool apply automatically.
-- Granular failure modes; on any failure, fan-out is a true no-op (does
-  not inject stub or "no useful evidence" text).
+- Add `imas_codex/standard_names/fanout/` implementing
+  (Proposer → Executor → Synthesizer).
+- Reuse existing graph helpers via a closed, MVP-sized catalog — but
+  **only after Phase 0 reshapes those helpers into the right
+  signatures** (sync, `gc=` kwarg, public symbol).
+- Plug into `refine_name` only; default off.
+- Cost charged to the **parent call-site's `BudgetLease`** as sub-events.
+- Granular failure modes; on any failure, fan-out is a true no-op.
+- All-helper-sync runners explicitly wrapped in `asyncio.to_thread`.
 
 ### Non-goals
 
 - Free agentic tool-calling.
-- Depth-2+ chaining.  No knob, no future-proofing — add a separate plan
-  if a concrete need ever materialises.
+- Depth-2+ chaining.
 - Runtime-generated functions.
-- Multi-model debate (orthogonal — handled by RD-quorum review).
-- Replacing B12 grammar-retry compose path.  B12 stays.
+- Multi-model debate (orthogonal — RD-quorum review).
+- Replacing B12 grammar-retry compose path.
 - Pre-persist generate fan-out — replaced by deterministic name-key
   lookup (§5.2).
+- New graph schema fields on existing nodes; the lone schema addition
+  is a thin telemetry-only `Fanout` node (§8).
 
 ---
 
 ## 3. Function catalog (MVP)
 
-A **closed** set of functions.  The proposer LLM emits a JSON list
-parsed via a **Pydantic discriminated union on `fn_id`** so each call
-gets *typed* args at parse time — no runtime arg validation, no
-`dict[str, Any]`, no out-of-bounds k/max_results.
+A **closed** set of functions.  The proposer LLM emits a JSON list parsed
+via a **Pydantic discriminated union on `fn_id`** so each call gets typed
+args at parse time — no runtime arg validation, no `dict[str, Any]`, no
+out-of-bounds `k` / `max_results`.
 
-All functions wrap **existing** Python helpers; direct in-process calls
-(no MCP boundary).
+### 3.1 MVP catalog — final symbols (post-Phase-0)
 
-### 3.1 MVP catalog
+All four entries point at sync helpers in `imas_codex/graph/dd_search.py`,
+all four take `gc` as a parameter, none open their own `GraphClient`.
 
-| ID                       | Backing function                                              | Cost class      | Why in MVP                                         |
-|--------------------------|---------------------------------------------------------------|-----------------|----------------------------------------------------|
-| `search_existing_names`  | `imas_codex.standard_names.search.search_similar_names`       | vector          | Description-similarity check (NOT a name dup check)|
-| `search_dd_paths`        | `imas_codex.graph.dd_search.hybrid_dd_search`                 | vector + graph  | Cross-IDS / cross-domain DD context                |
-| `find_related_dd_paths`  | `imas_codex.standard_names.workers._related_path_neighbours`  | graph           | Cluster/coordinate/unit siblings of a known DD path|
-| `search_dd_clusters`     | `imas_codex.graph.dd_search` cluster path (existing)          | vector          | Concept-level grouping discovery                   |
+| ID                       | Backing symbol (post Phase 0)                            | Signature shape                                            | Cost class       |
+|--------------------------|----------------------------------------------------------|------------------------------------------------------------|------------------|
+| `search_existing_names`  | `imas_codex.graph.dd_search.search_similar_names`        | `(query, k, *, gc=None, include_superseded=False)` (sync)  | vector           |
+| `search_dd_paths`        | `imas_codex.graph.dd_search.hybrid_dd_search`            | `(gc, query, ..., k=...)` (already conforms)               | vector + graph   |
+| `related_dd_search`      | `imas_codex.graph.dd_search.related_dd_search`           | `(gc, path, *, max_results=...)` (sync, public)            | graph            |
+| `cluster_search`         | `imas_codex.graph.dd_search.cluster_search`              | `(gc, query, *, scope=None, k=...)` (sync, public)         | vector           |
 
-**Dropped from MVP per RD review**:
+The proposer-visible `fn_id` is the human-friendly form
+(`search_existing_names`, `search_dd_paths`, `find_related_dd_paths`,
+`search_dd_clusters`); each maps 1:1 to a backing symbol via the catalog
+registry.  Display names are not the same as backing symbol names so the
+catalog can outlive helper renames.
 
-- `fetch_existing_name` — useless at depth-1 without a prior search;
-  if we ever need it, a depth-2 plan will reintroduce it.
-- `list_grammar_vocabulary` — the existing helper
-  (`imas_codex.llm.sn_tools._list_grammar_vocabulary`) returns *markdown*
-  and only takes `segment`.  Building a thin pure-structured wrapper is
-  out of scope for this plan; if vocab-gap surfacing is needed, it
-  belongs in a deterministic reviewer-side helper (a separate plan), not
-  in fan-out.
-- `get_dd_identifiers` — same shape problem; defer.
-- `search_signals` / `fetch_dd_paths` — irrelevant at compose-time refine.
-
-### 3.2 Discriminated-union schemas (parse-time bound enforcement)
+### 3.2 Discriminated-union schemas (parse-time bounds)
 
 ```python
 # imas_codex/standard_names/fanout/schemas.py
 from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
-# NOTE: All bounds (k, max_results, min/max length) are enforced by
-# Pydantic at parse time.  No runtime post-validation, no silent
-# clamping.  An out-of-bounds value rejects the *whole* FanoutCall.
+# ALL bounds enforced at parse time.  Out-of-bounds → whole FanoutPlan rejects.
 
 class _SearchExistingNames(BaseModel):
     fn_id: Literal["search_existing_names"]
@@ -128,8 +120,7 @@ class _SearchDDPaths(BaseModel):
     fn_id: Literal["search_dd_paths"]
     query: str = Field(..., min_length=2, max_length=200)
     k: int = Field(default=8, ge=1, le=15)
-    # NOTE: ids_filter / physics_domain are NOT LLM-supplied (see §3.3);
-    # they're injected by the caller.
+    # ids_filter / physics_domain are NOT LLM-supplied (see §3.3).
 
 class _FindRelatedDDPaths(BaseModel):
     fn_id: Literal["find_related_dd_paths"]
@@ -148,40 +139,30 @@ FanoutCall = Annotated[
 ]
 
 class FanoutPlan(BaseModel):
-    queries: list[FanoutCall] = Field(
-        default_factory=list,
-        max_length=3,            # mirror max_fan_degree config
-    )
-    # Optional rationale; logged only, not fed forward.
-    notes: str = Field(default="", max_length=200)
+    queries: list[FanoutCall] = Field(default_factory=list, max_length=3)
+    notes: str = Field(default="", max_length=200)   # logged only
 ```
 
-A bad `fn_id`, missing required field, or out-of-bounds `k` causes
-*parse* to fail at the call boundary — the entire `FanoutPlan` is
-rejected.  Per RD point (5), this enters the `planner_schema_fail` mode
-(true no-op, logged loudly).
+### 3.3 Caller-injected scope
 
-### 3.3 Caller-injected scope (RD point 11)
+Proposer LLM picks **only** `fn_id` + intent arg (`query` / `path`) +
+small `k` / `max_results`.  Known scope is injected at runtime from
+caller context, not asked of the model:
 
-The proposer LLM picks **only** `fn_id` and the *intent* arg (`query`
-or `path`) plus a small `k`/`max_results`.  Known scope is injected by
-the dispatcher from caller context, not asked of the model:
+| Injected at runtime               | Source                                |
+|-----------------------------------|---------------------------------------|
+| `physics_domain`                  | refine context (already known)        |
+| `ids_filter`                      | derived from candidate's source path  |
+| `dd_version`                      | settings default                      |
 
-| Injected at runtime by dispatcher | Source                                      |
-|-----------------------------------|---------------------------------------------|
-| `physics_domain`                  | refine context (already known)              |
-| `ids_filter`                      | derived from candidate's source DD path     |
-| `facility`                        | not used at compose time; reserved          |
-| `dd_version`                      | settings default                            |
-
-The runner signature is therefore:
+Runner signature:
 
 ```python
 async def run_search_dd_paths(
     args: _SearchDDPaths,
     *,
     gc: GraphClient,
-    scope: FanoutScope,        # caller-injected
+    scope: FanoutScope,
 ) -> FanoutResult: ...
 
 class FanoutScope(BaseModel):
@@ -190,20 +171,14 @@ class FanoutScope(BaseModel):
     dd_version: int | None = None
 ```
 
-Shrinks the LLM-visible arg surface, the prompt size, and the error
-surface (the model can't get scope wrong because it never sees it).
-
-### 3.4 Grammar segments — sourced from ISN, not hard-coded (RD point 1)
+### 3.4 Grammar segments — sourced from ISN
 
 If/when a vocab-segment-aware function is ever added, the segment
-`Literal` MUST be built at module load time from
-`imas_standard_names.grammar.get_grammar_context()` (see existing
-pattern in `imas_codex/standard_names/audits.py`).  No hard-coded
-segment list anywhere in `fanout/`.  This plan does not include such a
-function in MVP; the rule is recorded here so it isn't reinvented when
-one is added.
+`Literal` MUST be built at module load from
+`imas_standard_names.grammar.get_grammar_context()` (existing pattern in
+`imas_codex/standard_names/audits.py`).  No hard-coded list.  Not in MVP.
 
-### 3.5 Output shape
+### 3.5 Output shapes
 
 ```python
 class FanoutHit(BaseModel):
@@ -222,68 +197,164 @@ class FanoutResult(BaseModel):
     elapsed_ms: float = 0.0
 ```
 
+### 3.6 Phase 0 — helper extractions (PREREQUISITE for Phase 1)
+
+**Three of four MVP runners cannot be implemented as thin wrappers
+against the helpers as they exist today** (verified against `main`):
+
+| Helper (current state)                                | Problem                                                                                              |
+|-------------------------------------------------------|------------------------------------------------------------------------------------------------------|
+| `standard_names.search.search_similar_names`          | Sync, opens its own `with GraphClient() as gc:`.  No `gc` parameter — under 6-pool × `max_fan_degree=3` worst case = up to 18 simultaneous fresh `GraphClient` instantiations. |
+| `graph.dd_search.hybrid_dd_search`                    | ✓ Already conforms: sync, takes `gc`.                                                                |
+| `standard_names.workers._related_path_neighbours`     | Leading-underscore private; would create cyclic import (`workers.py` ↔ `fanout.runners`).             |
+| Cluster search                                        | **Does not exist as a callable helper.**  Available only as `tools.graph_search.ClusterSearchTool.search_dd_clusters` async method (decorated `@cache_results / @mcp_tool / @handle_errors`).  Calling it re-introduces the MCP boundary the plan disclaims. |
+
+Phase 0 is the gating prerequisite.  Phase 1 cannot start until Phase 0
+lands.  Phase 0 changes are **independently shippable** (they improve the
+helpers regardless of fan-out).
+
+#### Phase 0 deliverables
+
+(a) **`search_similar_names` overload**: add `gc: GraphClient | None = None`
+    keyword.  When `None`, open a session as today (back-compat).  When
+    provided, reuse it.  Add `include_superseded: bool = False` keyword
+    (S2): when `True`, drop the `pipeline_status='superseded'` exclusion
+    (cycle-2 refine wants the just-superseded cycle-1 name as comparator).
+    Move callable to `imas_codex/graph/dd_search.py`; keep an import-shim
+    in `imas_codex/standard_names/search.py` until in-tree callers
+    migrate (search call sites grep is small — ≤5 hits).
+
+(b) **`related_dd_search` extraction**: move `_related_path_neighbours`
+    body from `workers.py` to `imas_codex/graph/dd_search.py`, rename to
+    `related_dd_search` (drop leading underscore, drop `_path_` infix to
+    match `hybrid_dd_search` siblings).  Keep
+    `from imas_codex.graph.dd_search import related_dd_search as
+    _related_path_neighbours` shim in `workers.py` until callers migrate.
+
+(c) **`cluster_search` extraction**: extract the Cypher + helper logic
+    out of `ClusterSearchTool.search_dd_clusters` body in
+    `imas_codex/tools/graph_search.py` into a sync
+    `cluster_search(gc, query, *, scope=None, k=8) -> list[ClusterHit]`
+    in `imas_codex/graph/dd_search.py`.  Rewrite
+    `ClusterSearchTool.search_dd_clusters` to delegate to it (`async`
+    wrapper preserves the MCP-tool decorator semantics).  Tests on the
+    MCP side must continue to pass unchanged.
+
+#### Phase 0 acceptance criteria
+
+1. All four catalog backing symbols live in `imas_codex/graph/dd_search.py`;
+   each is sync; each takes `gc` as the **first positional** parameter
+   (or `gc=` kwarg for `search_similar_names` to preserve its existing
+   signature shape).
+2. No new graph queries, no schema changes — Phase 0 is pure refactor.
+3. Existing MCP tool tests for `search_dd_clusters` (`tests/tools/...`)
+   pass unchanged.
+4. `tests/standard_names/test_search_similar_names.py::test_gc_reuse`:
+   pass a `gc` kwarg; assert no new `GraphClient` is instantiated
+   (mock the constructor).
+5. `tests/graph/test_related_dd_search.py`: smoke test for the renamed
+   function plus a back-compat test for the `_related_path_neighbours`
+   shim.
+6. Lint + format clean; full pytest green.
+7. **No fan-out code lands in Phase 0.**  Phase 0 PR is pure helper
+   refactor; Phase 1 PR follows.
+
 ---
 
 ## 4. Two-stage call pattern
 
-### Stage A — Query Proposer LLM
+### 4.1 Stage A — Query Proposer LLM
 
-- **Input**: candidate name + reviewer comment(s) + small `chain_history`
-  excerpt (refine context).
-- **System prompt**: `sn/fanout_propose.md` — short, lists the catalog
-  and a verbatim **`catalog_version=<sha256>`** literal in the first line
-  so any catalog change automatically invalidates prompt-cache prefixes
-  (RD point 7).  Prompt caching only takes effect on the direct
-  OpenRouter path (`supports_cache(model)` true and
-  `OPENROUTER_API_KEY_IMAS_CODEX` set); proxy paths strip
-  `cache_control` silently — the plan and the runner log a one-liner if
-  caching is unavailable.
+- **Input**: candidate name + reviewer-comment slice (per §5.1 trigger
+  predicate, only `clarity` and `disambiguation` dims) + bounded
+  `chain_history` excerpt (S3: last cycle's `reviewer_comments_per_dim`
+  values truncated to **800 chars total**, no chain walk).
+- **System prompt**: `sn/fanout_propose.md`.  First line is a literal
+  `catalog_version=<sha256>` placeholder; see §6.1 for hash
+  specification (I4: hash the **fully rendered system prompt**, not the
+  schema dict).
 - **User prompt**: dynamic context only.
-- **Output schema**: `FanoutPlan` (discriminated union).
-- **Validation**: `acall_llm_structured` with `response_model=FanoutPlan`.
-  Any parse failure → `planner_schema_fail` (see §7.2).  No agentic
-  retry.
-- **Model**: cheap-tier default (Haiku 4.5), low temperature (≤0.2);
-  override via `[tool.imas-codex.sn.fanout].proposer-model`.
+- **Output schema**: `FanoutPlan`.
+- **Validation**: `acall_llm_structured(response_model=FanoutPlan)`.
+  Parse failure → `planner_schema_fail` (§7.2), no agentic retry.
+- **Model**: `proposer-model` (default cheap-tier Haiku 4.5),
+  `proposer-temperature` ≤ 0.2.
+- **Post-parse query-side dedup (S1)**: in `dispatcher.propose()`,
+  collapse calls with identical `(fn_id, normalized_query_or_path)`
+  to the first occurrence; bump `duplicate_query_collapsed` counter.
+  Normalization: lowercase + collapse whitespace.
 
-### Stage B — Function Executor (no LLM)
+### 4.2 Stage B — Function Executor (sync helpers, async wrapper)
 
-- For each `FanoutCall` (already typed by parse):
-  - Look up runner by `fn_id`.
-  - `asyncio.create_task(runner(args, gc=gc, scope=scope))` wrapped in
-    `asyncio.wait_for(..., timeout=function_timeout_s)`.
-- All tasks under `asyncio.gather(..., return_exceptions=True)`, the
-  whole gather wrapped in `asyncio.wait_for(total_timeout_s)`.
-- Per-call exceptions / timeouts → `FanoutResult(ok=False, error=...)`.
-- Returns `list[FanoutResult]` in input order.
-- Optional dedup across results (same `(kind, id)` collapses, max-score
-  wins) before rendering.
+**All four MVP backing helpers are synchronous** (Neo4j blocking I/O +
+numpy embeddings).  A naive `async def runner(...): return helper(...)`
+runs the helper **on the event loop** — `asyncio.gather` does not
+parallelise it, and `asyncio.wait_for` cannot cancel sync code
+mid-execution.
 
-### Stage C — Synthesizer
+Mandatory pattern: every runner wraps its helper with
+`asyncio.to_thread`:
 
-Stage C is **the call-site's existing LLM call** (e.g. the refine
-worker's existing `acall_llm_structured` to refine a candidate).
-`run_fanout` does **not** call Stage C itself — it returns the rendered
-evidence string, which the call-site injects into its existing user
-prompt.  This keeps the call-site's flow readable and avoids forcing a
-new wrapper around every existing pool call.
+```python
+async def run_search_dd_paths(args, *, gc, scope) -> FanoutResult:
+    t0 = time.monotonic()
+    try:
+        hits = await asyncio.wait_for(
+            asyncio.to_thread(
+                hybrid_dd_search,
+                gc, args.query,
+                physics_domain=scope.physics_domain,
+                ids_filter=scope.ids_filter,
+                k=args.k,
+            ),
+            timeout=settings.function_timeout_s,
+        )
+        return FanoutResult(fn_id=args.fn_id, args=args.model_dump(),
+                            ok=True, hits=_to_hits(hits),
+                            elapsed_ms=(time.monotonic() - t0) * 1000)
+    except (asyncio.TimeoutError, Exception) as e:
+        return FanoutResult(fn_id=args.fn_id, args=args.model_dump(),
+                            ok=False, error=str(e),
+                            elapsed_ms=(time.monotonic() - t0) * 1000)
+```
+
+`asyncio.to_thread` schedules onto the default thread pool
+(`min(32, cpus + 4)` workers).  This pool is **shared** with existing
+`asyncio.to_thread(persist_refined_name, ...)` calls in workers and the
+rest of the 6-pool loop.  Under heavy fan-out load, refine persistence
+may briefly contend with fan-out runners on the same thread pool.
+Acceptable for MVP; revisit if measured contention shows up in
+telemetry.  *No* dedicated thread pool in MVP — keep machinery minimal.
+
+`total_timeout_s` wraps the outer `gather`; even if a sync helper
+ignores its individual `function_timeout_s`, the gather-level
+`wait_for` cancels Python-side waiters at the gate (the helper itself
+keeps running on the worker thread until it completes — it cannot be
+preempted, but its result is discarded).  Document this caveat.
+
+### 4.3 Stage C — Synthesizer
+
+Stage C is the call-site's existing LLM call (refine worker's existing
+`acall_llm_structured`).  `run_fanout` returns the rendered evidence
+string; the call-site injects it into its existing prompt template.
 
 ```
                 ┌────────── Stage A ──────────┐
-candidate +     │ Proposer LLM (cheap, low-T) │
- minimal ctx ──▶│  catalog_version embedded    │── FanoutPlan
-                └─────────────────────────────┘  (discriminated union,
-                              │                   parse-time bounded)
+candidate +     │ Proposer LLM (cheap, low-T) │── FanoutPlan
+ minimal ctx ──▶│  catalog_version embedded    │   (parse-time bounded)
+                └─────────────────────────────┘
+                              │ S1 query dedup
                               ▼
                 ┌────────── Stage B ──────────┐
-                │ asyncio.gather + scope inj. │── list[FanoutResult]
-                │ per-call + total timeout    │
+                │ asyncio.to_thread runners   │
+                │ + per-call wait_for          │── list[FanoutResult]
+                │ + total_timeout gather       │
                 └─────────────────────────────┘
-                              │
-                              ▼  (returned to call-site as evidence string)
+                              │ render
+                              ▼  (returned to caller as evidence string)
                 ┌────────── Stage C ──────────┐
-candidate +     │ EXISTING call-site LLM call │── refined / verified
-evidence ─────▶ │ (e.g. refine_name worker)   │   candidate
+candidate +     │ EXISTING refine LLM call    │── refined candidate
+evidence ─────▶ │ (charges parent lease)      │
                 └─────────────────────────────┘
 ```
 
@@ -291,63 +362,56 @@ evidence ─────▶ │ (e.g. refine_name worker)   │   candidate
 
 ## 5. Plug-in sites
 
-### 5.1 Phase 1 (only true fan-out): `refine_name`
+### 5.1 Phase 1 fan-out site: `refine_name`
 
-- **Why first**: reviewer comment is a strong query signal; refine is
-  already costly so one cheap proposer call is a small marginal.
-- **Trigger gate (RD point 9)**: fan-out runs ONLY when *both*
-  - the deterministic enrichment (B12) and `chain_history` injection
-    have already been applied for the current cycle, AND
-  - `chain_length > 0` AND the prior reviewer comment flagged ambiguity
-    (configurable predicate; default: comment mentions any of
-    `{"unclear", "ambiguous", "duplicate", "consider", "compare"}`).
-- **Stage A inputs**: candidate name + reviewer comment + last
-  `chain_history` slice + injected `FanoutScope` from caller.
-- **Output**: rendered evidence string, injected into the existing
+- **Trigger gate (orthogonality, RD point 9 v2)**: fan-out fires ONLY
+  when *all* of:
+  - deterministic enrichment (B12) and `chain_history` injection have
+    already been applied for the current cycle, AND
+  - `chain_length > 0`, AND
+  - prior reviewer comments contain at least one trigger keyword
+    (default: `{unclear, ambiguous, duplicate, consider, compare}`,
+    configurable via `refine-trigger-keywords`).
+- **Comment source (I3)**: trigger predicate flattens *only* the values
+  of `reviewer_comments_per_dim` keyed by dims in the explicit allow-list
+  `{"clarity", "disambiguation"}`.  Other dims (e.g. `convention`,
+  `grammar`) are ignored — those failure modes are not what fan-out is
+  designed to address.  The legacy free-form `reviewer_comments_name`
+  is *not* used.  Allow-list is configurable via
+  `refine-trigger-comment-dims`.
+- **Excerpt size (S3)**: concatenated allow-listed values, total
+  truncated to 800 chars (no multi-cycle walk).
+- **Stage A inputs**: candidate name + truncated comment slice +
+  injected `FanoutScope`.
+- **Output**: rendered evidence string injected into the existing
   refine user prompt.
 
 This is the only site that pays for a proposer LLM call in this plan.
 
-### 5.2 Phase 1.5 — Deterministic name-key dup guard for generate (NO fan-out)
+### 5.2 Phase 1.5 — Deterministic name-key dup guard (NO fan-out)
 
-Per RD point 3, the previously planned generate-site fan-out is
-**replaced** by a deterministic, LLM-free dup guard:
+Independently shippable (no fan-out infra required).
 
-- **When**: AFTER B12 produces its final candidate, BEFORE persisting
-  the new `StandardName` node.
-- **What**: a name-key lookup against existing StandardName ids.  Two
-  forms:
-  1. **Exact match** on the proposed `standard_name` string against
-     existing `StandardName.id` (case-folded).
-  2. **Lexical variants**: cheap normalization
-     (e.g. underscore-join order canonicalisation, known synonym
-     swaps from existing controlled-vocab maps) before comparison.
+- **When**: AFTER B12's final candidate, BEFORE persisting the new
+  `StandardName`.
+- **What**: name-key lookup against existing `StandardName.id`:
+  1. Exact case-folded match.
+  2. Lexical-variant normalisation (case-fold, collapsed underscores,
+     canonical-segment-order, known synonym swaps from
+     `imas_codex/standard_names/canonical.py`).  Exact set enumerated
+     in the Phase 1.5 PR — not inferred from ad-hoc tests.
 - **No vector search** — `search_similar_names` is description-vector,
-  not a name-level dup check, and is intentionally NOT used here.
-- **Action on hit**: drop the candidate, mark the source as
-  `duplicate_of=<existing_id>`, increment a `dup_prevented` metric.
-- **Implementation**: ~30 lines in
-  `imas_codex/standard_names/canonical.py` (existing module — has the
-  canonical-form helpers).  No fan-out infra used.
+  not a name-level dup check.  Intentionally NOT used here.
+- **Action on hit**: drop candidate, mark source `duplicate_of=<id>`,
+  emit `dup_prevented` metric.
+- **Implementation**: ~30 lines in `canonical.py`; no LLM call.
 
-This phase is split out because it is independently valuable and
-*does not* depend on the fan-out framework landing.  It can ship in
-parallel with or before Phase 1.
+### 5.3 Phase 2 / 3 — DEFERRED
 
-### 5.3 Phase 2 / 3 — DEFERRED (telemetry-gated)
+Per §8 telemetry gate.  Until met:
 
-Per RD points 4 and 8, no further sites are added until Phase 1
-telemetry has run **for at least one week of production traffic** AND
-shows positive lift on at least one of:
-
-- accept-rate delta on fanout-using vs non-using refine items, OR
-- mean refine-rotation count delta (lower is better), OR
-- `dup_prevented` rate (for the 1.5 deterministic guard).
-
-Until then:
-
-- vocab-gap suggestion remains in deterministic reviewer-side code (or
-  is a separate later plan with its own structured wrapper around
+- vocab-gap suggestion remains a deterministic reviewer-side helper (or
+  a future plan with its own structured-output wrapper around
   `_list_grammar_vocabulary`).
 - docs style consistency stays out of scope.
 
@@ -355,16 +419,15 @@ Until then:
 
 ## 6. Prompt design
 
-Two prompt files under `imas_codex/llm/prompts/sn/`:
+### 6.1 `sn/fanout_propose.md` — system prompt + version hash (I4)
 
-### 6.1 `sn/fanout_propose.md`
-
-Structure:
+The proposer system prompt is computed at module load **as a single
+string**:
 
 ```
-catalog_version=<SHA256_HEX>           ← LITERAL first line, RD point 7
+catalog_version=<SHA256_HEX>          ← LITERAL first line, see below
 
-You help a Standard-Names refine pipeline pull targeted DD context.
+You help an SN refine pipeline pull targeted DD context.
 
 Available functions (pick AT MOST 3, OR ZERO if none would help):
 
@@ -386,23 +449,58 @@ Output JSON conforming to the schema you have been given.  Returning
 invent function names.  Do NOT add fields beyond the schema.
 ```
 
-The first-line `catalog_version=<sha256>` literal is generated at
-module load by hashing the canonical catalog dict (sorted JSON of
-`{fn_id: {schema_json}}`).  Any catalog change → new hash → cached
-prompt prefix invalidates automatically.
+#### Hash specification (corrected per RD I4)
 
-Caching note (logged once per process at startup):
+The hash covers the **fully rendered system prompt body** — *not* the
+catalog schema dict.  Reasons:
 
-> Prompt caching active only when `supports_cache(proposer_model)` is
-> true AND the runner is on the direct OpenRouter path (env
-> `OPENROUTER_API_KEY_IMAS_CODEX` present).  On the proxy path, OpenAI/
-> Anthropic `cache_control` markers are stripped silently — fan-out
-> still functions but pays full prompt cost each call.
+- `Pydantic.model_json_schema()` output is **not stable across pydantic
+  minor versions** (e.g. `definitions` → `$defs`).  A dependency bump
+  silently invalidates every cached prefix on the wrong axis.
+- Help text in the prompt is not in the schema dict — a help-text edit
+  would change the actual prompt prefix without changing a schema-only
+  hash, so the version line would *lie* about identity.
+- Hashing the rendered string folds in any future
+  `[tool.imas-codex.sn.fanout]` knobs that are rendered into the prompt
+  (e.g. if `max-fan-degree` ever surfaces verbatim).
 
-### 6.2 `sn/fanout_evidence_block.md` (renderer template)
+Procedure:
 
-The renderer (`fanout/render.py`) emits a compact markdown block to
-inject into the call-site's existing user prompt:
+```python
+# fanout/config.py
+def _compute_catalog_version() -> str:
+    body = render_template_without_version_line()      # everything below
+                                                       # the version line
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+CATALOG_VERSION = _compute_catalog_version()
+
+# At prompt-render time, the version line is literally
+#   f"catalog_version={CATALOG_VERSION}\n"
+# prepended to the static body.  Hash is over the body only,
+# but the line *contains* the hash, so any change to the body
+# changes the line's literal content and busts the cache prefix.
+```
+
+Note in §6 explicitly: `proposer-temperature` is *not* part of the
+hash (sampling parameters do not change the prompt; cache hits across
+temperature changes are correct — cache covers the prompt, not the
+sampling) (S6).
+
+#### Caching path note
+
+Prompt caching only takes effect on the direct OpenRouter path
+(`supports_cache(proposer_model)` true AND
+`OPENROUTER_API_KEY_IMAS_CODEX` present).  On the proxy path,
+`cache_control` markers are stripped silently — fan-out still functions
+but pays full prompt cost each call.  The runner emits a one-time
+`fanout_cache_unavailable` info-log at startup if it detects the
+proxy path.
+
+### 6.2 `sn/fanout_evidence_block.md` — renderer template
+
+Compact markdown block injected into the call-site's existing user
+prompt via a `{{ fanout_evidence }}` placeholder:
 
 ```
 ## Fan-out evidence (queries=N, errors=M)
@@ -417,124 +515,234 @@ inject into the call-site's existing user prompt:
 - equilibrium/time_slice/profiles_1d/electrons/temperature   (unit-match)
 ```
 
-Length-bounded: per-result hit cap (`result_hit_cap`, default 8),
-total evidence cap (`evidence_token_cap`, default 2000).
+Length-bounded: `result_hit_cap` (default 8 per result),
+`evidence_token_cap` (default 2000 total; default **800 when the parent
+call-site is on the escalator model**, see I1).
 
 ### 6.3 No new synthesizer prompt
 
-The existing refine prompt (`sn/refine_name_user.md`) is augmented at
-render time with the evidence block via a single `{{ fanout_evidence }}`
-placeholder.  When fan-out is disabled / no-op, the placeholder is the
-empty string and the prompt is byte-identical to baseline (asserted by
-the disabled-noop golden test).
+The existing `sn/refine_name_user.md` gains a single
+`{{ fanout_evidence }}` placeholder.  When fan-out is disabled / no-op,
+the placeholder renders as `""` and the prompt is byte-identical to
+baseline (asserted by the disabled-noop golden test).
 
 ---
 
-## 7. Bounds, cost, and failure modes
+## 7. Bounds, cost, failure modes
 
 ### 7.1 Bounds
 
-| Bound                     | Default | Where enforced                                   |
-|---------------------------|---------|--------------------------------------------------|
-| `max_fan_degree`          | 3       | `FanoutPlan.queries` `max_length` (parse time)    |
-| Per-call k / max_results  | varies  | Per-variant `Field(le=...)` (parse time)         |
-| `function_timeout_s`      | 5.0     | `asyncio.wait_for` per runner call               |
-| `total_timeout_s`         | 12.0    | `asyncio.wait_for` wrapping Stage B `gather`     |
-| `result_hit_cap`          | 8       | Renderer truncates each `FanoutResult.hits`      |
-| `evidence_token_cap`      | 2000    | Renderer truncates total evidence                |
+| Bound                     | Default                              | Where enforced                                  |
+|---------------------------|--------------------------------------|-------------------------------------------------|
+| `max_fan_degree`          | 3                                    | `FanoutPlan.queries` `max_length` (parse time)  |
+| Per-call `k`/`max_results`| varies (see §3.2)                    | Per-variant `Field(le=...)` (parse time)        |
+| `function_timeout_s`      | 5.0                                  | `asyncio.wait_for` per runner call              |
+| `total_timeout_s`         | 12.0                                 | `asyncio.wait_for` wrapping `gather`            |
+| `result_hit_cap`          | 8                                    | Renderer truncates each `FanoutResult.hits`     |
+| `evidence_token_cap`      | 2000 baseline / **800 escalation**   | Renderer truncates total evidence (I1)          |
 
-`max_depth` is **NOT a configurable knob** (RD point 10).  Depth is
-architecturally fixed at 1 — there is no Stage D loop.
+`max_depth` remains intentionally absent.
 
-### 7.2 Failure modes (RD point 5 — explicit, granular)
+### 7.2 Failure modes (granular, true no-op semantics)
 
-| Mode                     | Trigger                                                         | Action                                                                           |
-|--------------------------|-----------------------------------------------------------------|----------------------------------------------------------------------------------|
-| `planner_schema_fail`    | `FanoutPlan` parse fails after the SDK's structured-output retry | Log loudly, increment metric, **true no-op** (no evidence injected — caller proceeds with baseline prompt). |
-| `planner_all_invalid`    | Plan parses but `len(queries) == 0` after parse                  | Log info, increment metric, **true no-op**.                                      |
-| `executor_partial_fail`  | Some runners failed/timed out, others returned hits              | Continue with what worked; render evidence from successful results only.         |
-| `executor_all_empty`     | All runners returned `ok=True` but empty `hits`                  | **True no-op** (do NOT inject "no useful evidence" stub — that changes baseline).|
-| `no_budget`              | `BudgetLease.charge_event` would overspend the parent reservation beyond a fan-out cap (see §7.3) | **True no-op**, log `fanout_no_budget`.                            |
-| `feature_disabled`       | `enabled=false` or per-site flag false                           | Bypass entirely; no metrics emitted (silent).                                   |
+| Mode                     | Trigger                                                              | Action                                                                                                                                       |
+|--------------------------|----------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| `planner_schema_fail`    | `FanoutPlan` parse fails after the SDK's structured-output retry     | Log loudly, increment metric, **true no-op** (caller proceeds with baseline prompt, `evidence == ""`).                                       |
+| `planner_all_invalid`    | Plan parses but `len(queries) == 0` (incl. after S1 dedup)            | Log info, increment metric, **true no-op**.                                                                                                   |
+| `executor_partial_fail`  | Some runners failed/timed out, others returned hits                  | Continue with what worked; render evidence from successful results only.                                                                     |
+| `executor_all_empty`     | All runners `ok=True` but empty `hits`                               | **True no-op** (no stub text).                                                                                                               |
+| `no_budget`              | Cumulative fan-out sub-event spend would breach `fanout-max-charge-per-cycle` (see §7.3) | **True no-op**, log `fanout_no_budget`.                                                                                                    |
+| `feature_disabled`       | `enabled=false` or per-site flag false                               | Bypass entirely; no metrics emitted, no `Fanout` graph node written (S5).                                                                    |
 
-"True no-op" means: the call-site's existing user prompt is rendered
-with `fanout_evidence=""` and the existing call proceeds exactly as if
-the feature were disabled.  No stub text, no "fan-out tried but
-failed" comment.  Baseline behavior is preserved bit-for-bit.
+"True no-op" means: existing user prompt rendered with
+`fanout_evidence=""`; existing call proceeds exactly as if fan-out
+were disabled.  Baseline behavior preserved bit-for-bit.
 
-### 7.3 Cost ownership (RD point 2 — corrected)
+### 7.3 Cost ownership (corrected per RD I1)
 
-`BudgetLease` already supports auto-extension via `_extend_reservation`,
-so a "fixed reservation" model would be misleading.  Corrected design:
+`BudgetLease.charge_event` calls `_extend_reservation` and never
+raises `BudgetExceeded` (verified `budget.py:169-192`).  Therefore:
 
-- The **parent call-site** (refine pool worker) reserves once for the
-  whole refine cycle, including a configured fan-out cost estimate
-  (`fanout-cost-estimate`, default $0.005) added to the parent
-  reservation.
-- Fan-out's Stage A LLM call charges to the **parent lease** via
-  `lease.charge_event(cost, LLMCostEvent(phase="sn_fanout_refine_proposer", ...))`.
-- The synthesizer (Stage C) is the call-site's existing call and
-  charges as it already does, but with a tag suffix when fan-out
-  evidence was used (`phase="sn_refine_name+fanout"`) so the analytics
+- **The cap is enforceable only *before* an LLM call**, not as an
+  invariant on `_reserved`.
+- The Stage C synthesiser is the existing refine call **with a larger
+  user prompt** (up to `evidence_token_cap` extra tokens).  At Opus
+  escalation rates (~$15/Mtok input) 2000 tokens ≈ $0.03 above
+  baseline — *much* more than v2's flat `fanout-cost-estimate=0.005`.
+  Reservation pad must be **tiered** by escalation.
+
+Corrected design:
+
+```toml
+[tool.imas-codex.sn.fanout]
+# Cost added to the parent lease at refine-cycle start.
+# Tiered by whether this cycle is Opus-escalation (chain_length >=
+# rotation_cap - 1).  Baseline cycles are Sonnet/Haiku-class.
+fanout-cost-estimate-baseline = 0.005
+fanout-cost-estimate-escalation = 0.05
+
+# Per-cycle hard cap on cumulative fan-out sub-event spend.
+# Above this, run_fanout returns "" (no_budget mode).  Independent
+# of the parent reservation; this is the cap that actually fires.
+fanout-max-charge-per-cycle-baseline = 0.02
+fanout-max-charge-per-cycle-escalation = 0.10
+```
+
+The refine worker, at cycle start, computes
+`escalate = (chain_length >= rotation_cap - 1)` and adds the
+escalation-tier estimate to its parent reservation when `escalate`,
+otherwise the baseline.  `run_fanout` reads the same escalation flag
+to:
+
+- choose the cap (`fanout-max-charge-per-cycle-*`),
+- shrink `evidence_token_cap` to 800 on escalation,
+- pre-flight gate against the cap before the proposer call.
+
+Charges:
+
+- Stage A proposer: charged to parent lease via
+  `lease.charge_event(cost, LLMCostEvent(phase="sn_fanout_refine_proposer", batch_id=fanout_run_id, ...))`.
+- Stage C synthesizer: charges as today, with phase suffix
+  `+fanout` and `batch_id=fanout_run_id` (see I6) so the analytics
   query can isolate fan-out-using rotations.
-- A soft cap `fanout-max-charge-per-cycle` (default $0.02) is
-  enforced inside `run_fanout`: before issuing the proposer call, if
-  `lease.remaining < fanout-max-charge-per-cycle - already_charged_to_fanout`
-  → enter `no_budget` mode (true no-op).
-- **Test invariant**: `lease.charged ≤ lease.reserved` after the
-  parent cycle completes (note: `≤ final reserved`, since
-  `BudgetLease._extend_reservation` may have grown the reservation —
-  the invariant is that no charge is silently leaked or
-  double-counted).
 
-The plan does NOT introduce a separate `BudgetManager.reserve` call for
-fan-out.  Single owner = parent.  Sub-events provide the visibility.
+**Test invariant (rewritten per RD I1)**:
+
+> After a refine cycle that uses fan-out,
+> `parent_lease.charged ≤ original_reservation + cumulative_fanout_charges`,
+> where `original_reservation` is the value snapshotted **before** the
+> first `_extend_reservation` call.  Equivalently: extensions are
+> attributable line-by-line to specific `LLMCostEvent`s; no charge is
+> silently leaked or double-counted.
+
+The naive v2 "`charged ≤ reserved`" invariant is tautological because
+`_reserved` auto-grows; it is replaced by this stronger statement.
 
 ### 7.4 Idempotency
 
 - Stage A: low-T + cached static system prompt → near-deterministic
-  plans for identical inputs within a process lifetime.
-- Stage B: read-only graph queries — deterministic given graph state.
+  plans for identical inputs.
+- Stage B: read-only graph queries.
 - Stage C: existing call-site characteristics preserved.
 
 ---
 
-## 8. Telemetry & rollout gate (RD point 8)
+## 8. Telemetry — durable Fanout node + `batch_id` join (I6)
 
-A `FanoutTelemetry` object emitted to logs (and graph-side `LLMCost`
-where relevant) on every fan-out invocation, regardless of outcome:
+### 8.1 Why a graph node, not just logs
 
-| Metric                          | Type           | Notes                                          |
-|---------------------------------|----------------|------------------------------------------------|
-| `invocation_count`              | counter        | Tagged `(site, pool)`                          |
-| `planner_schema_fail_count`     | counter        | Tagged `(site, model)`                         |
-| `planner_all_invalid_count`     | counter        | Tagged `(site)`                                |
-| `executor_partial_fail_count`   | counter        | Tagged `(site, fn_id)`                         |
-| `executor_all_empty_count`      | counter        | Tagged `(site)`                                |
-| `no_budget_count`               | counter        | Tagged `(site)`                                |
-| `fn_call_count`                 | counter        | Tagged `(fn_id)`                               |
-| `fn_failure_count`              | counter        | Tagged `(fn_id, kind=timeout|exception)`       |
-| `evidence_tokens_rendered`      | histogram      | Median + p95                                   |
-| `incremental_cost_per_fanout`   | histogram (USD)| Median + p95                                   |
-| `accept_rate_delta`             | derived gauge  | Compare fanout-using vs non-using refines       |
-| `refine_rotation_count_delta`   | derived gauge  | Likewise                                       |
-| `dup_prevented_count`           | counter        | From the Phase 1.5 deterministic dup guard     |
+v2 said "counters flow through structured-logging — no new infra."
+Opus 4.7 RD: counters in logs do not roll up to a queryable store
+across pod/process boundaries.  Phase-2 gate evaluation would degrade
+to grepping log files, and the join from a fan-out invocation to its
+proposer + synthesizer `LLMCostEvent`s relies on `phase` substring
+matching with no explicit run id — fragile.
 
-These flow through the existing `LLMCostEvent` pipeline where
-applicable (cost, tokens) and the existing structured-logging pipeline
-otherwise.  No new infra.
+### 8.2 `Fanout` node (telemetry-only, runtime-written)
 
-**Phase 2 gate (binding)**: Phase 2/3 cannot start until Phase 1
-(fan-out enabled in production) has run for **≥1 week** and emitted
-telemetry showing positive lift on **at least one** of:
+A thin runtime-telemetry node written **once per `run_fanout`
+invocation** (skipped when `feature_disabled` per S5):
 
-- `accept_rate_delta > 0` (fanout-using ≥ baseline, statistically),
-- `refine_rotation_count_delta < 0` (fanout-using converges in fewer
-  rotations), or
-- `dup_prevented_count > 0` for the deterministic guard (Phase 1.5).
+```cypher
+(:Fanout {
+  id: <fanout_run_id>,        // uuid4
+  sn_id: <sn_id>,
+  site: "refine_name",
+  outcome: "ok" | "planner_schema_fail" | "planner_all_invalid"
+         | "executor_partial_fail" | "executor_all_empty" | "no_budget",
+  plan_size: <int>,           // queries in plan post-dedup
+  hits_count: <int>,          // total hits across results
+  evidence_tokens: <int>,
+  arm: "on" | "off",          // for §8.4 within-cohort A/B
+  escalate: <bool>,
+  created_at: datetime()
+})
+```
 
-The gate is documented in `AGENTS.md` and re-asserted in any plan that
-proposes new fan-out sites.
+- **NOT** a schema-managed graph node in the LinkML sense — it is a
+  *runtime telemetry* node, in the same spirit as `LLMCost`.  It is
+  *not* added to `agents/schema-reference.md`.  The plan declares the
+  exemption explicitly so a future schema-compliance check does not
+  flag it as drift.
+- Acceptance: `tests/standard_names/fanout/test_telemetry_node.py`
+  asserts the node is written for a representative invocation and
+  matches the `Fanout` shape above.
+
+### 8.3 `LLMCostEvent.batch_id` linkage
+
+`LLMCostEvent` already has an unused `batch_id: str | None` field
+(verified `budget.py:68`).  Use it to stamp `fanout_run_id` on **both**
+the proposer event and the synthesizer event when fan-out fires.
+Cypher join:
+
+```cypher
+MATCH (f:Fanout {id: $run_id})
+MATCH (c:LLMCost {batch_id: f.id})
+RETURN f, collect(c) AS charges
+```
+
+No new edges, no new schema fields — just a re-use of the existing
+column.
+
+### 8.4 Within-cohort A/B for Phase-2 gate (corrected per RD I2)
+
+v2's gate was selection-biased: comparing fanout-using vs non-using
+items conflates fan-out efficacy with cohort difficulty (the trigger
+predicate selects already-failing, ambiguity-flagged items).  The fix:
+
+When the trigger predicate matches:
+
+1. Compute `arm = "on" if hash((sn_id, chain_length)) % 2 == 0 else "off"`.
+2. If `arm == "on"`: run fan-out as planned.
+3. If `arm == "off"`: skip fan-out (true no-op), but **still write a
+   `Fanout` node with `outcome="off_arm"` and `arm="off"`** so the
+   denominator is queryable.
+4. Stamp `arm` onto the synthesizer `LLMCostEvent` via `batch_id`
+   (the on-arm `Fanout.id`) — the off arm uses a UUID derived from
+   `(sn_id, chain_length, "off")` so the join still works.
+
+Gate metrics computed strictly *within* the trigger-eligible cohort:
+
+- `accept_rate(arm=on) - accept_rate(arm=off)` (target > 0)
+- `mean_refine_rotations(arm=on) - mean_refine_rotations(arm=off)` (target < 0)
+
+Compounding caveat to acknowledge: with `DEFAULT_REFINE_ROTATIONS=3`
+and trigger requiring `chain_length > 0`, fan-out fires only on
+cycles 2 and 3, so the structural ceiling on rotation savings is
+"save one cycle on already-bad items."  The plan documents this
+ceiling so the gate isn't held to an unrealistic effect size.
+
+### 8.5 Other counters
+
+Logs-only counters (kept as today, not promoted to nodes):
+
+- `duplicate_query_collapsed` (S1)
+- `fn_call_count` per `fn_id`
+- `fn_failure_count` per `fn_id, kind=timeout|exception`
+- `fanout_cache_unavailable` (one-shot info)
+
+These are useful for in-flight ops but not for Phase-2 gate evaluation,
+which operates on `Fanout` + `LLMCost`.
+
+### 8.6 Gate enforcement (S4)
+
+The Phase-2 gate is "binding" only if mechanically enforced.  Add a
+**CI lint** in `.github/workflows/lint.yml` (or equivalent existing
+hook):
+
+```bash
+# Any future fan-out-expansion plan must cite the Phase-1 telemetry
+# appendix.  Failure = lint failure.
+for plan in plans/features/standard-names/4*-fanout*.md; do
+  [[ -f "$plan" ]] && \
+    grep -q '39-fanout-phase1-telemetry' "$plan" || {
+      echo "ERROR: $plan must cite 39-fanout-phase1-telemetry.md"
+      exit 1
+    }
+done
+```
+
+Cheap; makes the gate enforceable rather than aspirational.
 
 ---
 
@@ -544,77 +752,94 @@ proposes new fan-out sites.
 [tool.imas-codex.sn.fanout]
 # Master switch.  Default off until rolled out.
 enabled = false
-# Hard cap on Stage A query count (mirrored in FanoutPlan.queries.max_length).
+# Hard cap on Stage A query count.
 max-fan-degree = 3
-# Per-function timeout.
+# Per-function and total Stage B timeouts.
 function-timeout-s = 5.0
-# Total Stage B timeout.
 total-timeout-s = 12.0
-# Per-result hit cap fed to renderer.
+# Per-result hit cap (renderer).
 result-hit-cap = 8
-# Total evidence token budget rendered into the synthesizer prompt.
-evidence-token-cap = 2000
-# Stage A (proposer) model.
+# Total evidence token caps (renderer).
+evidence-token-cap-baseline = 2000
+evidence-token-cap-escalation = 800
+# Stage A model.
 proposer-model = "openrouter/anthropic/claude-haiku-4.5"
 proposer-temperature = 0.1
-# Cost estimate added to the PARENT lease reservation when a refine cycle
-# starts (covers Stage A + delta synth context tokens).
-fanout-cost-estimate = 0.005
-# Soft cap on cumulative fanout sub-event charges per refine cycle.
-# Above this, fan-out enters no_budget mode (true no-op).
-fanout-max-charge-per-cycle = 0.02
-# Refine-side trigger predicate (substrings; comment must contain at
-# least one to enable fan-out for that cycle).
+# Cost padding added to PARENT lease at refine-cycle start (tiered, I1).
+fanout-cost-estimate-baseline = 0.005
+fanout-cost-estimate-escalation = 0.05
+# Per-cycle hard cap on fan-out sub-event spend (tiered, I1).
+fanout-max-charge-per-cycle-baseline = 0.02
+fanout-max-charge-per-cycle-escalation = 0.10
+# Refine trigger.
 refine-trigger-keywords = ["unclear", "ambiguous", "duplicate", "consider", "compare"]
+# Reviewer-comment dim allow-list for the trigger predicate (I3).
+refine-trigger-comment-dims = ["clarity", "disambiguation"]
+# Comment excerpt total length cap (S3).
+refine-trigger-comment-chars = 800
 
-# Per-site enable flags.  Master `enabled` must also be true.
+# Per-site enable flags.
 [tool.imas-codex.sn.fanout.sites]
-refine_name = false   # Phase 1 flips this when ready
+refine_name = false       # Phase 1 flips to true after Phase 0 lands.
 # generate_name dup guard (Phase 1.5) is NOT a fan-out site — it has its
-# own deterministic config under [tool.imas-codex.sn] (see canonical.py).
+# own deterministic config under [tool.imas-codex.sn].
 ```
-
-`max-depth` is intentionally absent (RD point 10).
 
 Loaded by `imas_codex/standard_names/fanout/config.py` into a
 `FanoutSettings` Pydantic model.
 
 ---
 
-## 10. Module layout
+## 10. Module layout & GraphClient lifecycle (I5)
 
 ```
 imas_codex/standard_names/fanout/
   __init__.py
   catalog.py          # CatalogEntry registry (fn_id → runner)
   schemas.py          # Discriminated-union FanoutCall + FanoutPlan + result types
-  runners.py          # async wrappers around existing helpers
+  runners.py          # async wrappers (asyncio.to_thread) around graph helpers
   dispatcher.py       # propose() / execute() / run_fanout() public API
   render.py           # format_results() — markdown evidence block
-  config.py           # FanoutSettings + version-hash computation
-  telemetry.py        # FanoutTelemetry emitter
+  config.py           # FanoutSettings + _compute_catalog_version()
+  telemetry.py        # FanoutTelemetry emitter + Fanout-node writer
   README.md           # how to add a function to the catalog
 ```
 
-Public API (called from `workers.py` refine path):
+### 10.1 GraphClient lifecycle (rule, I5)
+
+The refine worker (`workers.py`) opens **one** `GraphClient` for the
+entire refine cycle and passes it into:
+
+- the existing `_hybrid_search_neighbours(gc, ...)` call (already
+  takes `gc`), AND
+- the new `run_fanout(..., gc=gc, ...)` call.
+
+`run_fanout` passes that same `gc` into every runner via the kwarg.
+Every catalog runner accepts `gc` as a keyword argument and reuses it.
+**No runner instantiates `GraphClient`.**  This rule is what makes
+Phase 0 deliverable (a) — the `gc=None` overload on
+`search_similar_names` — load-bearing for the catalog.
+
+### 10.2 Public API
 
 ```python
 async def run_fanout(
     *,
-    site: Literal["refine_name"],   # MVP: only one site exists
-    candidate: CandidateContext,    # name + path + description
-    reviewer_comment: str | None,
-    chain_history_excerpt: str | None,
+    site: Literal["refine_name"],   # MVP: only one site
+    candidate: CandidateContext,    # name + path + description + chain_length
+    reviewer_comments_per_dim: dict[str, str] | None,
     scope: FanoutScope,             # caller-injected, not LLM-supplied
-    gc: GraphClient,
-    parent_lease: BudgetLease,      # parent's lease, sub-event charged
+    gc: GraphClient,                # one client per refine cycle, see §10.1
+    parent_lease: BudgetLease,
     settings: FanoutSettings,
+    arm: Literal["on", "off"] = "on",   # §8.4 within-cohort A/B
+    fanout_run_id: str | None = None,    # auto-uuid4 if None
 ) -> str:
     """Returns the rendered evidence block (possibly empty string).
 
-    Empty string ⇒ true no-op (any failure mode in §7.2).  Caller
-    injects the (possibly empty) string into its existing prompt
-    template.
+    Empty string ⇒ true no-op (any failure mode in §7.2 OR arm=='off').
+    Caller injects the (possibly empty) string into its existing
+    {{ fanout_evidence }} placeholder.
     """
 ```
 
@@ -622,10 +847,15 @@ async def run_fanout(
 
 ## 11. Phased rollout
 
-### Phase 1 — Refine fan-out (Wave 1)
+### Phase 0 — Helper extractions (PREREQUISITE, Wave 1)
 
-**Goal**: Land framework + refine plug-in, default-off, with full
-telemetry.  Validate on `magnetic_field_diagnostics` probe loop.
+See §3.6.  Three sub-PRs (a/b/c), each independently shippable, each
+land before Phase 1 starts.
+
+### Phase 1 — Refine fan-out (Wave 2, after Phase 0)
+
+**Goal**: Land framework + refine plug-in, default-off, with
+`Fanout`-node telemetry.
 
 **Files added**:
 
@@ -638,141 +868,164 @@ telemetry.  Validate on `magnetic_field_diagnostics` probe loop.
 - `tests/standard_names/fanout/test_runners.py`
 - `tests/standard_names/fanout/test_render.py`
 - `tests/standard_names/fanout/test_disabled_is_noop.py`
+- `tests/standard_names/fanout/test_telemetry_node.py`
 - `tests/standard_names/fanout/test_dispatcher_integration.py`
 - `tests/standard_names/fanout/fixtures/refine_baseline.txt`
 
 **Files modified**:
 
-- `imas_codex/standard_names/workers.py` — refine path: trigger gate +
-  `run_fanout` + evidence injection into existing user prompt.
+- `imas_codex/standard_names/workers.py` — refine path: trigger gate,
+  arm hashing, parent-reservation tier, `run_fanout` call (passes the
+  cycle's `gc`), evidence injection.
 - `imas_codex/llm/prompts/sn/refine_name_user.md` — add
   `{{ fanout_evidence }}` placeholder (renders as `""` when disabled).
 - `pyproject.toml` — add `[tool.imas-codex.sn.fanout]`.
 - `imas_codex/standard_names/config/__init__.py` — export loader.
-- `AGENTS.md` — short § on the structured fan-out pattern + the Phase 2
-  telemetry gate.
+- `AGENTS.md` — short § on the structured fan-out pattern + Phase-2
+  telemetry gate + GraphClient-lifecycle rule.
+- `.github/workflows/lint.yml` (or existing pre-commit hook) — add the
+  S4 CI lint for future fan-out-expansion plans.
 
-**Acceptance criteria (Phase 1)**:
+**Acceptance criteria (Phase 1)** — additive to Phase 0:
 
-1. `enabled=false`: refine prompts are byte-identical to current
-   baseline (golden test `test_disabled_is_noop.py`).
+1. `enabled=false`: refine prompts byte-identical to baseline (golden
+   `test_disabled_is_noop.py`).
 2. `enabled=true` + stub Stage A returning a fixed `FanoutPlan`:
    refine prompt receives a deterministic evidence block.
 3. `FanoutPlan` parse-time validation rejects: unknown `fn_id`,
-   out-of-bounds `k`, missing required `query`/`path`, plan with
+   out-of-bounds `k`, missing required `query`/`path`,
    `len(queries) > max_fan_degree`.  Each is a unit test.
 4. `planner_schema_fail` and `planner_all_invalid` modes produce
-   `evidence == ""` and emit the corresponding metric.
-5. `executor_partial_fail` is observable in tests with one stub runner
-   raising — others' results render normally.
+   `evidence == ""` and emit metric + `Fanout` node with appropriate
+   `outcome`.
+5. `executor_partial_fail` observable with one stub runner raising —
+   others' results render normally.
 6. `executor_all_empty` produces `evidence == ""` (no stub text).
-7. `function_timeout_s` and `total_timeout_s` enforced under simulated
-   slow runners.
-8. `no_budget` mode triggered when parent lease's remaining is below the
-   per-cycle cap; `evidence == ""`.
-9. **Cost invariant** (`test_dispatcher.py::test_no_leaked_budget`):
-   after a refine cycle that uses fan-out, `parent_lease.charged ≤
-   parent_lease.reserved` (`≤` allows for legitimate `_extend_reservation`),
-   and the sum of `phase=sn_fanout_*` `LLMCost` events equals
-   `parent_lease.charged - non_fanout_charges`.
-10. `catalog_version` literal at top of system prompt matches
-    `sha256(canonical_catalog_dict)` (asserted by
-    `test_catalog_version_hash`).
-11. `uv run pytest tests/standard_names/fanout -v` green.
-12. `uv run ruff check . && uv run ruff format --check .` clean.
-13. `uv run pytest tests/graph/test_schema_compliance.py -v` green
-    (no schema changes, but verify).
+7. **Sync-runner timeout test (B2-mandated)**:
+   `test_dispatcher.py::test_function_timeout_with_sync_helper` uses a
+   sync `time.sleep(10)`-based runner via `asyncio.to_thread`; verifies
+   the *Python-side* `wait_for` returns at `function_timeout_s` even
+   though the helper continues running on the worker thread (the result
+   is discarded).  An additional assertion verifies the result was
+   `ok=False, error="timeout"`.
+8. Total-timeout test parallel to (7) wraps the gather.
+9. `no_budget` mode triggered when fan-out cumulative spend would
+   breach `fanout-max-charge-per-cycle-*`; `evidence == ""`,
+   `Fanout.outcome="no_budget"`.
+10. **Cost invariant (rewritten per I1)**:
+    `test_dispatcher.py::test_cost_attribution`: snapshot `original_reservation`
+    before any `_extend_reservation`; after the cycle, assert
+    `parent_lease.charged ≤ original_reservation + sum(fanout_charges)`,
+    and assert that every `LLMCost` event with `batch_id == fanout_run_id`
+    has phase prefix `sn_fanout_` or phase suffix `+fanout`.
+11. `catalog_version` line at top of system prompt matches
+    `sha256(rendered_body)`; mutating any character of the body
+    (template, help text) flips the hash
+    (`test_catalog_version_hash_covers_body`).
+12. Trigger predicate uses only `clarity` / `disambiguation` dims;
+    other dim values present in `reviewer_comments_per_dim` do not
+    fire the trigger
+    (`test_trigger_predicate.py::test_dim_allowlist`).
+13. Comment excerpt is truncated to `refine-trigger-comment-chars`
+    (`test_trigger_predicate.py::test_excerpt_truncated`).
+14. `Fanout` graph node is written for `arm=on` AND `arm=off`
+    invocations; not written when `feature_disabled`.
+15. CI lint (S4) blocks a synthetic test plan that doesn't cite
+    `39-fanout-phase1-telemetry.md`.
+16. `uv run pytest tests/standard_names/fanout -v` green.
+17. `uv run ruff check . && uv run ruff format --check .` clean.
+18. `uv run pytest tests/graph/test_schema_compliance.py -v` green
+    (`Fanout` node is runtime-only and exempt — exemption documented in
+    the schema-compliance test if it would otherwise flag the label).
 
-### Phase 1.5 — Deterministic name-key dup guard (Wave 1, parallel to Phase 1)
+### Phase 1.5 — Deterministic name-key dup guard (Wave 1, parallel)
 
-**Independently shippable** — does not depend on fan-out infra.
-
-**Files modified**:
-
-- `imas_codex/standard_names/canonical.py` — add `find_existing_name_key()`
-  helper + integration into the persist-time path in `workers.py`.
-- `imas_codex/standard_names/workers.py` — call dup guard before persist.
-- `pyproject.toml` — `[tool.imas-codex.sn].dup-guard-enabled = true`
-  (default on; deterministic, low risk).
+Independent of fan-out infra.
 
 **Acceptance criteria (Phase 1.5)**:
 
-1. Exact-match dup is detected against existing `StandardName.id` (case-folded).
-2. Lexical-variant dup is detected against the documented variant set.
-3. On hit, candidate is dropped + source marked `duplicate_of=<id>`.
-4. `dup_prevented_count` metric emitted on every hit.
-5. No LLM call introduced; cost invariant: zero LLM cost for the dup
-   guard itself.
+1. Exact-match dup detected against existing `StandardName.id`.
+2. Lexical-variant dup detected against the documented variant set
+   (set enumerated explicitly in the PR).
+3. Candidate dropped + source marked `duplicate_of=<id>`.
+4. `dup_prevented_count` metric emitted.
+5. Zero LLM cost.
 
 ### Phase 2 / 3 — DEFERRED, telemetry-gated
 
-Per §8, no further sites added until Phase 1 has emitted ≥1 week of
-production telemetry showing positive lift.  When the gate is met, a
-follow-up plan (40+) will:
-
-- Specify the next site with its own discriminated-union additions.
-- Justify the catalog expansion (e.g. add a structured wrapper around
-  `_list_grammar_vocabulary` if vocab-gap auto-suggest is the chosen
-  next site).
-- Re-establish a Phase-2 telemetry gate for any subsequent expansion.
+Per §8.4, gate is mechanically enforced via S4 CI lint and within-cohort
+A/B metrics.
 
 ---
 
 ## 12. Test strategy
 
-All Stage A LLM calls are stubbed in tests.  Integration tests use the
-real graph fixture but stubbed LLM.
+### 12.1 Phase 0
 
-### 12.1 Unit (Phase 1)
+| File / case                                      | Coverage                                                  |
+|--------------------------------------------------|-----------------------------------------------------------|
+| `tests/standard_names/test_search_similar_names.py::test_gc_reuse` | `gc=` kwarg → no new `GraphClient` (mock the constructor).|
+| `tests/standard_names/test_search_similar_names.py::test_include_superseded` | S2 path: superseded names included when flag set.    |
+| `tests/graph/test_related_dd_search.py`           | Renamed function smoke + back-compat shim.                |
+| `tests/tools/test_cluster_search.py` (existing)   | Pass unchanged after `cluster_search` extraction.         |
 
-| File / case                                                  | Coverage                                                             |
-|--------------------------------------------------------------|----------------------------------------------------------------------|
-| `test_schemas.py::test_discriminator_routes_to_correct_variant` | Each `fn_id` parses to its typed model.                          |
-| `test_schemas.py::test_unknown_fn_id_rejects`                 | Whole plan rejects, no silent drop.                                  |
-| `test_schemas.py::test_out_of_bounds_k_rejects`               | `k=99` → ValidationError; bounds at parse time.                      |
-| `test_schemas.py::test_missing_required_field_rejects`        | `_SearchDDPaths` without `query` → ValidationError.                  |
-| `test_schemas.py::test_max_fan_degree`                         | `len(queries) > 3` → ValidationError.                                 |
-| `test_dispatcher.py::test_planner_schema_fail_noop`            | Stub LLM returns invalid JSON → `evidence == ""`, metric emitted.    |
-| `test_dispatcher.py::test_planner_all_invalid_noop`            | Plan with `queries=[]` → `evidence == ""`.                           |
-| `test_dispatcher.py::test_executor_partial_fail`               | One stub runner raises; rendered evidence omits the failure but      |
-|                                                                | includes the rest.                                                   |
-| `test_dispatcher.py::test_executor_all_empty_noop`             | All runners return empty `hits` → `evidence == ""` (no stub).        |
-| `test_dispatcher.py::test_function_timeout`                     | Slow runner cancelled at `function_timeout_s`.                        |
-| `test_dispatcher.py::test_total_timeout`                        | `gather` aborts at `total_timeout_s`; partial results returned.       |
-| `test_dispatcher.py::test_no_budget_noop`                       | Parent lease near-exhausted → `evidence == ""`, metric emitted.      |
-| `test_dispatcher.py::test_no_leaked_budget`                     | `parent_lease.charged ≤ parent_lease.reserved` post-cycle, and       |
-|                                                                | sum of `phase=sn_fanout_*` events equals fan-out charged.            |
-| `test_dispatcher.py::test_scope_injection`                     | LLM-supplied `args` never include scope fields; runner sees scope    |
-|                                                                | from caller.                                                         |
-| `test_dispatcher.py::test_catalog_version_hash_in_prompt`      | First line of rendered system prompt is                              |
-|                                                                | `catalog_version=<sha256>` matching the runtime-computed hash.       |
-| `test_runners.py`                                               | Each runner's happy-path + at least one failure path.                 |
-| `test_render.py::test_per_hit_cap`                             | Renderer truncates each result's hits.                                |
-| `test_render.py::test_total_token_cap`                         | Renderer truncates total evidence.                                    |
-| `test_render.py::test_empty_inputs_return_empty_string`         | No results / all empty → `""` (not "no useful evidence").            |
-| `test_disabled_is_noop.py`                                     | With `enabled=false`, refine call produces a prompt byte-identical   |
-|                                                                | to the stored baseline fixture.                                       |
+### 12.2 Phase 1 — unit
 
-### 12.2 Integration (Phase 1)
+| File / case                                                       | Coverage                                                              |
+|-------------------------------------------------------------------|-----------------------------------------------------------------------|
+| `test_schemas.py::test_discriminator_routes`                       | Each `fn_id` parses to its typed model.                               |
+| `test_schemas.py::test_unknown_fn_id_rejects`                      | Whole plan rejects.                                                   |
+| `test_schemas.py::test_out_of_bounds_k_rejects`                    | `k=99` → ValidationError; bounds at parse time.                       |
+| `test_schemas.py::test_missing_required_field_rejects`             | `_SearchDDPaths` without `query` → ValidationError.                   |
+| `test_schemas.py::test_max_fan_degree`                             | `len(queries) > 3` → ValidationError.                                  |
+| `test_dispatcher.py::test_query_dedup` (S1)                         | Two `(fn_id, normalized_query)`-identical calls collapse to one;      |
+|                                                                    | `duplicate_query_collapsed` counter emitted.                          |
+| `test_dispatcher.py::test_planner_schema_fail_noop`                 | Stub LLM returns invalid JSON → `evidence == ""`, `Fanout.outcome`    |
+|                                                                    | matches.                                                               |
+| `test_dispatcher.py::test_planner_all_invalid_noop`                 | Plan with `queries=[]` → `evidence == ""`.                            |
+| `test_dispatcher.py::test_executor_partial_fail`                   | One stub runner raises; others render.                                 |
+| `test_dispatcher.py::test_executor_all_empty_noop`                 | All runners return empty hits → `evidence == ""`.                     |
+| `test_dispatcher.py::test_function_timeout_with_sync_helper` (B2)   | Sync `time.sleep(10)` runner; `wait_for` returns at 5 s with `ok=False`. |
+| `test_dispatcher.py::test_total_timeout_with_sync_helpers` (B2)     | Multiple slow sync runners; gather aborts at 12 s.                    |
+| `test_dispatcher.py::test_no_budget_noop`                          | Fan-out spend cap reached → `evidence == ""`, `Fanout.outcome`.       |
+| `test_dispatcher.py::test_cost_attribution` (I1)                   | Snapshot `original_reservation`; assert per-charge attribution.       |
+| `test_dispatcher.py::test_arm_assignment` (I2)                     | Hash routing yields ~50/50 across N synthetic items.                  |
+| `test_dispatcher.py::test_arm_off_writes_fanout_node` (I2)         | `arm=off` still writes `Fanout` with `outcome=off_arm`.               |
+| `test_dispatcher.py::test_scope_injection`                         | LLM-supplied `args` never include scope; runner sees scope from caller.|
+| `test_dispatcher.py::test_catalog_version_hash_covers_body` (I4)    | Mutate a help-text char → hash flips. Mutate a comment in code that   |
+|                                                                    | does not affect the rendered body → hash unchanged.                   |
+| `test_runners.py`                                                  | Each runner happy-path + at least one failure path; uses real         |
+|                                                                    | `asyncio.to_thread` + a sync stub helper.                             |
+| `test_render.py::test_per_hit_cap`                                 | Renderer truncates each result.                                       |
+| `test_render.py::test_total_token_cap_baseline_vs_escalation` (I1)  | 2000 (baseline) and 800 (escalation) caps both honoured.              |
+| `test_render.py::test_empty_inputs_return_empty_string`             | No results / all empty → `""`.                                        |
+| `test_disabled_is_noop.py`                                         | `enabled=false` → byte-identical to baseline fixture.                 |
+| `test_disabled_is_noop.py::test_no_fanout_node_when_disabled` (S5)  | Disabled invocation does not write a `Fanout` node.                   |
+| `test_telemetry_node.py`                                           | Node properties match the §8.2 shape; `batch_id` linkage on           |
+|                                                                    | `LLMCost` events present.                                              |
+| `test_trigger_predicate.py::test_dim_allowlist` (I3)               | Comment in disallowed dim does not trigger.                           |
+| `test_trigger_predicate.py::test_excerpt_truncated` (S3)            | Total excerpt ≤ `refine-trigger-comment-chars`.                       |
 
-| File                                  | Coverage                                                                  |
-|---------------------------------------|---------------------------------------------------------------------------|
-| `test_dispatcher_integration.py`      | Real graph fixture; stubbed Stage A returns a canonical plan; Stage B    |
-|                                       | hits live graph (`search_existing_names`, `find_related_dd_paths`),      |
-|                                       | asserts well-known seed nodes returned.                                  |
+### 12.3 Phase 1 — integration
 
-### 12.3 Phase 1.5 tests
+| File                                  | Coverage                                                                       |
+|---------------------------------------|--------------------------------------------------------------------------------|
+| `test_dispatcher_integration.py`      | Real graph fixture; stubbed Stage A returns canonical plan; Stage B hits live |
+|                                       | graph; well-known seed nodes returned; `Fanout` node persisted; LLMCost rows  |
+|                                       | linked via `batch_id`.                                                         |
+
+### 12.4 Phase 1.5 tests
 
 | File                                       | Coverage                                                       |
 |--------------------------------------------|----------------------------------------------------------------|
-| `tests/standard_names/test_dup_guard.py`   | Exact + lexical-variant detection; persist path skipped; metric|
-|                                            | emitted; zero LLM cost.                                        |
+| `tests/standard_names/test_dup_guard.py`   | Exact + lexical-variant detection; persist skipped; metric emitted; zero LLM cost. |
 
-### 12.4 Telemetry tests
+### 12.5 CI lint (S4)
 
-`test_telemetry.py` — every failure mode in §7.2 emits exactly the
-expected metric tag set; happy path emits `invocation_count`,
-`evidence_tokens_rendered`, `incremental_cost_per_fanout`.
+| File                                                     | Coverage                                                         |
+|----------------------------------------------------------|------------------------------------------------------------------|
+| `tests/lint/test_phase2_gate_lint.py`                    | Synthetic `plans/.../40-fanout-vocab.md` without the citation     |
+|                                                          | exits non-zero; with the citation exits zero.                    |
 
 ---
 
@@ -780,68 +1033,70 @@ expected metric tag set; happy path emits `invocation_count`,
 
 The plan is fully delivered when:
 
-1. All Phase 1 + Phase 1.5 acceptance criteria met.
-2. Phase 1 enabled in production for ≥1 week with telemetry collected
-   per §8.
-3. The Phase-2 gate evaluation is documented (a short
-   `plans/features/standard-names/39-fanout-phase1-telemetry.md`
-   appendix), regardless of whether the gate passes.
-4. Fan-out spend per refine cycle visible in graph (filter
-   `phase LIKE 'sn_fanout_%'`) and bounded by
-   `fanout-max-charge-per-cycle`.
-5. No agentic-loop fallback path exists in code (review checklist).
-6. No hard-coded grammar segment lists in `fanout/` (RD point 1).
+1. Phase 0 acceptance criteria met; helper extractions landed.
+2. Phase 1 + Phase 1.5 acceptance criteria met.
+3. Phase 1 enabled in production for ≥1 week with telemetry collected
+   per §8 (within-cohort A/B).
+4. The Phase-2 gate evaluation written up in
+   `plans/features/standard-names/39-fanout-phase1-telemetry.md`,
+   regardless of whether the gate passes.
+5. Fan-out spend per refine cycle visible via the `Fanout` ↔ `LLMCost`
+   join (`batch_id`).
+6. No agentic-loop fallback in code (review checklist).
+7. No hard-coded grammar segment lists in `fanout/`.
+8. CI lint (S4) blocks future fan-out-expansion plans that do not
+   cite the telemetry appendix.
 
 ---
 
 ## 14. Documentation updates required
 
-| File                                              | Change                                                       |
-|---------------------------------------------------|--------------------------------------------------------------|
-| `AGENTS.md`                                        | New § "Structured fan-out" linking to this plan + the Phase 2|
-|                                                    | telemetry gate.                                              |
-| `imas_codex/standard_names/fanout/README.md`       | New — how to add a function to the catalog (discriminated-   |
-|                                                    | union pattern, scope-injection rule, version hash).          |
-| `imas_codex/standard_names/canonical.py`           | Module docstring updated to describe the dup-guard helper.   |
-| `plans/features/standard-names/39-...md`           | This plan; update Phase status checkboxes as work proceeds.  |
-| `plans/features/standard-names/39-fanout-phase1-telemetry.md` | Created at end of Phase 1 with measured values    |
-|                                                    | feeding the Phase-2 gate.                                    |
+| File                                                            | Change                                                       |
+|-----------------------------------------------------------------|--------------------------------------------------------------|
+| `AGENTS.md`                                                      | New § "Structured fan-out" + GraphClient-lifecycle rule +    |
+|                                                                  | Phase-2 telemetry gate.                                      |
+| `imas_codex/standard_names/fanout/README.md`                     | New — how to add a function to the catalog (discriminated-   |
+|                                                                  | union pattern, scope-injection rule, version hash, `gc`      |
+|                                                                  | reuse rule).                                                 |
+| `imas_codex/standard_names/canonical.py`                         | Module docstring updated to describe the dup-guard helper.   |
+| `imas_codex/graph/dd_search.py`                                  | Module docstring updated to list the four post-Phase-0       |
+|                                                                  | catalog symbols.                                             |
+| `plans/features/standard-names/39-...md`                         | This plan; tick boxes as work proceeds.                      |
+| `plans/features/standard-names/39-fanout-phase1-telemetry.md`    | Created at end of Phase 1 with measured A/B values.          |
 
 ---
 
-## 15. What this plan does NOT do (re-stated for the reviewer)
+## 15. What this plan does NOT do
 
 - ❌ No free agentic looping.
 - ❌ No depth-2+ chaining (no knob, no future-proofing).
 - ❌ No runtime function generation.
 - ❌ No multi-model debate.
-- ❌ No new graph queries / schema changes.
-- ❌ No touching B12 grammar-retry compose path.
-- ❌ No pre-persist generate fan-out (replaced by deterministic
-  name-key dup guard).
-- ❌ No vector-similarity name dup check (description-vector ≠ name dup).
-- ❌ No stub "fan-out failed" text injected into prompts on failure
-  (true no-op only).
+- ❌ No new graph schema additions on existing nodes; only the
+  runtime-telemetry `Fanout` node (exempt from schema-compliance).
+- ❌ No B12 grammar-retry compose-path changes.
+- ❌ No pre-persist generate fan-out.
+- ❌ No vector-similarity name dup check.
+- ❌ No stub "fan-out failed" text on failure (true no-op only).
+- ❌ No new thread pool.  Default `asyncio.to_thread` pool is shared
+   with existing workers; contention acceptable for MVP.
 
 ---
 
 ## 16. Open questions for further RD review
 
-1. **Refine trigger predicate**: keyword-based default
-   (`refine-trigger-keywords`) is crude.  Should we instead key on the
-   reviewer's structured output fields (e.g. `score < threshold` AND
-   `category="ambiguity"`) once those are reliably populated?  Defer
+1. **Trigger predicate refinement**: the keyword-based default is crude;
+   may key on structured reviewer fields (`score < threshold AND
+   category="ambiguity"`) once those are reliably populated.  Defer
    until Phase 1 telemetry shows the keyword variant is too noisy.
-2. **Cache feasibility check at startup**: should the runner *probe*
-   `supports_cache(proposer_model)` and emit a one-time warning if the
-   proxy path is detected, or is the existing logging in
-   `imas_codex/discovery/base/llm.py` sufficient?
-3. **Phase 1.5 dup-guard variant set**: enumerate the lexical
-   normalisations explicitly in the Phase 1.5 PR (do not infer from
-   ad-hoc tests).  Suggest a starting set:
-   case-fold, collapse repeated underscores, canonical-segment-order,
-   known synonym map from `imas_codex/standard_names/canonical.py`.
+2. **Phase 1.5 lexical-variant set**: enumerated in the PR, not
+   inferred — starter set: case-fold, collapsed underscores,
+   canonical-segment-order, known synonym map from `canonical.py`.
+3. **`Fanout` node retention**: telemetry-only nodes accumulate.
+   Recommend a TTL sweep (delete `Fanout` older than 30 days) bundled
+   into existing graph-housekeeping if there is one; otherwise note as
+   a follow-up cleanup task.
 
 ---
 
-*End of plan v2.*
+*End of plan v3.*
