@@ -36,7 +36,7 @@ def _ensure_json(value: Any) -> str | None:
 
 
 def _ensure_list(value: Any) -> list[str]:
-    """Coerce *value* to a list of strings (for multi-valued fields like physics_domain).
+    """Coerce *value* to a list of strings (for multi-valued fields).
 
     - ``None`` / empty string → ``[]``
     - scalar string → ``[value]``
@@ -47,6 +47,27 @@ def _ensure_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
     return list(value)
+
+
+def _scalar_domain(value: Any) -> str | None:
+    """Coerce a possibly-list ``physics_domain`` value to a scalar string.
+
+    Defensive helper for reads from the graph during the schema migration
+    window — legacy nodes may still have a list-valued ``physics_domain``
+    before ``sn clear`` is run.  Returns the first non-empty entry from
+    a list, or the string itself, or ``None``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        s = value.strip()
+        return s if s else None
+    if isinstance(value, list | tuple):
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+        return None
+    return None
 
 
 def _parse_grammar_vnext(name: str) -> dict[str, str | None]:
@@ -179,7 +200,7 @@ def query_pipeline_buckets(
             "MATCH (sn:StandardName) "
             "WHERE sn.name_stage IN ['reviewed', 'refining'] "
             "AND coalesce(sn.reviewer_score_name, 0.0) < $threshold "
-            "AND coalesce(sn.regen_count, 0) < $cap "
+            "AND coalesce(sn.chain_length, 0) < $cap "
             "RETURN count(*) AS cnt",
             threshold=threshold,
             cap=cap,
@@ -531,7 +552,7 @@ def fetch_low_score_sources(
     params: dict[str, Any] = {"min_score": float(min_score)}
 
     if domain:
-        where_clauses.append("$domain IN sn.physics_domain")
+        where_clauses.append("sn.physics_domain = $domain")
         params["domain"] = domain
 
     if ids and source_type == "dd":
@@ -1044,12 +1065,20 @@ def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
             batch=cluster_batch,
         )
 
-    # --- HAS_PHYSICS_DOMAIN (multi-valued) ---
+    # --- HAS_PHYSICS_DOMAIN (one edge per source domain) ---
+    # Post-refactor: ``physics_domain`` is the scalar primary; the full
+    # set of contributing domains lives in ``source_domains``.  Edges are
+    # MERGEd from ``source_domains`` (plus the scalar primary as a
+    # fallback for legacy callers) so that cross-domain discoverability
+    # is preserved at the graph level.
     domain_batch = []
     for n in names:
         if not n.get("id"):
             continue
-        domains = _ensure_list(n.get("physics_domain"))
+        domains: set[str] = set(_ensure_list(n.get("source_domains")))
+        primary = _scalar_domain(n.get("physics_domain"))
+        if primary:
+            domains.add(primary)
         for d in domains:
             domain_batch.append({"sn_id": n["id"], "domain_id": d})
     if domain_batch:
@@ -1236,7 +1265,6 @@ def write_standard_names(
                     "validity_domain": n.get("validity_domain"),
                     "constraints": n.get("constraints") or None,
                     "unit": n.get("unit"),
-                    "physics_domain": _ensure_list(n.get("physics_domain")),
                     "cocos_transformation_type": n.get("cocos_transformation_type"),
                     "cocos": n.get("cocos"),
                     "dd_version": n.get("dd_version"),
@@ -1270,24 +1298,89 @@ def write_standard_names(
             ],
         )
 
-        # Append-with-dedupe physics_domain (list property, never overwrite)
-        pd_batch = [
-            {"id": n["id"], "physics_domain": _ensure_list(n.get("physics_domain"))}
-            for n in names
-            if _ensure_list(n.get("physics_domain"))
-        ]
-        if pd_batch:
+        # Promote-on-higher-rank: read existing scalar primary +
+        # source_domains, compute promotion in Python, write back.
+        # Replaces the legacy list-append-with-dedupe semantics.
+        from imas_codex.standard_names.domain_ranking import (
+            maybe_promote_domain,
+            merge_source_domains,
+        )
+
+        pd_inputs = []
+        for n in names:
+            sn_id = n.get("id")
+            if not sn_id:
+                continue
+            candidate = _scalar_domain(n.get("physics_domain"))
+            incoming_sources = _ensure_list(n.get("source_domains"))
+            if candidate and candidate not in incoming_sources:
+                incoming_sources = [*incoming_sources, candidate]
+            if not candidate and not incoming_sources:
+                continue
+            pd_inputs.append(
+                {
+                    "id": sn_id,
+                    "candidate": candidate,
+                    "incoming_sources": incoming_sources,
+                }
+            )
+
+        if pd_inputs:
+            # Read existing values for this batch so we can compute
+            # promotion in Python (rank tables are not encodable in Cypher).
+            existing_rows = (
+                gc.query(
+                    """
+                    UNWIND $ids AS sid
+                    MATCH (sn:StandardName {id: sid})
+                    RETURN sn.id AS id,
+                           sn.physics_domain AS physics_domain,
+                           sn.source_domains AS source_domains
+                    """,
+                    ids=[p["id"] for p in pd_inputs],
+                )
+                or []
+            )
+            existing_map = {
+                row["id"]: row
+                for row in existing_rows  # type: ignore[index]
+            }
+
+            pd_batch = []
+            for p in pd_inputs:
+                row = existing_map.get(p["id"], {})
+                existing_primary = _scalar_domain(row.get("physics_domain"))
+                existing_sources = _ensure_list(row.get("source_domains"))
+                # Legacy nodes may have list-valued physics_domain — fold
+                # those into source_domains too.
+                legacy_list = (
+                    row.get("physics_domain")
+                    if isinstance(row.get("physics_domain"), list)
+                    else None
+                )
+                if legacy_list:
+                    existing_sources = list(
+                        dict.fromkeys([*existing_sources, *legacy_list])
+                    )
+
+                merged_sources = merge_source_domains(
+                    existing_sources, p["incoming_sources"]
+                )
+                promoted = maybe_promote_domain(existing_primary, p["candidate"])
+                pd_batch.append(
+                    {
+                        "id": p["id"],
+                        "physics_domain": promoted,
+                        "source_domains": merged_sources or None,
+                    }
+                )
+
             gc.query(
                 """
                 UNWIND $batch AS b
                 MERGE (sn:StandardName {id: b.id})
-                WITH sn, b,
-                     coalesce(sn.physics_domain, []) AS existing,
-                     coalesce(b.physics_domain, []) AS incoming
-                WITH sn, existing,
-                     [d IN incoming WHERE d IS NOT NULL
-                      AND NOT (d IN existing) | d] AS new_domains
-                SET sn.physics_domain = existing + new_domains
+                SET sn.physics_domain = coalesce(b.physics_domain, sn.physics_domain),
+                    sn.source_domains = coalesce(b.source_domains, sn.source_domains)
                 """,
                 batch=pd_batch,
             )
@@ -2163,15 +2256,29 @@ def persist_generated_name_batch(
 
     # --- Atomically transition stage + clear source claim ---
     # Build the batch excluding error-sibling candidates (no source node).
-    finalize_batch = [
-        {
-            "sn_id": entry["id"],
-            "sns_id": entry.get("source_id"),
-            "model": compose_model,
-        }
-        for entry in candidates
-        if entry.get("id") and entry.get("model") != "deterministic:dd_error_modifier"
-    ]
+    # StandardNameSource.id has a source-type prefix (e.g. "dd:path" or
+    # "signals:path"), so we must prepend the prefix derived from the
+    # candidate's source_types field.
+    finalize_batch = []
+    for entry in candidates:
+        if not entry.get("id"):
+            continue
+        if entry.get("model") == "deterministic:dd_error_modifier":
+            continue
+        raw_source_id = entry.get("source_id")
+        if raw_source_id:
+            _st = (entry.get("source_types") or ["dd"])[0]
+            _prefix = "dd" if _st == "dd" else "signals"
+            sns_id = f"{_prefix}:{raw_source_id}"
+        else:
+            sns_id = None
+        finalize_batch.append(
+            {
+                "sn_id": entry["id"],
+                "sns_id": sns_id,
+                "model": compose_model,
+            }
+        )
     if finalize_batch:
         _finalize_generated_name_stage(finalize_batch)
 
@@ -3526,7 +3633,7 @@ def get_enrichment_candidates(
             )
             params["ids_filter"] = ids_filter
         if domain_filter:
-            where_clauses.append("$domain_filter IN sn.physics_domain")
+            where_clauses.append("sn.physics_domain = $domain_filter")
             params["domain_filter"] = domain_filter
         if status_filter:
             where_clauses.append("sn.pipeline_status = $status_filter")
@@ -4654,7 +4761,7 @@ def export_review_comments(
     params: dict[str, Any] = {}
     where_clauses: list[str] = []
     if domain:
-        where_clauses.append("$domain IN sn.physics_domain")
+        where_clauses.append("sn.physics_domain = $domain")
         params["domain"] = domain
 
     where = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
@@ -4828,6 +4935,32 @@ def finalize_sn_run(
         logger.warning("Failed to finalize SNRun %s: %s", run_id, exc)
 
 
+# ---------------------------------------------------------------------------
+# LLMCost pool normalisation (W4c)
+# ---------------------------------------------------------------------------
+# Maps the raw ``phase`` labels used by callers to six canonical pool names.
+_PHASE_TO_POOL: dict[str, str] = {
+    "generate": "compose",
+    "generate_name": "compose",
+    "compose": "compose",
+    "regen": "refine_name",
+    "refine_name": "refine_name",
+    "refine_docs": "refine_docs",
+    "validate": "validate",
+    "validate_name": "validate",
+    "review_names": "review",
+    "review_docs": "review",
+    "review": "review",
+    "enrich": "enrich",
+    "enrich_links": "enrich",
+}
+
+
+def _normalize_pool(phase: str) -> str:
+    """Map a raw phase string to a canonical pool name."""
+    return _PHASE_TO_POOL.get(phase, phase)
+
+
 @retry_on_deadlock()
 def record_llm_cost(
     *,
@@ -4877,6 +5010,8 @@ def record_llm_cost(
             id: $id,
             run_id: $run_id,
             phase: $phase,
+            pool: $pool,
+            event_type: $event_type,
             cycle: $cycle,
             sn_ids: $sn_ids,
             batch_id: $batch_id,
@@ -4899,6 +5034,8 @@ def record_llm_cost(
         "id": spend_id,
         "run_id": run_id,
         "phase": phase,
+        "pool": _normalize_pool(phase),
+        "event_type": phase,
         "cycle": cycle,
         "sn_ids": sn_ids_clean,
         "batch_id": batch_id,
@@ -5064,6 +5201,7 @@ def _claim_sn_atomic(
     extra_return_fields: str = "",
     stage_field: str | None = None,
     to_stage: str | None = None,
+    domain: str | None = None,
 ) -> list[dict[str, Any]]:
     """Single-transaction stage-aware claim for StandardName nodes.
 
@@ -5099,6 +5237,12 @@ def _claim_sn_atomic(
     to_stage:
         Target stage value for the transition (e.g. ``'refining'``).
         Ignored when *stage_field* is *None*.
+    domain:
+        Optional physics domain to scope the claim.  When set, only
+        StandardName nodes with ``physics_domain = $domain`` are
+        considered eligible.  Used by ``sn run --physics-domain`` to
+        prevent concurrent domain-specific runs from competing for
+        each other's items.
 
     Returns
     -------
@@ -5116,6 +5260,12 @@ def _claim_sn_atomic(
         stage_set = f", sn.{stage_field} = $to_stage"
         params["to_stage"] = to_stage
 
+    # Optional physics-domain scope (scalar comparison post-refactor).
+    domain_where = ""
+    if domain:
+        domain_where = " AND sn.physics_domain = $domain"
+        params["domain"] = domain
+
     with GraphClient() as gc:
         with gc.session() as session:
             tx = session.begin_transaction()
@@ -5129,6 +5279,7 @@ def _claim_sn_atomic(
                           AND (sn.claimed_at IS NULL
                                OR sn.claimed_at < datetime()
                                     - duration($cutoff))
+                          {domain_where}
                         WITH sn ORDER BY rand() LIMIT 1
                         SET sn.claimed_at = datetime(),
                             sn.claim_token = $token
@@ -5151,7 +5302,9 @@ def _claim_sn_atomic(
                 seed = dict(seed_result[0])
                 cluster_id = seed.get("_cluster_id")
                 unit = seed.get("_unit")
-                physics_domain = seed.get("_physics_domain")
+                # Defensive scalar coerce: legacy nodes may still hold a
+                # list-valued physics_domain until ``sn clear`` has run.
+                physics_domain = _scalar_domain(seed.get("_physics_domain"))
                 expand_limit = batch_size - 1
 
                 # ── Step 2: Expand ───────────────────────────────
@@ -5203,7 +5356,7 @@ def _claim_sn_atomic(
                             MATCH (sn:StandardName)
                             WHERE {eligibility_where}
                               AND sn.claimed_at IS NULL
-                              AND $fallback_domain IN sn.physics_domain
+                              AND sn.physics_domain = $fallback_domain
                             MATCH (sn)-[:HAS_UNIT]
                                 ->(:Unit {{id: $unit}})
                             WITH sn LIMIT $expand_limit
@@ -5220,7 +5373,7 @@ def _claim_sn_atomic(
                             MATCH (sn:StandardName)
                             WHERE {eligibility_where}
                               AND sn.claimed_at IS NULL
-                              AND $fallback_domain IN sn.physics_domain
+                              AND sn.physics_domain = $fallback_domain
                             WITH sn LIMIT $expand_limit
                             SET sn.claimed_at = datetime(),
                                 sn.claim_token = $token
@@ -5573,6 +5726,7 @@ def claim_review_name_seed_and_expand(
     facility: str | None = None,
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+    domain: str | None = None,
 ) -> list[dict[str, Any]]:
     """Claim StandardName nodes for name review (Phase 8.1 stage machine).
 
@@ -5605,6 +5759,7 @@ def claim_review_name_seed_and_expand(
             ", coalesce(sn.chain_length, 0) AS chain_length"
             ", sn.name_stage AS name_stage"
         ),
+        domain=domain,
     )
 
 
@@ -5753,6 +5908,7 @@ def claim_review_docs_seed_and_expand(
     facility: str | None = None,
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+    domain: str | None = None,
 ) -> list[dict[str, Any]]:
     """Claim StandardName nodes for docs review (Phase 8.1 stage machine).
 
@@ -5785,6 +5941,7 @@ def claim_review_docs_seed_and_expand(
             ", coalesce(sn.docs_chain_length, 0) AS docs_chain_length"
             ", sn.docs_stage AS docs_stage"
         ),
+        domain=domain,
     )
 
 
@@ -5934,6 +6091,7 @@ def claim_refine_name_seed_and_expand(
     rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+    domain: str | None = None,
 ) -> list[dict[str, Any]]:
     """Claim StandardName nodes for name refinement (Option B chain creation).
 
@@ -5973,6 +6131,7 @@ def claim_refine_name_seed_and_expand(
         ),
         stage_field="name_stage",
         to_stage="refining",
+        domain=domain,
     )
 
     # Enrich each claimed item with its REFINED_FROM chain history.
@@ -5995,7 +6154,8 @@ def persist_refined_name(
     description: str,
     kind: str = "scalar",
     unit: str | None = None,
-    physics_domain: list[str] | None = None,
+    physics_domain: str | None = None,
+    source_domains: list[str] | None = None,
     tags: list[str] | None = None,
     old_chain_length: int = 0,
     model: str = "unknown",
@@ -6046,6 +6206,7 @@ def persist_refined_name(
                           new.kind              = $kind,
                           new.unit              = $unit,
                           new.physics_domain    = $physics_domain,
+                          new.source_domains    = $source_domains,
                           new.tags              = $tags,
                           new.model             = $model,
                           new.generated_at      = datetime(),
@@ -6092,7 +6253,9 @@ def persist_refined_name(
                         description=description,
                         kind=kind,
                         unit=unit,
-                        physics_domain=physics_domain or [],
+                        physics_domain=physics_domain,
+                        source_domains=source_domains
+                        or ([physics_domain] if physics_domain else []),
                         tags=tags or [],
                         model=model,
                         grammar_json=grammar_json,
@@ -6601,6 +6764,7 @@ def release_refine_name_failed_claims(
 def claim_generate_docs_seed_and_expand(
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+    domain: str | None = None,
 ) -> list[dict[str, Any]]:
     """Claim StandardName nodes ready for generate_docs.
 
@@ -6641,6 +6805,7 @@ def claim_generate_docs_seed_and_expand(
             ", sn.name_stage AS name_stage"
         ),
         # stage_field=None → claim only, no stage transition
+        domain=domain,
     )
 
     # Enrich each claimed item with REFINED_FROM chain history.
@@ -6816,6 +6981,7 @@ def claim_refine_docs_seed_and_expand(
     rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+    domain: str | None = None,
 ) -> list[dict[str, Any]]:
     """Claim StandardName nodes for docs refinement.
 
@@ -6864,6 +7030,7 @@ def claim_refine_docs_seed_and_expand(
         ),
         stage_field="docs_stage",
         to_stage="refining",
+        domain=domain,
     )
 
     # Enrich each claimed item with its DOCS_REVISION_OF chain history.

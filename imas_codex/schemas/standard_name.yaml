@@ -478,15 +478,25 @@ classes:
         range: string
       physics_domain:
         description: >-
-          Physics domain classifications. A StandardName may belong to
-          multiple domains when its source DD paths span domains
-          (e.g. plasma_current appears in equilibrium, transport, magnetics).
-          Append-only at write time — a domain seen once is recorded
-          forever, never overwritten.
-        multivalued: true
+          Primary physics domain for this StandardName (scalar). When a
+          source from a more central domain (lower rank in
+          domain_ranking) is attached, ``physics_domain`` is promoted —
+          this is the canonical "where does this concept live" pointer.
+          Cross-domain discoverability is preserved via ``source_domains``.
         range: PhysicsDomain
         annotations:
           relationship_type: HAS_PHYSICS_DOMAIN
+      source_domains:
+        description: >-
+          Every physics domain that has ever contributed a source to
+          this StandardName (append-only, deduplicated). Preserves
+          cross-domain discoverability after the primary
+          ``physics_domain`` has been promoted to a more central
+          value. A name with sources from {transport, equilibrium}
+          will have ``physics_domain='equilibrium'`` (promoted) and
+          ``source_domains=['transport', 'equilibrium']``.
+        multivalued: true
+        range: string
       cocos_transformation_type:
         description: >-
           COCOS transformation type from the source DD path. Identifies which
@@ -1461,6 +1471,16 @@ classes:
         description: USD charged beyond the lease reservation. 0.0 when call fits its reservation.
         range: float
         ifabsent: float(0.0)
+      pool:
+        description: >-
+          Normalized pipeline pool name. One of: compose, refine_name,
+          refine_docs, validate, review, enrich. Maps legacy phase values
+          to the six canonical pool identifiers.
+      event_type:
+        description: >-
+          Raw phase/event label as recorded by the caller (e.g.
+          generate_name, regen, refine_docs). Preserves the original
+          granularity before pool normalisation.
       for_run:
         range: SNRun
         annotations:

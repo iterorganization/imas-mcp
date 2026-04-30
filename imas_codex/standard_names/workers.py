@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import random
+import re as _re
 from collections.abc import Callable
 from functools import cache as _cache
 from typing import TYPE_CHECKING, Any
@@ -76,6 +77,39 @@ def _dedup_adjacent_tokens(name: str, log: logging.Logger | None = None) -> str:
             continue
         result.append(tok)
     return "_".join(result)
+
+
+# ---------------------------------------------------------------------------
+# Pre-validation gate (W4b): reject malformed LLM output before MERGE
+# ---------------------------------------------------------------------------
+
+_SNAKE_CASE_RE = _re.compile(r"[a-z][a-z0-9_]*")
+
+
+def is_well_formed_candidate(raw_name: str) -> tuple[bool, str | None]:
+    """Check whether *raw_name* is a plausible standard-name candidate.
+
+    Returns ``(True, None)`` if the name passes all checks, or
+    ``(False, reason)`` if it should be rejected **before** MERGE.
+
+    Rejection criteria:
+    - Empty or whitespace-only
+    - Length > 100 characters (likely LLM monologue)
+    - Contains newline, tab, ``{``, ``}``, ``\\``, or triple-dot
+    - Not snake_case-shaped after stripping
+    """
+    if not raw_name or not raw_name.strip():
+        return False, "empty_or_whitespace"
+    name = raw_name.strip()
+    if len(name) > 100:
+        return False, "too_long"
+    if any(ch in name for ch in ("\n", "\t", "{", "}", "\\")):
+        return False, "illegal_chars"
+    if "..." in name:
+        return False, "triple_dot"
+    if not _SNAKE_CASE_RE.fullmatch(name):
+        return False, "not_snake_case"
+    return True, None
 
 
 # ---------------------------------------------------------------------------
@@ -1845,10 +1879,11 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             else:
                 unit = raw_unit
 
-            # Inject physics_domain from DD (authoritative, like unit)
-            # Wrap scalar to list for multi-valued field
+            # Inject physics_domain from DD (authoritative, like unit).
+            # Post-refactor: scalar primary + source_domains list.
             raw_domain = source_item.get("physics_domain") if source_item else None
-            physics_domain = [raw_domain] if raw_domain else []
+            physics_domain = raw_domain or None
+            source_domains = [raw_domain] if raw_domain else []
 
             # Inject COCOS metadata from DD (authoritative, like unit)
             cocos_type = source_item.get("cocos_label") if source_item else None
@@ -1856,6 +1891,37 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             # Normalize name via grammar round-trip BEFORE persist
             # to avoid duplicate nodes if validate would rename
             name_id = c.standard_name
+
+            # W4b: Pre-validation gate — reject malformed LLM output
+            # before it reaches MERGE.
+            _well_formed, _reject_reason = is_well_formed_candidate(name_id)
+            if not _well_formed:
+                state.stats["compose_pre_validation_rejects"] = (
+                    state.stats.get("compose_pre_validation_rejects", 0) + 1
+                )
+                wlog.warning(
+                    "Pre-validation reject: %r (%s)",
+                    name_id[:80],
+                    _reject_reason,
+                )
+                # Mark source as failed (if identifiable)
+                if c.source_id and not state.dry_run:
+                    try:
+                        from imas_codex.graph.client import GraphClient
+
+                        _prefix = "dd" if state.source == "dd" else "signals"
+                        with GraphClient() as gc:
+                            gc.query(
+                                "MATCH (sns:StandardNameSource {id: $id}) "
+                                "SET sns.status = 'failed', "
+                                "    sns.claimed_at = null, "
+                                "    sns.claim_token = null",
+                                id=f"{_prefix}:{c.source_id}",
+                            )
+                    except Exception:
+                        wlog.debug("Failed to mark source %s as failed", c.source_id)
+                continue
+
             grammar_failed = False
             try:
                 from imas_standard_names.grammar import (
@@ -1942,6 +2008,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     "reason": c.reason,
                     "unit": unit,
                     "physics_domain": physics_domain,
+                    "source_domains": source_domains,
                     "cocos_transformation_type": cocos_type,
                     "cocos": batch.cocos_version,
                     "dd_version": batch.dd_version,
@@ -3051,7 +3118,8 @@ async def _compose_batch_core(
             unit = "1" if raw_unit in ("-", "mixed", None, "") else raw_unit
 
             raw_domain = source_item.get("physics_domain") if source_item else None
-            physics_domain = [raw_domain] if raw_domain else []
+            physics_domain = raw_domain or None
+            source_domains = [raw_domain] if raw_domain else []
 
             cocos_type = source_item.get("cocos_label") if source_item else None
 
@@ -3083,6 +3151,7 @@ async def _compose_batch_core(
                 "reason": c.reason,
                 "unit": unit,
                 "physics_domain": physics_domain,
+                "source_domains": source_domains,
                 "cocos_transformation_type": cocos_type,
                 "cocos": batch[0].get("cocos_version") if batch else None,
                 "dd_version": batch[0].get("dd_version") if batch else None,
@@ -3288,10 +3357,16 @@ async def process_refine_name_batch(
                 kind=result_obj.kind,
                 unit=item.get("unit"),
                 physics_domain=(
-                    item.get("physics_domain")
-                    if isinstance(item.get("physics_domain"), list)
-                    else [item.get("physics_domain")]
-                    if item.get("physics_domain")
+                    (
+                        (item.get("physics_domain") or [None])[0]
+                        if isinstance(item.get("physics_domain"), list)
+                        else item.get("physics_domain")
+                    )
+                    or None
+                ),
+                source_domains=(
+                    item.get("source_domains")
+                    if isinstance(item.get("source_domains"), list)
                     else None
                 ),
                 tags=item.get("tags") if isinstance(item.get("tags"), list) else None,

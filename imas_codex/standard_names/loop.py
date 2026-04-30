@@ -646,6 +646,9 @@ def _build_pool_specs(
     )
 
     regen_score = min_score if min_score is not None else DEFAULT_MIN_SCORE
+    _rotation_cap_kwargs: dict[str, Any] = {}
+    if rotation_cap is not None:
+        _rotation_cap_kwargs["rotation_cap"] = rotation_cap
     _review_name_cap = (
         review_name_backlog_cap
         if review_name_backlog_cap is not None
@@ -737,7 +740,10 @@ def _build_pool_specs(
         ),
         PoolSpec(
             name="review_name",
-            claim=_make_claim_adapter(claim_review_name_seed_and_expand),
+            claim=_make_claim_adapter(
+                claim_review_name_seed_and_expand,
+                **({"domain": only_domain} if only_domain else {}),
+            ),
             process=_make_process_adapter(process_review_name_batch),
             release=_make_release_adapter(
                 release_review_names_claims, ids_kwarg="sn_ids"
@@ -749,6 +755,8 @@ def _build_pool_specs(
             claim=_make_claim_adapter(
                 claim_refine_name_seed_and_expand,
                 min_score=regen_score,
+                **_rotation_cap_kwargs,
+                **({"domain": only_domain} if only_domain else {}),
             ),
             process=_make_process_adapter(process_refine_name_batch),
             release=_make_release_adapter(
@@ -758,7 +766,10 @@ def _build_pool_specs(
         ),
         PoolSpec(
             name="generate_docs",
-            claim=_make_claim_adapter(claim_generate_docs_seed_and_expand),
+            claim=_make_claim_adapter(
+                claim_generate_docs_seed_and_expand,
+                **({"domain": only_domain} if only_domain else {}),
+            ),
             process=_make_process_adapter(process_generate_docs_batch),
             release=_make_release_adapter(
                 release_generate_docs_claims, ids_kwarg="sn_ids"
@@ -767,7 +778,10 @@ def _build_pool_specs(
         ),
         PoolSpec(
             name="review_docs",
-            claim=_make_claim_adapter(claim_review_docs_seed_and_expand),
+            claim=_make_claim_adapter(
+                claim_review_docs_seed_and_expand,
+                **({"domain": only_domain} if only_domain else {}),
+            ),
             process=_make_process_adapter(process_review_docs_batch),
             release=_make_release_adapter(
                 release_review_docs_claims, ids_kwarg="sn_ids"
@@ -779,6 +793,8 @@ def _build_pool_specs(
             claim=_make_claim_adapter(
                 claim_refine_docs_seed_and_expand,
                 min_score=regen_score,
+                **_rotation_cap_kwargs,
+                **({"domain": only_domain} if only_domain else {}),
             ),
             process=_make_process_adapter(process_refine_docs_batch),
             release=_make_release_adapter(
