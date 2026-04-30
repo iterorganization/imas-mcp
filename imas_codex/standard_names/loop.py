@@ -1011,6 +1011,28 @@ async def run_sn_pools(
 
     cost_is_exact = True
 
+    # ── A3: LLM routing observability ─────────────────────────────
+    import os
+
+    from imas_codex.discovery.base.llm import _supports_cache_control
+    from imas_codex.settings import get_model
+
+    _a3_model = get_model("sn-run")
+    _a3_cache = _supports_cache_control(_a3_model)
+    _a3_or_key = os.environ.get("OPENROUTER_API_KEY_STANDARD_NAMES") or ""
+    _a3_or_key_src = "OPENROUTER_API_KEY_STANDARD_NAMES"
+    if not _a3_or_key:
+        _a3_or_key = os.environ.get("OPENROUTER_API_KEY_IMAS_CODEX") or ""
+        _a3_or_key_src = "OPENROUTER_API_KEY_IMAS_CODEX"
+    _a3_route = "direct" if (_a3_cache and _a3_or_key) else "proxy"
+    logger.info(
+        "run_sn_pools: model=%s supports_cache=%s route=%s api_key_source=%s",
+        _a3_model,
+        _a3_cache,
+        _a3_route,
+        _a3_or_key_src if _a3_or_key else "NONE",
+    )
+
     try:
         # ── B2: Reconcile-once-at-startup ─────────────────────────
         # Must complete BEFORE any pool issues its first claim.
@@ -1103,6 +1125,27 @@ async def run_sn_pools(
                 sweep_task.cancel()
             await asyncio.gather(sweep_task, return_exceptions=True)
         logger.info("run_sn_pools: all pools exited — %s", health_map)
+
+        # ── A3: per-pool cost observability ────────────────────────
+        phase_spent = shared_mgr.phase_spent
+        for pool_name, h in (health_map or {}).items():
+            completed = getattr(h, "total_processed", 0) if h else 0
+            spent = phase_spent.get(pool_name, 0.0)
+            mean_cost = spent / completed if completed > 0 else 0.0
+            logger.info(
+                "run_sn_pools: pool=%s completed=%d spent=$%.4f mean_cost=$%.6f",
+                pool_name,
+                completed,
+                spent,
+                mean_cost,
+            )
+            if completed > 0 and mean_cost == 0.0 and _a3_route == "direct":
+                logger.warning(
+                    "run_sn_pools: pool=%s has %d completed items but mean_cost=0 "
+                    "with expected route='direct' — cost tracking may be broken",
+                    pool_name,
+                    completed,
+                )
 
         # Aggregate per-pool processed counts into RunSummary.
         def _total(name: str) -> int:
