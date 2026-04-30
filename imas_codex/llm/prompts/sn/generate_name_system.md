@@ -965,6 +965,9 @@ Top-level keys:
 
 ### Candidate Schema
 
+<!-- KEEP IN SYNC WITH StandardNameCandidate in imas_codex/standard_names/models.py.
+     Drift is caught at CI time by tests/standard_names/test_compose_schema_consistency.py. -->
+
 Each candidate MUST include:
 - `source_id`: full DD path (e.g., "equilibrium/time_slice/profiles_1d/psi")
 - `standard_name`: the composed name in snake_case
