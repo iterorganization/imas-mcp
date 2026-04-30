@@ -2412,6 +2412,9 @@ def write_vocab_gaps(
 
     now = datetime.now(UTC).isoformat()
 
+    # Classify gaps using the ISN segment-token index
+    from imas_codex.standard_names.segments import is_known_token
+
     # Build deduplicated gap nodes and relationship batch
     gap_nodes: dict[str, dict] = {}
     rel_batch: list[dict] = []
@@ -2422,11 +2425,31 @@ def write_vocab_gaps(
         gap_id = f"vocab_gap:{segment}:{needed_token}"
 
         if gap_id not in gap_nodes:
+            # Classify this gap
+            segments_found = is_known_token(needed_token)
+            if not segments_found:
+                category = "absent"
+                actual_segments: list[str] = []
+            elif segment not in segments_found:
+                if len(segments_found) > 1:
+                    category = "ambiguous_known_token"
+                else:
+                    category = "wrong_slot_placement"
+                actual_segments = segments_found
+            else:
+                # Token is in the reported segment — should not normally
+                # happen (not a gap at all), but classify as absent
+                # defensively to preserve existing behaviour.
+                category = "absent"
+                actual_segments = []
+
             gap_nodes[gap_id] = {
                 "id": gap_id,
                 "segment": segment,
                 "needed_token": needed_token,
                 "example_count": 0,
+                "category": category,
+                "actual_segments": actual_segments,
             }
         gap_nodes[gap_id]["example_count"] += 1
 
@@ -2448,6 +2471,8 @@ def write_vocab_gaps(
             SET vg.segment = b.segment,
                 vg.needed_token = b.needed_token,
                 vg.example_count = coalesce(vg.example_count, 0) + b.example_count,
+                vg.category = b.category,
+                vg.actual_segments = b.actual_segments,
                 vg.first_seen_at = coalesce(vg.first_seen_at, datetime()),
                 vg.last_seen_at = datetime()
             """,

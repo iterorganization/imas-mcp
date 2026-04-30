@@ -84,6 +84,27 @@ enums:
       catalog_edit:
         description: Imported from a catalog PR with editorial changes
 
+  VocabGapCategory:
+    description: >-
+      Classification of a VocabGap node.  Distinguishes true vocabulary
+      absences from LLM slot-placement errors where the token exists in a
+      different closed segment.
+    permissible_values:
+      absent:
+        description: >-
+          Token not found in any closed-vocabulary segment — a genuine
+          ISN grammar gap that requires editorial action.
+      wrong_slot_placement:
+        description: >-
+          Token exists in one or more closed segments but the LLM placed
+          it in a segment that does not contain it.  Signals a prompt /
+          model improvement need, not an ISN gap.
+      ambiguous_known_token:
+        description: >-
+          Token exists in multiple closed segments and the reported
+          segment is not among them.  May indicate either LLM confusion
+          or legitimate vocabulary overlap requiring editorial review.
+
   StandardNameReviewStatus:
     description: >-
       Review lifecycle for standard names.
@@ -1174,6 +1195,18 @@ classes:
       last_seen_at:
         description: When this gap was most recently reported
         range: datetime
+      category:
+        description: >-
+          Gap classification: absent (true gap), wrong_slot_placement
+          (token exists in a different segment), or ambiguous_known_token
+          (token found in multiple segments).
+        range: VocabGapCategory
+      actual_segments:
+        description: >-
+          Closed-vocabulary segments that actually contain this token.
+          Populated when category is wrong_slot_placement or
+          ambiguous_known_token; empty for absent gaps.
+        multivalued: true
 
   StandardNameSource:
     description: >-

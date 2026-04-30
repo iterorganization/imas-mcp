@@ -2153,6 +2153,7 @@ def sn_gaps(
         table = Table(title="Missing Vocabulary Tokens")
         table.add_column("Segment", style="cyan")
         table.add_column("Needed Token", style="bold")
+        table.add_column("Category", style="magenta")
         table.add_column("Sources", justify="right")
         table.add_column("Example Count", justify="right")
         table.add_column("First Seen")
@@ -2161,9 +2162,14 @@ def sn_gaps(
         for r in results:
             first_seen = str(r["first_seen"])[:10] if r.get("first_seen") else "—"
             last_seen = str(r["last_seen"])[:10] if r.get("last_seen") else "—"
+            cat = r.get("category") or "—"
+            actual = r.get("actual_segments") or []
+            if actual:
+                cat = f"{cat} ({', '.join(actual)})"
             table.add_row(
                 r["segment"],
                 r["needed_token"],
+                cat,
                 str(r["occurrences"]),
                 str(r.get("example_count") or "—"),
                 first_seen,

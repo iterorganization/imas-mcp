@@ -73,6 +73,46 @@ def is_open_segment(segment: str | None) -> bool:
     return segment in open_segments()
 
 
+@lru_cache(maxsize=1)
+def _segment_token_index() -> dict[str, list[str]]:
+    """Build a reverse index: token → list of segment names that contain it.
+
+    Only closed-vocabulary segments (non-empty token lists in
+    ``SEGMENT_TOKEN_MAP``) are indexed.  Open segments are excluded
+    because every token is admissible there by definition.
+    """
+    try:
+        from imas_standard_names.grammar.constants import SEGMENT_TOKEN_MAP
+    except ImportError:
+        return {}
+
+    index: dict[str, list[str]] = {}
+    try:
+        for seg, tokens in SEGMENT_TOKEN_MAP.items():
+            if not tokens:
+                continue  # open-vocabulary segment
+            for tok in tokens:
+                index.setdefault(tok, []).append(seg)
+    except Exception:  # pragma: no cover — defensive
+        return {}
+    return index
+
+
+def is_known_token(token: str) -> list[str]:
+    """Return the closed-vocabulary segment names whose vocab contains *token*.
+
+    Case-sensitive match against every closed segment in the ISN
+    ``SEGMENT_TOKEN_MAP``.  Returns ``[]`` when the token is absent
+    from all closed segments (either a true gap or an open-segment
+    term).
+
+    Multiple segments may be returned when the token legitimately
+    appears in more than one closed vocabulary (e.g. orientation /
+    qualifier overlap).
+    """
+    return list(_segment_token_index().get(token, []))
+
+
 def filter_closed_segment_gaps(
     gaps: list[dict],
     *,
@@ -97,6 +137,7 @@ def filter_closed_segment_gaps(
 __all__ = [
     "PSEUDO_SEGMENTS",
     "filter_closed_segment_gaps",
+    "is_known_token",
     "is_open_segment",
     "open_segments",
 ]
