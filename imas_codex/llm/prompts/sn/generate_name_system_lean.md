@@ -37,8 +37,6 @@ Named-entity geometry always uses `_of_`, never `_at_`. Use `vertical_coordinate
 
 **Never:** `real_part_of_X` → `X_real_part`; `ion_rotation_frequency_toroidal` → `toroidal_component_of_ion_rotation_frequency`; `reconstructed_safety_factor` → `safety_factor`; `electron_temperature_profile` → `electron_temperature`; `electron_density_on_ggd` → `electron_density`.
 
-{% include "sn/_compose_scored_examples.md" %}
-
 ### HARD PRE-EMIT CHECKS — validate EVERY candidate name before output
 
 Run these ten checks IN ORDER against each candidate name string before
@@ -494,25 +492,3 @@ Each candidate MUST include:
 ### Secondary Tags (0-3 only)
 
 time-dependent, steady-state, spatial-profile, flux-surface-average, volume-average, line-integrated, local-measurement, global-quantity, measured, reconstructed, simulated, derived, validated, equilibrium-reconstruction, transport-modeling, mhd-stability-analysis, heating-deposition, calibrated, real-time, post-shot-analysis, benchmark-quantity, performance-metric
-
-{% if domain_vocabulary %}
-## PREFERRED VOCABULARY FOR THIS DOMAIN — reuse unless concept is genuinely different
-
-The following standard names already exist in this physics domain and have been
-validated. **Reuse** these terms and naming patterns unless the concept you are
-naming is genuinely different. Synonymous proliferation within a domain is the
-single most common quality failure.
-
-{{ domain_vocabulary }}
-{% endif %}
-
-{% if reviewer_themes %}
-## RECENT REVIEWER FEEDBACK FOR THIS DOMAIN — address these
-
-Expert reviewers have flagged these recurring issues in this domain's standard names.
-Pay special attention to avoiding these patterns:
-
-{% for theme in reviewer_themes %}
-- {{ theme }}
-{% endfor %}
-{% endif %}
