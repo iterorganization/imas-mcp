@@ -15,7 +15,7 @@ import pytest
 def test_fetch_docs_review_feedback_returns_full_payload():
     """Happy path: SN with docs review returns score + comments + per-dim + verdict."""
     from imas_codex.standard_names.graph_ops import (
-        fetch_docs_review_feedback_for_sns,
+        fetch_docs_review_feedback_for_standard_names,
     )
 
     fake_rows = [
@@ -40,7 +40,7 @@ def test_fetch_docs_review_feedback_returns_full_payload():
     with patch(
         "imas_codex.standard_names.graph_ops.GraphClient", return_value=fake_client
     ):
-        result = fetch_docs_review_feedback_for_sns(["electron_temperature"])
+        result = fetch_docs_review_feedback_for_standard_names(["electron_temperature"])
 
     assert "electron_temperature" in result
     entry = result["electron_temperature"]
@@ -54,7 +54,7 @@ def test_fetch_docs_review_feedback_returns_full_payload():
 def test_fetch_docs_review_feedback_omits_unreviewed():
     """Cold-start: SNs with reviewer_score_docs IS NULL are not in graph results."""
     from imas_codex.standard_names.graph_ops import (
-        fetch_docs_review_feedback_for_sns,
+        fetch_docs_review_feedback_for_standard_names,
     )
 
     fake_client = MagicMock()
@@ -65,7 +65,7 @@ def test_fetch_docs_review_feedback_omits_unreviewed():
     with patch(
         "imas_codex.standard_names.graph_ops.GraphClient", return_value=fake_client
     ):
-        result = fetch_docs_review_feedback_for_sns(["never_reviewed_sn"])
+        result = fetch_docs_review_feedback_for_standard_names(["never_reviewed_sn"])
 
     assert result == {}
 
@@ -73,18 +73,18 @@ def test_fetch_docs_review_feedback_omits_unreviewed():
 def test_fetch_docs_review_feedback_handles_empty_input():
     """No graph call when input is None or empty."""
     from imas_codex.standard_names.graph_ops import (
-        fetch_docs_review_feedback_for_sns,
+        fetch_docs_review_feedback_for_standard_names,
     )
 
-    assert fetch_docs_review_feedback_for_sns(None) == {}
-    assert fetch_docs_review_feedback_for_sns([]) == {}
-    assert fetch_docs_review_feedback_for_sns(set()) == {}
+    assert fetch_docs_review_feedback_for_standard_names(None) == {}
+    assert fetch_docs_review_feedback_for_standard_names([]) == {}
+    assert fetch_docs_review_feedback_for_standard_names(set()) == {}
 
 
 def test_fetch_docs_review_feedback_handles_malformed_scores_json():
     """Bad JSON in reviewer_scores_docs must not crash — fall back to None."""
     from imas_codex.standard_names.graph_ops import (
-        fetch_docs_review_feedback_for_sns,
+        fetch_docs_review_feedback_for_standard_names,
     )
 
     fake_rows = [
@@ -105,7 +105,7 @@ def test_fetch_docs_review_feedback_handles_malformed_scores_json():
     with patch(
         "imas_codex.standard_names.graph_ops.GraphClient", return_value=fake_client
     ):
-        result = fetch_docs_review_feedback_for_sns(["ion_density"])
+        result = fetch_docs_review_feedback_for_standard_names(["ion_density"])
 
     entry = result["ion_density"]
     assert entry["reviewer_scores"] is None

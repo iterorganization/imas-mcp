@@ -279,9 +279,9 @@ def build_neighborhood_context(
         ``unit``, ``review_tier``.  Empty list on search failure.
     """
     try:
-        from imas_codex.standard_names.search import search_similar_names
+        from imas_codex.standard_names.search import search_standard_names_vector
     except Exception:
-        logger.debug("search_similar_names unavailable", exc_info=True)
+        logger.debug("search_standard_names_vector unavailable", exc_info=True)
         return []
 
     batch_names = batch.get("names", [])
@@ -302,7 +302,7 @@ def build_neighborhood_context(
         return []
 
     try:
-        raw_results = search_similar_names(query, k=k + 5)
+        raw_results = search_standard_names_vector(query, k=k + 5)
     except Exception:
         logger.debug("Neighborhood search failed", exc_info=True)
         raw_results = []
@@ -317,7 +317,7 @@ def build_neighborhood_context(
         ]
         for name in unclustered_names[:3]:
             try:
-                per_name = search_similar_names(name["description"], k=3)
+                per_name = search_standard_names_vector(name["description"], k=3)
                 for r in per_name:
                     if r.get("id", "") not in batch_ids:
                         filtered.append(r)

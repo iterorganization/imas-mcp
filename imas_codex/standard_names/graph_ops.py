@@ -835,7 +835,7 @@ def fetch_reviewer_history_for_sources(
     return mapping
 
 
-def fetch_docs_review_feedback_for_sns(
+def fetch_docs_review_feedback_for_standard_names(
     sn_ids: list[str] | set[str] | None,
 ) -> dict[str, dict[str, Any]]:
     """Fetch prior docs-axis reviewer feedback keyed by StandardName id.
@@ -921,15 +921,23 @@ def fetch_docs_review_feedback_for_sns(
 
 
 # Plan 40 §17 — public rename. Canonical name is
-# ``fetch_docs_review_feedback_for_standard_names``; the legacy
+# ``fetch_docs_review_feedback_for_standard_names`` (above); the legacy
 # ``fetch_docs_review_feedback_for_sns`` alias is retained for one
 # release with a DeprecationWarning. Phase 4 callsite migration has
 # moved package-internal callers to the canonical name.
-def fetch_docs_review_feedback_for_standard_names(
+def fetch_docs_review_feedback_for_sns(
     sn_ids: list[str] | set[str] | None,
 ) -> dict[str, dict[str, Any]]:
-    """Canonical alias of :func:`fetch_docs_review_feedback_for_sns`."""
-    return fetch_docs_review_feedback_for_sns(sn_ids)
+    """Deprecated alias of :func:`fetch_docs_review_feedback_for_standard_names`."""
+    import warnings
+
+    warnings.warn(
+        "fetch_docs_review_feedback_for_sns is deprecated; "
+        "use fetch_docs_review_feedback_for_standard_names.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return fetch_docs_review_feedback_for_standard_names(sn_ids)
 
 
 def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:

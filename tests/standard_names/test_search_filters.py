@@ -1,4 +1,4 @@
-"""Tests for search_similar_names stage/status filters (Track C).
+"""Tests for search_standard_names_vector stage/status filters (Track C).
 
 Validates that:
 (a) quarantined names are excluded
@@ -66,7 +66,7 @@ class TestSearchFiltersInCypher:
     @patch("imas_codex.embeddings.encoder.Encoder")
     def test_query_excludes_quarantined(self, MockEncoder, MockGC) -> None:
         """Cypher must filter out validation_status='quarantined'."""
-        from imas_codex.standard_names.search import search_similar_names
+        from imas_codex.standard_names.search import search_standard_names_vector
 
         # Mock encoder
         mock_enc = MagicMock()
@@ -76,7 +76,7 @@ class TestSearchFiltersInCypher:
         gc_ctx, gc_instance = _mock_gc_with_rows([])
         MockGC.return_value = gc_ctx
 
-        search_similar_names("electron temperature", k=5)
+        search_standard_names_vector("electron temperature", k=5)
 
         cypher = gc_instance.query.call_args[0][0]
         assert "quarantined" in cypher
@@ -87,7 +87,7 @@ class TestSearchFiltersInCypher:
     @patch("imas_codex.embeddings.encoder.Encoder")
     def test_results_respect_k_limit(self, MockEncoder, MockGC) -> None:
         """Results are capped at k even when more pass filters."""
-        from imas_codex.standard_names.search import search_similar_names
+        from imas_codex.standard_names.search import search_standard_names_vector
 
         mock_enc = MagicMock()
         mock_enc.embed_texts.return_value = [[0.1] * 768]
@@ -98,17 +98,17 @@ class TestSearchFiltersInCypher:
         gc_ctx, gc_instance = _mock_gc_with_rows(rows)
         MockGC.return_value = gc_ctx
 
-        results = search_similar_names("electron temperature", k=3)
+        results = search_standard_names_vector("electron temperature", k=3)
         assert len(results) == 3
 
     @patch("imas_codex.graph.client.GraphClient")
     @patch("imas_codex.embeddings.encoder.Encoder")
     def test_empty_query_returns_empty(self, MockEncoder, MockGC) -> None:
         """Empty or whitespace query returns [] without calling graph."""
-        from imas_codex.standard_names.search import search_similar_names
+        from imas_codex.standard_names.search import search_standard_names_vector
 
-        assert search_similar_names("") == []
-        assert search_similar_names("   ") == []
+        assert search_standard_names_vector("") == []
+        assert search_standard_names_vector("   ") == []
         MockGC.assert_not_called()
 
 

@@ -518,14 +518,15 @@ def run_duplicate_detection(names: list[dict[str, Any]]) -> list[DuplicateCompon
     semantic_available = False
     search_fn = None
     try:
-        from imas_codex.standard_names.search import search_similar_names
+        from imas_codex.standard_names.search import search_standard_names_vector
 
         # Quick probe — don't fail if graph is down
-        search_fn = search_similar_names
+        search_fn = search_standard_names_vector
         semantic_available = True
     except ImportError:
         logger.debug(
-            "search_similar_names not importable — lexical-only duplicate detection"
+            "search_standard_names_vector not importable — "
+            "lexical-only duplicate detection"
         )
 
     # --- Candidate pair discovery ---

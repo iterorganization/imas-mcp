@@ -1061,7 +1061,8 @@ def search_standard_names_vector(
         try:
             from imas_codex.graph.client import GraphClient
 
-            gc = GraphClient()
+            _gc_ctx: Any = GraphClient()
+            gc = _gc_ctx.__enter__() if hasattr(_gc_ctx, "__enter__") else _gc_ctx
             own_gc = True
         except Exception:
             logger.debug("GraphClient unavailable", exc_info=True)
@@ -1102,7 +1103,10 @@ def search_standard_names_vector(
     finally:
         if own_gc:
             try:
-                gc.close()
+                if hasattr(_gc_ctx, "__exit__"):
+                    _gc_ctx.__exit__(None, None, None)
+                else:
+                    gc.close()
             except Exception:
                 pass
 

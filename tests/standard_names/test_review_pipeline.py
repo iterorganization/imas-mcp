@@ -302,7 +302,7 @@ def test_review_neighborhood_enrichment():
     ]
 
     with patch(
-        "imas_codex.standard_names.search.search_similar_names",
+        "imas_codex.standard_names.search.search_standard_names_vector",
         return_value=mock_results,
     ):
         neighborhood = build_neighborhood_context(batch, all_names, k=10)

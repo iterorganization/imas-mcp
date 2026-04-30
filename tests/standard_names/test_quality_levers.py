@@ -75,18 +75,22 @@ class TestDomainVocabularyPreseed:
 
 
 class TestReferenceSNRetrieval:
-    """Tests for search_similar_sns_with_full_docs."""
+    """Tests for search_standard_names_with_documentation."""
 
     def test_empty_query_returns_empty(self):
         """Empty query returns empty list."""
-        from imas_codex.standard_names.search import search_similar_sns_with_full_docs
+        from imas_codex.standard_names.search import (
+            search_standard_names_with_documentation,
+        )
 
-        assert search_similar_sns_with_full_docs("") == []
-        assert search_similar_sns_with_full_docs("   ") == []
+        assert search_standard_names_with_documentation("") == []
+        assert search_standard_names_with_documentation("   ") == []
 
     def test_excludes_specified_ids(self):
         """Excluded IDs are filtered from results."""
-        from imas_codex.standard_names.search import search_similar_sns_with_full_docs
+        from imas_codex.standard_names.search import (
+            search_standard_names_with_documentation,
+        )
 
         mock_rows = [
             {
@@ -126,7 +130,7 @@ class TestReferenceSNRetrieval:
             mock_gc.__exit__ = MagicMock(return_value=False)
             MockGC.return_value = mock_gc
 
-            results = search_similar_sns_with_full_docs(
+            results = search_standard_names_with_documentation(
                 "electron temperature",
                 k=5,
                 exclude_ids=["electron_temperature"],
@@ -137,7 +141,9 @@ class TestReferenceSNRetrieval:
 
     def test_returns_full_docs(self):
         """Results include documentation and tags."""
-        from imas_codex.standard_names.search import search_similar_sns_with_full_docs
+        from imas_codex.standard_names.search import (
+            search_standard_names_with_documentation,
+        )
 
         mock_rows = [
             {
@@ -169,7 +175,7 @@ class TestReferenceSNRetrieval:
             mock_gc.__exit__ = MagicMock(return_value=False)
             MockGC.return_value = mock_gc
 
-            results = search_similar_sns_with_full_docs("safety factor")
+            results = search_standard_names_with_documentation("safety factor")
 
         assert len(results) == 1
         assert "documentation" in results[0]

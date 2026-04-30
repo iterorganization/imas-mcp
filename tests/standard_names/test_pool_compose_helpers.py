@@ -159,7 +159,7 @@ class TestSearchReferenceExemplars:
         ]
 
         with patch(
-            "imas_codex.standard_names.search.search_similar_sns_with_full_docs",
+            "imas_codex.standard_names.search.search_standard_names_with_documentation",
             return_value=[{"id": "x", "description": "y"}],
         ) as mock_search:
             out = _search_reference_exemplars(items, ["magnetics"], k=5)
@@ -180,7 +180,7 @@ class TestSearchReferenceExemplars:
         from imas_codex.standard_names.workers import _search_reference_exemplars
 
         with patch(
-            "imas_codex.standard_names.search.search_similar_sns_with_full_docs",
+            "imas_codex.standard_names.search.search_standard_names_with_documentation",
             side_effect=RuntimeError("boom"),
         ):
             out = _search_reference_exemplars([{"description": "x"}], ["magnetics"])
@@ -190,7 +190,7 @@ class TestSearchReferenceExemplars:
         from imas_codex.standard_names.workers import _search_reference_exemplars
 
         with patch(
-            "imas_codex.standard_names.search.search_similar_sns_with_full_docs",
+            "imas_codex.standard_names.search.search_standard_names_with_documentation",
             return_value=[],
         ) as mock_search:
             _search_reference_exemplars([{"description": "alpha"}], ["magnetics"])

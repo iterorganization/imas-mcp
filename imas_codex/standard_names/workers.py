@@ -508,14 +508,14 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
 def _search_nearby_names(query: str, k: int = 5) -> list[dict]:
     """Search for existing standard names near *query* for collision avoidance.
 
-    Wraps :func:`imas_codex.standard_names.search.search_similar_names` with graceful
-    fallback — never raises, returns ``[]`` if graph or embeddings are
-    unavailable.
+    Wraps :func:`imas_codex.standard_names.search.search_standard_names_vector`
+    with graceful fallback — never raises, returns ``[]`` if graph or
+    embeddings are unavailable.
     """
     try:
-        from imas_codex.standard_names.search import search_similar_names
+        from imas_codex.standard_names.search import search_standard_names_vector
 
-        return search_similar_names(query, k=k)
+        return search_standard_names_vector(query, k=k)
     except Exception:
         return []
 
@@ -1353,7 +1353,7 @@ def _search_reference_exemplars(
     """Synthesise a query from batch items and return reference SN exemplars.
 
     Builds a query string from up to three item descriptions, calls
-    :func:`search_similar_sns_with_full_docs`, and excludes any SN whose
+    :func:`search_standard_names_with_documentation`, and excludes any SN whose
     ``id`` matches an item already present in the batch (when items carry an
     ``existing_name``).  *domains* filters via embedding-quality semantics
     only (the search itself filters by ``validation_status='valid'``).
@@ -1361,7 +1361,9 @@ def _search_reference_exemplars(
     Returns an empty list if no descriptions are available or the search
     backend is unavailable.
     """
-    from imas_codex.standard_names.search import search_similar_sns_with_full_docs
+    from imas_codex.standard_names.search import (
+        search_standard_names_with_documentation,
+    )
 
     desc_snippets = [
         item.get("description", "") for item in items[:3] if item.get("description")
@@ -1377,7 +1379,7 @@ def _search_reference_exemplars(
     )
 
     try:
-        return search_similar_sns_with_full_docs(
+        return search_standard_names_with_documentation(
             synth_query, k=k, exclude_ids=exclude_ids or None
         )
     except Exception:
@@ -1750,7 +1752,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
         reference_exemplars: list[dict] = []
         try:
             from imas_codex.standard_names.search import (
-                search_similar_sns_with_full_docs,
+                search_standard_names_with_documentation,
             )
 
             desc_snippets = [
@@ -1765,7 +1767,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     item.get("path", "").replace("/", "_") for item in batch.items
                 ]
                 reference_exemplars = await asyncio.to_thread(
-                    search_similar_sns_with_full_docs,
+                    search_standard_names_with_documentation,
                     synth_query,
                     k=5,
                     exclude_ids=batch_ids,

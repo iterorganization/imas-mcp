@@ -496,7 +496,7 @@ def _fetch_dd_paths_batch(
     return result
 
 
-def _fetch_nearby_sns(
+def _fetch_nearby_standard_names(
     gc: Any,
     items: list[dict[str, Any]],
     k: int = _NEARBY_K,
@@ -541,6 +541,11 @@ def _fetch_nearby_sns(
             result[sid] = []
 
     return result
+
+
+# Plan 40 §17 — backwards-compat alias for tests; canonical is
+# ``_fetch_nearby_standard_names``.
+_fetch_nearby_sns = _fetch_nearby_standard_names
 
 
 def _fetch_domain_siblings(
@@ -824,16 +829,16 @@ async def enrich_contextualise_worker(
         ):
             from imas_codex.graph.client import GraphClient
             from imas_codex.standard_names.graph_ops import (
-                fetch_docs_review_feedback_for_sns,
+                fetch_docs_review_feedback_for_standard_names,
             )
 
             with GraphClient() as gc:
                 dd_data = _fetch_dd_paths_batch(gc, _sn_ids)
-                nearby_data = _fetch_nearby_sns(gc, _items)
+                nearby_data = _fetch_nearby_standard_names(gc, _items)
                 sibling_data = _fetch_domain_siblings(gc, _items)
                 link_data = _fetch_link_candidates(gc, dd_data, _items)
                 related_data = _fetch_related_neighbours(gc, dd_data, _items)
-            docs_feedback = fetch_docs_review_feedback_for_sns(_sn_ids)
+            docs_feedback = fetch_docs_review_feedback_for_standard_names(_sn_ids)
             return (
                 dd_data,
                 nearby_data,

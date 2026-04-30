@@ -213,16 +213,18 @@ class TestFetchDDPathsBatch:
 
 
 class TestFetchNearbySNs:
-    """Test _fetch_nearby_sns with mocked graph client."""
+    """Test _fetch_nearby_standard_names with mocked graph client."""
 
     def test_returns_per_item(self) -> None:
-        from imas_codex.standard_names.enrich_workers import _fetch_nearby_sns
+        from imas_codex.standard_names.enrich_workers import (
+            _fetch_nearby_standard_names,
+        )
 
         gc = MagicMock()
         gc.query.return_value = FAKE_NEARBY_ROWS
 
         items = [_make_item("electron_temperature")]
-        result = _fetch_nearby_sns(gc, items, k=6)
+        result = _fetch_nearby_standard_names(gc, items, k=6)
 
         assert "electron_temperature" in result
         assert len(result["electron_temperature"]) == 2
@@ -230,13 +232,15 @@ class TestFetchNearbySNs:
 
     def test_vector_search_failure_continues(self) -> None:
         """If vector search fails for one item, return empty list."""
-        from imas_codex.standard_names.enrich_workers import _fetch_nearby_sns
+        from imas_codex.standard_names.enrich_workers import (
+            _fetch_nearby_standard_names,
+        )
 
         gc = MagicMock()
         gc.query.side_effect = RuntimeError("index not found")
 
         items = [_make_item("electron_temperature")]
-        result = _fetch_nearby_sns(gc, items, k=6)
+        result = _fetch_nearby_standard_names(gc, items, k=6)
 
         assert result["electron_temperature"] == []
 
@@ -628,11 +632,13 @@ class TestContextualiseIntegration:
     def test_nearby_query_syntax(self) -> None:
         """Vector search query runs without Cypher errors."""
         from imas_codex.graph.client import GraphClient
-        from imas_codex.standard_names.enrich_workers import _fetch_nearby_sns
+        from imas_codex.standard_names.enrich_workers import (
+            _fetch_nearby_standard_names,
+        )
 
         item = _make_item("__nonexistent_test_id__")
         with GraphClient() as gc:
-            result = _fetch_nearby_sns(gc, [item], k=2)
+            result = _fetch_nearby_standard_names(gc, [item], k=2)
         assert isinstance(result, dict)
 
     def test_siblings_query_syntax(self) -> None:
