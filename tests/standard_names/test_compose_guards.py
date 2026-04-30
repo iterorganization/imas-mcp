@@ -1,6 +1,6 @@
 """Compose-prompt guard tests for HARD PRE-EMIT CHECKS (Phase 5d).
 
-Tests that compose_system.md contains the required guard content and
+Tests that generate_name_system.md contains the required guard content and
 that the rendered prompt includes all ten HARD PRE-EMIT CHECKS.  These
 are structural/content tests — they do not call the LLM.
 
@@ -20,8 +20,8 @@ from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
 
 def _load_compose_system_raw() -> str:
-    """Read the raw (un-rendered) compose_system.md template."""
-    path = PROMPTS_DIR / "sn" / "compose_system.md"
+    """Read the raw (un-rendered) generate_name_system.md template."""
+    path = PROMPTS_DIR / "sn" / "generate_name_system.md"
     return path.read_text(encoding="utf-8")
 
 
@@ -31,7 +31,7 @@ def _load_compose_system_raw() -> str:
 
 
 class TestHardPreEmitChecksPresence:
-    """Verify all 10 HARD PRE-EMIT CHECKS are present in compose_system.md."""
+    """Verify all 10 HARD PRE-EMIT CHECKS are present in generate_name_system.md."""
 
     @pytest.fixture(autouse=True)
     def _load(self) -> None:

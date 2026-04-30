@@ -1426,7 +1426,7 @@ classes:
         description: >-
           JSON-encoded dict of per-file 16-char hex digests that
           contributed to ``pipeline_hash``.  Allows precise diff
-          reporting ("compose_system.md changed") without storing the
+          reporting ("generate_name_system.md changed") without storing the
           full file contents.
         range: string
       status:

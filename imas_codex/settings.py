@@ -725,8 +725,8 @@ def get_sn_retry_k_expansion() -> int:
 def get_compose_lean() -> bool:
     """Whether to use the lean compose system prompt (≤8K tokens).
 
-    When True, workers.compose_worker selects ``sn/compose_system_lean``
-    instead of the full 39K-token ``sn/compose_system`` template, and caps
+    When True, workers.compose_worker selects ``sn/generate_name_system_lean``
+    instead of the full 39K-token ``sn/generate_name_system`` template, and caps
     ``existing_names`` at 50 (vs 200).  Reduces per-batch cost ~4× (Phase A
     of plan 43 — see plans/features/standard-names/43-pipeline-rd-fix.md).
 

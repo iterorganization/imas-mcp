@@ -3,7 +3,7 @@
 Verifies that:
 1. The shared `_coordinate_conventions.md` fragment forbids citing COCOS-N
    numbers in description / documentation prose.
-2. Both `compose_system.md` and `enrich_system.md` (which include the fragment)
+2. Both `generate_name_system.md` and `enrich_system.md` (which include the fragment)
    render the COCOS-N prohibition.
 3. The "See also:" trailer pattern is explicitly forbidden in `enrich_system.md`
    PR-3 (cross-references must be inline, not appended as a trailing block).
@@ -153,12 +153,12 @@ class TestEnrichSystemSignConventionExample:
 
 
 # ---------------------------------------------------------------------------
-# compose_system.md — DS-5 sign-convention rule
+# generate_name_system.md — DS-5 sign-convention rule
 # ---------------------------------------------------------------------------
 
 
 class TestComposeSystemDS5:
-    PATH = "sn/compose_system.md"
+    PATH = "sn/generate_name_system.md"
 
     def test_ds5_section_present(self) -> None:
         raw = _load(self.PATH)
@@ -238,7 +238,7 @@ class TestRenderedPromptIncludesCocosProhibition:
         )
 
         clear_context_cache()
-        rendered = render_prompt("sn/compose_system", build_compose_context())
+        rendered = render_prompt("sn/generate_name_system", build_compose_context())
         normalized = re.sub(r"\s+", " ", rendered)
         assert "COCOS Convention" in rendered
         assert "NEVER cite a COCOS number" in normalized

@@ -135,7 +135,7 @@ class TestComposePromptPreviousName:
             "cluster_context": "",
             "nearby_existing_names": [],
         }
-        rendered = render_prompt("sn/compose_dd", context)
+        rendered = render_prompt("sn/generate_name_dd", context)
         assert "Previous generation:" in rendered
         assert "poloidal_magnetic_flux" in rendered
 
@@ -161,7 +161,7 @@ class TestComposePromptPreviousName:
             "cluster_context": "",
             "nearby_existing_names": [],
         }
-        rendered = render_prompt("sn/compose_dd", context)
+        rendered = render_prompt("sn/generate_name_dd", context)
         assert "human-accepted" in rendered
         assert "⚠️" in rendered or "only replace" in rendered
 
@@ -182,5 +182,5 @@ class TestComposePromptPreviousName:
             "cluster_context": "",
             "nearby_existing_names": [],
         }
-        rendered = render_prompt("sn/compose_dd", context)
+        rendered = render_prompt("sn/generate_name_dd", context)
         assert "Previous generation:" not in rendered

@@ -2,8 +2,8 @@
 
 Verifies that the three W38 anti-patterns (instrument prefix carry-over,
 suffix-form for component, compound hardware identifiers) are present in
-both the system prompts (compose_system.md, compose_system_lean.md) and
-the user prompts (compose_dd.md, compose_dd_names.md).
+both the system prompts (generate_name_system.md, generate_name_system_lean.md) and
+the user prompts (generate_name_dd.md, generate_name_dd_names.md).
 
 These are content/structural assertions — they do not call the LLM.
 """
@@ -33,7 +33,9 @@ W38_GOOD_EXAMPLES = (
 W38_HARDWARE_PROPERTY_EXEMPLAR = "cross_sectional_area_of_rogowski_coil"
 
 
-@pytest.mark.parametrize("filename", ["compose_system.md", "compose_system_lean.md"])
+@pytest.mark.parametrize(
+    "filename", ["generate_name_system.md", "generate_name_system_lean.md"]
+)
 class TestSystemPromptW38Gallery:
     """The full W38 ANTI-PATTERN GALLERY block must appear in both system prompts."""
 
@@ -68,7 +70,9 @@ class TestSystemPromptW38Gallery:
         assert raw.count("Decision rule") >= 3
 
 
-@pytest.mark.parametrize("filename", ["compose_dd.md", "compose_dd_names.md"])
+@pytest.mark.parametrize(
+    "filename", ["generate_name_dd.md", "generate_name_dd_names.md"]
+)
 class TestUserPromptW38TableRows:
     """The user-facing per-batch tables must include W38 row entries."""
 
@@ -94,7 +98,7 @@ class TestSystemPromptW38Placement:
     layer, not inside the dynamic user prompt."""
 
     def test_compose_system_after_includes(self) -> None:
-        raw = _load("compose_system.md")
+        raw = _load("generate_name_system.md")
         # W38 must appear after the prelude includes; trailing tail includes
         # (e.g. _coordinate_conventions.md) may legitimately appear later.
         prelude_end = raw.index('{% include "sn/_compose_scored_examples.md" %}')
@@ -104,13 +108,13 @@ class TestSystemPromptW38Placement:
     def test_compose_system_after_emw_gallery(self) -> None:
         # W38 extends the EMW pilot gallery — must appear AFTER it so the
         # narrative flow is "polarimetry exemplars → broader rotation patterns".
-        raw = _load("compose_system.md")
+        raw = _load("generate_name_system.md")
         emw_pos = raw.index("ANTI-PATTERN GALLERY — real review failures (EMW pilot)")
         w38_pos = raw.index("W38 ANTI-PATTERN GALLERY")
         assert w38_pos > emw_pos
 
     def test_compose_system_before_curated_examples(self) -> None:
-        raw = _load("compose_system.md")
+        raw = _load("generate_name_system.md")
         w38_pos = raw.index("W38 ANTI-PATTERN GALLERY")
         examples_pos = raw.index("## Curated Examples")
         assert w38_pos < examples_pos
@@ -128,7 +132,7 @@ class TestSystemPromptRendersWithDefaultContext:
         return build_compose_context()
 
     def test_compose_system_renders(self, context: dict) -> None:
-        rendered = render_prompt("sn/compose_system", context)
+        rendered = render_prompt("sn/generate_name_system", context)
         assert "W38 ANTI-PATTERN GALLERY" in rendered
         for bad in W38_BAD_EXAMPLES:
             assert bad in rendered
@@ -136,7 +140,7 @@ class TestSystemPromptRendersWithDefaultContext:
             assert good in rendered
 
     def test_compose_system_lean_renders(self, context: dict) -> None:
-        rendered = render_prompt("sn/compose_system_lean", context)
+        rendered = render_prompt("sn/generate_name_system_lean", context)
         assert "W38 ANTI-PATTERN GALLERY" in rendered
         for bad in W38_BAD_EXAMPLES:
             assert bad in rendered

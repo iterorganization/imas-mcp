@@ -33,7 +33,7 @@ def _get_isn_context() -> dict[str, Any]:
 
 
 def build_compose_context() -> dict[str, Any]:
-    """Build rich context dict for sn/compose_system.md template.
+    """Build rich context dict for sn/generate_name_system.md template.
 
     Pulls all grammar, vocabulary, field-guidance, tag, and applicability
     data from ISN's ``get_grammar_context()`` public API, then augments

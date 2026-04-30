@@ -580,7 +580,7 @@ async def _run_model(
 
             try:
                 user_prompt = render_prompt(
-                    "sn/compose_dd", {**context, **user_context}
+                    "sn/generate_name_dd", {**context, **user_context}
                 )
             except Exception:
                 logger.warning("Failed to render prompt for batch %s", group_key)
