@@ -143,16 +143,16 @@ class TestPersistGeneratedNameBatch:
         mock_write.return_value = 2
         persist_generated_name_batch(sample_candidates, compose_model="test")
 
-        # Must embed using text_field="id" (the standard-name string)
+        # Must embed using text_field="_embed_text" (post-A1: name — description basis)
         mock_embed.assert_called_once()
         call_kwargs = mock_embed.call_args
         assert (
-            call_kwargs[1].get("text_field") == "id"
+            call_kwargs[1].get("text_field") == "_embed_text"
             or call_kwargs[0][0] is sample_candidates
         )
-        # Verify text_field kwarg is "id"
+        # Verify text_field kwarg is "_embed_text"
         _, kwargs = mock_embed.call_args
-        assert kwargs.get("text_field") == "id"
+        assert kwargs.get("text_field") == "_embed_text"
 
     @patch("imas_codex.standard_names.graph_ops._finalize_generated_name_stage")
     @patch("imas_codex.standard_names.graph_ops.write_standard_names")
