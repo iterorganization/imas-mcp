@@ -1,17 +1,24 @@
-# Plan 40 — Standard-Name Search & Fetch Facility (v3)
+# Plan 40 — Standard-Name Search & Fetch Facility (v3.1)
 
-> **Status:** v3 draft — expanded scope.
-> **Supersedes:** v2 (SHA `3d412c77`, 1280 lines), v1 (SHA `3048413e`, 1030 lines).
+> **Status:** v3.1 — incorporates `include_standard_names=True` default flip from main commit `33514f2a`. No structural rewrite vs. v3.
+> **Supersedes:** v3 (initial draft, SHA `9668afeb`, 765 lines), v2 (SHA `3d412c77`, 1280 lines), v1 (SHA `3048413e`, 1030 lines).
 > **Sibling plan:** [39 — Structured-Fanout Standard-Name Discovery](39-structured-fanout.md).
 > **Owner boundary:** plan 39 owns the **dispatcher / discovery loop**; plan 40 owns the **search & fetch internals** (writer fix, retrieval, MCP palette, naming, backing-function unification).
 >
-> ### What changed from v2 → v3
+> ### What changed v3 → v3.1
+>
+> - §1, §3.4, §7.1, §8.3, §9.7, §10, §11 (A10 demoted to verified precondition; A14 added), §12, §14, §16, §17 updated to match landed `33514f2a` defaults.
+> - **No CLI flag rename.** v3.0 proposed `--standard-names`; v3.1 keeps the existing `--include-standard-names/--no-include-standard-names` (default `True`) which already landed.
+> - **Auto-detect deferred.** v3.0 made `_detect_has_standard_names()` a Phase 3 deliverable; v3.1 demotes it to optional polish (§16 Q1). Phase 3's primary deliverable becomes the 3 new tools + renames + DD-only suppression gate.
+> - **A14 added** for the new DD-only suppression criterion.
+>
+> ### What changed v2 → v3
 >
 > 1. **MCP tool palette mirrors the DD family.** v2 only spec'd `search` + `fetch`. v3 specifies a 7-tool palette (`search_standard_names`, `fetch_standard_names`, `find_related_standard_names`, `list_standard_names`, `list_grammar_vocabulary`, `check_standard_names`, `get_standard_name_summary`) modelled 1:1 on `imas-codex-search_dd_paths`, `fetch_dd_paths`, `find_related_dd_paths`, etc.
 > 2. **Tiered grammar-segment policy.** v2's three-stream RRF treated all 12 segments equally, which lets `component=x` flood results for queries like `x_component_of_magnetic_field_at_outboard_midplane`. v3 introduces Tier 1 / Tier 2 / Tier 3 weighting (see §5.4).
 > 3. **Naming alignment.** All `_sn` / `_sns` suffixes in public APIs become `_standard_names` (full audit table in §17). Backing helper renames, MCP tool names, and CLI subcommand stems all converge.
 > 4. **Backing-function unification.** v3 mirrors `imas_codex/graph/dd_search.py`: pure functions in `imas_codex/standard_names/search.py` are consumed by **both** the discovery pipeline workers (plan 39) **and** the MCP server thin wrappers. v2 left the pipeline calling its own private helpers in parallel; v3 eliminates that drift.
-> 5. **`include_standard_names=False` default investigated and addressed.** v2 §7.3 wrongly attributed the missing palette to `dd_only`. v3 §7.1 traces it to the explicit `include_standard_names: bool = False` field at `imas_codex/llm/server.py:1768` and the matching CLI flag at `imas_codex/cli/serve.py:57`. New design: auto-detect by graph contents (mirroring `_detect_dd_only`).
+> 5. **`include_standard_names` default flipped to `True` (landed in main, commit `33514f2a`).** v2 §7.3 wrongly attributed the missing palette to `dd_only`. The real cause was `include_standard_names: bool = False` at `imas_codex/llm/server.py:1768` and `--include-standard-names` (default false) in `imas_codex/cli/serve.py:57`. Both have been flipped to **default `True`**, with a `--no-include-standard-names` opt-out. Plan 40 v3 takes that flip as a **verified precondition** (§7.1) and adds the missing `not self.dd_only` suppression (FACILITY_TOOLS-style) to keep DD-only deployments lean.
 > 6. **Phase 4 added** — pipeline call-site migration to the unified backing functions.
 > 7. **Acceptance criteria** extended with **A10–A13** covering the four new concerns.
 
@@ -118,8 +125,8 @@ Two distinct dropouts result:
   Branches do not blend; grammar-aware retrieval only fires when the caller already knows which segment to filter on, which the LLM caller almost never does.
 
 - `imas_codex/llm/server.py:3084-3260` — five SN tools registered behind `if self.include_standard_names:` gate (search, fetch, list_standard_names, list_grammar_vocabulary, list_promotion_candidates). v2 incorrectly stated four; the fifth is `list_promotion_candidates` at line 3247.
-- `imas_codex/llm/server.py:1768` — `include_standard_names: bool = False`. THIS is the gate that hides the palette by default — not `dd_only`. v2 §7.3 was wrong on this point.
-- `imas_codex/cli/serve.py:57-61` — `--include-standard-names` flag, default false, with help text `"Expose standard-name MCP tools (off by default; tools under development)"`. Aligns with v3's expanded scope: the "under development" caveat goes away once v3 lands.
+- `imas_codex/llm/server.py:1768` — `include_standard_names: bool = True` (flipped from `False` in commit `33514f2a`). Stock deployments now register the palette by default. v2 §7.3 wrongly blamed `dd_only`; the real gate has always been this field.
+- `imas_codex/cli/serve.py:57-60` — `--include-standard-names/--no-include-standard-names` flag, **default true** (since `33514f2a`), help text `"Expose standard-name MCP tools (on by default; pass --no-include-standard-names to suppress)"`. Plan 40 keeps this surface unchanged.
 
 ### 3.5 Schema (LinkML) state
 
@@ -369,18 +376,24 @@ These are the same shape as the DD `fetch_dd_paths` `include_*` kwargs, mapped o
 
 > **Owner:** plan 40. **Touches:** `imas_codex/llm/server.py`, `imas_codex/llm/sn_tools.py`, `imas_codex/cli/serve.py`.
 
-### 7.1 Why the SN palette is hidden today
+### 7.1 SN palette default state (verified precondition)
 
-`imas_codex/llm/server.py:1768` declares `include_standard_names: bool = False`, and `imas_codex/llm/server.py:3084` gates the entire SN tool block behind `if self.include_standard_names:`. The CLI surface (`imas_codex/cli/serve.py:57-61`) propagates a `--include-standard-names` flag, default false, with `"tools under development"` help text.
+**Verified at HEAD.** Commit `33514f2a` flipped both defaults:
 
-That means a stock `imas-codex serve` deployment registers **zero** SN tools — including the existing four (search, fetch, list_standard_names, list_grammar_vocabulary) and the fifth `list_promotion_candidates`. The DD family auto-detects mode in `_detect_dd_only` (`server.py:1869-1907`) and registers accordingly. The SN family does not.
+- `imas_codex/llm/server.py:1768`: `include_standard_names: bool = True` (was `False`).
+- `imas_codex/cli/serve.py:57-60`: `--include-standard-names/--no-include-standard-names`, `default=True`, help text `"Expose standard-name MCP tools (on by default; pass --no-include-standard-names to suppress)"`.
+- `tests/llm/test_tool_schemas.py::TestIncludeStandardNames` and `tests/core/test_cli.py::test_serve_default_options`/`test_serve_read_only` assert the new default.
 
-**v3 design:**
+So a stock `imas-codex serve` deployment **already registers all five existing SN tools** (search, fetch, list, list_grammar_vocabulary, list_promotion_candidates). Plan 40 inherits this and does **not** rename the flag.
 
-1. **Auto-detect.** Add `_detect_has_standard_names()` mirroring `_detect_dd_only()`. Cypher: `MATCH (sn:StandardName) RETURN count(sn) > 0 AS has_sns`. If true → register SN tools regardless of the flag.
-2. **Keep flag as override.** `--include-standard-names`/`--no-include-standard-names` becomes `--standard-names/--no-standard-names`, default `None` (auto-detect). Explicit `--no-standard-names` suppresses registration even when the graph has SNs (deployments that want a DD-only LLM-facing surface against a dual graph).
-3. **Background detection.** Like `_background_detect_dd_only`, run on a daemon thread; default to **registering** at startup so the palette appears immediately, then log if the background pass disagrees.
-4. **Drop "under development" caveat.** Help text becomes `"Expose standard-name MCP tools (auto-detected from graph contents; override with --no-standard-names)"`.
+**Remaining gap (this plan owns):** the SN block at `server.py:3084` gates only on `if self.include_standard_names:` — it does **not** check `self.dd_only`. DD-only deployments (graph with no facilities, see `_detect_dd_only` at `server.py:1869-1907`) therefore still register SN tools, which is wasteful when the operator clearly wants a stripped-down DD surface.
+
+**v3 design (minimal):**
+
+1. **Add `dd_only` suppression.** Change the Phase 3 gate to `if self.include_standard_names and not self.dd_only:`. Mirrors the FACILITY_TOOLS pattern at `server.py:1774-1783` and the `if not self.dd_only:` guards at `server.py:1979`, `2200`, `2321`, `3055`.
+2. **Background re-evaluation.** When `_background_detect_dd_only` flips `self.dd_only` to `True` after startup, log a warning that the SN tools are already registered (re-registration is not supported by FastMCP); operators should restart with the corrected flag. This matches existing FACILITY_TOOLS behaviour.
+3. **No flag rename.** `--include-standard-names/--no-include-standard-names` is the canonical name; the alternate `--standard-names` rename proposed in v3.0 is dropped.
+4. **Optional polish (deferred).** A future change can add `_detect_has_standard_names()` mirroring `_detect_dd_only()` so the flag becomes truly auto. Out of scope for plan 40 — the default-on flag already covers the intended UX.
 
 ### 7.2 Seven-tool palette specification
 
@@ -486,10 +499,10 @@ Mirrors `get_ids_summary` shape but for SN families.
 
 ### 7.3 Per-tool registration sketches
 
-Each new tool registers under the existing `if self._has_standard_names_tools():` guard (which replaces `if self.include_standard_names:`). Pattern follows existing SN block:
+Each new tool registers under the tightened guard `if self.include_standard_names and not self.dd_only:` (see §8.3 step 1). Pattern follows existing SN block:
 
 ```python
-if self._has_standard_names_tools():
+if self.include_standard_names and not self.dd_only:
     @self.mcp.tool()
     def find_related_standard_names(name: str, relationship_types: str = "all",
                                     max_results: int = 20) -> str:
@@ -574,12 +587,12 @@ Private dict-key strings (`"stale_token_sn"`, `max_per_sn` kwarg) are retained: 
 
 ### 8.3 Phase 3 — MCP palette (1 PR)
 
-1. Add `_detect_has_standard_names` + `_background_detect_has_standard_names` mirror in `server.py`.
-2. Replace `if self.include_standard_names:` gate with `if self._has_standard_names_tools():`.
-3. Register the three new tools (`find_related_standard_names`, `check_standard_names`, `get_standard_name_summary`).
-4. Update CLI flag in `cli/serve.py`: rename to `--standard-names/--no-standard-names`, default `None` (auto-detect). Keep `--include-standard-names` as a hidden alias for one release.
-5. Naming alignment renames per §7.5 + §17.
-6. Tests: §9.7 (registration auto-detect), §9.8 (find_related buckets), §9.9 (check suggestions), §9.10 (summary).
+1. Tighten the registration gate at `server.py:3084` from `if self.include_standard_names:` to `if self.include_standard_names and not self.dd_only:` — adds DD-only suppression (FACILITY_TOOLS-style).
+2. Register the three new tools (`find_related_standard_names`, `check_standard_names`, `get_standard_name_summary`).
+3. Naming alignment renames per §7.5 + §17.
+4. Tests: §9.7 (registration & dd_only suppression), §9.8 (find_related buckets), §9.9 (check suggestions), §9.10 (summary).
+5. **No CLI flag rename.** `--include-standard-names/--no-include-standard-names` (default `True`) is already the canonical surface as of commit `33514f2a`.
+6. *(Optional polish, may slip to a follow-up.)* Add `_detect_has_standard_names` mirroring `_detect_dd_only` so the default can become truly auto-detected. Not required for plan 40 acceptance.
 
 **Exit criterion:** A10–A13 satisfied (§11).
 
@@ -624,12 +637,20 @@ Private dict-key strings (`"stale_token_sn"`, `max_per_sn` kwarg) are retained: 
 
 - `…::test_mode_vector_skips_keyword_and_grammar_streams`
 
-### 9.7 Registration auto-detect *(NEW in v3)*
+### 9.7 Registration & DD-only suppression
 
-- `tests/llm/test_sn_tool_registration.py::test_palette_registered_when_graph_has_sns` — start `IMASCodexServer` with auto-detect against a graph containing `:StandardName`; assert all 7 tools registered.
-- `…::test_palette_suppressed_with_explicit_no_standard_names` — `--no-standard-names` → 0 SN tools.
-- `…::test_palette_suppressed_when_graph_empty_of_sns` — DD-only graph → no SN tools.
-- `…::test_background_detection_logs_correction` — startup default registers; background pass disagrees; log line emitted.
+**Already on main (verified at HEAD, do not duplicate):** `tests/llm/test_tool_schemas.py::TestIncludeStandardNames`:
+- `test_sn_tools_present_by_default` — default `True` registers the SN block.
+- `test_sn_tools_present_in_rw_server` — read-write server includes SN tools.
+- `test_sn_tools_absent_when_opted_out` — `include_standard_names=False` suppresses.
+- `test_sn_tools_present_when_flag_set` — explicit `True` registers.
+
+`tests/core/test_cli.py::test_serve_default_options` and `test_serve_read_only` already assert the CLI default propagates as `include_standard_names=True`.
+
+**New tests this plan adds** (`tests/llm/test_sn_tool_registration.py`):
+- `test_sn_tools_absent_under_dd_only` — `dd_only=True, include_standard_names=True` → 0 SN tools registered (covers the gate tightening in §8.3 step 1).
+- `test_sn_tools_present_when_dd_only_false_and_include_true` — explicit positive baseline mirroring the FACILITY_TOOLS pattern.
+- *(Optional, only if §8.3 step 6 lands in this plan.)* `test_palette_auto_detected_against_sn_graph` — `_detect_has_standard_names()` returns True against a graph populated with `:StandardName`.
 
 ### 9.8 `find_related_standard_names` buckets *(NEW in v3)*
 
@@ -664,7 +685,7 @@ Re-uses `tests/graph/test_schema_compliance.py` per §4.5; the test re-parses Li
 
 ## 10. Configuration
 
-No new YAML keys. Existing `imas_codex/schemas/standard_name.yaml` extended (§4.2). CLI flag rename per §8.3.
+No new YAML keys. Existing `imas_codex/schemas/standard_name.yaml` extended (§4.2). No CLI flag rename — `--include-standard-names/--no-include-standard-names` (default `True`) is already the canonical surface as of `33514f2a`.
 
 ---
 
@@ -679,10 +700,11 @@ No new YAML keys. Existing `imas_codex/schemas/standard_name.yaml` extended (§4
 - **A7.** `grammar_parse_fallback = true` set on parser-error names; columns/edges absent.
 - **A8.** Schema-compliance test passes against regenerated models without manual fixture edits.
 - **A9.** `StandardNameAttachment.grammar_fields` round-trips the new column dict.
-- **A10.** *(NEW)* When the graph holds StandardNames, all 7 SN tools are visible in the MCP palette without any `--include-standard-names`-style flag.
+- **A10.** *(VERIFIED PRECONDITION, credit `33514f2a`.)* All 5 existing SN tools register by default in a stock `imas-codex serve` deployment; `tests/llm/test_tool_schemas.py::TestIncludeStandardNames` already enforces this on main. Plan 40 inherits and does not regress.
 - **A11.** *(NEW)* Query `x_component_of_magnetic_field_at_outboard_midplane` ranks the matching SN first; no `component=x` flood pushes it out of the top-k (tested in a fixture catalog with ≥ 50 `component=x` decoy SNs).
 - **A12.** *(NEW)* `find_related_standard_names("electron_temperature")` returns ≥ 3 distinct buckets in the markdown output.
 - **A13.** *(NEW)* `grep -r "_sn\|_sns" imas_codex/standard_names/ imas_codex/llm/sn_tools.py` matches no public symbols (private dict-keys/kwargs may remain).
+- **A14.** *(NEW)* Under `dd_only=True`, no SN tools are registered even with `include_standard_names=True` — covered by the new `test_sn_tools_absent_under_dd_only` test (§9.7).
 
 ---
 
@@ -690,7 +712,7 @@ No new YAML keys. Existing `imas_codex/schemas/standard_name.yaml` extended (§4
 
 - **Open-vocab explosion.** Populating `physical_base` columns from arbitrary parsed tokens means the column carries an open value space. Acceptable: it is exactly what `physical_base` is in ISN. Downstream queries that join on `physical_base` already use `=` (no need for GrammarToken existence).
 - **Tier policy mis-tuned.** Tier weights {1.0, 0.5, 0.25} are seeded; observability over real query traffic may show mis-classification (e.g., `position` should perhaps be Tier 1). v3 lands the policy as a constant in `grammar_query.py`; revisiting weights is a follow-up plan, not a blocker.
-- **Auto-detect race on cold start.** Startup default for SN registration is `True` (palette appears immediately); background detection may correct in either direction. Tests cover both branches (§9.7).
+- **DD-only deployments still see SN tools today.** Mitigated by the §8.3 step 1 gate tightening (`and not self.dd_only`); covered by A14.
 - **Pipeline migration churn (Phase 4).** Plan 39 may have unmerged work that touches the same workers. Phase 4 lands last for that reason.
 
 ---
@@ -710,9 +732,9 @@ No new metrics infra.
 
 ## 14. Documentation
 
-- `AGENTS.md` § "Standard Names" — update the MCP-tool subsection to list seven tools and link to §7.2 of this plan.
-- README MCP tool table — extend.
-- `imas-codex serve --help` — refreshed help text per §7.1.
+- `AGENTS.md` § "Standard Names" — update the MCP-tool subsection to list seven tools and link to §7.2 of this plan; note that registration is now default-on (since `33514f2a`) and document the `--no-include-standard-names` opt-out.
+- README MCP tool table — extend with the three new tools; mention the default-on flag.
+- `imas-codex serve --help` — already updated by `33514f2a` to `"on by default; pass --no-include-standard-names to suppress"`. No further change unless the optional auto-detect (§8.3 step 6) lands.
 
 ---
 
@@ -726,9 +748,8 @@ Phase 4 (§8.4) is the explicit hand-off: plan-39 workers stop importing `_segme
 
 ## 16. Open Questions
 
-1. **Auto-detect vs. always-on registration.** Phase 3 lands auto-detection. An alternative: always register, return a graceful "no standard names in graph" stub. Auto-detection is more honest (palette contents reflect graph contents) and matches the DD pattern. Confirm with reviewers.
+1. **Auto-detect for SN registration (§8.3 step 6).** Should plan 40 also add `_detect_has_standard_names()` mirroring `_detect_dd_only()`, or defer? Default-on flag already covers UX; auto-detect is purely "DD-only graph shouldn't even need `--no-include-standard-names`". Recommend defer.
 2. **Tier weights {1.0, 0.5, 0.25}.** Magic numbers seeded from the worked example; should we instead tune from a held-out query set? Defer — a separate plan once we have query traffic to learn from.
-3. **Hidden CLI alias for one release** of `--include-standard-names`. Drop in v3.1, or keep indefinitely? Suggest one-release deprecation.
 4. **`group_by_base` semantics across mode="vector"`.** Group-by-base is meaningful only when grammar is populated; for vector-only queries, `group_by_base=True` should error (or silently no-op). Suggest error with explicit message.
 5. **`fetch` `return_fields` vs `include_*` precedence.** When both `return_fields` and `include_documentation` are set, which wins? Suggest `return_fields` is the final whitelist; `include_*` are convenience macros that expand into the whitelist.
 
@@ -757,9 +778,9 @@ Phase 4 (§8.4) is the explicit hand-off: plan-39 workers stop importing `_segme
 | `imas_codex/standard_names/orphan_sweep.py`         | `"stale_token_sn"` (dict key)           | `"stale_token_sn"`                               | internal   | **keep** (string literal)         |
 | `imas_codex/standard_names/graph_ops.py`            | `fetch_docs_review_feedback_for_sns`    | `fetch_docs_review_feedback_for_standard_names`  | public     | rename + 1-release alias          |
 | `imas_codex/standard_names/graph_ops.py`            | `_write_segment_edges`                  | `_write_grammar_decomposition`                   | private    | rename + behaviour change         |
-| `imas_codex/cli/serve.py`                           | `--include-standard-names`              | `--standard-names`/`--no-standard-names`         | public     | rename + 1-release hidden alias   |
-| `imas_codex/llm/server.py`                          | `include_standard_names: bool = False`  | (replaced by `_has_standard_names_tools()` gate) | public     | replace                           |
+| `imas_codex/cli/serve.py`                           | `--include-standard-names`              | `--include-standard-names`                       | public     | **keep** (default flipped to True in `33514f2a`) |
+| `imas_codex/llm/server.py`                          | `include_standard_names: bool = True`   | `include_standard_names: bool = True`            | public     | **keep**; gate becomes `and not self.dd_only`    |
 
 ---
 
-*End of plan 40 v3.*
+*End of plan 40 v3.1 — incorporates `33514f2a` `include_standard_names=True` default flip. Updated sections: §1 (changes header), §7.1, §8.3, §9.7, §10, §11 (A10/A14), §12, §14, §16, §17.*
