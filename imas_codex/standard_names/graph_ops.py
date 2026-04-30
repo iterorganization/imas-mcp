@@ -5253,6 +5253,7 @@ def claim_generate_name_seed_and_expand(
     facility: str | None = None,
     batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
+    domain: str | None = None,
 ) -> list[dict[str, Any]]:
     """Claim StandardNameSource nodes (status='extracted') for name generation.
 
@@ -5275,6 +5276,11 @@ def claim_generate_name_seed_and_expand(
         Maximum batch size including the seed.
     timeout_seconds:
         Stale-claim recovery window.
+    domain:
+        Optional physics domain to restrict claims to DD-backed sources
+        whose linked IMASNode has ``physics_domain = domain``.  When set,
+        the seed step only claims items from that domain, so concurrent
+        ``--physics-domain`` runs do not compete for each other's seeds.
 
     Returns
     -------
@@ -5297,6 +5303,18 @@ def claim_generate_name_seed_and_expand(
         )
         extra_params["facility"] = facility
 
+    # Optional domain filter for DD sources — restricts seed to the target domain
+    # so concurrent domain-specific runs don't compete for each other's items.
+    domain_where = ""
+    if domain:
+        domain_where = (
+            "AND (sns.source_type != 'dd' OR EXISTS {"
+            "  MATCH (sns)-[:FROM_DD_PATH]->(n:IMASNode)"
+            "  WHERE n.physics_domain = $domain"
+            "})"
+        )
+        extra_params["domain"] = domain
+
     with GraphClient() as gc:
         with gc.session() as session:
             tx = session.begin_transaction()
@@ -5311,6 +5329,7 @@ def claim_generate_name_seed_and_expand(
                                OR sns.claimed_at < datetime()
                                     - duration($cutoff))
                           {facility_where}
+                          {domain_where}
                         WITH sns ORDER BY rand() LIMIT 1
                         SET sns.claimed_at = datetime(),
                             sns.claim_token = $token

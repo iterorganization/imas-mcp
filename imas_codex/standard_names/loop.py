@@ -598,6 +598,7 @@ def _build_pool_specs(
     review_name_backlog_cap: int | None = None,
     review_docs_backlog_cap: int | None = None,
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    only_domain: str | None = None,
 ) -> list[Any]:
     """Construct 6 :class:`PoolSpec` objects wiring claims → batch processors.
 
@@ -724,7 +725,10 @@ def _build_pool_specs(
     specs = [
         PoolSpec(
             name="generate_name",
-            claim=_make_claim_adapter(claim_generate_name_seed_and_expand),
+            claim=_make_claim_adapter(
+                claim_generate_name_seed_and_expand,
+                **({"domain": only_domain} if only_domain else {}),
+            ),
             process=_make_process_adapter(process_generate_name_batch),
             release=_make_release_adapter(
                 release_generate_name_claims, ids_kwarg="source_ids"
@@ -1042,6 +1046,7 @@ async def run_sn_pools(
             review_name_backlog_cap=review_name_backlog_cap,
             review_docs_backlog_cap=review_docs_backlog_cap,
             on_event=on_event,
+            only_domain=only_domain,
         )
 
         # ── Wire pool health into display state ───────────────────
