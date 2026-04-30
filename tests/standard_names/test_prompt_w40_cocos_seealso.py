@@ -153,61 +153,36 @@ class TestEnrichSystemSignConventionExample:
 
 
 # ---------------------------------------------------------------------------
-# generate_name_system.md — DS-5 sign-convention rule
+# generate_name_system.md — DS documentation sections removed (compose-only)
 # ---------------------------------------------------------------------------
 
 
-class TestComposeSystemDS5:
+class TestComposeSystemDocSectionsRemoved:
+    """DS-1..DS-8 and the Documentation Template are documentation-scope content
+    that belongs in generate_docs_system.md, not the compose prompt. Verify they
+    are absent — the compose prompt produces name/grammar/description only."""
+
     PATH = "sn/generate_name_system.md"
 
-    def test_ds5_section_present(self) -> None:
+    def test_ds5_removed_from_compose(self) -> None:
         raw = _load(self.PATH)
-        assert "DS-5 Sign conventions" in raw
+        assert "DS-5 Sign conventions" not in raw
 
-    def test_ds5_forbids_cocos_n_in_prose(self) -> None:
+    def test_documentation_template_removed(self) -> None:
         raw = _load(self.PATH)
-        ds5_idx = raw.index("DS-5 Sign conventions")
-        ds5_block = raw[ds5_idx : ds5_idx + 2000]
-        normalized = re.sub(r"\s+", " ", ds5_block)
-        assert "NEVER cite a COCOS number" in normalized
+        assert "### Documentation Template" not in raw
 
-    def test_ds5_example_uses_pure_geometry(self) -> None:
+    def test_documentation_structure_removed(self) -> None:
         raw = _load(self.PATH)
-        # The DS-5 example MUST express the sign in physical terms (counter-
-        # clockwise viewed from above, increasing toroidal angle, etc.) without
-        # citing a COCOS number.
-        ds5_idx = raw.index("DS-5 Sign conventions")
-        ds5_block = raw[ds5_idx : ds5_idx + 2000]
-        assert "counter-clockwise" in ds5_block
-        # And the DS-5 examples themselves must not cite COCOS-N.
-        # (We allow the structured COCOS reference TABLE elsewhere in the file
-        # under {% if cocos_version %}, but DS-5's free-text examples must be
-        # COCOS-number-free.)
-        cocos_n_pattern = re.compile(r"COCOS[\s-]?(?:N|\d)")
-        # Find all matches inside DS-5's example block (between "For example:"
-        # and the next heading).
-        try:
-            ex_start = ds5_block.index("For example:")
-            ex_end = ds5_block.index("If you cannot supply")
-            example_text = ds5_block[ex_start:ex_end]
-            assert not cocos_n_pattern.search(example_text), (
-                f"DS-5 example block still cites COCOS-N: "
-                f"{cocos_n_pattern.findall(example_text)}"
-            )
-        except ValueError:
-            pytest.fail("DS-5 example block markers not found")
+        assert "### Documentation Structure" not in raw
 
-    def test_cocos_dependent_rule_does_not_demand_cocos_n_in_prose(self) -> None:
-        """The 'sign convention paragraph MUST be specific to COCOS N' rule
-        was removed — it told the LLM to literally name the COCOS number.
-        """
-        raw = _load(self.PATH)
-        # The old text "MUST be specific to COCOS {{ cocos_version }} — not
-        # generic" actively encouraged the leak. Verify it is gone.
-        assert "MUST be specific to COCOS {{ cocos_version }}" not in raw
-        # The replacement must instruct the LLM not to cite the number.
+    def test_cocos_prohibition_still_available_via_include(self) -> None:
+        """The COCOS-N prohibition lives in shared/_coordinate_conventions.md
+        and is included by both compose and enrich prompts — verify the
+        shared fragment still carries it."""
+        raw = _load("shared/sn/_coordinate_conventions.md")
         normalized = re.sub(r"\s+", " ", raw)
-        assert "DO NOT cite the COCOS number" in normalized
+        assert "MUST NEVER appear" in normalized
 
 
 # ---------------------------------------------------------------------------
@@ -241,4 +216,4 @@ class TestRenderedPromptIncludesCocosProhibition:
         rendered = render_prompt("sn/generate_name_system", build_compose_context())
         normalized = re.sub(r"\s+", " ", rendered)
         assert "COCOS Convention" in rendered
-        assert "NEVER cite a COCOS number" in normalized
+        assert "MUST NEVER appear" in normalized

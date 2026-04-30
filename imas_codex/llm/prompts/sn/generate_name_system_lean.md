@@ -354,55 +354,23 @@ is locus metadata; the physics base is what varies across DD paths.
   `thomson_scattering` IDS describe TS quantities), drop the instrument locus entirely —
   use the bare physics name.
 
-### ANTI-PATTERN GALLERY — real review failures (EMW pilot)
+### ANTI-PATTERN REFERENCE — real review failures
 
-These are real names produced in the EMW pilot with verbatim reviewer critique and the
-corrected canonical form. Study them before composing names for polarimetry, interferometry,
-or any diagnostic-heavy IDS.
+Curated from the EMW pilot (polarimetry) and W37 rotation Set C. Study these before
+composing names for any diagnostic-heavy IDS.
 
-**Entry 1 — Instrument as bare prefix**
+**EMW-1 — Instrument as bare prefix**
 - ❌ `polarimeter_laser_wavelength` (score 0.50)
-- *Critic:* "Under rc21 canonical rendering, named-entity context should generally appear as
-  a postfix locus; `polarimeter` is an instrument identifier, not a valid qualifier."
 - ✅ `vacuum_wavelength_of_polarimeter_beam`
-- *Fix:* Move instrument to `_of_` locus; add physical qualifier `vacuum_` to disambiguate
-  from in-plasma wavelength.
+- *Fix:* Move instrument to `_of_` locus; add physical qualifier `vacuum_`.
 
-**Entry 2 — State prefix + instrument identity + unit mismatch**
+**EMW-2 — State prefix + unregistered base → emit vocab_gap**
 - ❌ `initial_ellipticity_of_polarimeter_channel_beam` (score 0.3625)
-- *Critic:* "'initial' is not a registered operator or qualifier; 'polarimeter_channel_beam'
-  embeds instrument identity violating DD-independence; unit 'm' is incorrect for ellipticity
-  (dimensionless)."
 - ✅ `ellipticity_angle_of_polarimeter_beam` — `ellipticity_angle` is a novel
   `physical_base` token (allowed since `physical_base` is open). Auto-VocabGap
-  tracking will surface it for ISN review. No need to emit a `vocab_gap` exit.
+  tracking will surface it for ISN review.
 - *Fix:* Drop `initial_`; simplify locus to `_of_polarimeter_beam`; surface vocab gap
   rather than fabricating a base token.
-
-**Entry 3 — State prefix + vocab gap + unit mismatch**
-- ❌ `initial_polarization_of_polarimeter_channel_beam` (score 0.3625)
-- *Critic:* "'polarization' base uncertain — propose `polarization_angle` (a novel but
-  well-formed `physical_base` token); 'initial' prefix is a state descriptor that should be
-  excluded; unit 'm' is wrong (should be rad or dimensionless)."
-- ✅ `polarization_angle_of_polarimeter_beam`
-- *Fix:* Drop `initial_`; use `polarization_angle` (registered, unit `rad`); simplify
-  locus to `_of_polarimeter_beam`.
-
-**Entry 4 — Non-registered compound locus**
-- ❌ `ellipticity_of_polarimeter_channel_beam` (score 0.4375)
-- *Critic:* "'polarimeter_channel_beam' is not a registered locus; 'ellipticity' base
-  status uncertain against the closed vocabulary."
-- ✅ `ellipticity_angle_of_polarimeter_beam` (pending vocab registration for `ellipticity_angle`)
-- *Fix:* Strip the sub-component qualifier `_channel` from the locus — `_of_polarimeter_beam`
-  is the registered form; use the most specific registered base token available.
-
-**Entry 5 — Instrument identity in locus + base ambiguity**
-- ❌ `polarization_of_polarimeter_channel_beam` (score 0.45)
-- *Critic:* "Instrument-specific naming and state prefix; 'polarization' base uncertain
-  against closed vocabulary; unit 'm' is wrong (should be rad)."
-- ✅ `polarization_angle_of_polarimeter_beam`
-- *Fix:* Use `polarization_angle` (registered base, unit `rad`); simplify locus by
-  removing `_channel` sub-component identifier.
 
 **Exemplar — proposing a new `physical_base`:**
 
@@ -509,14 +477,10 @@ Each candidate MUST include:
 - `source_id`: full DD path (e.g., "equilibrium/time_slice/profiles_1d/psi")
 - `standard_name`: the composed name in snake_case
 - `description`: one-sentence summary, **under 120 characters**
-- `documentation`: rich documentation (target 150-400 words): opening definition, defining equation ($$...$$, all variables defined with units), physical significance, typical values, sign convention if COCOS-dependent, cross-references
 - `kind`: one of `"scalar"`, `"vector"`, `"metadata"`
-- `links`: array of 4-8 related standard names, each prefixed with `name:` (e.g., `"name:electron_temperature"`)
 - `dd_paths`: array of IMAS DD paths this name maps to (include the source_id at minimum)
 - `grammar_fields`: dict of grammar fields used (only non-null fields)
-- `reason`: brief justification
-- `validity_domain`: physical region where meaningful or `null`
-- `constraints`: array of physical constraints (e.g., `["T_e > 0"]`)
+- `reason`: brief justification (≤25 words — list grammar tokens used; do not restate description)
 
 ### Kind Classification
 

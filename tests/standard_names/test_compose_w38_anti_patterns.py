@@ -37,11 +37,11 @@ W38_HARDWARE_PROPERTY_EXEMPLAR = "cross_sectional_area_of_rogowski_coil"
     "filename", ["generate_name_system.md", "generate_name_system_lean.md"]
 )
 class TestSystemPromptW38Gallery:
-    """The full W38 ANTI-PATTERN GALLERY block must appear in both system prompts."""
+    """The W38 anti-pattern entries must appear in both system prompts."""
 
     def test_gallery_heading(self, filename: str) -> None:
         raw = _load(filename)
-        assert "W38 ANTI-PATTERN GALLERY" in raw
+        assert "ANTI-PATTERN REFERENCE" in raw or "W38 ANTI-PATTERN GALLERY" in raw
 
     def test_three_anti_pattern_headers(self, filename: str) -> None:
         raw = _load(filename)
@@ -102,20 +102,19 @@ class TestSystemPromptW38Placement:
         # W38 must appear after the prelude includes; trailing tail includes
         # (e.g. _coordinate_conventions.md) may legitimately appear later.
         prelude_end = raw.index('{% include "sn/_compose_scored_examples.md" %}')
-        w38_pos = raw.index("W38 ANTI-PATTERN GALLERY")
+        w38_pos = raw.index("W38-A1")
         assert w38_pos > prelude_end
 
-    def test_compose_system_after_emw_gallery(self) -> None:
-        # W38 extends the EMW pilot gallery — must appear AFTER it so the
-        # narrative flow is "polarimetry exemplars → broader rotation patterns".
+    def test_emw_before_w38_in_reference(self) -> None:
+        # EMW entries appear before W38 entries in the consolidated reference.
         raw = _load("generate_name_system.md")
-        emw_pos = raw.index("ANTI-PATTERN GALLERY — real review failures (EMW pilot)")
-        w38_pos = raw.index("W38 ANTI-PATTERN GALLERY")
+        emw_pos = raw.index("EMW-1")
+        w38_pos = raw.index("W38-A1")
         assert w38_pos > emw_pos
 
     def test_compose_system_before_curated_examples(self) -> None:
         raw = _load("generate_name_system.md")
-        w38_pos = raw.index("W38 ANTI-PATTERN GALLERY")
+        w38_pos = raw.index("W38-A1")
         examples_pos = raw.index("## Curated Examples")
         assert w38_pos < examples_pos
 
@@ -133,7 +132,7 @@ class TestSystemPromptRendersWithDefaultContext:
 
     def test_compose_system_renders(self, context: dict) -> None:
         rendered = render_prompt("sn/generate_name_system", context)
-        assert "W38 ANTI-PATTERN GALLERY" in rendered
+        assert "W38-A1" in rendered
         for bad in W38_BAD_EXAMPLES:
             assert bad in rendered
         for good in W38_GOOD_EXAMPLES:

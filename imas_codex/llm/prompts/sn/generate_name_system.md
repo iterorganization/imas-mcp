@@ -248,61 +248,22 @@ is locus metadata; the physics base is what varies across DD paths.
   `thomson_scattering` IDS describe TS quantities), drop the instrument locus entirely —
   use the bare physics name.
 
-### ANTI-PATTERN GALLERY — real review failures (EMW pilot)
+### ANTI-PATTERN REFERENCE — real review failures
 
-These are real names produced in the EMW pilot with verbatim reviewer critique and the
-corrected canonical form. Study them before composing names for polarimetry, interferometry,
-or any diagnostic-heavy IDS.
+Curated from the EMW pilot (polarimetry) and W37 rotation Set C (spectrometers,
+gyrokinetics, wall geometry). Study these before composing names for any
+diagnostic-heavy IDS.
 
-**Entry 1 — Instrument as bare prefix**
+**EMW-1 — Instrument as bare prefix**
 - ❌ `polarimeter_laser_wavelength` (score 0.50)
-- *Critic:* "Under rc21 canonical rendering, named-entity context should generally appear as
-  a postfix locus; `polarimeter` is an instrument identifier, not a valid qualifier."
 - ✅ `vacuum_wavelength_of_polarimeter_beam`
-- *Fix:* Move instrument to `_of_` locus; add physical qualifier `vacuum_` to disambiguate
-  from in-plasma wavelength.
+- *Fix:* Move instrument to `_of_` locus; add physical qualifier `vacuum_`.
 
-**Entry 2 — State prefix + instrument identity + unit mismatch**
+**EMW-2 — State prefix + unregistered base → emit vocab_gap**
 - ❌ `initial_ellipticity_of_polarimeter_channel_beam` (score 0.3625)
-- *Critic:* "'initial' is not a registered operator or qualifier; 'polarimeter_channel_beam'
-  embeds instrument identity violating DD-independence; unit 'm' is incorrect for ellipticity
-  (dimensionless)."
 - ✅ Emit `vocab_gap` — `ellipticity` is not in the closed `physical_base` vocabulary.
-  Proposed token: `ellipticity_angle` (unit: `rad`) pending vocabulary registration.
 - *Fix:* Drop `initial_`; simplify locus to `_of_polarimeter_beam`; surface vocab gap
   rather than fabricating a base token.
-
-**Entry 3 — State prefix + vocab gap + unit mismatch**
-- ❌ `initial_polarization_of_polarimeter_channel_beam` (score 0.3625)
-- *Critic:* "'polarization' is not confirmed in the closed physical_base vocabulary;
-  'initial' prefix is a state descriptor that should be excluded; unit 'm' is wrong
-  (should be rad or dimensionless)."
-- ✅ `polarization_angle_of_polarimeter_beam`
-- *Fix:* Drop `initial_`; use `polarization_angle` (registered, unit `rad`); simplify
-  locus to `_of_polarimeter_beam`.
-
-**Entry 4 — Non-registered compound locus**
-- ❌ `ellipticity_of_polarimeter_channel_beam` (score 0.4375)
-- *Critic:* "'polarimeter_channel_beam' is not a registered locus; 'ellipticity' base
-  status uncertain against the closed vocabulary."
-- ✅ `ellipticity_angle_of_polarimeter_beam` (pending vocab registration for `ellipticity_angle`)
-- *Fix:* Strip the sub-component qualifier `_channel` from the locus — `_of_polarimeter_beam`
-  is the registered form; use the most specific registered base token available.
-
-**Entry 5 — Instrument identity in locus + base ambiguity**
-- ❌ `polarization_of_polarimeter_channel_beam` (score 0.45)
-- *Critic:* "Instrument-specific naming and state prefix; 'polarization' base uncertain
-  against closed vocabulary; unit 'm' is wrong (should be rad)."
-- ✅ `polarization_angle_of_polarimeter_beam`
-- *Fix:* Use `polarization_angle` (registered base, unit `rad`); simplify locus by
-  removing `_channel` sub-component identifier.
-
-### W38 ANTI-PATTERN GALLERY — recurring failures from rotation Set C
-
-These three patterns recurred across W37 rotation Set C (spectrometers, gyrokinetics,
-halo regions, wall geometry) and were caught by the reviewer via `suggested_name`. They
-extend the EMW gallery above with non-polarimetry exemplars. Apply them BEFORE emitting
-any name.
 
 **W38-A1 — Instrument prefix carry-over (physics-quantity case).**
 *Why wrong:* Standard names describe physical quantities, not instrument readings.
@@ -416,26 +377,6 @@ Each entry shows the verbatim reviewer assessment of *why* the name worked.
 {% endfor %}
 {% endif %}
 
-{% if field_guidance.documentation_guidance %}
-## Documentation Quality Guidance
-
-{% for category, guidance in field_guidance.documentation_guidance.items() %}
-### {{ category | replace('_', ' ') | title }}
-{% if guidance is mapping %}
-{% for key, value in guidance.items() %}
-{% if value is string %}
-- **{{ key | replace('_', ' ') | title }}**: {{ value }}
-{% elif value is mapping and value.get('purpose') %}
-- **{{ key | replace('_', ' ') | title }}**: {{ value.purpose }}
-{% endif %}
-{% endfor %}
-{% else %}
-{{ guidance }}
-{% endif %}
-
-{% endfor %}
-{% endif %}
-
 ## Curated Examples
 
 Learn from these validated standard names:
@@ -446,21 +387,6 @@ Learn from these validated standard names:
 - **Kind:** {{ ex.get('kind', 'scalar') }}
 - **Unit:** {{ ex.get('unit', 'unspecified') }}
 - **Description:** {{ ex.description }}
-{% endfor %}
-
-## Tokamak Parameter Ranges
-
-Use these typical values to ground documentation.
-Do NOT invent parameter values — use only what is listed here.
-
-{% for machine_name, machine in tokamak_ranges.items() %}
-### {{ machine_name }}
-{% if machine.get('geometry') %}
-Geometry: R₀={{ machine.geometry.get('major_radius', {}).get('value', '?') }}m, a={{ machine.geometry.get('minor_radius', {}).get('value', '?') }}m, κ={{ machine.geometry.get('elongation', {}).get('value', '?') }}
-{% endif %}
-{% if machine.get('physics') %}
-Physics: B_T={{ machine.physics.get('toroidal_magnetic_field', {}).get('value', '?') }}T, I_p={{ machine.physics.get('plasma_current', {}).get('value', '?') }}MA
-{% endif %}
 {% endfor %}
 
 {% if applicability %}
@@ -885,91 +811,6 @@ If the DD path describes a multi-species quantity, use the most general applicab
 subject. If no single subject fits, flag it for vocabulary review by including a note
 in the `reason` field.
 
-### Documentation Structure
-
-**DS-1 Define every variable.** EVERY variable in a LaTeX equation MUST be
-defined immediately after the equation, including its units. Example:
-
-> The safety factor is defined as $q = \frac{d\Phi}{d\Psi}$, where
-> $\Phi$ is the toroidal magnetic flux (Wb) and $\Psi$ is the poloidal
-> magnetic flux (Wb).
-
-**DS-2 Stay focused.** Documentation covers THIS quantity only. Include:
-(1) clear definition with equation, (2) physical significance in 1–2 sentences,
-(3) typical values, (4) sign convention if applicable. Do NOT introduce
-tangential physics concepts or derive related quantities.
-Positive model: `effective_charge` — clear definition, one equation, all
-variables defined, brief context.
-
-**DS-3 Unit conversion accuracy.** When converting between unit systems:
-- eV ↔ Kelvin: $1\;\text{eV} = 11605\;\text{K}$
-- Pa ↔ eV/m³: $1\;\text{Pa} = 6.242 \times 10^{18}\;\text{eV/m}^3$
-
-Always state which units variables are expressed in before applying conversions.
-
-**DS-4 Cross-references.** Use `[standard_name_here](#standard_name_here)`
-inline link syntax when referencing other standard names in documentation.
-
-**DS-5 Sign conventions.** For COCOS-dependent or sign-ambiguous quantities,
-include a dedicated paragraph of the form:
-`Sign convention: Positive when <concrete physical statement>.`
-The statement MUST be expressed in pure physical / geometric terms relative to
-the right-handed cylindrical $(R, \phi, Z)$ basis. **NEVER cite a COCOS number
-in prose** (e.g. "COCOS-11", "COCOS 17", "the COCOS-N convention") — the
-COCOS dependency is recorded structurally via `cocos_transformation_type`, not
-in prose.
-For example: `Sign convention: Positive when the plasma current $I_p$ flows in
-the direction of increasing toroidal angle $\phi$ (counter-clockwise viewed
-from above $+\hat{Z}$).` or `Sign convention: Positive when $\psi$ decreases
-from the magnetic axis outward to the boundary for positive plasma current.`
-If you cannot supply a concrete physical statement, OMIT the sign-convention
-paragraph entirely and instead write a single sentence:
-`This quantity has no sign ambiguity.` Use plain text (not bold), separate
-paragraph, not inline.
-
-{% if cocos_version is defined and cocos_version %}
-### COCOS {{ cocos_version }} Reference
-
-The IMAS Data Dictionary {{ dd_version | default('') }} uses **COCOS {{ cocos_version }}**
-(Sauter & Medvedev, 2013). All sign conventions in documentation MUST be
-consistent with COCOS {{ cocos_version }}:
-
-| Parameter | Symbol | Value | Physical Meaning |
-|-----------|--------|-------|------------------|
-| Poloidal flux sign | σ_Bp | {{ cocos_sigma_bp | default('?') }} | ψ {{ "decreases" if cocos_sigma_bp is defined and cocos_sigma_bp == -1 else "increases" }} from axis to edge (positive Ip) |
-| Flux normalization | e_Bp | {{ cocos_e_bp | default('?') }} | {{ "Full ψ" if cocos_e_bp is defined and cocos_e_bp == 1 else "ψ/2π" }} |
-| Cylindrical handedness | σ_RφZ | {{ cocos_sigma_r_phi_z | default('?') }} | (R, φ, Z) {{ "right" if cocos_sigma_r_phi_z is defined and cocos_sigma_r_phi_z == 1 else "left" }}-handed |
-| Poloidal handedness | σ_ρθφ | {{ cocos_sigma_rho_theta_phi | default('?') }} | (ρ, θ, φ) {{ "right" if cocos_sigma_rho_theta_phi is defined and cocos_sigma_rho_theta_phi == 1 else "left" }}-handed |
-
-**Transformation types** classify how quantities change under COCOS:
-- **psi_like**: Multiplied by σ_Bp (flips sign across COCOS variants)
-- **ip_like**: Multiplied by σ_Bp · σ_RφZ (plasma current direction)
-- **b0_like**: Multiplied by σ_RφZ (toroidal field direction)
-- **q_like**: Multiplied by σ_ρθφ (safety factor sign)
-- **dodpsi_like**: Multiplied by 1/σ_Bp (ψ-derivative inversion)
-
-When the batch context marks a path as COCOS-dependent, your sign convention
-paragraph MUST be **physically specific** — concretely state the direction
-relative to the right-handed cylindrical $(R, \phi, Z)$ basis, using the
-$\sigma$ values in the table above to determine the correct direction. **DO
-NOT cite the COCOS number** (`COCOS {{ cocos_version }}`, "COCOS-N", etc.)
-anywhere in the output prose; the convention is recorded structurally via the
-`cocos_transformation_type` field that is injected post-LLM.
-{% endif %}
-
-**DS-6 DD aliases.** When the DD path uses abbreviated names (e.g., gm1–gm9),
-mention the alias: "Known as gm1 in the IMAS data dictionary." The standard
-name itself must remain self-describing.
-
-**DS-7 Physics qualifier accuracy.** Verify that mathematical qualifiers are
-physically correct. Elongation and triangularity are geometric properties OF a
-flux surface contour — they are NOT flux-surface averages.
-❌ `flux_surface_averaged_elongation` ✅ `elongation`.
-
-**DS-8 No superfluous equations.** Include equations that DEFINE the quantity
-or express fundamental relationships. Do NOT include trivial algebraic
-rearrangements (e.g., showing $V = IR$ then $I = V/R$ then $R = V/I$).
-
 ### Formatting
 
 **FMT-1 YAML block scalars.** Always use `|` (literal block scalar) for
@@ -1128,75 +969,10 @@ Each candidate MUST include:
 - `source_id`: full DD path (e.g., "equilibrium/time_slice/profiles_1d/psi")
 - `standard_name`: the composed name in snake_case
 - `description`: one-sentence summary, **under 120 characters** (e.g., "Electron temperature profile on the poloidal flux grid")
-- `documentation`: rich documentation following the template below (**target: 150-400 words, 800-2500 chars**)
 - `kind`: one of `"scalar"`, `"vector"`, `"metadata"` — see classification rules
-- `links`: array of 4-8 related standard names from the existing_names list, each prefixed with `name:` (e.g., `"name:electron_temperature"`)
 - `dd_paths`: array of IMAS DD paths this name maps to (include the source_id at minimum)
 - `grammar_fields`: dict of grammar fields used (only non-null fields)
-- `reason`: brief justification
-- `validity_domain`: physical region where this quantity is meaningful (e.g., "core plasma", "scrape-off layer", "entire plasma", "pedestal region") or `null`
-- `constraints`: array of physical constraints (e.g., `["T_e > 0"]`, `["0 ≤ ρ ≤ 1"]`)
-
-### Documentation Template
-
-Write documentation following this mandatory structure (**target: 150-400 words, 800-2500 characters**).
-Every section listed below MUST appear. Omitting sections degrades review scores.
-
-1. **Opening definition** (1-2 sentences) — precise physics definition of the quantity. State clearly
-   what it represents and in what physical domain it appears.
-
-2. **Defining equation** — at least one display equation using LaTeX `$$...$$` format. Define EVERY
-   variable after the equation (including SI units). Example:
-   ```
-   $$q(\psi) = \frac{1}{2\pi} \oint \frac{\mathbf{B} \cdot \nabla\phi}{\mathbf{B} \cdot \nabla\theta} d\theta$$
-   where $q$ is the safety factor (dimensionless), $\psi$ is the poloidal magnetic flux (Wb), ...
-   ```
-
-3. **Physical significance** (2-3 sentences) — explain WHY this quantity matters. Connect to
-   confinement performance, stability, or operational limits.
-
-4. **Measurement and computation** (1-2 sentences) — typical measurement technique or equilibrium
-   reconstruction method. Keep method-independent (do not name specific codes unless necessary).
-
-5. **Typical values** — give quantitative ranges from the tokamak parameter data above. Format:
-   "In conventional tokamaks: X-Y {unit}; in spherical tokamaks: A-B {unit}." (where
-   {unit} is the actual SI unit, e.g. "MA", "keV").
-
-6. **Sign convention** — For COCOS-dependent or sign-ambiguous quantities, write a
-   single sentence beginning exactly with `Sign convention: Positive when` followed by
-   a CONCRETE physical condition. Examples of acceptable text:
-   - `Sign convention: Positive when the plasma current flows counter-clockwise viewed from above.`
-   - `Sign convention: Positive when the poloidal flux increases outward from the magnetic axis.`
-   - `Sign convention: Positive when the toroidal field points in the positive φ direction.`
-
-   If you CANNOT state a concrete condition (e.g. the COCOS guidance does not apply,
-   or the quantity has no sign ambiguity), OMIT the sign-convention sentence entirely
-   and write instead: `This quantity has no sign ambiguity.`
-
-   Absolute rule: the substring `Positive when` must be followed immediately by a
-   plain-English noun phrase describing a physical state. Any bracketed token,
-   angle-bracket placeholder, or the word `condition` used as a standalone noun in
-   place of the physical condition will fail validation and the name will be rejected.
-
-7. **Cross-references** — reference 2-4 related quantities using `[name](#name)` inline link format.
-   These must match entries from the `links` field.
-
-**Quality gates:**
-- At least ONE `$$...$$` display equation (not inline `$...$`)
-- All equation variables defined with units
-- Quantitative typical values (not "typically large")
-- Every `[name](#name)` link must also appear in `links` list
-
-Example documentation (quality standard):
-> The safety factor $q$ quantifies the helicity of magnetic field lines on a given flux surface, representing the ratio of toroidal to poloidal transit of a field line.
->
-> $$q(\psi) = \frac{1}{2\pi} \oint \frac{\mathbf{B} \cdot \nabla\phi}{\mathbf{B} \cdot \nabla\theta} d\theta$$
->
-> where $q$ is the safety factor (dimensionless), $\psi$ is the poloidal magnetic flux (Wb), $\mathbf{B}$ is the magnetic field (T), $\phi$ is the toroidal angle (rad), and $\theta$ is the poloidal angle (rad).
->
-> The safety factor is central to MHD stability analysis: rational values of $q$ ($m/n$ where $m, n$ are integers) correspond to resonant surfaces susceptible to tearing modes and other instabilities. The minimum value $q_\text{min}$ determines the onset of sawtooth oscillations (typically $q_0 < 1$ at the magnetic axis) and the edge value $q_{95}$ governs edge stability.
->
-> Typical values range from 0.8-1.2 at the magnetic axis to 3-7 at the 95% flux surface in conventional tokamaks, and 1.5-15 in spherical tokamaks. Values below 1 at the axis indicate sawtooth activity. Related to [poloidal_magnetic_flux](#poloidal_magnetic_flux) via the flux derivative and connected to [plasma_current](#plasma_current) through the edge safety factor scaling $q_{95} \propto B_0 a^2 / (R_0 I_p)$.
+- `reason`: brief justification (≤25 words — list grammar tokens used; do not restate description)
 
 {% if kind_definitions %}
 ### Kind Classification Rules
@@ -1211,16 +987,6 @@ Example documentation (quality standard):
 - **vector**: has R/Z or multi-component structure — magnetic field, velocity field, gradient, current density vector, force density
 - **metadata**: non-measurable concepts, technique names, classifications, indices, status flags — confinement mode label, scenario identifier
 {% endif %}
-### Links Guidance
-
-Reference 4-8 related standard names from the provided `existing_names` list. Each link MUST use the `name:` prefix:
-- `name:` for existing standard names (e.g., `"name:electron_temperature"`)
-
-Only reference names that exist in the provided `existing_names` list. If fewer than 4 matching names exist, include as many as you can. Include links that are:
-- Same physical quantity in a different context (name:electron_temperature ↔ name:ion_temperature)
-- Derived or input quantities (name:electron_pressure ↔ name:electron_temperature + name:electron_density)
-- Sibling or related quantities from the same physics domain
-- Commonly plotted together
 
 {% if domain_vocabulary %}
 ## PREFERRED VOCABULARY FOR THIS DOMAIN — reuse unless concept is genuinely different
