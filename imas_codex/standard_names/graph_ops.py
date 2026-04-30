@@ -3354,6 +3354,7 @@ def clear_sn_subsystem(
     * ``StandardName`` — the generated names
     * ``StandardNameReview`` — RD-quorum review records
     * ``StandardNameSource`` — per-path extraction tracking
+    * ``DocsRevision`` — refine_docs snapshot history (orphans without parent SN)
     * ``VocabGap`` — grammar vocabulary gap reports
     * ``SNRun`` — run audit / rotation memory
     * ``LLMCost`` — LLM call cost ledger rows
@@ -3379,6 +3380,7 @@ def clear_sn_subsystem(
         "StandardName",
         "StandardNameReview",
         "StandardNameSource",
+        "DocsRevision",
         "VocabGap",
         "SNRun",
         "LLMCost",
@@ -3404,6 +3406,7 @@ def clear_sn_subsystem(
         gc.query("MATCH (r:StandardNameReview) DETACH DELETE r")
         gc.query("MATCH (sn:StandardName) DETACH DELETE sn")
         gc.query("MATCH (s:StandardNameSource) DETACH DELETE s")
+        gc.query("MATCH (d:DocsRevision) DETACH DELETE d")
         gc.query("MATCH (v:VocabGap) DETACH DELETE v")
         gc.query("MATCH (rr:SNRun) DETACH DELETE rr")
         gc.query("MATCH (c:LLMCost) DETACH DELETE c")
