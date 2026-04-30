@@ -1364,7 +1364,7 @@ def write_standard_names(
                     )
 
                 merged_sources = merge_source_domains(
-                    existing_sources, p["incoming_sources"]
+                    existing_sources, *p["incoming_sources"]
                 )
                 promoted = maybe_promote_domain(existing_primary, p["candidate"])
                 pd_batch.append(

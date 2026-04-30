@@ -619,49 +619,62 @@ class TestCombinedScenarios:
 
 
 class TestResolvePhysicsDomains:
-    """Tests for _resolve_physics_domains list merge."""
+    """Tests for _resolve_physics_domains -> (primary, source_domains).
+
+    Post-refactor: returns ``(primary_scalar, sorted_source_list)``.
+    """
 
     def test_all_none(self):
-        assert _resolve_physics_domains([None, None]) == []
+        assert _resolve_physics_domains([None, None]) == (None, [])
 
     def test_all_empty(self):
-        assert _resolve_physics_domains(["", "", None]) == []
+        assert _resolve_physics_domains(["", "", None]) == (None, [])
 
     def test_unanimous_domain(self):
-        assert _resolve_physics_domains(["transport", "transport"]) == ["transport"]
+        primary, sources = _resolve_physics_domains(["transport", "transport"])
+        assert primary == "transport"
+        assert sources == ["transport"]
 
     def test_general_kept_with_specific(self):
-        result = _resolve_physics_domains(["general", "transport"])
-        assert sorted(result) == ["general", "transport"]
+        _, sources = _resolve_physics_domains(["general", "transport"])
+        assert sorted(sources) == ["general", "transport"]
 
     def test_multiple_specific_merged(self):
-        result = _resolve_physics_domains(["general", "transport", "equilibrium"])
-        assert sorted(result) == ["equilibrium", "general", "transport"]
+        _, sources = _resolve_physics_domains(["general", "transport", "equilibrium"])
+        assert sorted(sources) == ["equilibrium", "general", "transport"]
 
     def test_two_specific_merged(self):
-        result = _resolve_physics_domains(["transport", "equilibrium"])
-        assert sorted(result) == ["equilibrium", "transport"]
+        _, sources = _resolve_physics_domains(["transport", "equilibrium"])
+        assert sorted(sources) == ["equilibrium", "transport"]
 
     def test_single_value(self):
-        assert _resolve_physics_domains(["equilibrium"]) == ["equilibrium"]
+        primary, sources = _resolve_physics_domains(["equilibrium"])
+        assert primary == "equilibrium"
+        assert sources == ["equilibrium"]
 
     def test_none_mixed_with_value(self):
-        assert _resolve_physics_domains([None, "transport", ""]) == ["transport"]
+        primary, sources = _resolve_physics_domains([None, "transport", ""])
+        assert primary == "transport"
+        assert sources == ["transport"]
 
     def test_all_general(self):
-        assert _resolve_physics_domains(["general", "general"]) == ["general"]
+        primary, sources = _resolve_physics_domains(["general", "general"])
+        assert primary == "general"
+        assert sources == ["general"]
 
     def test_list_inputs_merged(self):
-        result = _resolve_physics_domains([["equilibrium"], ["transport"]])
-        assert sorted(result) == ["equilibrium", "transport"]
+        _, sources = _resolve_physics_domains([["equilibrium"], ["transport"]])
+        assert sorted(sources) == ["equilibrium", "transport"]
 
     def test_mixed_scalar_and_list(self):
-        result = _resolve_physics_domains(["equilibrium", ["transport", "magnetics"]])
-        assert sorted(result) == ["equilibrium", "magnetics", "transport"]
+        _, sources = _resolve_physics_domains(
+            ["equilibrium", ["transport", "magnetics"]]
+        )
+        assert sorted(sources) == ["equilibrium", "magnetics", "transport"]
 
 
 class TestMergeDuplicatesPhysicsDomain:
-    """Test that _merge_duplicates merges physics_domain lists."""
+    """Test that _merge_duplicates resolves physics_domain via promotion."""
 
     def test_merge_same_domain(self):
         group = [
@@ -669,7 +682,8 @@ class TestMergeDuplicatesPhysicsDomain:
             _candidate("te", "eq/te", physics_domain="transport"),
         ]
         merged = _merge_duplicates(group)
-        assert merged["physics_domain"] == ["transport"]
+        assert merged["physics_domain"] == "transport"
+        assert merged["source_domains"] == ["transport"]
 
     def test_merge_general_vs_specific(self):
         group = [
@@ -677,7 +691,9 @@ class TestMergeDuplicatesPhysicsDomain:
             _candidate("te", "eq/te", physics_domain="transport"),
         ]
         merged = _merge_duplicates(group)
-        assert sorted(merged["physics_domain"]) == ["general", "transport"]
+        # Both contributed sources; primary picked by rank
+        assert sorted(merged["source_domains"]) == ["general", "transport"]
+        assert merged["physics_domain"] in ("general", "transport")
 
     def test_merge_no_domain(self):
         group = [
@@ -685,7 +701,8 @@ class TestMergeDuplicatesPhysicsDomain:
             _candidate("te", "eq/te"),
         ]
         merged = _merge_duplicates(group)
-        assert merged["physics_domain"] == []
+        assert merged["physics_domain"] is None
+        assert merged["source_domains"] == []
 
     def test_merge_mixed_none_and_value(self):
         group = [
@@ -693,4 +710,5 @@ class TestMergeDuplicatesPhysicsDomain:
             _candidate("te", "eq/te", physics_domain="equilibrium"),
         ]
         merged = _merge_duplicates(group)
-        assert merged["physics_domain"] == ["equilibrium"]
+        assert merged["physics_domain"] == "equilibrium"
+        assert merged["source_domains"] == ["equilibrium"]

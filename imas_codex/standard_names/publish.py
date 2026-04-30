@@ -389,7 +389,20 @@ def _fetch_expected_domains() -> set[str] | None:
                 """
                 MATCH (sn:StandardName)
                 WHERE sn.pipeline_status IN ['published', 'accepted', 'reviewed', 'enriched']
-                UNWIND sn.physics_domain AS domain
+                // Post-refactor: source_domains is the multi-valued field.
+                // Fall back to scalar physics_domain wrapped in a list for
+                // legacy nodes that have not been re-persisted yet.
+                WITH sn,
+                     CASE
+                       WHEN sn.source_domains IS NOT NULL
+                            AND size(sn.source_domains) > 0
+                         THEN sn.source_domains
+                       WHEN sn.physics_domain IS NULL THEN []
+                       ELSE [sn.physics_domain]
+                     END AS domains
+                UNWIND domains AS domain
+                WITH domain
+                WHERE domain IS NOT NULL
                 RETURN DISTINCT domain
                 """
             )

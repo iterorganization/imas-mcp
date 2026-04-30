@@ -46,19 +46,25 @@ class ConsolidationResult:
 # =============================================================================
 
 
-def _resolve_physics_domains(domain_lists: list[list[str] | str | None]) -> list[str]:
-    """Merge physics_domain lists from all candidates in a merge group.
+def _resolve_physics_domains(
+    domain_lists: list[list[str] | str | None],
+) -> tuple[str | None, list[str]]:
+    """Merge physics_domain values from all candidates in a merge group.
 
-    Collects all unique non-empty domains across all sources.
-    Returns a sorted list (deterministic order).
+    Returns ``(primary_scalar, source_domains_list)`` where
+    *primary_scalar* is the highest-ranked domain (per
+    ``domain_ranking.domain_rank``) across all inputs and
+    *source_domains_list* is the sorted, deduplicated union.
 
     Args:
-        domain_lists: physics_domain values from all candidates in a merge group.
-            Each may be a list, a scalar string, or None.
+        domain_lists: physics_domain values from all candidates.  Each
+            may be a list (legacy), a scalar string, or None.
 
     Returns:
-        Sorted list of unique domains (may be empty).
+        Tuple ``(primary, sources)``.  Empty inputs → ``(None, [])``.
     """
+    from imas_codex.standard_names.domain_ranking import maybe_promote_domain
+
     all_domains: set[str] = set()
     for item in domain_lists:
         if item is None:
@@ -68,7 +74,12 @@ def _resolve_physics_domains(domain_lists: list[list[str] | str | None]) -> list
                 all_domains.add(item)
         else:
             all_domains.update(d for d in item if d)
-    return sorted(all_domains)
+
+    sources = sorted(all_domains)
+    primary: str | None = None
+    for d in sources:
+        primary = maybe_promote_domain(primary, d)
+    return primary, sources
 
 
 def _merge_duplicates(group: list[dict]) -> dict:
@@ -108,10 +119,12 @@ def _merge_duplicates(group: list[dict]) -> dict:
         all_source_types.update(c.get("source_types") or [])
     merged["source_types"] = sorted(all_source_types)
 
-    # Resolve physics_domain across sources (merge all domains)
-    merged["physics_domain"] = _resolve_physics_domains(
+    # Resolve physics_domain across sources: scalar primary + source list.
+    primary, sources = _resolve_physics_domains(
         [c.get("physics_domain") for c in group]
     )
+    merged["physics_domain"] = primary
+    merged["source_domains"] = sources
 
     return merged
 

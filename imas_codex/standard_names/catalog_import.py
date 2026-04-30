@@ -177,17 +177,31 @@ _GRAPH_ONLY_PRESERVE = frozenset(
 def _entry_to_graph_dict(
     entry: Any,
     *,
-    physics_domain: list[str],
+    physics_domain: list[str] | str | None,
 ) -> dict[str, Any]:
     """Convert a validated ISN entry to a graph-write dict.
 
     Does NOT include graph-only fields (source_paths, etc.).
     Grammar fields are derived from the entry name.
+
+    Post-refactor: ``physics_domain`` is the scalar primary domain
+    and ``source_domains`` carries the full list.  Accepts either a
+    list (legacy catalog form) or a scalar.
     """
     grammar = _grammar_decomposition(entry.name)
 
     links = [str(lnk) for lnk in entry.links] if entry.links else []
     constraints = list(entry.constraints) if entry.constraints else []
+
+    if isinstance(physics_domain, list):
+        source_domains = list(physics_domain)
+        primary_domain = source_domains[0] if source_domains else None
+    elif isinstance(physics_domain, str) and physics_domain:
+        primary_domain = physics_domain
+        source_domains = [physics_domain]
+    else:
+        primary_domain = None
+        source_domains = []
 
     result: dict[str, Any] = {
         "id": entry.name,
@@ -198,7 +212,8 @@ def _entry_to_graph_dict(
         "links": links or None,
         "validity_domain": entry.validity_domain or None,
         "constraints": constraints or None,
-        "physics_domain": physics_domain,
+        "physics_domain": primary_domain,
+        "source_domains": source_domains,
         "status": str(entry.status) if entry.status else "draft",
         "deprecates": str(entry.deprecates) if entry.deprecates else None,
         "superseded_by": str(entry.superseded_by) if entry.superseded_by else None,
@@ -384,6 +399,7 @@ def _write_import_entries(
             sn.validity_domain = b.validity_domain,
             sn.constraints = b.constraints,
             sn.physics_domain = b.physics_domain,
+            sn.source_domains = b.source_domains,
             sn.status = b.status,
             sn.deprecates = b.deprecates,
             sn.superseded_by = b.superseded_by,
@@ -592,16 +608,23 @@ def run_import(
                 # Validate against ISN model
                 entry = ta.validate_python(entry_data)
 
-                # Parse physics_domain — must be a list (no bare-string fallback)
+                # Parse physics_domain — accept scalar (post-refactor) or
+                # list (legacy catalog form).  Normalise to list internally
+                # so downstream code computes source_domains correctly.
                 raw_pd = entry_data.get("physics_domain")
-                if raw_pd is not None and not isinstance(raw_pd, list):
+                if raw_pd is None:
+                    physics_domain_list = [path_domain]
+                elif isinstance(raw_pd, str):
+                    physics_domain_list = [raw_pd] if raw_pd else [path_domain]
+                elif isinstance(raw_pd, list):
+                    physics_domain_list = raw_pd if raw_pd else [path_domain]
+                else:
                     report.errors.append(
                         f"{relative}/{entry_data.get('name', '?')}: "
-                        f"physics_domain must be a list, got {type(raw_pd).__name__}. "
-                        f"Catalog will be rebuilt fresh with list form."
+                        f"physics_domain must be a string or list, got "
+                        f"{type(raw_pd).__name__}."
                     )
                     continue
-                physics_domain_list = raw_pd if raw_pd else [path_domain]
 
                 # Grammar decomposition — hard fail on parse error
                 grammar = _grammar_decomposition(entry.name)
@@ -816,8 +839,13 @@ def check_catalog(
                 entry = ta.validate_python(model_data)
 
                 raw_pd = entry_data.get("physics_domain")
-                pd_list = raw_pd if isinstance(raw_pd, list) else [path_domain]
-                graph_dict = _entry_to_graph_dict(entry, physics_domain=pd_list)
+                if isinstance(raw_pd, list):
+                    pd_value: list[str] | str = raw_pd
+                elif isinstance(raw_pd, str) and raw_pd:
+                    pd_value = raw_pd
+                else:
+                    pd_value = [path_domain]
+                graph_dict = _entry_to_graph_dict(entry, physics_domain=pd_value)
                 catalog_entries[graph_dict["id"]] = graph_dict
 
         except Exception:

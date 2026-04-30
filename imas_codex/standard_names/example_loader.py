@@ -102,7 +102,7 @@ def _query_examples_for_target(
             MATCH (sn:StandardName)
             WHERE {score_expr} IS NOT NULL
               AND {verdict_expr} IS NOT NULL
-              AND ANY(d IN sn.physics_domain WHERE d IN $domains)
+              AND sn.physics_domain IN $domains
               AND abs({score_expr} - $target) <= $tolerance
             RETURN sn.id AS id,
                    sn.description AS description,

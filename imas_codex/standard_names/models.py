@@ -95,9 +95,16 @@ class StandardNamePublishEntry(BaseModel):
     )
     unit: str | None = Field(default=None, description="SI unit string")
     status: str = Field(default="drafted", description="Entry status")
-    physics_domain: list[str] = Field(
+    physics_domain: str | None = Field(
+        default=None,
+        description="Primary physics domain (scalar, promoted by rank).",
+    )
+    source_domains: list[str] = Field(
         default_factory=list,
-        description="Physics domain classifications (multi-valued)",
+        description=(
+            "All physics domains that have contributed a source to "
+            "this StandardName (append-only, deduplicated)."
+        ),
     )
     description: str = Field(default="", description="Human-readable description")
     # Rich fields

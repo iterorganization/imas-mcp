@@ -146,7 +146,7 @@ def _fetch_candidates(
     params: dict[str, Any] = {}
 
     if domain:
-        cypher += " AND $domain IN sn.physics_domain"
+        cypher += " AND sn.physics_domain = $domain"
         params["domain"] = domain
 
     cypher += """
