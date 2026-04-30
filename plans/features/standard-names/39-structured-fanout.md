@@ -199,15 +199,14 @@ class FanoutResult(BaseModel):
 
 ### 3.6 Phase 0 — helper extractions (PREREQUISITE for Phase 1)
 
-**Three of four MVP runners cannot be implemented as thin wrappers
-against the helpers as they exist today** (verified against `main`):
+**Audit against `main` HEAD `66d64296` (corrected 2026-04-30):**
 
 | Helper (current state)                                | Problem                                                                                              |
 |-------------------------------------------------------|------------------------------------------------------------------------------------------------------|
-| `standard_names.search.search_similar_names`          | Sync, opens its own `with GraphClient() as gc:`.  No `gc` parameter — under 6-pool × `max_fan_degree=3` worst case = up to 18 simultaneous fresh `GraphClient` instantiations. |
+| `standard_names.search.search_similar_names`          | Sync, opens its own `with GraphClient() as gc:` (search.py:47).  No `gc` parameter — under 6-pool × `max_fan_degree=3` worst case = up to 18 simultaneous fresh `GraphClient` instantiations. |
 | `graph.dd_search.hybrid_dd_search`                    | ✓ Already conforms: sync, takes `gc`.                                                                |
-| `standard_names.workers._related_path_neighbours`     | Leading-underscore private; would create cyclic import (`workers.py` ↔ `fanout.runners`).             |
-| Cluster search                                        | **Does not exist as a callable helper.**  Available only as `tools.graph_search.ClusterSearchTool.search_dd_clusters` async method (decorated `@cache_results / @mcp_tool / @handle_errors`).  Calling it re-introduces the MCP boundary the plan disclaims. |
+| `graph.dd_search.related_dd_search`                   | ✓ **Already exists at `graph/dd_search.py:590`** — public, sync, takes `gc`. The `_related_path_neighbours` in `workers.py` is just a 40-line presentation wrapper that already calls `related_dd_search`. **No move/extract needed.** Fan-out runner imports `related_dd_search` directly. |
+| Cluster search                                        | **Does not exist as a sync callable helper.**  Available only as `tools.graph_search.ClusterSearchTool.search_dd_clusters` async method (decorated `@cache_results / @mcp_tool / @handle_errors`).  Internal helpers `_search_by_text` / `_search_by_path` / `_list_by_ids` are sync — extraction is straightforward (~50 LOC). |
 
 Phase 0 is the gating prerequisite.  Phase 1 cannot start until Phase 0
 lands.  Phase 0 changes are **independently shippable** (they improve the
@@ -224,12 +223,13 @@ helpers regardless of fan-out).
     in `imas_codex/standard_names/search.py` until in-tree callers
     migrate (search call sites grep is small — ≤5 hits).
 
-(b) **`related_dd_search` extraction**: move `_related_path_neighbours`
-    body from `workers.py` to `imas_codex/graph/dd_search.py`, rename to
-    `related_dd_search` (drop leading underscore, drop `_path_` infix to
-    match `hybrid_dd_search` siblings).  Keep
-    `from imas_codex.graph.dd_search import related_dd_search as
-    _related_path_neighbours` shim in `workers.py` until callers migrate.
+(b) **`related_dd_search` — already in place, no work required.**
+    Audit confirmed `related_dd_search(gc, path, *, max_results=...)`
+    exists at `imas_codex/graph/dd_search.py:590` as a public sync
+    helper.  Fan-out runner imports it directly.  The
+    `_related_path_neighbours` wrapper in `workers.py:829` is presentation
+    glue that the linear path will retire; the catalog does NOT depend
+    on it.
 
 (c) **`cluster_search` extraction**: extract the Cypher + helper logic
     out of `ClusterSearchTool.search_dd_clusters` body in
@@ -252,9 +252,9 @@ helpers regardless of fan-out).
 4. `tests/standard_names/test_search_similar_names.py::test_gc_reuse`:
    pass a `gc` kwarg; assert no new `GraphClient` is instantiated
    (mock the constructor).
-5. `tests/graph/test_related_dd_search.py`: smoke test for the renamed
-   function plus a back-compat test for the `_related_path_neighbours`
-   shim.
+5. `tests/graph/test_related_dd_search.py`: smoke test confirming the
+   existing `related_dd_search(gc, path)` signature matches catalog
+   expectations (no rename — function is already in place).
 6. Lint + format clean; full pytest green.
 7. **No fan-out code lands in Phase 0.**  Phase 0 PR is pure helper
    refactor; Phase 1 PR follows.
