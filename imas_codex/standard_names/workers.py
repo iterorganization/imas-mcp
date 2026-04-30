@@ -3186,10 +3186,13 @@ async def _compose_batch_core(
     if stop_event.is_set():
         return 0
 
-    # ── B9: Reference exemplars (full docs, validated SNs) ────────────
-    reference_exemplars = await asyncio.to_thread(
-        _search_reference_exemplars, batch, domains_in_batch, k=5
-    )
+    # ── B9: Reference exemplars — superseded by graph-backed
+    # ``compose_scored_examples`` loaded above. The active prompt
+    # template ``sn/generate_name_dd`` no longer renders a
+    # ``reference_exemplars`` block (removed in commit 7a86069e), so
+    # the per-batch ANN search has been retired here. The linear path
+    # still uses ``_search_reference_exemplars`` for the names-only
+    # template ``sn/generate_name_dd_names``.
 
     # ── B10: Cluster-aware existing-names roster ──────────────────────
     # Build name-only roster from any existing_name field carried on batch
@@ -3235,7 +3238,6 @@ async def _compose_batch_core(
         "existing_names": existing_names,
         "cluster_context": "",
         "nearby_existing_names": nearby,
-        "reference_exemplars": reference_exemplars,
         "cocos_version": batch[0].get("cocos_version") if batch else None,
         "dd_version": batch[0].get("dd_version") if batch else None,
     }
