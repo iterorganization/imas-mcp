@@ -1067,14 +1067,15 @@ def _is_attachment_consistent(source_id: str, sn_name: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _process_attachments(
-    attachments: list, state: StandardNameBuildState, wlog: logging.LoggerAdapter
-) -> None:
-    """Attach DD paths to existing standard names without regeneration.
+def _process_attachments_core(
+    attachments: list,
+    wlog: logging.LoggerAdapter | logging.Logger,
+) -> dict[str, int]:
+    """Stateless attachment-processing helper used by both compose paths.
 
-    Creates HAS_STANDARD_NAME relationships in the graph for paths that the
-    compose LLM identified as mapping to existing names. Rejects attachments
-    that fail deterministic consistency checks (e.g. tense mismatch).
+    Filters by tense consistency, writes ``HAS_STANDARD_NAME`` edges and
+    appends ``source_paths``, and returns ``{"accepted", "rejected"}``
+    counts.  Caller is responsible for any state-side stats updates.
     """
     from imas_codex.graph.client import GraphClient
 
@@ -1090,12 +1091,9 @@ def _process_attachments(
     for src, sn, why in rejected:
         wlog.warning("Rejected attachment %s → %s: %s", src, sn, why)
 
+    counts = {"accepted": 0, "rejected": len(rejected)}
     if not accepted:
-        if rejected:
-            state.stats["attachments_rejected"] = state.stats.get(
-                "attachments_rejected", 0
-            ) + len(rejected)
-        return
+        return counts
 
     batch = [
         {"source_id": a.source_id, "standard_name": a.standard_name} for a in accepted
@@ -1119,14 +1117,29 @@ def _process_attachments(
         for a in accepted:
             wlog.info("Attached %s → %s (%s)", a.source_id, a.standard_name, a.reason)
 
-        prev = state.stats.get("attachments", 0)
-        state.stats["attachments"] = prev + len(accepted)
-        if rejected:
-            state.stats["attachments_rejected"] = state.stats.get(
-                "attachments_rejected", 0
-            ) + len(rejected)
+        counts["accepted"] = len(accepted)
     except Exception:
         wlog.warning("Failed to process attachments", exc_info=True)
+
+    return counts
+
+
+def _process_attachments(
+    attachments: list, state: StandardNameBuildState, wlog: logging.LoggerAdapter
+) -> None:
+    """Attach DD paths to existing standard names without regeneration.
+
+    Linear-path wrapper around :func:`_process_attachments_core` that
+    folds counts into the build state's stats dictionary.
+    """
+    counts = _process_attachments_core(attachments, wlog)
+    if counts["accepted"]:
+        prev = state.stats.get("attachments", 0)
+        state.stats["attachments"] = prev + counts["accepted"]
+    if counts["rejected"]:
+        state.stats["attachments_rejected"] = (
+            state.stats.get("attachments_rejected", 0) + counts["rejected"]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1290,6 +1303,86 @@ def _update_sources_after_vocab_gap(
         wlog.warning(
             "Failed to update StandardNameSource vocab_gap status", exc_info=True
         )
+
+
+def _update_sources_after_skip(
+    skipped_ids: list[str],
+    source: str,
+    wlog: logging.LoggerAdapter | logging.Logger,
+) -> None:
+    """Clear claims and mark StandardNameSource nodes ``status='skipped'``.
+
+    The compose LLM may decide a source is not a physics quantity and emit
+    its ``source_id`` in ``result.skipped``.  Without this transition the
+    source remains ``claimed`` forever and gets re-processed every run.
+    """
+    from imas_codex.graph.client import GraphClient
+
+    if not skipped_ids:
+        return
+
+    source_type = "dd" if source == "dd" else "signals"
+    sns_ids = [f"{source_type}:{sid}" for sid in skipped_ids if sid]
+    if not sns_ids:
+        return
+
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                UNWIND $ids AS sns_id
+                MATCH (sns:StandardNameSource {id: sns_id})
+                SET sns.status        = 'skipped',
+                    sns.claim_token   = null,
+                    sns.claimed_at    = null,
+                    sns.skipped_at    = datetime()
+                """,
+                ids=sns_ids,
+            )
+        wlog.debug("Marked %d StandardNameSource nodes as skipped", len(sns_ids))
+    except Exception:
+        wlog.warning("Failed to update StandardNameSource skip status", exc_info=True)
+
+
+def _search_reference_exemplars(
+    items: list[dict],
+    domains: list[str],
+    *,
+    k: int = 5,
+) -> list[dict]:
+    """Synthesise a query from batch items and return reference SN exemplars.
+
+    Builds a query string from up to three item descriptions, calls
+    :func:`search_similar_sns_with_full_docs`, and excludes any SN whose
+    ``id`` matches an item already present in the batch (when items carry an
+    ``existing_name``).  *domains* filters via embedding-quality semantics
+    only (the search itself filters by ``validation_status='valid'``).
+
+    Returns an empty list if no descriptions are available or the search
+    backend is unavailable.
+    """
+    from imas_codex.standard_names.search import search_similar_sns_with_full_docs
+
+    desc_snippets = [
+        item.get("description", "") for item in items[:3] if item.get("description")
+    ]
+    if not desc_snippets:
+        return []
+    synth_query = "; ".join(desc_snippets)
+
+    # Real SN ids of items already present in the batch (cluster-aware
+    # nearby retrieval injects these); avoid feeding the LLM duplicates.
+    exclude_ids = sorted(
+        {item.get("existing_name") for item in items if item.get("existing_name")}
+    )
+
+    try:
+        return search_similar_sns_with_full_docs(
+            synth_query, k=k, exclude_ids=exclude_ids or None
+        )
+    except Exception:
+        logger.debug("Reference exemplar search failed", exc_info=True)
+        return []
 
 
 # Opus model for L7 borderline revision pass
@@ -3093,17 +3186,56 @@ async def _compose_batch_core(
     if stop_event.is_set():
         return 0
 
+    # ── B9: Reference exemplars (full docs, validated SNs) ────────────
+    reference_exemplars = await asyncio.to_thread(
+        _search_reference_exemplars, batch, domains_in_batch, k=5
+    )
+
+    # ── B10: Cluster-aware existing-names roster ──────────────────────
+    # Build name-only roster from any existing_name field carried on batch
+    # items plus a graph query for SNs in the same IMASSemanticCluster.
+    existing_names_set: set[str] = {
+        item.get("existing_name") for item in batch if item.get("existing_name")
+    }
+    existing_names_set.discard(None)
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        path_ids = [item.get("path") for item in batch if item.get("path")]
+        if path_ids:
+
+            def _cluster_roster() -> list[str]:
+                with GraphClient() as gc:
+                    rows = gc.query(
+                        """
+                        UNWIND $paths AS p
+                        MATCH (n:IMASNode {id: p})-[:IN_SEMANTIC_CLUSTER]->(cl)
+                        MATCH (other:IMASNode)-[:IN_SEMANTIC_CLUSTER]->(cl)
+                        MATCH (other)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+                        WHERE coalesce(sn.validation_status, '') <> 'quarantined'
+                          AND coalesce(sn.pipeline_status, '') <> 'superseded'
+                        RETURN DISTINCT sn.id AS id
+                        LIMIT 200
+                        """,
+                        paths=path_ids,
+                    )
+                    return [r["id"] for r in (rows or []) if r.get("id")]
+
+            cluster_names = await asyncio.to_thread(_cluster_roster)
+            existing_names_set.update(cluster_names)
+    except Exception:
+        logger.debug("Cluster-aware existing_names lookup failed", exc_info=True)
+    existing_names = sorted(existing_names_set)[: 50 if compose_lean else 200]
+
     # ── Render user prompt ─────────────────────────────────────────────
     user_context = {
         "items": batch,
         "ids_name": group_key,
         "ids_contexts": ids_contexts,
-        "existing_names": sorted(
-            {item.get("existing_name") for item in batch if item.get("existing_name")}
-        )[: 50 if compose_lean else 200],
+        "existing_names": existing_names,
         "cluster_context": "",
         "nearby_existing_names": nearby,
-        "reference_exemplars": [],
+        "reference_exemplars": reference_exemplars,
         "cocos_version": batch[0].get("cocos_version") if batch else None,
         "dd_version": batch[0].get("dd_version") if batch else None,
     }
@@ -3130,13 +3262,18 @@ async def _compose_batch_core(
         result, cost, tokens = llm_out
 
         # ── Charge cost ────────────────────────────────────────────────
+        # B8: full token breakdown for per-candidate cost attribution.
+        tokens_in = getattr(llm_out, "input_tokens", 0) or 0
+        tokens_out = getattr(llm_out, "output_tokens", 0) or 0
+        tokens_cache_r = getattr(llm_out, "cache_read_tokens", 0) or 0
+        tokens_cache_w = getattr(llm_out, "cache_creation_tokens", 0) or 0
         if lease:
             _event = LLMCostEvent(
                 model=model,
-                tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
-                tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
-                tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
-                tokens_cached_write=(getattr(llm_out, "cache_creation_tokens", 0) or 0),
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                tokens_cached_read=tokens_cache_r,
+                tokens_cached_write=tokens_cache_w,
                 sn_ids=tuple(
                     c.standard_name for c in (result.candidates if result else [])
                 ),
@@ -3148,6 +3285,8 @@ async def _compose_batch_core(
 
         # ── Build candidates ───────────────────────────────────────────
         candidates: list[dict] = []
+        wlog = logger  # plain logger; pool path has no WorkerLogAdapter
+        source_kind = "dd"  # pool-mode generate-name is DD-only today
         for c in result.candidates:
             source_item = next(
                 (item for item in batch if item.get("path") == c.source_id),
@@ -3162,8 +3301,35 @@ async def _compose_batch_core(
 
             cocos_type = source_item.get("cocos_label") if source_item else None
 
-            # Grammar normalization
+            # B1/W4b: Pre-validation gate — reject malformed LLM output
+            # before MERGE.  Mark the source as 'failed' so it is not
+            # re-claimed forever.
             name_id = c.standard_name
+            _well_formed, _reject_reason = is_well_formed_candidate(name_id)
+            if not _well_formed:
+                wlog.warning(
+                    "Pool %s: pre-validation reject %r (%s)",
+                    phase_tag,
+                    name_id[:80],
+                    _reject_reason,
+                )
+                if c.source_id:
+                    try:
+                        from imas_codex.graph.client import GraphClient
+
+                        with GraphClient() as gc:
+                            gc.query(
+                                "MATCH (sns:StandardNameSource {id: $id}) "
+                                "SET sns.status = 'failed', "
+                                "    sns.claimed_at = null, "
+                                "    sns.claim_token = null",
+                                id=f"{source_kind}:{c.source_id}",
+                            )
+                    except Exception:
+                        wlog.debug("Failed to mark source %s as failed", c.source_id)
+                continue
+
+            grammar_failed = False
             try:
                 from imas_standard_names.grammar import (
                     compose_standard_name,
@@ -3175,17 +3341,62 @@ async def _compose_batch_core(
                 if normalized != name_id:
                     name_id = normalized
                 name_id = _dedup_adjacent_tokens(name_id)
-            except Exception:
-                pass  # grammar failures kept as-is
+            except Exception as gram_exc:
+                grammar_failed = True
+                wlog.debug(
+                    "Pool %s: grammar parse failed for %r — attempting B2 retry",
+                    phase_tag,
+                    name_id,
+                )
+
+                # B2: Single-shot grammar-failure retry.
+                try:
+                    retry_name, _r_cost, _r_ti, _r_to = await _grammar_retry(
+                        name_id, str(gram_exc), model, acall_llm_structured
+                    )
+                    if lease and _r_cost > 0:
+                        _r_event = LLMCostEvent(
+                            model=model,
+                            tokens_in=_r_ti,
+                            tokens_out=_r_to,
+                            sn_ids=(name_id,),
+                            batch_id=f"{group_key}-grammar-retry",
+                            phase=phase_tag,
+                            service="standard-names",
+                        )
+                        lease.charge_event(_r_cost, _r_event)
+                    if retry_name and retry_name != name_id:
+                        try:
+                            parsed = parse_standard_name(retry_name)
+                            normalized = compose_standard_name(parsed)
+                            name_id = _dedup_adjacent_tokens(normalized)
+                            grammar_failed = False
+                            wlog.info(
+                                "Pool %s: B2 grammar retry succeeded %r → %r",
+                                phase_tag,
+                                c.standard_name,
+                                name_id,
+                            )
+                        except Exception:
+                            wlog.debug(
+                                "Pool %s: B2 retry result still un-parseable",
+                                phase_tag,
+                            )
+                except Exception:
+                    wlog.debug(
+                        "Pool %s: B2 grammar retry failed for %r",
+                        phase_tag,
+                        name_id,
+                    )
 
             cand = {
                 "id": name_id,
-                "source_types": ["dd"],
+                "source_types": [source_kind],
                 "source_id": c.source_id,
                 "description": c.description or "",
                 "kind": c.kind,
                 "source_paths": [
-                    encode_source_path("dd", p) for p in (c.dd_paths or [])
+                    encode_source_path(source_kind, p) for p in (c.dd_paths or [])
                 ],
                 "fields": c.grammar_fields,
                 "reason": c.reason,
@@ -3195,18 +3406,221 @@ async def _compose_batch_core(
                 "cocos_transformation_type": cocos_type,
                 "cocos": batch[0].get("cocos_version") if batch else None,
                 "dd_version": batch[0].get("dd_version") if batch else None,
+                **({"_grammar_retry_exhausted": True} if grammar_failed else {}),
             }
 
             if regen:
                 cand["regen_increment"] = True
 
-            # Per-candidate cost attribution
-            n_cands = max(len(result.candidates), 1)
+            candidates.append(cand)
+
+            # ── B3: Deterministic error-sibling minting ───────────────
+            if (
+                not grammar_failed
+                and source_item
+                and source_item.get("has_errors")
+                and source_item.get("error_node_ids")
+            ):
+                try:
+                    from imas_codex.standard_names.error_siblings import (
+                        mint_error_siblings,
+                    )
+
+                    siblings = mint_error_siblings(
+                        name_id,
+                        error_node_ids=source_item["error_node_ids"],
+                        unit=unit,
+                        physics_domain=physics_domain,
+                        cocos_type=cocos_type,
+                        cocos_version=batch[0].get("cocos_version") if batch else None,
+                        dd_version=batch[0].get("dd_version") if batch else None,
+                    )
+                    if siblings:
+                        for s in siblings:
+                            s["_from_error_sibling"] = True
+                        candidates.extend(siblings)
+                        wlog.debug(
+                            "Pool %s: minted %d error siblings for %r",
+                            phase_tag,
+                            len(siblings),
+                            name_id,
+                        )
+                except Exception:
+                    wlog.debug(
+                        "Pool %s: error-sibling minting failed for %r",
+                        phase_tag,
+                        name_id,
+                        exc_info=True,
+                    )
+
+        # ── B8: Per-candidate cost / token attribution ────────────────
+        # Pro-rata across LLM-generated candidates only — error siblings
+        # are deterministic and carry no LLM cost.
+        from datetime import UTC, datetime
+
+        _llm_cands = [c for c in candidates if not c.get("_from_error_sibling")]
+        n_cands = max(len(_llm_cands), 1)
+        _llm_at = datetime.now(UTC).isoformat()
+        for cand in candidates:
+            if cand.get("_from_error_sibling"):
+                continue
             cand["llm_cost"] = cost / n_cands
             cand["llm_model"] = model
             cand["llm_service"] = "standard-names"
+            cand["llm_at"] = _llm_at
+            cand["llm_tokens_in"] = tokens_in // n_cands
+            cand["llm_tokens_out"] = tokens_out // n_cands
+            cand["llm_tokens_cached_read"] = tokens_cache_r // n_cands
+            cand["llm_tokens_cached_write"] = tokens_cache_w // n_cands
 
-            candidates.append(cand)
+        # ── C1: Inline audits — populate validation_status ────────────
+        try:
+            from imas_codex.standard_names.audits import run_audits
+
+            for cand in candidates:
+                if cand.get("_from_error_sibling"):
+                    cand.setdefault("validation_status", "valid")
+                    continue
+                src_paths = cand.get("source_paths") or []
+                src_path = strip_dd_prefix(src_paths[0]) if src_paths else None
+                try:
+                    audit_issues = run_audits(
+                        candidate=cand,
+                        existing_sns_in_domain=None,
+                        source_path=src_path,
+                        source_cocos_type=cand.get("cocos_transformation_type"),
+                    )
+                except Exception:
+                    audit_issues = []
+                if cand.get("_grammar_retry_exhausted"):
+                    audit_issues = list(audit_issues) + [
+                        "audit:grammar_retry_exhausted"
+                    ]
+                cand["validation_issues"] = audit_issues
+                cand["validation_status"] = (
+                    "quarantined"
+                    if _is_quarantined(list(audit_issues), {})
+                    else "valid"
+                )
+        except Exception:
+            wlog.debug("Pool %s: audits failed", phase_tag, exc_info=True)
+            for cand in candidates:
+                cand.setdefault("validation_status", "valid")
+
+        # Strip private flag before persist
+        for cand in candidates:
+            cand.pop("_grammar_retry_exhausted", None)
+
+        # ── B4: Vocab gaps — persist + clear sources ──────────────────
+        if result.vocab_gaps:
+            from imas_codex.standard_names.graph_ops import write_vocab_gaps
+
+            gap_dicts = [
+                {
+                    "source_id": vg.source_id,
+                    "segment": vg.segment,
+                    "needed_token": vg.needed_token,
+                    "reason": vg.reason,
+                }
+                for vg in result.vocab_gaps
+            ]
+            try:
+                await asyncio.to_thread(write_vocab_gaps, gap_dicts, source_kind)
+                wlog.debug(
+                    "Pool %s: persisted %d vocab gaps", phase_tag, len(gap_dicts)
+                )
+            except Exception:
+                wlog.warning(
+                    "Pool %s: write_vocab_gaps failed", phase_tag, exc_info=True
+                )
+            try:
+                await asyncio.to_thread(
+                    _update_sources_after_vocab_gap, gap_dicts, source_kind, wlog
+                )
+            except Exception:
+                wlog.debug(
+                    "Pool %s: vocab_gap source-status update failed",
+                    phase_tag,
+                    exc_info=True,
+                )
+
+        # W29: auto-detect novel physical_base tokens.
+        if result.candidates:
+            try:
+                auto_gaps = _auto_detect_physical_base_gaps(result.candidates)
+                if auto_gaps:
+                    from imas_codex.standard_names.graph_ops import write_vocab_gaps
+
+                    await asyncio.to_thread(
+                        write_vocab_gaps,
+                        auto_gaps,
+                        source_kind,
+                        skip_segment_filter=True,
+                    )
+                    wlog.debug(
+                        "Pool %s: auto-detected %d physical_base gaps",
+                        phase_tag,
+                        len(auto_gaps),
+                    )
+            except Exception:
+                wlog.debug(
+                    "Pool %s: physical_base gap detection failed",
+                    phase_tag,
+                    exc_info=True,
+                )
+
+        # ── B5: Attachments — write edges + clear source claims ───────
+        if result.attachments:
+            try:
+                attach_counts = await asyncio.to_thread(
+                    _process_attachments_core, result.attachments, wlog
+                )
+                wlog.info(
+                    "Pool %s: attached %d (rejected %d)",
+                    phase_tag,
+                    attach_counts.get("accepted", 0),
+                    attach_counts.get("rejected", 0),
+                )
+            except Exception:
+                wlog.debug(
+                    "Pool %s: attachment processing failed",
+                    phase_tag,
+                    exc_info=True,
+                )
+            try:
+                await asyncio.to_thread(
+                    _update_sources_after_attach,
+                    result.attachments,
+                    source_kind,
+                    wlog,
+                )
+            except Exception:
+                wlog.debug(
+                    "Pool %s: attach source-status update failed",
+                    phase_tag,
+                    exc_info=True,
+                )
+
+        # ── B6: Skipped sources — clear claims so they don't loop ─────
+        if result.skipped:
+            try:
+                await asyncio.to_thread(
+                    _update_sources_after_skip,
+                    list(result.skipped),
+                    source_kind,
+                    wlog,
+                )
+                wlog.debug(
+                    "Pool %s: marked %d sources as skipped",
+                    phase_tag,
+                    len(result.skipped),
+                )
+            except Exception:
+                wlog.debug(
+                    "Pool %s: skipped source-status update failed",
+                    phase_tag,
+                    exc_info=True,
+                )
 
         # ── Persist ────────────────────────────────────────────────────
         if candidates:

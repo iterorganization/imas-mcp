@@ -104,6 +104,7 @@ def _mock_compose_llm_result(items: list[dict]) -> Any:
         cand = SimpleNamespace(
             standard_name=f"test_name_{len(candidates)}",
             source_id=path,
+            description=f"Test description for {path}",
             kind="scalar",
             dd_paths=[path],
             grammar_fields={},
