@@ -38,7 +38,7 @@ from imas_codex.standard_names.defaults import (
     DEFAULT_REFINE_ROTATIONS,
 )
 from imas_codex.standard_names.graph_ops import (
-    claim_generate_docs_seed_and_expand,
+    claim_generate_docs_batch,
     persist_generated_docs,
     persist_refined_docs,
     persist_reviewed_docs,
@@ -521,7 +521,7 @@ def test_docs_escalation_at_final_attempt(_gc, _clean, mock_llm):
 def test_generate_docs_gates_on_name_accepted(_gc, _clean):
     """generate_docs eligibility gates on name_stage='accepted'.
 
-    Verifies that ``claim_generate_docs_seed_and_expand`` returns only SNs
+    Verifies that ``claim_generate_docs_batch`` returns only SNs
     with ``name_stage='accepted' AND docs_stage='pending'``.  The duplicate-
     field bug (Neo4j 42N38) that previously blocked this call has been fixed
     by removing ``description`` and ``kind`` from ``extra_return_fields``
@@ -549,7 +549,7 @@ def test_generate_docs_gates_on_name_accepted(_gc, _clean):
 
     # Call the real claim function — this would previously fail with Neo4j
     # GQL error 42N38 (duplicate return item name).
-    claimed = claim_generate_docs_seed_and_expand(batch_size=10)
+    claimed = claim_generate_docs_batch(batch_size=10)
     claimed_ids = {item["id"] for item in claimed}
 
     assert sn_reviewed not in claimed_ids, (

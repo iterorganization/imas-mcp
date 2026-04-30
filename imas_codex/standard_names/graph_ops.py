@@ -2177,7 +2177,7 @@ def persist_generated_name_batch(
 ) -> int:
     """Persist a single generate-name batch immediately to graph.
 
-    Called from within ``_compose_batch_core`` after LLM success.
+    Called from within ``compose_batch`` after LLM success.
     Enriches candidates with provenance metadata, embeds the standard-name
     string, and extracts grammar fields before writing.
 
@@ -5211,7 +5211,7 @@ def update_sn_per_phase_costs(run_id: str) -> int:
 # Compose targets StandardNameSource; the other four target StandardName.
 # =============================================================================
 
-_DEFAULT_SEED_EXPAND_BATCH = 25
+DEFAULT_POOL_BATCH_SIZE = 25
 
 
 def _claim_sn_atomic(
@@ -5449,9 +5449,9 @@ def _claim_sn_atomic(
 
 
 @retry_on_deadlock()
-def claim_generate_name_seed_and_expand(
+def claim_generate_name_batch(
     facility: str | None = None,
-    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+    batch_size: int = DEFAULT_POOL_BATCH_SIZE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
     domain: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -5674,7 +5674,7 @@ def claim_generate_name_seed_and_expand(
                 raise
 
     logger.debug(
-        "claim_generate_name_seed_and_expand: claimed %d (token=%s)",
+        "claim_generate_name_batch: claimed %d (token=%s)",
         len(items),
         token[:8],
     )
@@ -5687,7 +5687,7 @@ def claim_generate_name_seed_and_expand(
 @retry_on_deadlock()
 def claim_enrich_seed_and_expand(
     min_score_threshold: float = 0.0,
-    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+    batch_size: int = DEFAULT_POOL_BATCH_SIZE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:
     """Claim StandardName nodes that lack documentation enrichment.
@@ -5713,7 +5713,7 @@ def claim_enrich_seed_and_expand(
 
 @retry_on_deadlock()
 def claim_review_names_seed_and_expand(
-    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+    batch_size: int = DEFAULT_POOL_BATCH_SIZE,
     min_score: float = DEFAULT_MIN_SCORE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:
@@ -5747,9 +5747,9 @@ def claim_review_names_seed_and_expand(
 
 
 @retry_on_deadlock()
-def claim_review_name_seed_and_expand(
+def claim_review_name_batch(
     facility: str | None = None,
-    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+    batch_size: int = DEFAULT_POOL_BATCH_SIZE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
     domain: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -5841,7 +5841,7 @@ def persist_reviewed_name(
         Acceptance threshold.
     rotation_cap:
         Maximum chain depth before exhaustion (same value used by
-        :func:`claim_refine_name_seed_and_expand`).
+        :func:`claim_refine_name_batch`).
 
     Returns
     -------
@@ -5929,9 +5929,9 @@ def persist_reviewed_name(
 
 
 @retry_on_deadlock()
-def claim_review_docs_seed_and_expand(
+def claim_review_docs_batch(
     facility: str | None = None,
-    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+    batch_size: int = DEFAULT_POOL_BATCH_SIZE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
     domain: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -6023,7 +6023,7 @@ def persist_reviewed_docs(
         Acceptance threshold.
     rotation_cap:
         Maximum chain depth before exhaustion (same value used by
-        :func:`claim_refine_docs_seed_and_expand`).
+        :func:`claim_refine_docs_batch`).
 
     Returns
     -------
@@ -6111,10 +6111,10 @@ def persist_reviewed_docs(
 
 
 @retry_on_deadlock()
-def claim_refine_name_seed_and_expand(
+def claim_refine_name_batch(
     min_score: float = DEFAULT_MIN_SCORE,
     rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
-    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+    batch_size: int = DEFAULT_POOL_BATCH_SIZE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
     domain: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -6786,8 +6786,8 @@ def release_refine_name_failed_claims(
 
 
 @retry_on_deadlock()
-def claim_generate_docs_seed_and_expand(
-    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+def claim_generate_docs_batch(
+    batch_size: int = DEFAULT_POOL_BATCH_SIZE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
     domain: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -6838,7 +6838,7 @@ def claim_generate_docs_seed_and_expand(
         item["chain_history"] = name_chain_history(item["id"])
 
     logger.debug(
-        "claim_generate_docs_seed_and_expand: claimed %d",
+        "claim_generate_docs_batch: claimed %d",
         len(items),
     )
     return items
@@ -7001,10 +7001,10 @@ def release_generate_docs_failed_claims(
 
 
 @retry_on_deadlock()
-def claim_refine_docs_seed_and_expand(
+def claim_refine_docs_batch(
     min_score: float = DEFAULT_MIN_SCORE,
     rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
-    batch_size: int = _DEFAULT_SEED_EXPAND_BATCH,
+    batch_size: int = DEFAULT_POOL_BATCH_SIZE,
     timeout_seconds: int = _CLAIM_TIMEOUT_SECONDS,
     domain: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -7063,7 +7063,7 @@ def claim_refine_docs_seed_and_expand(
         item["docs_chain_history"] = docs_chain_history(item["id"], limit=5)
 
     logger.debug(
-        "claim_refine_docs_seed_and_expand: claimed %d",
+        "claim_refine_docs_batch: claimed %d",
         len(items),
     )
     return items

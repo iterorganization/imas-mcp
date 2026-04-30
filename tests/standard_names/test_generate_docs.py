@@ -162,14 +162,14 @@ def _make_docs_item(
 def test_claim_only_when_name_accepted():
     """SN with name_stage='reviewed' is NOT claimed; accepted+pending IS claimed."""
     from imas_codex.standard_names.graph_ops import (
-        claim_generate_docs_seed_and_expand,
+        claim_generate_docs_batch,
     )
 
     # Simulate empty seed result (not eligible)
     gc_empty, tx_empty = _make_gc_tx(seed_rows=[])
     with _patch_gc(gc_empty):
         with _patch_chain_history():
-            result = claim_generate_docs_seed_and_expand()
+            result = claim_generate_docs_batch()
 
     assert result == [], "SN with name_stage='reviewed' must NOT be claimed"
 
@@ -186,13 +186,13 @@ def test_claim_only_when_name_accepted():
 def test_claim_eligible_accepted_pending():
     """SN with name_stage='accepted', docs_stage='pending' IS claimed."""
     from imas_codex.standard_names.graph_ops import (
-        claim_generate_docs_seed_and_expand,
+        claim_generate_docs_batch,
     )
 
     gc, tx = _make_gc_tx()
     with _patch_gc(gc):
         with _patch_chain_history():
-            items = claim_generate_docs_seed_and_expand(batch_size=1)
+            items = claim_generate_docs_batch(batch_size=1)
 
     assert len(items) == 1
     assert items[0]["id"] == "electron_temperature"
@@ -206,14 +206,14 @@ def test_claim_eligible_accepted_pending():
 def test_claim_skips_already_drafted_docs():
     """SN with docs_stage='drafted' is NOT returned even if name_stage='accepted'."""
     from imas_codex.standard_names.graph_ops import (
-        claim_generate_docs_seed_and_expand,
+        claim_generate_docs_batch,
     )
 
     # Simulate the seed query filtering out docs_stage='drafted' → empty
     gc_empty, tx_empty = _make_gc_tx(seed_rows=[])
     with _patch_gc(gc_empty):
         with _patch_chain_history():
-            result = claim_generate_docs_seed_and_expand()
+            result = claim_generate_docs_batch()
 
     assert result == []
 
@@ -231,13 +231,13 @@ def test_claim_skips_already_drafted_docs():
 def test_claim_includes_reviewer_feedback():
     """Claimed items include reviewer_score_name, reviewer_comments_name, reviewer_verdict_name."""
     from imas_codex.standard_names.graph_ops import (
-        claim_generate_docs_seed_and_expand,
+        claim_generate_docs_batch,
     )
 
     gc, tx = _make_gc_tx()
     with _patch_gc(gc):
         with _patch_chain_history():
-            items = claim_generate_docs_seed_and_expand(batch_size=1)
+            items = claim_generate_docs_batch(batch_size=1)
 
     assert len(items) == 1
     item = items[0]

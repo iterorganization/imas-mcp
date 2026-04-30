@@ -284,7 +284,7 @@ class TestThrottlePausesGenerateName:
 
         # generate_name's throttled claim should return None
         with patch(
-            f"{_GO}.claim_generate_name_seed_and_expand",
+            f"{_GO}.claim_generate_name_batch",
             return_value=[{"id": "x", "claim_token": "t"}],
         ):
             result = await specs_by_name["generate_name"].claim()
@@ -315,7 +315,7 @@ class TestThrottlePausesGenerateDocs:
         specs_by_name["review_docs"].health.pending_count = REVIEW_DOCS_BACKLOG_CAP + 1
 
         with patch(
-            f"{_GO}.claim_generate_docs_seed_and_expand",
+            f"{_GO}.claim_generate_docs_batch",
             return_value=[{"id": "x", "claim_token": "t"}],
         ):
             result = await specs_by_name["generate_docs"].claim()
@@ -339,7 +339,7 @@ class TestThrottleAllowsBelowCap:
         fake_items = [{"id": "src-1", "claim_token": "tok"}]
         # Patch BEFORE building specs so the closure captures the mock
         with patch(
-            f"{_GO}.claim_generate_name_seed_and_expand",
+            f"{_GO}.claim_generate_name_batch",
             return_value=fake_items,
         ):
             specs = _build_specs()
@@ -365,7 +365,7 @@ class TestThrottleAllowsBelowCap:
         fake_items = [{"id": "src-1", "claim_token": "tok"}]
         # Patch BEFORE building specs so the closure captures the mock
         with patch(
-            f"{_GO}.claim_generate_name_seed_and_expand",
+            f"{_GO}.claim_generate_name_batch",
             return_value=fake_items,
         ):
             specs = _build_specs()
@@ -392,7 +392,7 @@ class TestThrottleAllowsBelowCap:
         specs_by_name["review_name"].health.pending_count = REVIEW_NAME_BACKLOG_CAP + 10
 
         with patch(
-            f"{_GO}.claim_refine_name_seed_and_expand",
+            f"{_GO}.claim_refine_name_batch",
             return_value=[{"id": "sn-1", "claim_token": "t"}],
         ):
             result = await specs_by_name["refine_name"].claim()
@@ -409,7 +409,7 @@ class TestThrottleAllowsBelowCap:
         specs_by_name["review_docs"].health.pending_count = REVIEW_DOCS_BACKLOG_CAP + 5
 
         with patch(
-            f"{_GO}.claim_refine_docs_seed_and_expand",
+            f"{_GO}.claim_refine_docs_batch",
             return_value=[{"id": "sn-2", "claim_token": "t"}],
         ):
             result = await specs_by_name["refine_docs"].claim()

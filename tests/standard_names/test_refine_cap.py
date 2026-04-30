@@ -19,12 +19,12 @@ def _get_pool_specs_kwargs(rotation_cap: int | None = None) -> dict[str, list]:
         return spy
 
     patches = {
-        "claim_refine_name_seed_and_expand": _make_spy("refine_name"),
-        "claim_refine_docs_seed_and_expand": _make_spy("refine_docs"),
-        "claim_generate_name_seed_and_expand": _make_spy("generate_name"),
-        "claim_generate_docs_seed_and_expand": _make_spy("generate_docs"),
-        "claim_review_name_seed_and_expand": _make_spy("review_name"),
-        "claim_review_docs_seed_and_expand": _make_spy("review_docs"),
+        "claim_refine_name_batch": _make_spy("refine_name"),
+        "claim_refine_docs_batch": _make_spy("refine_docs"),
+        "claim_generate_name_batch": _make_spy("generate_name"),
+        "claim_generate_docs_batch": _make_spy("generate_docs"),
+        "claim_review_name_batch": _make_spy("review_name"),
+        "claim_review_docs_batch": _make_spy("review_docs"),
         "release_generate_name_claims": lambda **kw: 0,
         "release_refine_name_claims": lambda **kw: 0,
         "release_generate_docs_claims": lambda **kw: 0,
@@ -86,8 +86,8 @@ class TestRefineCapForwarding:
         # The fix should contain rotation_cap_kwargs being spread into
         # the refine_name claim adapter
         assert "_rotation_cap_kwargs" in source
-        assert "claim_refine_name_seed_and_expand" in source
-        assert "claim_refine_docs_seed_and_expand" in source
+        assert "claim_refine_name_batch" in source
+        assert "claim_refine_docs_batch" in source
 
     def test_bucket_c_uses_chain_length(self):
         """Bucket C query should use chain_length, not regen_count."""

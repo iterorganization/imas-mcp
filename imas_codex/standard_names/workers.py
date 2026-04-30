@@ -3040,7 +3040,7 @@ async def persist_worker(state: StandardNameBuildState, **_kwargs) -> None:
 # =============================================================================
 
 
-async def _compose_batch_core(
+async def compose_batch(
     batch: list[dict],
     mgr: BudgetManager,
     stop_event: asyncio.Event,
@@ -3675,25 +3675,7 @@ async def process_generate_name_batch(
 
     Returns count of items successfully processed.
     """
-    return await _compose_batch_core(
-        batch, mgr, stop_event, regen=False, on_event=on_event
-    )
-
-
-async def process_regen_batch(
-    batch: list[dict],
-    mgr: BudgetManager,
-    stop_event: asyncio.Event,
-) -> int:
-    """Pool-mode regen batch processor.
-
-    Same as :func:`process_generate_name_batch` but sets ``regen_increment``
-    on each candidate so :func:`persist_generated_name_batch` increments
-    ``regen_count`` on the :class:`StandardName` node.
-
-    Returns count of items successfully processed.
-    """
-    return await _compose_batch_core(batch, mgr, stop_event, regen=True)
+    return await compose_batch(batch, mgr, stop_event, regen=False, on_event=on_event)
 
 
 async def process_refine_name_batch(

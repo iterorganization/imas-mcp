@@ -76,7 +76,7 @@ def _make_refine_item(
     score: float = 0.6,
     **overrides: Any,
 ) -> dict[str, Any]:
-    """Build a claimed-item dict as returned by claim_refine_name_seed_and_expand."""
+    """Build a claimed-item dict as returned by claim_refine_name_batch."""
     item: dict[str, Any] = {
         "id": sn_id,
         "description": "A test quantity",
@@ -106,11 +106,11 @@ def _make_refine_item(
 
 
 class TestClaimRefinesEligibleSN:
-    """claim_refine_name_seed_and_expand selects reviewed + low-score + chain < cap."""
+    """claim_refine_name_batch selects reviewed + low-score + chain < cap."""
 
     def test_claim_refines_eligible_sn(self):
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_name_seed_and_expand,
+            claim_refine_name_batch,
         )
 
         gc, tx = _mock_gc_tx()
@@ -142,7 +142,7 @@ class TestClaimRefinesEligibleSN:
         )
 
         with _patch_gc(gc), _patch_chain_history():
-            items = claim_refine_name_seed_and_expand(batch_size=1)
+            items = claim_refine_name_batch(batch_size=1)
 
         assert len(items) == 1
         assert items[0]["chain_history"] == []
@@ -155,7 +155,7 @@ class TestClaimRefinesEligibleSN:
     def test_claim_skips_at_chain_cap(self):
         """Items at or above rotation_cap are excluded by WHERE clause."""
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_name_seed_and_expand,
+            claim_refine_name_batch,
         )
 
         gc, tx = _mock_gc_tx()
@@ -167,14 +167,14 @@ class TestClaimRefinesEligibleSN:
         )
 
         with _patch_gc(gc), _patch_chain_history():
-            items = claim_refine_name_seed_and_expand(rotation_cap=3, batch_size=10)
+            items = claim_refine_name_batch(rotation_cap=3, batch_size=10)
 
         assert items == []
 
     def test_claim_enriches_chain_history(self):
         """Each claimed item gets chain_history from name_chain_history()."""
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_name_seed_and_expand,
+            claim_refine_name_batch,
         )
 
         gc, tx = _mock_gc_tx()
@@ -205,7 +205,7 @@ class TestClaimRefinesEligibleSN:
         )
 
         with _patch_gc(gc), _patch_chain_history(return_value=chain):
-            items = claim_refine_name_seed_and_expand(batch_size=1)
+            items = claim_refine_name_batch(batch_size=1)
 
         assert items[0]["chain_history"] == chain
 

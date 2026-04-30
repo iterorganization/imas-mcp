@@ -176,11 +176,11 @@ class TestClaimReturnScalarPhysicsDomain:
 
     def test_claim_review_docs_returns_scalar_physics_domain(self) -> None:
         from imas_codex.standard_names.graph_ops import (
-            claim_review_docs_seed_and_expand,
+            claim_review_docs_batch,
         )
 
         result = self._run_sn_claim(
-            claim_review_docs_seed_and_expand,
+            claim_review_docs_batch,
             seed_row={
                 "_cluster_id": "c1",
                 "_unit": "keV",
@@ -210,11 +210,11 @@ class TestClaimReturnScalarPhysicsDomain:
 
     def test_claim_refine_name_returns_scalar_physics_domain(self) -> None:
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_name_seed_and_expand,
+            claim_refine_name_batch,
         )
 
         result = self._run_sn_claim(
-            claim_refine_name_seed_and_expand,
+            claim_refine_name_batch,
             seed_row={
                 "_cluster_id": None,
                 "_unit": "s",
@@ -254,7 +254,7 @@ class TestClaimReturnScalarPhysicsDomain:
         Verify the CASE expression no longer wraps in head().
         """
         from imas_codex.standard_names.graph_ops import (
-            claim_generate_name_seed_and_expand,
+            claim_generate_name_batch,
         )
 
         gc = _mock_gc()
@@ -282,7 +282,7 @@ class TestClaimReturnScalarPhysicsDomain:
             ]
         )
         with _patch_gc(gc):
-            result = claim_generate_name_seed_and_expand(batch_size=1)
+            result = claim_generate_name_batch(batch_size=1)
 
         assert result, "expected at least one item"
         # The seed CASE expression should return a scalar _physics_domain
@@ -301,7 +301,7 @@ class TestClaimReturnScalarPhysicsDomain:
         to `imas.physics_domain = $fallback_domain`.
         """
         from imas_codex.standard_names.graph_ops import (
-            claim_generate_name_seed_and_expand,
+            claim_generate_name_batch,
         )
 
         gc = _mock_gc()
@@ -323,7 +323,7 @@ class TestClaimReturnScalarPhysicsDomain:
             ]
         )
         with _patch_gc(gc):
-            claim_generate_name_seed_and_expand(batch_size=2)
+            claim_generate_name_batch(batch_size=2)
 
         # Find the expand Cypher call (2nd query call)
         assert gc._tx.run.call_count >= 2, "expand query was never issued"

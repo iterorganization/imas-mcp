@@ -82,10 +82,10 @@ class TestSeedIsRandom:
     """Populate 100 candidate rows; run claim 10×; seeds must not be constant."""
 
     def test_compose_seed_is_random(self):
-        """claim_generate_name_seed_and_expand sends ORDER BY rand() and passes
+        """claim_generate_name_batch sends ORDER BY rand() and passes
         through whichever seed the graph returns."""
         from imas_codex.standard_names.graph_ops import (
-            claim_generate_name_seed_and_expand,
+            claim_generate_name_batch,
         )
 
         seen_ids: set[str] = set()
@@ -117,7 +117,7 @@ class TestSeedIsRandom:
                 ]
             )
             with _patch_gc(gc):
-                result = claim_generate_name_seed_and_expand(batch_size=1)
+                result = claim_generate_name_batch(batch_size=1)
                 if result:
                     seen_ids.add(result[0]["id"])
 
@@ -323,7 +323,7 @@ class TestReviewExcludesLowScore:
 
     def test_review_docs_excludes_low_score(self):
         from imas_codex.standard_names.graph_ops import (
-            claim_review_docs_seed_and_expand,
+            claim_review_docs_batch,
         )
 
         gc, tx = _mock_gc_tx()
@@ -351,7 +351,7 @@ class TestReviewExcludesLowScore:
         )
 
         with _patch_gc(gc):
-            items = claim_review_docs_seed_and_expand(batch_size=1, min_score=0.5)
+            items = claim_review_docs_batch(batch_size=1, min_score=0.5)
 
         seed_query = tx.run.call_args_list[0].args[0]
         assert "coalesce(sn.reviewer_score_name, 1.0) >= $min_score" in seed_query
@@ -368,7 +368,7 @@ class TestRefineNameEligibility:
 
     def test_refine_name_excludes_unreviewed_names(self):
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_name_seed_and_expand,
+            claim_refine_name_batch,
         )
 
         gc, tx = _mock_gc_tx()
@@ -408,7 +408,7 @@ class TestRefineNameEligibility:
                 return_value=[],
             ),
         ):
-            items = claim_refine_name_seed_and_expand(min_score=0.5, batch_size=5)
+            items = claim_refine_name_batch(min_score=0.5, batch_size=5)
 
         # Verify the WHERE clause requires name_stage = 'reviewed'
         seed_query = tx.run.call_args_list[0].args[0]
@@ -434,7 +434,7 @@ class TestReviewAndRefineDisjoint:
         Same-name overlap is structurally impossible.
         """
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_name_seed_and_expand,
+            claim_refine_name_batch,
             claim_review_names_seed_and_expand,
         )
 
@@ -499,9 +499,7 @@ class TestReviewAndRefineDisjoint:
                 return_value=[],
             ),
         ):
-            refine_items = claim_refine_name_seed_and_expand(
-                min_score=0.5, batch_size=1
-            )
+            refine_items = claim_refine_name_batch(min_score=0.5, batch_size=1)
 
         review_ids = {it["id"] for it in review_items}
         refine_ids = {it["id"] for it in refine_items}
@@ -543,11 +541,11 @@ class TestClaimTokenTwoStep:
 
     def test_compose_two_step(self):
         from imas_codex.standard_names.graph_ops import (
-            claim_generate_name_seed_and_expand,
+            claim_generate_name_batch,
         )
 
         self._run_and_check_readback(
-            claim_generate_name_seed_and_expand,
+            claim_generate_name_batch,
             [
                 [
                     {
@@ -628,11 +626,11 @@ class TestClaimTokenTwoStep:
 
     def test_refine_name_two_step(self):
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_name_seed_and_expand,
+            claim_refine_name_batch,
         )
 
         self._run_and_check_readback(
-            claim_refine_name_seed_and_expand,
+            claim_refine_name_batch,
             [
                 [{"_cluster_id": None, "_unit": None, "_physics_domain": None}],
                 [
@@ -670,11 +668,11 @@ class TestRetryOnDeadlockApplied:
     @pytest.mark.parametrize(
         "fn_name",
         [
-            "claim_generate_name_seed_and_expand",
+            "claim_generate_name_batch",
             "claim_enrich_seed_and_expand",
             "claim_review_names_seed_and_expand",
-            "claim_review_docs_seed_and_expand",
-            "claim_refine_name_seed_and_expand",
+            "claim_review_docs_batch",
+            "claim_refine_name_batch",
         ],
     )
     def test_has_wrapped(self, fn_name: str):
@@ -697,11 +695,11 @@ class TestEmptyPoolReturnsEmpty:
     @pytest.mark.parametrize(
         "fn_name",
         [
-            "claim_generate_name_seed_and_expand",
+            "claim_generate_name_batch",
             "claim_enrich_seed_and_expand",
             "claim_review_names_seed_and_expand",
-            "claim_review_docs_seed_and_expand",
-            "claim_refine_name_seed_and_expand",
+            "claim_review_docs_batch",
+            "claim_refine_name_batch",
         ],
     )
     def test_empty(self, fn_name: str):

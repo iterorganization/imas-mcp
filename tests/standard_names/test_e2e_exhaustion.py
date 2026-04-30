@@ -22,8 +22,8 @@ import uuid
 import pytest
 
 from imas_codex.standard_names.graph_ops import (
-    claim_generate_docs_seed_and_expand,
-    claim_refine_name_seed_and_expand,
+    claim_generate_docs_batch,
+    claim_refine_name_batch,
     persist_refined_docs,
     persist_refined_name,
     persist_reviewed_docs,
@@ -404,14 +404,14 @@ def test_e2e_name_exhausted_blocks_docs_pipeline(_gc, _clean):
         assert _count_docs_revisions(_gc, sn_id) == 0
 
     # generate_docs must NOT claim v3 (name_stage='exhausted', not 'accepted')
-    claimed_docs = claim_generate_docs_seed_and_expand(batch_size=50)
+    claimed_docs = claim_generate_docs_batch(batch_size=50)
     claimed_ids = {item["id"] for item in claimed_docs}
     assert sn_v3 not in claimed_ids, (
         "Exhausted SN must not appear in generate_docs claim"
     )
 
     # refine_name must NOT claim v3 (name_stage='exhausted', not 'reviewed')
-    claimed_refine = claim_refine_name_seed_and_expand(
+    claimed_refine = claim_refine_name_batch(
         min_score=0.75, rotation_cap=_CAP, batch_size=50
     )
     claimed_refine_ids = {item["id"] for item in claimed_refine}
@@ -472,18 +472,18 @@ def test_e2e_docs_exhausted_keeps_name_accepted(_gc, _clean):
     )
 
     # Exhausted SN must not be claimed by refine_docs (docs_stage != 'reviewed')
-    from imas_codex.standard_names.graph_ops import claim_refine_docs_seed_and_expand
+    from imas_codex.standard_names.graph_ops import claim_refine_docs_batch
 
-    claimed_refine = claim_refine_docs_seed_and_expand(batch_size=50)
+    claimed_refine = claim_refine_docs_batch(batch_size=50)
     claimed_refine_ids = {item["id"] for item in claimed_refine}
     assert sn_id not in claimed_refine_ids, (
         "Exhausted SN must not appear in refine_docs claim"
     )
 
     # review_docs must NOT claim this SN (docs_stage='exhausted', not 'drafted')
-    from imas_codex.standard_names.graph_ops import claim_review_docs_seed_and_expand
+    from imas_codex.standard_names.graph_ops import claim_review_docs_batch
 
-    claimed_review = claim_review_docs_seed_and_expand(batch_size=50)
+    claimed_review = claim_review_docs_batch(batch_size=50)
     claimed_review_ids = {item["id"] for item in claimed_review}
     assert sn_id not in claimed_review_ids, (
         "Exhausted SN must not appear in review_docs claim"
@@ -537,7 +537,7 @@ def test_e2e_acceptance_at_cap_overrides_exhaustion(_gc, _clean):
     assert _fetch_produced_name_target(_gc, src_id) == sn_v3
 
     # generate_docs CAN claim SN_v3 (name_stage='accepted', docs_stage='pending')
-    claimed = claim_generate_docs_seed_and_expand(batch_size=50)
+    claimed = claim_generate_docs_batch(batch_size=50)
     claimed_ids = {item["id"] for item in claimed}
     assert sn_v3 in claimed_ids, (
         "Accepted SN at rotation cap should be eligible for generate_docs"

@@ -238,9 +238,9 @@ class TestAtomicClaimReturnsExpandedPayload:
             assert key in item, f"missing key: {key}"
 
     def test_payload_keys_refine_name(self):
-        """claim_refine_name_seed_and_expand returns SN payload + refine-specific fields."""
+        """claim_refine_name_batch returns SN payload + refine-specific fields."""
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_name_seed_and_expand,
+            claim_refine_name_batch,
         )
 
         gc, tx = _mock_gc_tx()
@@ -279,7 +279,7 @@ class TestAtomicClaimReturnsExpandedPayload:
                 return_value=[],
             ),
         ):
-            items = claim_refine_name_seed_and_expand(min_score=0.5, batch_size=1)
+            items = claim_refine_name_batch(min_score=0.5, batch_size=1)
 
         assert len(items) == 1
         for key in [
@@ -344,7 +344,7 @@ class TestAtomicClaimRandomOrder:
             ("claim_compose_seed_and_expand", {}),
             ("claim_enrich_seed_and_expand", {}),
             ("claim_review_names_seed_and_expand", {}),
-            ("claim_review_docs_seed_and_expand", {}),
+            ("claim_review_docs_batch", {}),
             ("claim_regen_seed_and_expand", {"min_score": 0.5}),
         ]
 

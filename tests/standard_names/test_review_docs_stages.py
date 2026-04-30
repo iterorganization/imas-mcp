@@ -53,7 +53,7 @@ def _make_docs_item(
     claim_token: str = "tok-review-docs-123",
     **overrides: Any,
 ) -> dict[str, Any]:
-    """Build a claimed-item dict as returned by claim_review_docs_seed_and_expand."""
+    """Build a claimed-item dict as returned by claim_review_docs_batch."""
     item: dict[str, Any] = {
         "id": sn_id,
         "name": sn_id,
@@ -90,7 +90,7 @@ def _mock_budget_manager() -> MagicMock:
 
 
 class TestClaimOnlyDraftedDocs:
-    """claim_review_docs_seed_and_expand uses docs_stage='drafted' as gate."""
+    """claim_review_docs_batch uses docs_stage='drafted' as gate."""
 
     def test_claim_only_drafted_docs(self):
         """The claim WHERE clause gates on docs_stage='drafted'."""
@@ -111,10 +111,10 @@ class TestClaimOnlyDraftedDocs:
             side_effect=_fake_claim_sn_atomic,
         ):
             from imas_codex.standard_names.graph_ops import (
-                claim_review_docs_seed_and_expand,
+                claim_review_docs_batch,
             )
 
-            claim_review_docs_seed_and_expand(batch_size=5)
+            claim_review_docs_batch(batch_size=5)
 
         assert len(captured) == 1
         where = captured[0]
@@ -134,10 +134,10 @@ class TestClaimOnlyDraftedDocs:
             side_effect=_fake_claim_sn_atomic,
         ):
             from imas_codex.standard_names.graph_ops import (
-                claim_review_docs_seed_and_expand,
+                claim_review_docs_batch,
             )
 
-            claim_review_docs_seed_and_expand(batch_size=5)
+            claim_review_docs_batch(batch_size=5)
 
         assert kwargs_captured
         kw = kwargs_captured[0]
@@ -164,10 +164,10 @@ class TestClaimSkipsPendingDocs:
             side_effect=_fake_claim_sn_atomic,
         ):
             from imas_codex.standard_names.graph_ops import (
-                claim_review_docs_seed_and_expand,
+                claim_review_docs_batch,
             )
 
-            claim_review_docs_seed_and_expand(batch_size=5)
+            claim_review_docs_batch(batch_size=5)
 
         assert captured
         where = captured[0]

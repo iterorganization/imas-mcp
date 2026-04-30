@@ -54,7 +54,7 @@ def _make_reviewed_item(
     claim_token: str = "tok-review-123",
     **overrides: Any,
 ) -> dict[str, Any]:
-    """Build a claimed-item dict as returned by claim_review_name_seed_and_expand."""
+    """Build a claimed-item dict as returned by claim_review_name_batch."""
     item: dict[str, Any] = {
         "id": sn_id,
         "name": sn_id,
@@ -91,7 +91,7 @@ def _mock_budget_manager() -> MagicMock:
 
 
 class TestClaimOnlyDrafted:
-    """claim_review_name_seed_and_expand uses name_stage='drafted' as gate."""
+    """claim_review_name_batch uses name_stage='drafted' as gate."""
 
     def test_claim_only_drafted(self):
         """The claim WHERE clause gates on name_stage='drafted'."""
@@ -112,10 +112,10 @@ class TestClaimOnlyDrafted:
             side_effect=_fake_claim_sn_atomic,
         ):
             from imas_codex.standard_names.graph_ops import (
-                claim_review_name_seed_and_expand,
+                claim_review_name_batch,
             )
 
-            claim_review_name_seed_and_expand(batch_size=5)
+            claim_review_name_batch(batch_size=5)
 
         assert len(captured) == 1
         where = captured[0]
@@ -135,10 +135,10 @@ class TestClaimOnlyDrafted:
             side_effect=_fake_claim_sn_atomic,
         ):
             from imas_codex.standard_names.graph_ops import (
-                claim_review_name_seed_and_expand,
+                claim_review_name_batch,
             )
 
-            claim_review_name_seed_and_expand(batch_size=5)
+            claim_review_name_batch(batch_size=5)
 
         assert kwargs_captured
         kw = kwargs_captured[0]

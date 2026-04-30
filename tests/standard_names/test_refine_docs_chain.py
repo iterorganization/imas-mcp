@@ -77,7 +77,7 @@ def _make_refine_docs_item(
     score: float = 0.5,
     **overrides: Any,
 ) -> dict[str, Any]:
-    """Build a claimed-item dict as returned by claim_refine_docs_seed_and_expand."""
+    """Build a claimed-item dict as returned by claim_refine_docs_batch."""
     item: dict[str, Any] = {
         "id": sn_id,
         "description": "Electron temperature in the plasma core.",
@@ -111,12 +111,12 @@ def _make_refine_docs_item(
 
 
 class TestClaimRefineDocsEligible:
-    """claim_refine_docs_seed_and_expand selects reviewed + low docs score + chain < cap."""
+    """claim_refine_docs_batch selects reviewed + low docs score + chain < cap."""
 
     def test_claim_eligibility(self):
         """docs_stage='reviewed' + score < min_score + chain < cap → claimable."""
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_docs_seed_and_expand,
+            claim_refine_docs_batch,
         )
 
         gc, tx = _mock_gc_tx()
@@ -149,7 +149,7 @@ class TestClaimRefineDocsEligible:
         )
 
         with _patch_gc(gc), _patch_docs_chain_history():
-            items = claim_refine_docs_seed_and_expand(batch_size=1)
+            items = claim_refine_docs_batch(batch_size=1)
 
         assert len(items) == 1
         assert items[0]["docs_chain_history"] == []
@@ -162,14 +162,14 @@ class TestClaimRefineDocsEligible:
     def test_claim_excludes_chain_at_cap(self):
         """docs_chain_length >= rotation_cap → not claimed."""
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_docs_seed_and_expand,
+            claim_refine_docs_batch,
         )
 
         gc, tx = _mock_gc_tx()
         tx.run = MagicMock(side_effect=[[], []])
 
         with _patch_gc(gc), _patch_docs_chain_history():
-            items = claim_refine_docs_seed_and_expand(rotation_cap=3, batch_size=10)
+            items = claim_refine_docs_batch(rotation_cap=3, batch_size=10)
 
         assert items == []
 
@@ -181,7 +181,7 @@ class TestClaimRefineDocsEligible:
     def test_claim_excludes_accepted_verdict(self):
         """reviewer_verdict_docs='accept' → not claimed (defensive guard)."""
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_docs_seed_and_expand,
+            claim_refine_docs_batch,
         )
 
         gc, tx = _mock_gc_tx()
@@ -189,7 +189,7 @@ class TestClaimRefineDocsEligible:
         tx.run = MagicMock(side_effect=[[]])
 
         with _patch_gc(gc), _patch_docs_chain_history():
-            items = claim_refine_docs_seed_and_expand(batch_size=1)
+            items = claim_refine_docs_batch(batch_size=1)
 
         assert items == []
 
@@ -200,7 +200,7 @@ class TestClaimRefineDocsEligible:
     def test_claim_enriches_chain_history(self):
         """Each claimed item gets docs_chain_history from docs_chain_history()."""
         from imas_codex.standard_names.graph_ops import (
-            claim_refine_docs_seed_and_expand,
+            claim_refine_docs_batch,
         )
 
         gc, tx = _mock_gc_tx()
@@ -240,7 +240,7 @@ class TestClaimRefineDocsEligible:
         )
 
         with _patch_gc(gc), _patch_docs_chain_history(return_value=chain):
-            items = claim_refine_docs_seed_and_expand(batch_size=1)
+            items = claim_refine_docs_batch(batch_size=1)
 
         assert len(items) == 1
         assert items[0]["docs_chain_history"] == chain

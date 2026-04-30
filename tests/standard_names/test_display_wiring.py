@@ -103,13 +103,13 @@ class TestOnEventNoneDoesNotCrash:
         """Verify that worker functions accept on_event=None without error.
 
         This tests the API contract: all 6 pool workers and
-        ``_compose_batch_core`` accept ``on_event`` as a keyword-only arg
+        ``compose_batch`` accept ``on_event`` as a keyword-only arg
         with ``None`` as default.
         """
         import inspect
 
         from imas_codex.standard_names.workers import (
-            _compose_batch_core,
+            compose_batch,
             process_generate_docs_batch,
             process_generate_name_batch,
             process_refine_docs_batch,
@@ -119,7 +119,7 @@ class TestOnEventNoneDoesNotCrash:
         )
 
         for fn in (
-            _compose_batch_core,
+            compose_batch,
             process_generate_name_batch,
             process_refine_name_batch,
             process_review_name_batch,

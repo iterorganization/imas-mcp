@@ -25,12 +25,12 @@ _BM = "imas_codex.standard_names.budget.BudgetManager"
 
 # Stub all 6 claim functions to return empty (no work).
 _CLAIM_PATCHES = {
-    "generate_name": f"{_GO}.claim_generate_name_seed_and_expand",
-    "review_name": f"{_GO}.claim_review_name_seed_and_expand",
-    "refine_name": f"{_GO}.claim_refine_name_seed_and_expand",
-    "generate_docs": f"{_GO}.claim_generate_docs_seed_and_expand",
-    "review_docs": f"{_GO}.claim_review_docs_seed_and_expand",
-    "refine_docs": f"{_GO}.claim_refine_docs_seed_and_expand",
+    "generate_name": f"{_GO}.claim_generate_name_batch",
+    "review_name": f"{_GO}.claim_review_name_batch",
+    "refine_name": f"{_GO}.claim_refine_name_batch",
+    "generate_docs": f"{_GO}.claim_generate_docs_batch",
+    "review_docs": f"{_GO}.claim_review_docs_batch",
+    "refine_docs": f"{_GO}.claim_refine_docs_batch",
 }
 
 

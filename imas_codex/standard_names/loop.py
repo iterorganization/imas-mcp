@@ -622,12 +622,12 @@ def _build_pool_specs(
         REVIEW_NAME_BACKLOG_CAP,
     )
     from imas_codex.standard_names.graph_ops import (
-        claim_generate_docs_seed_and_expand,
-        claim_generate_name_seed_and_expand,
-        claim_refine_docs_seed_and_expand,
-        claim_refine_name_seed_and_expand,
-        claim_review_docs_seed_and_expand,
-        claim_review_name_seed_and_expand,
+        claim_generate_docs_batch,
+        claim_generate_name_batch,
+        claim_refine_docs_batch,
+        claim_refine_name_batch,
+        claim_review_docs_batch,
+        claim_review_name_batch,
         release_generate_docs_claims,
         release_generate_name_claims,
         release_refine_docs_claims,
@@ -737,7 +737,7 @@ def _build_pool_specs(
         PoolSpec(
             name="generate_name",
             claim=_make_claim_adapter(
-                claim_generate_name_seed_and_expand,
+                claim_generate_name_batch,
                 **({"domain": only_domain} if only_domain else {}),
             ),
             process=_make_process_adapter(process_generate_name_batch),
@@ -749,7 +749,7 @@ def _build_pool_specs(
         PoolSpec(
             name="review_name",
             claim=_make_claim_adapter(
-                claim_review_name_seed_and_expand,
+                claim_review_name_batch,
                 **({"domain": only_domain} if only_domain else {}),
             ),
             process=_make_process_adapter(process_review_name_batch),
@@ -761,7 +761,7 @@ def _build_pool_specs(
         PoolSpec(
             name="refine_name",
             claim=_make_claim_adapter(
-                claim_refine_name_seed_and_expand,
+                claim_refine_name_batch,
                 min_score=regen_score,
                 **_rotation_cap_kwargs,
                 **({"domain": only_domain} if only_domain else {}),
@@ -775,7 +775,7 @@ def _build_pool_specs(
         PoolSpec(
             name="generate_docs",
             claim=_make_claim_adapter(
-                claim_generate_docs_seed_and_expand,
+                claim_generate_docs_batch,
                 **({"domain": only_domain} if only_domain else {}),
             ),
             process=_make_process_adapter(process_generate_docs_batch),
@@ -787,7 +787,7 @@ def _build_pool_specs(
         PoolSpec(
             name="review_docs",
             claim=_make_claim_adapter(
-                claim_review_docs_seed_and_expand,
+                claim_review_docs_batch,
                 **({"domain": only_domain} if only_domain else {}),
             ),
             process=_make_process_adapter(process_review_docs_batch),
@@ -799,7 +799,7 @@ def _build_pool_specs(
         PoolSpec(
             name="refine_docs",
             claim=_make_claim_adapter(
-                claim_refine_docs_seed_and_expand,
+                claim_refine_docs_batch,
                 min_score=regen_score,
                 **_rotation_cap_kwargs,
                 **({"domain": only_domain} if only_domain else {}),
