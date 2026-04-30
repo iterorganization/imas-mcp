@@ -5308,7 +5308,7 @@ def claim_generate_name_seed_and_expand(
     domain_where = ""
     if domain:
         domain_where = (
-            "AND (sns.source_type != 'dd' OR EXISTS {"
+            "AND (NOT (sns.source_type = 'dd') OR EXISTS {"
             "  MATCH (sns)-[:FROM_DD_PATH]->(n:IMASNode)"
             "  WHERE n.physics_domain = $domain"
             "})"
