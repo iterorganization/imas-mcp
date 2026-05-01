@@ -437,7 +437,11 @@ result-hit-cap = 8
 evidence-token-cap-baseline = 2000
 evidence-token-cap-escalation = 800
 # Stage A LLM model + sampling.
-proposer-model = "openrouter/anthropic/claude-haiku-4.5"
+# NOTE: Anthropic's structured-output API rejects schemas with `oneOf`
+# (FanoutPlan uses a discriminated union over fn_id). Use a provider that
+# supports oneOf (Gemini, OpenAI). Tested: gemini-3.1-flash-lite-preview
+# accepts the schema and returns valid plans cheaply.
+proposer-model = "openrouter/google/gemini-3.1-flash-lite-preview"
 proposer-temperature = 0.1
 # Cost padding added to the parent lease at refine-cycle start (tiered, plan §7.3).
 fanout-cost-estimate-baseline = 0.005

@@ -68,7 +68,7 @@ class FanoutSettings(BaseModel):
     evidence_token_cap_escalation: int = 800
     """Total evidence-block token cap on Opus-escalation cycles."""
 
-    proposer_model: str = "openrouter/anthropic/claude-haiku-4.5"
+    proposer_model: str = "openrouter/google/gemini-3.1-flash-lite-preview"
     """Stage A LLM model identifier."""
 
     proposer_temperature: float = 0.1
