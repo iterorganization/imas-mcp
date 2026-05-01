@@ -3790,21 +3790,33 @@ async def process_refine_name_batch(
     For each item in the batch:
     1. Walk the REFINED_FROM chain via ``chain_history`` (already enriched).
     2. Decide whether to escalate (chain_length ≥ rotation_cap - 1).
-    3. Call LLM to produce a refined name (``RefinedName`` response model).
-    4. Persist via ``persist_refined_name`` (new node + edge migration).
-    5. On failure, release claims via ``release_refine_name_failed_claims``.
+    3. Optionally fan out targeted DD context (plan 39 Phase 1 — gated).
+    4. Call LLM to produce a refined name (``RefinedName`` response model).
+    5. Run the Phase 1.5 dup guard before persisting (plan 39 §5.2).
+    6. Persist via ``persist_refined_name`` (new node + edge migration).
+    7. On failure, release claims via ``release_refine_name_failed_claims``.
 
     Returns count of items successfully processed.
     """
     import asyncio as _asyncio
 
     from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.graph.client import GraphClient
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.settings import get_model
     from imas_codex.standard_names.budget import LLMCostEvent
+    from imas_codex.standard_names.canonical import find_name_key_duplicate
     from imas_codex.standard_names.defaults import (
         DEFAULT_ESCALATION_MODEL,
         DEFAULT_REFINE_ROTATIONS,
+    )
+    from imas_codex.standard_names.fanout import (
+        CandidateContext,
+        FanoutScope,
+        assign_arm,
+        load_settings as load_fanout_settings,
+        run_fanout,
+        should_trigger_fanout,
     )
     from imas_codex.standard_names.graph_ops import (
         persist_refined_name,
@@ -3815,143 +3827,293 @@ async def process_refine_name_batch(
     rotation_cap = DEFAULT_REFINE_ROTATIONS
     processed = 0
 
-    for item in batch:
-        if stop_event.is_set():
-            break
+    # ── GraphClient lifecycle (plan 39 §10.1 I5) ─────────────────────
+    # One client per cycle, reused by hybrid-neighbour search,
+    # run_fanout, dup guard, and Fanout-node telemetry writes.
+    # ``persist_refined_name`` opens its own client (different
+    # transaction lifecycle) — that is intentional and unchanged.
+    fanout_settings = load_fanout_settings()
 
-        sn_id = item["id"]
-        chain_length = item.get("chain_length", 0) or 0
-        chain_history = item.get("chain_history", [])
+    with GraphClient() as gc:
+        for item in batch:
+            if stop_event.is_set():
+                break
 
-        # ── Escalation decision ───────────────────────────────────
-        escalate = chain_length >= rotation_cap - 1
-        if escalate:
-            model = DEFAULT_ESCALATION_MODEL
-        else:
-            model = get_model("language")
+            sn_id = item["id"]
+            chain_length = item.get("chain_length", 0) or 0
+            chain_history = item.get("chain_history", [])
 
-        # ── Build prompt context ──────────────────────────────────
-        path = item.get("source_paths", [""])[0] if item.get("source_paths") else ""
-        prompt_context: dict[str, Any] = {
-            "item": item,
-            "chain_history": chain_history,
-            "chain_length": chain_length,
-            "hybrid_neighbours": [],
-        }
+            # ── Escalation decision ───────────────────────────────────
+            escalate = chain_length >= rotation_cap - 1
+            if escalate:
+                model = DEFAULT_ESCALATION_MODEL
+            else:
+                model = get_model("language")
 
-        # Attempt hybrid neighbour search (best-effort)
-        try:
-            from imas_codex.graph.client import GraphClient
+            # ── Build prompt context ──────────────────────────────────
+            path = item.get("source_paths", [""])[0] if item.get("source_paths") else ""
+            prompt_context: dict[str, Any] = {
+                "item": item,
+                "chain_history": chain_history,
+                "chain_length": chain_length,
+                "hybrid_neighbours": [],
+                "fanout_evidence": "",
+            }
 
-            with GraphClient() as gc:
+            # Attempt hybrid neighbour search (best-effort).  Uses the
+            # cycle-scoped ``gc`` (plan 39 §10.1) — no fresh client.
+            try:
                 neighbours = _hybrid_search_neighbours(gc, path)
                 prompt_context["hybrid_neighbours"] = [
                     {"path": n.get("path", ""), "description": n.get("description")}
                     for n in neighbours
                 ]
-        except Exception:
-            logger.debug("Hybrid neighbour search failed for %s", sn_id)
+            except Exception:
+                logger.debug("Hybrid neighbour search failed for %s", sn_id)
 
-        user_prompt = render_prompt("sn/refine_name_user", prompt_context)
-
-        # ── Budget reservation ─────────────────────────────────────
-        estimated = 0.20  # single item
-        lease = mgr.reserve(estimated, phase="refine_name")
-
-        # ── LLM call ──────────────────────────────────────────────
-        try:
-            llm_out = await acall_llm_structured(
-                model=model,
-                messages=[{"role": "user", "content": user_prompt}],
-                response_model=RefinedName,
-                service="standard-names",
+            # ── Fan-out trigger gate (plan 39 §5.1) ──────────────────
+            # Plumb reviewer_comments_per_dim_name from the claim batch
+            # through the trigger predicate.  Gate on ALL of:
+            # chain_length > 0, chain_history present (B12 enrichment),
+            # at least one allow-listed dim contains a trigger keyword.
+            reviewer_comments = item.get("reviewer_comments_per_dim_name")
+            fanout_eligible, reviewer_excerpt = should_trigger_fanout(
+                reviewer_comments_per_dim=reviewer_comments,
+                chain_length=chain_length,
+                chain_history=chain_history,
+                keywords=fanout_settings.refine_trigger_keywords,
+                dims=fanout_settings.refine_trigger_comment_dims,
+                char_cap=fanout_settings.refine_trigger_comment_chars,
             )
 
-            # acall_llm_structured returns (result, cost, tokens) tuple
-            result_obj, cost, _tokens = llm_out
+            # ── Budget reservation (tiered, plan 39 §7.3 I1) ──────────
+            # Snapshot ``original_reservation`` *before* any extension
+            # so the cost-attribution invariant test can verify the
+            # delta is fully accounted for via LLMCost batch_id rows.
+            base_estimate = 0.20  # single-item refine
+            fanout_pad = 0.0
+            if (
+                fanout_eligible
+                and fanout_settings.enabled
+                and fanout_settings.sites.get("refine_name", False)
+            ):
+                fanout_pad = fanout_settings.cost_estimate_for(escalate=escalate)
+            estimated = base_estimate + fanout_pad
+            lease = mgr.reserve(estimated, phase="refine_name")
+            original_reservation = lease.reserved if lease else 0.0
 
-            # Charge cost to lease
-            if lease:
-                _event = LLMCostEvent(
+            # ── Optional fan-out (plan 39 Phase 1) ───────────────────
+            fanout_evidence = ""
+            fanout_run_id: str | None = None
+            if fanout_eligible and lease is not None:
+                arm = assign_arm(
+                    sn_id,
+                    chain_length,
+                    arm_percent=fanout_settings.refine_fanout_arm_percent,
+                )
+                import uuid as _uuid
+
+                fanout_run_id = str(_uuid.uuid4())
+                physics_dom = item.get("physics_domain")
+                if isinstance(physics_dom, list):
+                    physics_dom = physics_dom[0] if physics_dom else None
+                ids_filter = item.get("ids_name") or None
+                candidate_ctx = CandidateContext(
+                    sn_id=sn_id,
+                    name=sn_id,
+                    path=path,
+                    description=item.get("description") or "",
+                    physics_domain=physics_dom or "",
+                    chain_length=chain_length,
+                )
+                scope = FanoutScope(
+                    physics_domain=physics_dom,
+                    ids_filter=ids_filter,
+                )
+                try:
+                    fanout_evidence = await run_fanout(
+                        site="refine_name",
+                        candidate=candidate_ctx,
+                        reviewer_excerpt=reviewer_excerpt,
+                        scope=scope,
+                        gc=gc,
+                        parent_lease=lease,
+                        settings=fanout_settings,
+                        arm=arm,
+                        escalate=escalate,
+                        fanout_run_id=fanout_run_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "fan-out failed for %s — proceeding with empty evidence",
+                        sn_id,
+                    )
+                    fanout_evidence = ""
+            prompt_context["fanout_evidence"] = fanout_evidence
+
+            user_prompt = render_prompt("sn/refine_name_user", prompt_context)
+
+            # ── LLM call ──────────────────────────────────────────────
+            try:
+                llm_out = await acall_llm_structured(
                     model=model,
-                    tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
-                    tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
-                    tokens_cached_read=(getattr(llm_out, "cache_read_tokens", 0) or 0),
-                    tokens_cached_write=(
-                        getattr(llm_out, "cache_creation_tokens", 0) or 0
-                    ),
-                    sn_ids=(result_obj.name,),
-                    phase="refine_name",
+                    messages=[{"role": "user", "content": user_prompt}],
+                    response_model=RefinedName,
                     service="standard-names",
                 )
-                lease.charge_event(cost, _event)
 
-            # ── Persist ───────────────────────────────────────────
-            await _asyncio.to_thread(
-                persist_refined_name,
-                old_name=sn_id,
-                new_name=result_obj.name,
-                description=result_obj.description,
-                kind=result_obj.kind,
-                unit=item.get("unit"),
-                physics_domain=(
-                    (
-                        (item.get("physics_domain") or [None])[0]
-                        if isinstance(item.get("physics_domain"), list)
-                        else item.get("physics_domain")
+                # acall_llm_structured returns (result, cost, tokens) tuple
+                result_obj, cost, _tokens = llm_out
+
+                # Charge cost to lease.  Stamp ``batch_id`` with the
+                # ``fanout_run_id`` whenever fan-out fired so the
+                # ``Fanout`` ↔ ``LLMCost`` join (plan 39 §8.3) works
+                # for both arms.
+                if lease:
+                    _event = LLMCostEvent(
+                        model=model,
+                        tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                        tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                        tokens_cached_read=(
+                            getattr(llm_out, "cache_read_tokens", 0) or 0
+                        ),
+                        tokens_cached_write=(
+                            getattr(llm_out, "cache_creation_tokens", 0) or 0
+                        ),
+                        sn_ids=(result_obj.name,),
+                        phase=(
+                            "refine_name+fanout" if fanout_run_id else "refine_name"
+                        ),
+                        service="standard-names",
+                        batch_id=fanout_run_id,
                     )
-                    or None
-                ),
-                source_domains=(
-                    item.get("source_domains")
-                    if isinstance(item.get("source_domains"), list)
-                    else None
-                ),
-                tags=item.get("tags") if isinstance(item.get("tags"), list) else None,
-                old_chain_length=chain_length,
-                model=model,
-                grammar_fields=result_obj.grammar_fields,
-                reason=result_obj.reason,
-                escalated=escalate,
-            )
-            processed += 1
-            logger.info(
-                "refine_name: %s → %s (chain_length=%d, model=%s)",
-                sn_id,
-                result_obj.name,
-                chain_length + 1,
-                model,
-            )
+                    lease.charge_event(cost, _event)
 
-            if on_event is not None:
-                on_event(
-                    {
-                        "pool": "refine_name",
-                        "name": result_obj.name,
-                        "old_name": sn_id,
-                        "new_name": result_obj.name,
-                        "chain_length": chain_length + 1,
-                        "escalated": escalate,
-                        "model": model,
-                        "cost": cost,
-                    }
-                )
+                # ── Phase 1.5 dup guard (plan 39 §5.2) ────────────
+                # Deterministic name-key lookup AFTER B12 final
+                # candidate, BEFORE persisting.  On hit we drop the
+                # candidate and emit a ``dup_prevented`` log line.
+                # Excludes ``old_name`` so the chain's predecessor is
+                # never treated as a self-collision.
+                dup_id = None
+                try:
+                    dup_id = find_name_key_duplicate(
+                        gc,
+                        result_obj.name,
+                        exclude=sn_id,
+                    )
+                except Exception:
+                    logger.debug(
+                        "dup guard failed for %s — proceeding with persist",
+                        sn_id,
+                    )
+                if dup_id:
+                    logger.info(
+                        "refine_name dup_prevented: %s → %s collides with %s",
+                        sn_id,
+                        result_obj.name,
+                        dup_id,
+                    )
+                    # Release claim back to 'reviewed' so the cycle
+                    # can pick it up again (with fresh feedback) or
+                    # be marked superseded by manual review.
+                    token = item.get("claim_token") or ""
+                    try:
+                        await _asyncio.to_thread(
+                            release_refine_name_failed_claims,
+                            sn_ids=[sn_id],
+                            token=token,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "release after dup_prevented failed for %s",
+                            sn_id,
+                        )
+                    if on_event is not None:
+                        on_event(
+                            {
+                                "pool": "refine_name",
+                                "name": sn_id,
+                                "old_name": sn_id,
+                                "duplicate_of": dup_id,
+                                "outcome": "dup_prevented",
+                                "model": model,
+                                "cost": cost,
+                            }
+                        )
+                    continue
 
-        except Exception:
-            logger.exception("refine_name failed for %s", sn_id)
-            # Release claim — revert to 'reviewed'
-            token = item.get("claim_token") or ""
-            try:
+                # ── Persist ───────────────────────────────────────────
                 await _asyncio.to_thread(
-                    release_refine_name_failed_claims,
-                    sn_ids=[sn_id],
-                    token=token,
+                    persist_refined_name,
+                    old_name=sn_id,
+                    new_name=result_obj.name,
+                    description=result_obj.description,
+                    kind=result_obj.kind,
+                    unit=item.get("unit"),
+                    physics_domain=(
+                        (
+                            (item.get("physics_domain") or [None])[0]
+                            if isinstance(item.get("physics_domain"), list)
+                            else item.get("physics_domain")
+                        )
+                        or None
+                    ),
+                    source_domains=(
+                        item.get("source_domains")
+                        if isinstance(item.get("source_domains"), list)
+                        else None
+                    ),
+                    tags=(
+                        item.get("tags") if isinstance(item.get("tags"), list) else None
+                    ),
+                    old_chain_length=chain_length,
+                    model=model,
+                    grammar_fields=result_obj.grammar_fields,
+                    reason=result_obj.reason,
+                    escalated=escalate,
                 )
-            except Exception:
-                logger.debug(
-                    "release_refine_name_failed_claims also failed for %s",
+                processed += 1
+                logger.info(
+                    "refine_name: %s → %s (chain_length=%d, model=%s)",
                     sn_id,
+                    result_obj.name,
+                    chain_length + 1,
+                    model,
                 )
+
+                if on_event is not None:
+                    on_event(
+                        {
+                            "pool": "refine_name",
+                            "name": result_obj.name,
+                            "old_name": sn_id,
+                            "new_name": result_obj.name,
+                            "chain_length": chain_length + 1,
+                            "escalated": escalate,
+                            "model": model,
+                            "cost": cost,
+                            "fanout_run_id": fanout_run_id,
+                            "fanout_arm": (None if fanout_run_id is None else "scored"),
+                            "original_reservation": original_reservation,
+                        }
+                    )
+
+            except Exception:
+                logger.exception("refine_name failed for %s", sn_id)
+                # Release claim — revert to 'reviewed'
+                token = item.get("claim_token") or ""
+                try:
+                    await _asyncio.to_thread(
+                        release_refine_name_failed_claims,
+                        sn_ids=[sn_id],
+                        token=token,
+                    )
+                except Exception:
+                    logger.debug(
+                        "release_refine_name_failed_claims also failed for %s",
+                        sn_id,
+                    )
 
     return processed
 

@@ -60,6 +60,12 @@ _(none available)_
 {% else %}
 _(no prior refinement history — this is the first refine attempt)_
 {% endif %}
+{% if fanout_evidence %}
+
+---
+
+{{ fanout_evidence }}
+{% endif %}
 
 ---
 

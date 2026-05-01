@@ -104,6 +104,15 @@ class FanoutSettings(BaseModel):
     refine_trigger_comment_chars: int = 800
     """Total excerpt length cap (plan 39 §5.1 S3)."""
 
+    refine_fanout_arm_percent: int = 50
+    """Within-cohort A/B on-arm percentage (plan 39 §8.4 I2).
+
+    ``50`` (default) is a balanced 50/50 split; ``0`` forces every
+    trigger-eligible item to the off arm (kill switch); ``100`` forces
+    every item to the on arm (full rollout).  Used by
+    :func:`imas_codex.standard_names.fanout.trigger.assign_arm`.
+    """
+
     sites: dict[str, bool] = Field(
         default_factory=lambda: {"refine_name": False},
         description="Per-site enable flags (under [tool.imas-codex.sn.fanout.sites]).",

@@ -45,6 +45,11 @@ from .schemas import (
     FanoutResult,
     FanoutScope,
 )
+from .trigger import (
+    assign_arm,
+    extract_reviewer_excerpt,
+    should_trigger_fanout,
+)
 
 __all__ = [
     "CATALOG_VERSION",
@@ -55,7 +60,10 @@ __all__ = [
     "FanoutResult",
     "FanoutScope",
     "FanoutSettings",
+    "assign_arm",
+    "extract_reviewer_excerpt",
     "load_settings",
     "render_proposer_system_prompt",
     "run_fanout",
+    "should_trigger_fanout",
 ]

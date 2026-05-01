@@ -381,3 +381,192 @@ class TestRunFanout:
         assert "electron_temperature" in evidence
         outcomes = [c["params"]["outcome"] for c in gc.calls]
         assert "ok" in outcomes
+
+
+# ---------------------------------------------------------------------
+# execute() — partial failures + sync-helper timeouts (B2)
+# ---------------------------------------------------------------------
+
+
+class TestExecutePartialFail:
+    async def test_executor_partial_fail_other_results_render(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One runner raises, another returns hits — render the survivors."""
+        gc = _MockGraphClient()
+        plan = FanoutPlan(
+            queries=[
+                _SearchExistingNames(fn_id="search_existing_names", query="T_e"),
+                _SearchDDClusters(fn_id="search_dd_clusters", query="T_e"),
+            ]
+        )
+        _patch_llm(monkeypatch, _FakeLLMResult(plan))
+        # Healthy first runner
+        monkeypatch.setattr(
+            "imas_codex.standard_names.search.search_standard_names_vector",
+            lambda *a, **kw: [
+                {
+                    "id": "electron_temperature",
+                    "description": "T_e",
+                    "score": 0.9,
+                }
+            ],
+        )
+
+        # Failing cluster runner
+        def _boom(*a, **kw):
+            raise RuntimeError("graph unavailable")
+
+        monkeypatch.setattr(
+            "imas_codex.graph.dd_search.cluster_search",
+            _boom,
+        )
+
+        evidence = await dispatcher.run_fanout(
+            site="refine_name",
+            candidate=_candidate(),
+            reviewer_excerpt="unclear",
+            scope=_scope(),
+            gc=gc,
+            parent_lease=_new_lease(),
+            settings=_settings(),
+            fanout_run_id="run-partial",
+        )
+        assert evidence != ""
+        assert "electron_temperature" in evidence
+        outcomes = [c["params"]["outcome"] for c in gc.calls]
+        assert "executor_partial_fail" in outcomes
+
+
+class TestSyncTimeouts:
+    async def test_function_timeout_with_sync_helper(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sync ``time.sleep(10)`` runner — wait_for cancels at function_timeout_s.
+
+        Plan 39 §4.2 / B2: even though the helper keeps running on the
+        worker thread, the Python-side ``wait_for`` returns at the gate
+        and the result is recorded as ``ok=False, error="timeout"``.
+        """
+        import time
+
+        plan = FanoutPlan(
+            queries=[_SearchExistingNames(fn_id="search_existing_names", query="T_e")]
+        )
+        _patch_llm(monkeypatch, _FakeLLMResult(plan))
+
+        def _slow(*a, **kw):
+            time.sleep(5.0)  # would block well past the 0.3s gate
+            return []
+
+        monkeypatch.setattr(
+            "imas_codex.standard_names.search.search_standard_names_vector",
+            _slow,
+        )
+        s = _settings(function_timeout_s=0.3, total_timeout_s=2.0)
+        gc = _MockGraphClient()
+
+        t0 = __import__("time").monotonic()
+        evidence = await dispatcher.run_fanout(
+            site="refine_name",
+            candidate=_candidate(),
+            reviewer_excerpt="unclear",
+            scope=_scope(),
+            gc=gc,
+            parent_lease=_new_lease(),
+            settings=s,
+            fanout_run_id="run-fnto",
+        )
+        elapsed = __import__("time").monotonic() - t0
+
+        # The Python-side wait_for must return well under 5s.
+        assert elapsed < 2.5, f"wait_for did not cancel at the gate (elapsed={elapsed})"
+        # All runners failed → executor_partial_fail outcome.
+        assert evidence == ""
+        outcomes = [c["params"]["outcome"] for c in gc.calls]
+        assert "executor_partial_fail" in outcomes
+
+    async def test_total_timeout_with_sync_helpers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Total-timeout-s wraps the gather even when sync helpers ignore the gate."""
+        import time
+
+        plan = FanoutPlan(
+            queries=[
+                _SearchExistingNames(fn_id="search_existing_names", query="T_a"),
+                _SearchExistingNames(fn_id="search_existing_names", query="T_b"),
+            ]
+        )
+        _patch_llm(monkeypatch, _FakeLLMResult(plan))
+
+        def _slow(*a, **kw):
+            time.sleep(5.0)
+            return []
+
+        monkeypatch.setattr(
+            "imas_codex.standard_names.search.search_standard_names_vector",
+            _slow,
+        )
+        # function_timeout_s > total_timeout_s so the per-call gate
+        # cannot fire; the gather-wrap must.  Both bounds in seconds.
+        s = _settings(function_timeout_s=10.0, total_timeout_s=0.4)
+        gc = _MockGraphClient()
+        t0 = __import__("time").monotonic()
+        evidence = await dispatcher.run_fanout(
+            site="refine_name",
+            candidate=_candidate(),
+            reviewer_excerpt="unclear",
+            scope=_scope(),
+            gc=gc,
+            parent_lease=_new_lease(),
+            settings=s,
+            fanout_run_id="run-totalto",
+        )
+        elapsed = __import__("time").monotonic() - t0
+        assert elapsed < 2.5, (
+            f"total wait_for did not cancel at the gate (elapsed={elapsed})"
+        )
+        assert evidence == ""
+
+
+# ---------------------------------------------------------------------
+# Within-cohort A/B arm assignment (plan 39 §8.4 I2)
+# ---------------------------------------------------------------------
+
+
+class TestArmAssignment:
+    def test_arm_routing_is_balanced(self) -> None:
+        from imas_codex.standard_names.fanout.trigger import assign_arm
+
+        on = sum(1 for i in range(400) if assign_arm(f"sn_id_{i}", i) == "on")
+        # Loose 50/50 sanity (true Bernoulli p=0.5, n=400 → ±5σ ≈ ±50)
+        assert 150 <= on <= 250
+
+    async def test_arm_off_writes_fanout_node_and_skips_llm(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gc = _MockGraphClient()
+
+        async def _explode(**kwargs: Any):
+            raise AssertionError("LLM must not be called on off arm")
+
+        monkeypatch.setattr(
+            "imas_codex.discovery.base.llm.acall_llm_structured", _explode
+        )
+
+        evidence = await dispatcher.run_fanout(
+            site="refine_name",
+            candidate=_candidate(),
+            reviewer_excerpt="unclear",
+            scope=_scope(),
+            gc=gc,
+            parent_lease=_new_lease(),
+            settings=_settings(),
+            arm="off",
+            fanout_run_id="run-off-arm",
+        )
+        assert evidence == ""
+        # Single Cypher write: the Fanout node with outcome=off_arm.
+        outcomes = [c["params"]["outcome"] for c in gc.calls]
+        assert outcomes == ["off_arm"]
