@@ -72,11 +72,37 @@ def _search_standard_names(
 
     When any grammar-segment filter is provided (``physical_base``,
     ``subject``, ``transformation``, etc.), the search is routed through a
-    graph-native query that uses the typed edges written by W40 Phase 4
-    (``HAS_PHYSICAL_BASE``, ``HAS_SUBJECT``, …).  Names ingested before the
-    Phase 7 migration will not yet have typed edges, so these filters return
-    only newly-persisted names — this is expected and documented behaviour.
+    bare-name-column query (Plan 40 §5).  Open-vocabulary segments that
+    never have typed edges populated still match because the bare-name
+    columns are the post-Phase-1 source of truth.
     """
+    # Empty queries with no filters produce embedding-noise hits; refuse early.
+    has_filters = any(
+        v is not None
+        for v in (
+            kind,
+            pipeline_status,
+            cocos_type,
+            physical_base,
+            subject,
+            transformation,
+            component,
+            coordinate,
+            process,
+            position,
+            region,
+            device,
+            geometric_base,
+        )
+    )
+    if (not query or not query.strip()) and not has_filters:
+        return (
+            "## Standard Name Search Results\n\n"
+            "No query provided. Pass a physics concept "
+            "(e.g. `electron temperature`, `magnetic flux`) "
+            "or a grammar-segment filter (e.g. `physical_base=magnetic_flux`)."
+        )
+
     try:
         if gc is None:
             gc = GraphClient()
@@ -151,53 +177,56 @@ def _segment_filter_search_standard_names(
     k: int,
     segment_filters: dict[str, str],
 ) -> list[dict]:
-    """Query StandardName nodes using typed grammar-segment edges (W40 Phase 4).
+    """Bare-name column segment-filter search.
 
-    Builds a Cypher query that MATCH-traverses the typed edges written by
-    :func:`_write_segment_edges` (e.g. ``HAS_PHYSICAL_BASE``, ``HAS_SUBJECT``).
-    Multiple filters are combined as AND conditions.  If no SN has the typed
-    edges (pre-migration graph), the query returns an empty list gracefully.
+    Open-vocabulary segments (``physical_base``, ``subject``) do not have
+    typed grammar edges populated, so prior implementations using
+    ``(sn)-[:HAS_PHYSICAL_BASE]->(:GrammarToken)`` silently returned
+    empty results.  We now match the ``sn.<segment>`` bare-name column
+    directly — the post-Phase-1 source of truth.
 
     Args:
         gc: Open GraphClient.
-        query: Keyword passed through to a WHERE clause for fuzzy name matching
-            (falls back gracefully when no typed edges exist).
+        query: Reserved (kept for signature stability with the keyword/vector
+            siblings).  Currently unused; segment matches are exact.
         k: Maximum rows to return.
-        segment_filters: Mapping of segment name → token value, e.g.
-            ``{"physical_base": "temperature", "subject": "electron"}``.
+        segment_filters: Mapping of segment name → value.
 
     Returns:
-        List of dicts matching the column schema of :func:`_keyword_search_standard_names`.
+        List of dicts matching the column schema of
+        :func:`_keyword_search_standard_names`.
     """
-    # Map segment names to their typed edge labels
-    _edge_label: dict[str, str] = {
-        "physical_base": "HAS_PHYSICAL_BASE",
-        "subject": "HAS_SUBJECT",
-        "transformation": "HAS_TRANSFORMATION",
-        "component": "HAS_COMPONENT",
-        "coordinate": "HAS_COORDINATE",
-        "process": "HAS_PROCESS",
-        "position": "HAS_POSITION",
-        "region": "HAS_REGION",
-        "device": "HAS_DEVICE",
-        "geometric_base": "HAS_GEOMETRIC_BASE",
-    }
+    _segment_columns: tuple[str, ...] = (
+        "physical_base",
+        "subject",
+        "transformation",
+        "component",
+        "coordinate",
+        "process",
+        "position",
+        "region",
+        "device",
+        "geometric_base",
+        "object",
+        "geometry",
+    )
 
     params: dict = {"k": k}
-    match_clauses: list[str] = ["MATCH (sn:StandardName)"]
+    where: list[str] = []
 
     for i, (segment, token_value) in enumerate(segment_filters.items()):
-        label = _edge_label.get(segment)
-        if label is None:
+        if segment not in _segment_columns:
             continue  # unknown segment — skip silently
         param_key = f"seg_val_{i}"
         params[param_key] = token_value
-        match_clauses.append(
-            f"MATCH (sn)-[:{label}]->(:GrammarToken {{value: ${param_key}}})"
-        )
+        where.append(f"sn.{segment} = ${param_key}")
+
+    if not where:
+        return []
 
     cypher = (
-        "\n".join(match_clauses)
+        "MATCH (sn:StandardName)\nWHERE "
+        + " AND ".join(where)
         + """
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.description AS description,
@@ -657,6 +686,22 @@ def _find_related_standard_names(
         return NEO4J_NOT_RUNNING_MSG
     except Exception as e:
         return f"Error connecting to graph: {e}"
+
+    try:
+        exists_rows = gc.query(
+            "MATCH (sn:StandardName {id: $name}) RETURN sn.id AS id LIMIT 1",
+            name=name,
+        )
+    except ServiceUnavailable:
+        return NEO4J_NOT_RUNNING_MSG
+    except Exception as e:
+        return f"find_related failed: {_neo4j_error_message(e)}"
+    if not exists_rows:
+        return (
+            f"## Related Standard Names — `{name}`\n\n"
+            f"Standard name `{name}` not found in the catalogue. "
+            "Use `check_standard_names` for spelling suggestions."
+        )
 
     try:
         buckets = _find_related_backing(

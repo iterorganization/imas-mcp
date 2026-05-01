@@ -354,6 +354,25 @@ def search_standard_names(
                 pass
 
 
+#: Public segments accepted by ``segment_filters``. Bare-name columns are
+#: the post-Phase-1 source of truth; typed edges may be unpopulated for
+#: open-vocab segments (``physical_base``, ``subject``).
+_SEGMENT_FILTER_COLUMNS: tuple[str, ...] = (
+    "physical_base",
+    "subject",
+    "transformation",
+    "component",
+    "coordinate",
+    "process",
+    "position",
+    "region",
+    "device",
+    "geometric_base",
+    "object",
+    "geometry",
+)
+
+
 def _segment_filter_search(
     gc: Any,
     query: str,
@@ -363,32 +382,29 @@ def _segment_filter_search(
     pipeline_status: str | None,
     cocos_type: str | None,
 ) -> list[dict]:
-    """Graph-native typed-edge search (legacy compatibility)."""
-    edge_label = {
-        "physical_base": "HAS_PHYSICAL_BASE",
-        "subject": "HAS_SUBJECT",
-        "transformation": "HAS_TRANSFORMATION",
-        "component": "HAS_COMPONENT",
-        "coordinate": "HAS_COORDINATE",
-        "process": "HAS_PROCESS",
-        "position": "HAS_POSITION",
-        "region": "HAS_REGION",
-        "device": "HAS_DEVICE",
-        "geometric_base": "HAS_GEOMETRIC_BASE",
-    }
+    """Bare-name column segment-filter search (Plan 40 §5).
+
+    Pre-v3.2 implementations matched typed grammar edges
+    (``(sn)-[:HAS_PHYSICAL_BASE]->(:GrammarToken {value: ...})``).
+    Open-vocabulary segments (``physical_base``, ``subject``) never have
+    typed edges populated, so the typed-edge path silently returned []
+    even when the bare-name column was set. We now match the
+    ``sn.<segment>`` column directly, which is the post-Phase-1 source of
+    truth.
+    """
     params: dict[str, Any] = {"k": k}
-    matches = ["MATCH (sn:StandardName)"]
+    where: list[str] = []
     for i, (seg, val) in enumerate(segment_filters.items()):
-        label = edge_label.get(seg)
-        if label is None:
+        if seg not in _SEGMENT_FILTER_COLUMNS:
             continue
         param_key = f"seg_{i}"
         params[param_key] = val
-        matches.append(
-            f"MATCH (sn)-[:{label}]->(:GrammarToken {{value: ${param_key}}})"
-        )
+        where.append(f"sn.{seg} = ${param_key}")
+    if not where:
+        return []
     cypher = (
-        "\n".join(matches)
+        "MATCH (sn:StandardName)\nWHERE "
+        + " AND ".join(where)
         + """
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name,
