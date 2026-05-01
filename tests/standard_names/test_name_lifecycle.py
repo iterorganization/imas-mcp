@@ -646,6 +646,84 @@ def test_edge_migration_idempotent(_gc, _clean):
 
 
 # ===========================================================================
+# I6b. test_refined_name_inherits_unit_and_cluster_edges
+# ===========================================================================
+
+
+@pytest.mark.graph
+@pytest.mark.integration
+def test_refined_name_inherits_unit_and_cluster_edges(_gc, _clean):
+    """persist_refined_name must propagate HAS_UNIT and IN_CLUSTER edges.
+
+    Without this, claim-expand (which scopes by cluster+unit) cannot
+    surface chain>0 names — they are statistically excluded from
+    review-pool batches even though name_stage='drafted'.
+
+    Regression for the chain=1 review-starvation bug observed in the
+    iter2 smoke (22 chain=1 / 0 reviewed despite 1126 review attempts).
+    """
+    src_id = _uid("src_inherit")
+    sn_v1 = _uid("inherit_v1")
+    sn_v2 = _uid("inherit_v2")
+
+    _create_source(_gc, src_id)
+    _create_sn(_gc, sn_v1, name_stage="drafted", chain_length=0)
+
+    # Attach Unit + Cluster on predecessor (pipeline normally does this
+    # via _write_standard_name_edges for chain=0 names).
+    _gc.query(
+        """
+        MATCH (sn:StandardName {id: $sn})
+        MERGE (u:Unit {id: 'eV'})
+        MERGE (c:IMASSemanticCluster {id: 'test_cluster_inherit'})
+        MERGE (sn)-[:HAS_UNIT]->(u)
+        MERGE (sn)-[:IN_CLUSTER]->(c)
+        """,
+        sn=sn_v1,
+    )
+    _link_source_sn(_gc, src_id, sn_v1)
+
+    tok = f"tok-inh-{uuid.uuid4().hex[:8]}"
+    _set_claim(_gc, sn_v1, tok)
+    persist_reviewed_name(
+        sn_id=sn_v1,
+        claim_token=tok,
+        score=0.5,
+        model="m",
+        min_score=0.75,
+        rotation_cap=3,
+    )
+    persist_refined_name(
+        old_name=sn_v1,
+        new_name=sn_v2,
+        description="v2 quantity",
+        kind="scalar",
+        unit="eV",
+        old_chain_length=0,
+        model="m",
+    )
+
+    rows = list(
+        _gc.query(
+            """
+        MATCH (sn:StandardName {id: $sn})
+        OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
+        OPTIONAL MATCH (sn)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+        RETURN u.id AS unit, c.id AS cluster
+        """,
+            sn=sn_v2,
+        )
+    )
+    assert rows, "v2 missing"
+    assert rows[0]["unit"] == "eV", (
+        f"v2 must inherit HAS_UNIT from predecessor, got {rows[0]['unit']!r}"
+    )
+    assert rows[0]["cluster"] == "test_cluster_inherit", (
+        f"v2 must inherit IN_CLUSTER from predecessor, got {rows[0]['cluster']!r}"
+    )
+
+
+# ===========================================================================
 # I7. test_chain_history_walks_full_chain
 # ===========================================================================
 

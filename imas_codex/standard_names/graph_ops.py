@@ -6393,6 +6393,20 @@ def persist_refined_name(
                         WITH new, old, hsn_nodes
                         FOREACH (n IN hsn_nodes | MERGE (n)-[:HAS_STANDARD_NAME]->(new))
 
+                        // 6. Inherit HAS_UNIT and IN_CLUSTER edges from the
+                        // predecessor so that downstream claim-expand
+                        // (which scopes by cluster+unit) can pick up the
+                        // refined node. Without this, chain>0 SNs are
+                        // statistically excluded from review-pool expand.
+                        WITH DISTINCT new, old
+                        OPTIONAL MATCH (old)-[:HAS_UNIT]->(u:Unit)
+                        FOREACH (uu IN CASE WHEN u IS NULL THEN [] ELSE [u] END |
+                            MERGE (new)-[:HAS_UNIT]->(uu))
+                        WITH DISTINCT new, old
+                        OPTIONAL MATCH (old)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+                        FOREACH (cc IN CASE WHEN c IS NULL THEN [] ELSE [c] END |
+                            MERGE (new)-[:IN_CLUSTER]->(cc))
+
                         WITH DISTINCT new, old
                         RETURN new.id AS new_name, old.id AS old_name
                         """,
