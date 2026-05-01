@@ -34,11 +34,11 @@ class TestFanoutSettings:
 
     def test_load_settings_from_pyproject(self) -> None:
         # The shipped pyproject.toml has the section in place — load
-        # it and confirm the master switch is False (Phase 1A).
+        # it and confirm Phase 1B configuration (enabled, refine_name on).
         s = load_settings()
         assert isinstance(s, FanoutSettings)
-        assert s.enabled is False
-        assert s.sites == {"refine_name": False}
+        assert s.enabled is True
+        assert s.sites == {"refine_name": True}
 
 
 class TestCatalogVersion:

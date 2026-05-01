@@ -92,14 +92,30 @@ class FanoutSettings(BaseModel):
         "duplicate",
         "consider",
         "compare",
+        "decomposition",
+        "absorbed",
+        "compound",
+        "awkward",
     )
-    """Trigger keywords for refine-site fan-out."""
+    """Trigger keywords for refine-site fan-out.
+
+    Matched case-insensitively against the reviewer-comment excerpt
+    extracted from :attr:`refine_trigger_comment_dims`.  The default
+    list combines disambiguation cues (``unclear``, ``ambiguous``,
+    ``duplicate``) with grammar-decomposition cues actually written
+    by the rubric judge (``decomposition``, ``absorbed``, ``compound``,
+    ``awkward``)."""
 
     refine_trigger_comment_dims: tuple[str, ...] = (
-        "clarity",
-        "disambiguation",
+        "grammar",
+        "semantic",
     )
-    """Reviewer-comment dims used by the trigger predicate (plan 39 I3)."""
+    """Reviewer-comment dims used by the trigger predicate (plan 39 I3).
+
+    Must match the actual ``reviewer_comments_per_dim_name`` keys
+    written by ``review_names`` (rubric: grammar / semantic /
+    convention / completeness).  Defaults to the two dims most
+    likely to surface disambiguation/decomposition signal."""
 
     refine_trigger_comment_chars: int = 800
     """Total excerpt length cap (plan 39 §5.1 S3)."""

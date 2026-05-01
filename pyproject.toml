@@ -446,9 +446,15 @@ fanout-cost-estimate-escalation = 0.05
 fanout-max-charge-per-cycle-baseline = 0.02
 fanout-max-charge-per-cycle-escalation = 0.10
 # Refine trigger predicate.
-refine-trigger-keywords = ["unclear", "ambiguous", "duplicate", "consider", "compare"]
+# Keywords match the language reviewers actually use ("decomposition", "absorbed",
+# "compound", "awkward") plus disambiguation cues. Case-insensitive substring match.
+refine-trigger-keywords = ["unclear", "ambiguous", "duplicate", "consider", "compare", "decomposition", "absorbed", "compound", "awkward"]
 # Reviewer-comment dim allow-list for the trigger predicate (plan §5.1 I3).
-refine-trigger-comment-dims = ["clarity", "disambiguation"]
+# MUST match the actual review schema: ('grammar', 'semantic', 'convention', 'completeness').
+# We scan grammar + semantic because that is where decomposition/disambiguation
+# defects surface (a previous default of ('clarity', 'disambiguation') silently
+# disabled the trigger because those dims do not exist in the rubric).
+refine-trigger-comment-dims = ["grammar", "semantic"]
 # Comment excerpt total length cap (plan §5.1 S3).
 refine-trigger-comment-chars = 800
 
