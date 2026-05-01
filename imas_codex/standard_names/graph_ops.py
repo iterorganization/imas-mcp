@@ -5957,9 +5957,9 @@ def persist_reviewed_name(
 
     1. Verify ``claim_token`` matches the stored token.
     2. Compute target stage:
-       - ``'accepted'`` if ``verdict == 'accept'`` AND ``score >= min_score``
-       - ``'exhausted'`` if ``chain_length >= rotation_cap - 1``
-         AND ``score < min_score`` (cap reached, no further refine)
+       - ``'accepted'`` if ``score >= min_score`` (score-canonical, verdict informational)
+       - ``'exhausted'`` if ``chain_length >= rotation_cap - 1`` and score below min_score
+         (cap reached, no further refine)
        - ``'reviewed'`` otherwise (eligible for refine_name pickup)
     3. SET reviewer fields, ``name_stage``, clear claim state.
 
@@ -6021,12 +6021,27 @@ def persist_reviewed_name(
     chain_length: int = int(rows[0]["chain_length"])
 
     # ── Stage decision ────────────────────────────────────────────────
-    if verdict == "accept" and score >= min_score:
+    # Score is canonical (rubric-driven 0–1). Verdict is informational
+    # only — the LLM reviewer is over-conservative and frequently emits
+    # ``revise`` even at rsn>=0.85, which previously stranded names in
+    # ``reviewed`` (above min_score so refine wouldn't pick them up,
+    # below verdict=accept so they wouldn't promote). Trust the score.
+    if score >= min_score:
         target_stage = "accepted"
-    elif chain_length >= rotation_cap - 1 and score < min_score:
+    elif chain_length >= rotation_cap - 1:
         target_stage = "exhausted"
     else:
         target_stage = "reviewed"
+
+    if verdict in ("revise", "reject") and score >= min_score:
+        logger.info(
+            "persist_reviewed_name: score-canonical override for %s — "
+            "verdict=%s rsn=%.3f >= min_score=%.3f → accepted",
+            sn_id,
+            verdict,
+            score,
+            min_score,
+        )
 
     scores_json = _json.dumps(scores) if scores is not None else None
     comments_per_dim_json = (
@@ -6139,9 +6154,9 @@ def persist_reviewed_docs(
 
     1. Verify ``claim_token`` matches the stored token.
     2. Compute target stage:
-       - ``'accepted'`` if ``verdict == 'accept'`` AND ``score >= min_score``
+       - ``'accepted'`` if ``score >= min_score`` (score-canonical, verdict informational)
        - ``'exhausted'`` if ``docs_chain_length >= rotation_cap - 1``
-         AND ``score < min_score`` (cap reached, no further refine)
+         (cap reached, no further refine)
        - ``'reviewed'`` otherwise (eligible for refine_docs pickup)
     3. SET reviewer_docs fields, ``docs_stage``, clear claim state.
 
@@ -6203,12 +6218,23 @@ def persist_reviewed_docs(
     docs_chain_length: int = int(rows[0]["docs_chain_length"])
 
     # ── Stage decision ────────────────────────────────────────────────
-    if verdict == "accept" and score >= min_score:
+    # Score is canonical (see persist_reviewed_name for rationale).
+    if score >= min_score:
         target_stage = "accepted"
-    elif docs_chain_length >= rotation_cap - 1 and score < min_score:
+    elif docs_chain_length >= rotation_cap - 1:
         target_stage = "exhausted"
     else:
         target_stage = "reviewed"
+
+    if verdict in ("revise", "reject") and score >= min_score:
+        logger.info(
+            "persist_reviewed_docs: score-canonical override for %s — "
+            "verdict=%s rds=%.3f >= min_score=%.3f → accepted",
+            sn_id,
+            verdict,
+            score,
+            min_score,
+        )
 
     scores_json = _json.dumps(scores) if scores is not None else None
     comments_per_dim_json = (

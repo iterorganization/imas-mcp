@@ -307,6 +307,67 @@ class TestPersistToExhausted:
         assert result == "accepted"
 
 
+class TestScoreCanonicalPolicy:
+    """Score is authoritative; verdict is informational only.
+
+    Regression: 14 SNs were stuck in 'reviewed' with rsn>=0.75 because the
+    reviewer LLM returned verdict='revise' even at high scores. The old
+    AND-gate (verdict=='accept' AND score>=min_score) stranded them above
+    refine threshold but below promotion gate.
+    """
+
+    def test_revise_with_high_score_promotes_to_accepted(self):
+        """verdict='revise', score=0.9 → 'accepted' (score wins)."""
+        gc = _mock_gc_query(return_values=[[{"chain_length": 0}], []])
+        with _patch_gc(gc):
+            from imas_codex.standard_names.graph_ops import persist_reviewed_name
+
+            result = persist_reviewed_name(
+                sn_id="time",
+                claim_token="tok",
+                score=0.9,
+                verdict="revise",
+                model="m",
+                min_score=0.75,
+                rotation_cap=3,
+            )
+        assert result == "accepted"
+
+    def test_reject_with_high_score_promotes_to_accepted(self):
+        """verdict='reject' with score>=min_score still promotes (rubric is canonical)."""
+        gc = _mock_gc_query(return_values=[[{"chain_length": 0}], []])
+        with _patch_gc(gc):
+            from imas_codex.standard_names.graph_ops import persist_reviewed_name
+
+            result = persist_reviewed_name(
+                sn_id="x",
+                claim_token="tok",
+                score=0.8,
+                verdict="reject",
+                model="m",
+                min_score=0.75,
+                rotation_cap=3,
+            )
+        assert result == "accepted"
+
+    def test_high_score_at_cap_still_accepts(self):
+        """score>=min_score at chain_length>=cap-1 → accepted (not exhausted)."""
+        gc = _mock_gc_query(return_values=[[{"chain_length": 2}], []])
+        with _patch_gc(gc):
+            from imas_codex.standard_names.graph_ops import persist_reviewed_name
+
+            result = persist_reviewed_name(
+                sn_id="x",
+                claim_token="tok",
+                score=0.85,
+                verdict="revise",
+                model="m",
+                min_score=0.75,
+                rotation_cap=3,
+            )
+        assert result == "accepted"
+
+
 class TestPersistTokenMismatch:
     def test_persist_token_mismatch_no_op(self):
         """Wrong claim_token → returns '' and no SET is executed."""
