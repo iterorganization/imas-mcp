@@ -70,7 +70,6 @@ def test_name_only_batch_model_parses_minimal_json() -> None:
                         "convention": 19,
                         "completeness": 18,
                     },
-                    "verdict": "accept",
                     "reasoning": "ok",
                 }
             ]
@@ -86,13 +85,10 @@ def test_name_only_batch_model_parses_minimal_json() -> None:
 
 
 def _make_review(score_cls, source_id: str, name: str, **scores: int):
-    from imas_codex.standard_names.models import StandardNameReviewVerdict
-
     return SimpleNamespace(
         source_id=source_id,
         standard_name=name,
         scores=score_cls(**scores),
-        verdict=StandardNameReviewVerdict.accept,
         reasoning="test",
         revised_name=None,
         revised_fields=None,

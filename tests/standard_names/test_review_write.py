@@ -23,7 +23,6 @@ def _make_record(
     sn_id: str = "electron_temperature",
     model: str = "openrouter/anthropic/claude-opus-4.6",
     reviewer_model: str | None = None,
-    verdict: str = "accept",
     score: float = 0.725,
     tier: str = "good",
     comments: str = "Looks fine",
@@ -46,7 +45,6 @@ def _make_record(
         "score": score,
         "scores_json": json.dumps({"clarity": 18, "physics": 20}),
         "tier": tier,
-        "verdict": verdict,
         "comments": comments,
         "comments_per_dim_json": None,
         "reviewed_at": reviewed_at,
@@ -166,52 +164,8 @@ class TestWriteReviewsReviewerModel:
             )
 
 
-class TestWriteReviewsVerdict:
-    """verdict must be persisted on the StandardNameReview node."""
-
-    def test_verdict_populated_from_record(self) -> None:
-        """verdict is forwarded from the record into the Cypher batch."""
-        for verdict in ("accept", "reject", "revise"):
-            record = _make_record(verdict=verdict)
-            _, calls = _call_write_reviews([record])
-            batch = _extract_batch(calls)
-            row = batch[0]
-            assert row["verdict"] == verdict, (
-                f"Expected verdict={verdict!r}, got {row['verdict']!r}"
-            )
-
-    def test_verdict_defaults_to_empty_string_when_absent(self) -> None:
-        """Records without verdict must not raise — defaults to ''."""
-        record = _make_record()
-        record.pop("verdict", None)
-
-        _, calls = _call_write_reviews([record])
-        batch = _extract_batch(calls)
-        row = batch[0]
-
-        # Should be empty string (falsy), not None (which would be NULL in graph)
-        assert row["verdict"] == "", f"Expected empty string, got {row['verdict']!r}"
-
-    def test_verdict_in_cypher_set_clause(self) -> None:
-        """The Cypher must SET r.verdict so the graph node gets it."""
-        record = _make_record()
-        _, calls = _call_write_reviews([record])
-
-        merge_cypher = None
-        for c in calls:
-            args = c.args
-            if args and "MERGE (r:StandardNameReview" in args[0]:
-                merge_cypher = args[0]
-                break
-
-        assert merge_cypher is not None, "No MERGE StandardNameReview query found"
-        assert "r.verdict = b.verdict" in merge_cypher, (
-            "Cypher is missing SET r.verdict = b.verdict"
-        )
-
-
 class TestBuildReviewRecordIncludesNewFields:
-    """_build_review_record must produce records with reviewer_model and verdict."""
+    """_build_review_record must produce records with reviewer_model."""
 
     def _build(self, **kwargs) -> dict:
         from datetime import UTC, datetime
@@ -223,7 +177,6 @@ class TestBuildReviewRecordIncludesNewFields:
             "reviewer_score": 0.75,
             "review_tier": "good",
             "reviewer_comments": "Fine",
-            "reviewer_verdict": kwargs.pop("reviewer_verdict", "accept"),
         }
         return _build_review_record(
             item,
@@ -240,21 +193,7 @@ class TestBuildReviewRecordIncludesNewFields:
             f"reviewer_model {rec['reviewer_model']!r} != model {model!r}"
         )
 
-    def test_verdict_comes_from_item(self) -> None:
-        rec = self._build(reviewer_verdict="reject")
-        assert rec["verdict"] == "reject", (
-            f"Expected verdict='reject', got {rec['verdict']!r}"
-        )
-
-    def test_verdict_accept_default(self) -> None:
-        rec = self._build(reviewer_verdict="accept")
-        assert rec["verdict"] == "accept"
-
     def test_reviewer_model_not_none(self) -> None:
         rec = self._build()
         assert rec.get("reviewer_model") is not None
         assert rec["reviewer_model"] != ""
-
-    def test_verdict_not_none(self) -> None:
-        rec = self._build(reviewer_verdict="revise")
-        assert rec.get("verdict") is not None

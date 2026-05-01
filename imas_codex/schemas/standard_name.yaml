@@ -547,17 +547,13 @@ classes:
         description: >-
           Name-axis reviewer summary prose. Written by ``mode="name"``
           review only; used by the regeneration feedback-injection path.
-      reviewer_verdict_name:
-        description: >-
-          Name-axis verdict (accept, reject, or revise). Written by
-          ``mode="name"`` review only.
       reviewer_suggested_name:
         description: >-
-          Reviewer-proposed replacement name when verdict is ``revise``
-          or ``reject``. Set by the name-review phase whenever the LLM
-          offers a concrete improved name. The original ``id`` is
-          preserved; this field records the suggestion for human editorial
-          follow-up.  Null when the verdict is ``accept``.
+          Reviewer-proposed replacement name. Set by the name-review
+          phase whenever the LLM offers a concrete improved name. The
+          original ``id`` is preserved; this field records the suggestion
+          for human editorial follow-up. Null when the reviewer offered
+          no alternative.
         range: string
       reviewer_suggestion_justification_name:
         description: >-
@@ -594,10 +590,6 @@ classes:
         description: >-
           Docs-axis reviewer summary prose. Written by ``mode="docs"``
           review only.
-      reviewer_verdict_docs:
-        description: >-
-          Docs-axis verdict (accept, reject, or revise). Written by
-          ``mode="docs"`` review only.
       reviewer_model_docs:
         description: LLM model that produced the most recent docs-axis review.
       reviewed_docs_at:
@@ -1174,9 +1166,6 @@ classes:
       reviewer_comments_docs:
         description: >-
           Aggregated reviewer comments for this revision.
-      reviewer_verdict_docs:
-        description: >-
-          Reviewer verdict (accept/revise/reject) for this revision.
       created_at:
         description: >-
           When this revision snapshot was created.
@@ -1582,19 +1571,13 @@ classes:
           dimensions. Values are optional strings (null for no comment).
       tier:
         description: Quality tier (outstanding, good, inadequate, poor, unknown)
-      verdict:
-        description: >-
-          Review decision: ``accept``, ``reject``, or ``revise``.
-          Sourced from the LLM's ``reviewer_verdict`` field.
-          Mirrors ``StandardName.reviewer_verdict_name`` / ``reviewer_verdict_docs``
-          for the canonical reviewer.
       comments:
         description: Free-text reviewer comments
       suggested_name:
         description: >-
-          Reviewer-proposed replacement name when verdict is ``revise``
-          or ``reject``. Null when verdict is ``accept``. Mirrors
-          ``StandardName.reviewer_suggested_name`` for the canonical reviewer.
+          Reviewer-proposed replacement name. Mirrors
+          ``StandardName.reviewer_suggested_name`` for the canonical
+          reviewer. Null when the reviewer offered no alternative.
         range: string
       suggestion_justification:
         description: >-

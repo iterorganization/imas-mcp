@@ -77,7 +77,6 @@ def _make_gc_tx(seed_rows=None, readback_rows=None):
                 "tags": None,
                 "reviewer_score_name": 0.85,
                 "reviewer_comments_name": "Well formed name.",
-                "reviewer_verdict_name": "accept",
                 "chain_length": 0,
                 "docs_stage": "pending",
                 "name_stage": "accepted",
@@ -126,7 +125,6 @@ def _make_docs_item(
     docs_stage: str = "pending",
     reviewer_score: float = 0.85,
     reviewer_comments: str = "Well formed name.",
-    reviewer_verdict: str = "accept",
     chain_length: int = 0,
     **overrides: Any,
 ) -> dict[str, Any]:
@@ -145,7 +143,6 @@ def _make_docs_item(
         "docs_stage": docs_stage,
         "reviewer_score_name": reviewer_score,
         "reviewer_comments_name": reviewer_comments,
-        "reviewer_verdict_name": reviewer_verdict,
         "chain_length": chain_length,
         "chain_history": [],
         "claim_token": _TOKEN_A,
@@ -229,7 +226,7 @@ def test_claim_skips_already_drafted_docs():
 
 
 def test_claim_includes_reviewer_feedback():
-    """Claimed items include reviewer_score_name, reviewer_comments_name, reviewer_verdict_name."""
+    """Claimed items include reviewer_score_name and reviewer_comments_name."""
     from imas_codex.standard_names.graph_ops import (
         claim_generate_docs_batch,
     )
@@ -243,9 +240,7 @@ def test_claim_includes_reviewer_feedback():
     item = items[0]
     assert "reviewer_score_name" in item
     assert "reviewer_comments_name" in item
-    assert "reviewer_verdict_name" in item
     assert item["reviewer_score_name"] == 0.85
-    assert item["reviewer_verdict_name"] == "accept"
 
     # Verify the RETURN clause in the expand query includes these fields
     # Check the readback query (3rd tx.run call) or via extra_return_fields
@@ -430,13 +425,11 @@ def test_worker_renders_reviewer_feedback():
     item = _make_docs_item(
         reviewer_score=0.91,
         reviewer_comments="Excellent name — very precise.",
-        reviewer_verdict="accept",
     )
     context = {"item": item, "chain_history": []}
 
     rendered = render_prompt("sn/generate_docs_user", context)
     assert "0.91" in rendered
-    assert "accept" in rendered
 
 
 # =============================================================================

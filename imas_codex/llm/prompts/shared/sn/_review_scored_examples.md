@@ -7,7 +7,7 @@ tied to each dimension. Use these to anchor your own scores to a consistent
 absolute scale across batches.
 
 {% for ex in review_scored_examples %}
-### {{ ex.reviewer_verdict | capitalize }} — aggregate score {{ "%.2f"|format(ex.reviewer_score) }}
+### Aggregate score {{ "%.2f"|format(ex.reviewer_score) }}
 
 **`{{ ex.id }}`** [{{ ex.unit or 'dimensionless' }}, kind={{ ex.kind }}]
 Description: {{ ex.description }}
@@ -19,7 +19,6 @@ Per-dimension scores and reasoning:
 {% endfor %}
 
 {% if ex.reviewer_comments %}Reviewer summary: *{{ ex.reviewer_comments }}*{% endif %}
-{% if ex.reviewer_verdict %}Verdict: **{{ ex.reviewer_verdict }}**{% endif %}
 {% if ex.physics_domain %}Physics domain: {{ ex.physics_domain }}{% endif %}
 
 {% endfor %}

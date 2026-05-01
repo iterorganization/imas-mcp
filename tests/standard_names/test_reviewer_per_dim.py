@@ -106,7 +106,6 @@ class TestQualityReviewWithComments:
                 "compliance": 15,
             },
             comments=StandardNameQualityComments(grammar="good", semantic="accurate"),
-            verdict="accept",
             reasoning="Fine overall",
         )
         assert review.comments is not None
@@ -127,7 +126,6 @@ class TestQualityReviewWithComments:
                 "completeness": 16,
                 "compliance": 15,
             },
-            verdict="accept",
             reasoning="Fine overall",
         )
         assert review.comments is None
@@ -150,7 +148,6 @@ class TestQualityReviewWithComments:
             comments=StandardNameQualityCommentsDocs(
                 description_quality="clear", physics_accuracy="spot on"
             ),
-            verdict="accept",
             reasoning="Docs are good",
         )
         assert review.comments is not None
@@ -170,7 +167,6 @@ class TestWriteStandardNamesPerDim:
                 {
                     "id": "electron_temperature",
                     "reviewer_comments_per_dim": per_dim,
-                    "reviewer_verdict": "accept",
                 }
             ],
             mock_gc,
@@ -179,7 +175,6 @@ class TestWriteStandardNamesPerDim:
         assert cypher is not None, "MERGE StandardName query not found"
         # Shared slots must not appear — review is axis-specific only
         assert "sn.reviewer_comments_per_dim =" not in cypher
-        assert "sn.reviewer_verdict =" not in cypher
 
 
 class TestWriteReviewsPerDim:
@@ -255,7 +250,7 @@ class TestBuildReviewRecordPerDim:
 
 
 class TestMatchReviewsPerDim:
-    def test_reviewer_verdict_and_comments_per_dim_set(self):
+    def test_reviewer_comments_per_dim_set(self):
         from imas_codex.standard_names.models import (
             StandardNameQualityComments,
             StandardNameQualityReview,
@@ -277,7 +272,6 @@ class TestMatchReviewsPerDim:
                 "compliance": 20,
             },
             comments=StandardNameQualityComments(grammar="perfect"),
-            verdict="accept",
             reasoning="All dimensions outstanding",
         )
         wlog = logging.LoggerAdapter(logging.getLogger("test"))
@@ -285,13 +279,12 @@ class TestMatchReviewsPerDim:
             [review], entries, wlog, target="full"
         )
         entry = scored[0]
-        assert entry["reviewer_verdict"] == "accept"
         per_dim = json.loads(entry["reviewer_comments_per_dim"])
         assert per_dim["grammar"] == "perfect"
         assert per_dim["semantic"] is None
         assert entry["review_tier"] == "outstanding"
 
-    def test_docs_review_sets_verdict_and_comments(self):
+    def test_docs_review_sets_comments(self):
         from imas_codex.standard_names.models import (
             StandardNameQualityCommentsDocs,
             StandardNameQualityReviewDocs,
@@ -311,7 +304,6 @@ class TestMatchReviewsPerDim:
                 "physics_accuracy": 16,
             },
             comments=StandardNameQualityCommentsDocs(completeness="missing edge cases"),
-            verdict="revise",
             reasoning="Needs more detail",
         )
         wlog = logging.LoggerAdapter(logging.getLogger("test"))
@@ -319,7 +311,6 @@ class TestMatchReviewsPerDim:
             [review], entries, wlog, target="docs"
         )
         entry = scored[0]
-        assert entry["reviewer_verdict"] == "revise"
         per_dim = json.loads(entry["reviewer_comments_per_dim"])
         assert per_dim["completeness"] == "missing edge cases"
         assert "description_quality" in per_dim

@@ -62,7 +62,6 @@ Return a JSON object:
     "completeness": null,
     "physics_accuracy": null
   },
-  "verdict": "accept",
   "reasoning": "Specific justification covering each dimension",
   "revised_description": null,
   "revised_documentation": null,

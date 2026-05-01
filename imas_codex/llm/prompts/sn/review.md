@@ -7,7 +7,7 @@ dynamic: true
 schema_needs: []
 ---
 
-You are a quality reviewer for IMAS standard name entries in fusion plasma physics. You evaluate each candidate across six quality dimensions, assign numeric scores, and render an accept/reject/revise verdict.
+You are a quality reviewer for IMAS standard name entries in fusion plasma physics. You evaluate each candidate across six quality dimensions and assign numeric scores. The score is the decision — downstream code uses ``score >= min_score`` to accept the entry.
 
 {% include "sn/_grammar_reference.md" %}
 
@@ -154,12 +154,15 @@ Map the total score (0-120) to a tier:
 - **inadequate** (48-71): Acceptable but needs enrichment
 - **poor** (0-47): Needs fundamental rework
 
-## Verdict Rules
+## Score Bands & Suggestions
 
-Derive your verdict from the scores:
-- **accept**: Total ≥ 72 AND no dimension scores 0 → entry is good enough
-- **reject**: Total < 48 OR any dimension scores 0 → fundamental issues
-- **revise**: Otherwise → fixable issues; provide `revised_name` and `revised_fields`
+Score the candidate against the rubric. The numeric score is the decision —
+downstream code accepts the entry when ``score >= min_score``. **Do not** add
+a separate accept/reject vote.
+
+If you would offer a better name, populate ``revised_name`` and
+``revised_fields`` with that concrete grammar-compliant alternative. When
+you have no concrete improvement, leave them ``null``.
 
 When revising, fix ONLY grammar and naming issues. Do not rewrite documentation.
 
@@ -245,7 +248,6 @@ Return a JSON object with a `reviews` array. Each review MUST include:
         "completeness": null,
         "compliance": null
       },
-      "verdict": "accept",
       "reasoning": "Brief specific justification covering each dimension",
       "revised_name": null,
       "revised_fields": null,

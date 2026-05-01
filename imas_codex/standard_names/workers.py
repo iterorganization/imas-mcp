@@ -4246,8 +4246,6 @@ async def process_review_name_batch(
                 except Exception:
                     pass
 
-            verdict: str = str(result_obj.verdict)
-
             # ── Persist ───────────────────────────────────────────────
             new_stage = await _asyncio.to_thread(
                 persist_reviewed_name,
@@ -4257,7 +4255,6 @@ async def process_review_name_batch(
                 scores=scores_dict,
                 comments=comments,
                 comments_per_dim=comments_per_dim,
-                verdict=verdict,
                 model=model,
                 min_score=DEFAULT_MIN_SCORE,
                 rotation_cap=DEFAULT_REFINE_ROTATIONS,
@@ -4339,7 +4336,7 @@ async def process_generate_docs_batch(
 
     1. Render prompt via ``render_prompt("sn/generate_docs_user", {...})`` with
        reviewer feedback (reviewer_score_name, reviewer_comments_name,
-       reviewer_verdict_name) and chain history as context.
+       reviewer feedback and chain history as context.
     2. Use ``get_model("language")`` — bulk content generation model.
     3. Call ``acall_llm_structured`` with ``service="standard-names"`` and
        response_model=``GeneratedDocs``.
@@ -4610,8 +4607,6 @@ async def process_review_docs_batch(
                 except Exception:
                     pass
 
-            verdict: str = str(result_obj.verdict)
-
             # ── Persist ───────────────────────────────────────────────
             new_stage = await _asyncio.to_thread(
                 persist_reviewed_docs,
@@ -4621,7 +4616,6 @@ async def process_review_docs_batch(
                 scores=scores_dict,
                 comments=comments,
                 comments_per_dim=comments_per_dim,
-                verdict=verdict,
                 model=model,
                 min_score=DEFAULT_MIN_SCORE,
                 rotation_cap=DEFAULT_REFINE_ROTATIONS,
@@ -4765,7 +4759,6 @@ async def process_refine_docs_batch(
             "reviewer_comments_per_dim_docs": item.get(
                 "reviewer_comments_per_dim_docs"
             ),
-            "reviewer_verdict_docs": item.get("reviewer_verdict_docs"),
             "dd_paths": [],
         }
 
@@ -4853,7 +4846,6 @@ async def process_refine_docs_batch(
                 reviewer_comments_per_dim_to_snapshot=item.get(
                     "reviewer_comments_per_dim_docs"
                 ),
-                reviewer_verdict_to_snapshot=item.get("reviewer_verdict_docs"),
             )
             processed += 1
 

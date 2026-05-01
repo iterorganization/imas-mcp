@@ -46,10 +46,6 @@ modes:
       good:        {raw_min: 48}   # 60 %
       inadequate:  {raw_min: 32}   # 40 %
       poor:        {raw_min: 0}
-    verdict_rules:
-      accept: "raw_score >= 48 AND no dimension is 0"
-      reject: "raw_score < 32 OR any dimension is 0"
-      revise: "all other cases"
 
   docs:
     description: >-
@@ -64,10 +60,6 @@ modes:
       good:        {raw_min: 48}   # 60 %
       inadequate:  {raw_min: 32}   # 40 %
       poor:        {raw_min: 0}
-    verdict_rules:
-      accept: "raw_score >= 48 AND no dimension is 0"
-      reject: "raw_score < 32 OR any dimension is 0"
-      revise: "all other cases"
 
   full:
     description: >-
@@ -81,17 +73,6 @@ modes:
       good:        {raw_min: 72}   # 60 %
       inadequate:  {raw_min: 48}   # 40 %
       poor:        {raw_min: 0}
-    verdict_rules:
-      accept: "raw_score >= 72 AND no dimension is 0"
-      reject: "raw_score < 48 OR any dimension is 0"
-      revise: "all other cases"
-
-# Normalized (0-1) verdict thresholds — used by Python code that normalises
-# raw scores before comparing. Consistent with all three mode definitions.
-verdict_rules:
-  accept: "score >= 0.60 AND no dimension is 0"
-  reject: "score < 0.40 OR any dimension is 0"
-  revise: "all other cases"
 
 tiers:
   outstanding:

@@ -40,7 +40,6 @@ def _sn_row(
     *,
     name_id: str = "electron_temperature",
     score: float = 0.82,
-    verdict: str = "good",
     domain: str = "transport",
     scores: dict | None = None,
     comments_per_dim: dict | None = None,
@@ -53,7 +52,6 @@ def _sn_row(
         "kind": "scalar",
         "unit": "eV",
         "reviewer_score": score,
-        "reviewer_verdict": verdict,
         "reviewer_scores_json": json.dumps(scores or {"dim_a": 18, "dim_b": 16}),
         "reviewer_comments_per_dim_json": json.dumps(
             comments_per_dim or {"dim_a": "Good", "dim_b": "OK"}
@@ -88,7 +86,7 @@ class TestSingleReviewedName:
     """Graph with 1 reviewed name at score 0.82 → returned for 0.80 target bucket."""
 
     def test_returns_for_matching_bucket(self) -> None:
-        row = _sn_row(score=0.82, verdict="good")
+        row = _sn_row(score=0.82)
         # 4 targets × (domain-scoped + fallback) → need many responses.
         # Only the 0.80 target should match (|0.82 - 0.80| = 0.02 ≤ 0.05).
         # Provide it for the domain-scoped query at 0.80 target.
@@ -109,7 +107,6 @@ class TestSingleReviewedName:
         assert len(result) == 1
         assert result[0]["id"] == "electron_temperature"
         assert result[0]["reviewer_score"] == 0.82
-        assert result[0]["reviewer_verdict"] == "good"
         assert result[0]["target_score"] == 0.80
 
     def test_score_alias(self) -> None:
@@ -333,15 +330,12 @@ class TestReviewExamplesMatchesCompose:
             "kind",
             "unit",
             "reviewer_score",
-            "reviewer_verdict",
             "scores",
             "dimension_comments",
             "physics_domain",
             "target_score",
             "score",
-            "tier",
             "domain",
-            "verdict",
             "issues",
         }
         assert required_keys.issubset(set(result[0].keys()))

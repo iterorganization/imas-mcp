@@ -46,7 +46,6 @@ _(none available)_
 
 - **Name:** `{{ h.name }}`
 - **Reviewer score:** {{ "%.2f"|format(h.reviewer_score) }}
-- **Reviewer verdict:** {{ h.reviewer_verdict }}
 - **Per-dimension comments:**
 {% if h.reviewer_comments_per_dim %}
 {% for dim, comment in h.reviewer_comments_per_dim.items() %}

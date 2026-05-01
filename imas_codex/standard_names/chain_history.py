@@ -28,7 +28,6 @@ def name_chain_history(sn_id: str, *, limit: int = 5) -> list[dict]:
     * ``name``                      – ancestor ``id`` (= the standard name string)
     * ``model``                     – LLM model that produced the attempt
     * ``reviewer_score``            – numeric score (0–1) from the name reviewer
-    * ``reviewer_verdict``          – accept / revise / reject string
     * ``reviewer_comments_per_dim`` – per-dimension comments as ``{dim: comment}``
     * ``generated_at``              – ISO-8601 datetime string or ``None``
     """
@@ -42,7 +41,6 @@ def name_chain_history(sn_id: str, *, limit: int = 5) -> list[dict]:
           ancestor.model                            AS model,
           coalesce(ancestor.reviewer_score_name,
                    ancestor.reviewer_score)         AS reviewer_score,
-          ancestor.reviewer_verdict                 AS reviewer_verdict,
           ancestor.reviewer_comments_per_dim_name   AS reviewer_comments_per_dim,
           ancestor.generated_at                     AS generated_at
     """
@@ -56,7 +54,6 @@ def name_chain_history(sn_id: str, *, limit: int = 5) -> list[dict]:
                 "name": row["name"],
                 "model": row.get("model") or "unknown",
                 "reviewer_score": float(row.get("reviewer_score") or 0.0),
-                "reviewer_verdict": row.get("reviewer_verdict") or "unknown",
                 "reviewer_comments_per_dim": _parse_comments(
                     row.get("reviewer_comments_per_dim")
                 ),

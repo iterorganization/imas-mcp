@@ -25,7 +25,6 @@ def _make_name_review(
     """Build a fake name-axis review with verdict=revise and a revised_name."""
     from imas_codex.standard_names.models import (
         StandardNameQualityScoreNameOnly,
-        StandardNameReviewVerdict,
     )
 
     return SimpleNamespace(
@@ -37,7 +36,6 @@ def _make_name_review(
             convention=score,
             completeness=score,
         ),
-        verdict=StandardNameReviewVerdict.revise,
         reasoning="suggested a better name",
         revised_name=revised_name,
         revised_fields=None,

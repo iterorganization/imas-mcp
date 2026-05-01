@@ -201,7 +201,6 @@ class TestPersistToAccepted:
                 scores={"description_quality": 18},
                 comments="Excellent docs.",
                 comments_per_dim={"description_quality": "Clear"},
-                verdict="accept",
                 model="test/model",
                 min_score=0.75,
                 rotation_cap=3,
@@ -212,7 +211,7 @@ class TestPersistToAccepted:
 
 class TestPersistToReviewedLowScore:
     def test_persist_to_reviewed_low_score(self):
-        """verdict='reject', score=0.5, docs_chain_length=0, rotation_cap=3 → 'reviewed'."""
+        """score=0.5, docs_chain_length=0, rotation_cap=3 → 'reviewed'."""
         gc = _mock_gc_query(
             return_values=[
                 [{"docs_chain_length": 0}],
@@ -227,7 +226,6 @@ class TestPersistToReviewedLowScore:
                 sn_id="test_name",
                 claim_token="tok",
                 score=0.5,
-                verdict="reject",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -253,7 +251,6 @@ class TestPersistToExhaustedAtCap:
                 sn_id="test_name",
                 claim_token="tok",
                 score=0.5,
-                verdict="reject",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -279,7 +276,6 @@ class TestPersistToReviewedBelowCap:
                 sn_id="test_name",
                 claim_token="tok",
                 score=0.5,
-                verdict="reject",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -290,7 +286,7 @@ class TestPersistToReviewedBelowCap:
 
 class TestAcceptOverridesChainLengthAtCap:
     def test_accept_overrides_chain_length_at_cap(self):
-        """verdict='accept', docs_chain_length=2, rotation_cap=3 → 'accepted'."""
+        """docs_chain_length=2, rotation_cap=3 → 'accepted'."""
         gc = _mock_gc_query(
             return_values=[
                 [{"docs_chain_length": 2}],
@@ -305,7 +301,6 @@ class TestAcceptOverridesChainLengthAtCap:
                 sn_id="test_name",
                 claim_token="tok",
                 score=0.9,
-                verdict="accept",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -327,7 +322,6 @@ class TestPersistTokenMismatchNoOp:
                 sn_id="test_name",
                 claim_token="wrong-token",
                 score=0.9,
-                verdict="accept",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -361,7 +355,6 @@ class TestPersistWritesReviewerDocsFields:
                     "description_quality": "OK",
                     "documentation_quality": "Great",
                 },
-                verdict="accept",
                 model="openrouter/test/model",
                 min_score=0.75,
                 rotation_cap=3,
@@ -372,7 +365,6 @@ class TestPersistWritesReviewerDocsFields:
         call_kwargs = set_call[1]  # keyword args dict
 
         assert call_kwargs.get("score") == 0.8
-        assert call_kwargs.get("verdict") == "accept"
         assert call_kwargs.get("model") == "openrouter/test/model"
         assert call_kwargs.get("comments") == "Good docs."
 
@@ -411,7 +403,6 @@ class TestPersistDoesNotChangeNameFields:
                 sn_id="electron_temperature",
                 claim_token="tok",
                 score=0.8,
-                verdict="accept",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -479,7 +470,6 @@ class TestWorkerStreamsPerItemDocs:
             StandardNameQualityCommentsDocs,
             StandardNameQualityReviewDocs,
             StandardNameQualityScoreDocs,
-            StandardNameReviewVerdict,
         )
 
         for i in range(3):
@@ -494,7 +484,6 @@ class TestWorkerStreamsPerItemDocs:
                         completeness=17,
                         physics_accuracy=16,
                     ),
-                    verdict=StandardNameReviewVerdict.accept,
                     reasoning=f"Good docs {i}.",
                 ),
             )

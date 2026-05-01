@@ -67,10 +67,8 @@ class TestComposeWithEntries:
         assert "good" in result
 
     def test_two_entries(self) -> None:
-        ex1 = _example(
-            name_id="electron_temperature", score=0.95, verdict="outstanding"
-        )
-        ex2 = _example(name_id="plasma_current", score=0.42, verdict="poor")
+        ex1 = _example(name_id="electron_temperature", score=0.95)
+        ex2 = _example(name_id="plasma_current", score=0.42)
         result = _render_compose([ex1, ex2])
         assert "electron_temperature" in result
         assert "plasma_current" in result

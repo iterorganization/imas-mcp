@@ -246,7 +246,6 @@ def _reject_name(gc, sn_id: str, *, rotation_cap: int = _CAP) -> str:
         sn_id=sn_id,
         claim_token=tok,
         score=0.5,
-        verdict="reject",
         model="test/model",
         min_score=0.75,
         rotation_cap=rotation_cap,
@@ -260,7 +259,6 @@ def _accept_name(gc, sn_id: str, *, rotation_cap: int = _CAP) -> str:
         sn_id=sn_id,
         claim_token=tok,
         score=0.85,
-        verdict="accept",
         model="test/model",
         min_score=0.75,
         rotation_cap=rotation_cap,
@@ -301,7 +299,6 @@ def _reject_docs(gc, sn_id: str, *, rotation_cap: int = _CAP) -> str:
         sn_id=sn_id,
         claim_token=tok,
         score=0.5,
-        verdict="reject",
         comments="Needs improvement",
         model="test/model",
         min_score=0.75,
@@ -348,7 +345,6 @@ def _refine_docs(gc, sn_id: str, iteration: int = 0) -> dict:
         reviewer_comments_to_snapshot=snap.get("reviewer_comments_docs")
         or "Needs improvement",
         reviewer_comments_per_dim_to_snapshot=None,
-        reviewer_verdict_to_snapshot=snap.get("reviewer_verdict_docs") or "reject",
     )
 
 

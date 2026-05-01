@@ -258,7 +258,6 @@ class TestAtomicClaimReturnsExpandedPayload:
                         "physics_domain": None,
                         "validation_status": "valid",
                         "reviewer_score_name": 0.3,
-                        "reviewer_verdict_name": None,
                         "reviewer_comments_per_dim_name": None,
                         "chain_length": 1,
                         "name_stage": "reviewed",
@@ -284,7 +283,6 @@ class TestAtomicClaimReturnsExpandedPayload:
         assert len(items) == 1
         for key in [
             "reviewer_score_name",
-            "reviewer_verdict_name",
             "reviewer_comments_per_dim_name",
             "chain_length",
             "name_stage",

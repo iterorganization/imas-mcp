@@ -172,7 +172,6 @@ class TestPersistToAccepted:
                 scores={"grammar": 18},
                 comments="Excellent.",
                 comments_per_dim={"grammar": "Great"},
-                verdict="accept",
                 model="test/model",
                 min_score=0.75,
                 rotation_cap=3,
@@ -196,7 +195,6 @@ class TestPersistToAccepted:
                 sn_id="electron_temperature",
                 claim_token="tok-123",
                 score=0.9,
-                verdict="accept",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -209,7 +207,7 @@ class TestPersistToAccepted:
 
 class TestPersistToReviewed:
     def test_persist_to_reviewed_low_score(self):
-        """verdict='reject', score=0.5, chain_length=0, rotation_cap=3 → 'reviewed'."""
+        """score=0.5, chain_length=0, rotation_cap=3 → 'reviewed'."""
         gc = _mock_gc_query(
             return_values=[
                 [{"chain_length": 0}],
@@ -224,7 +222,6 @@ class TestPersistToReviewed:
                 sn_id="test_name",
                 claim_token="tok",
                 score=0.5,
-                verdict="reject",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -248,7 +245,6 @@ class TestPersistToReviewed:
                 sn_id="test_name",
                 claim_token="tok",
                 score=0.5,
-                verdict="reject",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -274,7 +270,6 @@ class TestPersistToExhausted:
                 sn_id="test_name",
                 claim_token="tok",
                 score=0.5,
-                verdict="reject",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -298,7 +293,6 @@ class TestPersistToExhausted:
                 sn_id="test_name",
                 claim_token="tok",
                 score=0.9,
-                verdict="accept",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -317,7 +311,7 @@ class TestScoreCanonicalPolicy:
     """
 
     def test_revise_with_high_score_promotes_to_accepted(self):
-        """verdict='revise', score=0.9 → 'accepted' (score wins)."""
+        """score=0.9 → 'accepted' (score wins)."""
         gc = _mock_gc_query(return_values=[[{"chain_length": 0}], []])
         with _patch_gc(gc):
             from imas_codex.standard_names.graph_ops import persist_reviewed_name
@@ -326,7 +320,6 @@ class TestScoreCanonicalPolicy:
                 sn_id="time",
                 claim_token="tok",
                 score=0.9,
-                verdict="revise",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -343,7 +336,6 @@ class TestScoreCanonicalPolicy:
                 sn_id="x",
                 claim_token="tok",
                 score=0.8,
-                verdict="reject",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -360,7 +352,6 @@ class TestScoreCanonicalPolicy:
                 sn_id="x",
                 claim_token="tok",
                 score=0.85,
-                verdict="revise",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -381,7 +372,6 @@ class TestPersistTokenMismatch:
                 sn_id="test_name",
                 claim_token="wrong-token",
                 score=0.9,
-                verdict="accept",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -412,7 +402,6 @@ class TestPersistWritesReviewerFields:
                 scores={"grammar": 16, "semantic": 18},
                 comments="Good name.",
                 comments_per_dim={"grammar": "OK", "semantic": "Great"},
-                verdict="accept",
                 model="openrouter/test/model",
                 min_score=0.75,
                 rotation_cap=3,
@@ -424,7 +413,6 @@ class TestPersistWritesReviewerFields:
         call_kwargs = set_call[1]  # keyword args dict
 
         assert call_kwargs.get("score") == 0.8
-        assert call_kwargs.get("verdict") == "accept"
         assert call_kwargs.get("model") == "openrouter/test/model"
         assert call_kwargs.get("comments") == "Good name."
 
@@ -462,7 +450,6 @@ class TestMinScoreThreshold:
                 sn_id="x",
                 claim_token="t",
                 score=0.75,
-                verdict="accept",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -479,7 +466,6 @@ class TestMinScoreThreshold:
                 sn_id="x",
                 claim_token="t",
                 score=0.74,
-                verdict="accept",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -497,7 +483,6 @@ class TestMinScoreThreshold:
                 sn_id="x",
                 claim_token="t",
                 score=0.5,
-                verdict="reject",
                 model="m",
                 min_score=0.75,
                 rotation_cap=3,
@@ -516,7 +501,6 @@ class TestWorkerUsesCanonicalModel:
         from imas_codex.standard_names.models import (
             StandardNameQualityReviewNameOnly,
             StandardNameQualityScoreNameOnly,
-            StandardNameReviewVerdict,
         )
 
         review_response = StandardNameQualityReviewNameOnly(
@@ -525,7 +509,6 @@ class TestWorkerUsesCanonicalModel:
             scores=StandardNameQualityScoreNameOnly(
                 grammar=16, semantic=18, convention=17, completeness=16
             ),
-            verdict=StandardNameReviewVerdict.accept,
             reasoning="Good name.",
         )
         mock_llm.add_response("review_name", response=review_response, model=None)
@@ -563,7 +546,6 @@ class TestWorkerUsesCanonicalModel:
         from imas_codex.standard_names.models import (
             StandardNameQualityReviewNameOnly,
             StandardNameQualityScoreNameOnly,
-            StandardNameReviewVerdict,
         )
 
         for i in range(3):
@@ -575,7 +557,6 @@ class TestWorkerUsesCanonicalModel:
                     scores=StandardNameQualityScoreNameOnly(
                         grammar=16, semantic=18, convention=17, completeness=16
                     ),
-                    verdict=StandardNameReviewVerdict.accept,
                     reasoning=f"Good {i}.",
                 ),
             )

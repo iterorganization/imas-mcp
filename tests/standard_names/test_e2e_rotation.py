@@ -39,7 +39,6 @@ from imas_codex.standard_names.models import (
     StandardNameQualityReviewNameOnly,
     StandardNameQualityScoreDocs,
     StandardNameQualityScoreNameOnly,
-    StandardNameReviewVerdict,
 )
 from imas_codex.standard_names.workers import (
     process_generate_docs_batch,
@@ -245,9 +244,7 @@ def _fetch_sn(gc, sn_id: str) -> dict:
                sn.description         AS description,
                sn.documentation       AS documentation,
                sn.reviewer_score_name AS reviewer_score_name,
-               sn.reviewer_verdict_name AS reviewer_verdict_name,
                sn.reviewer_score_docs AS reviewer_score_docs,
-               sn.reviewer_verdict_docs AS reviewer_verdict_docs,
                sn.reviewer_comments_docs AS reviewer_comments_docs
         """,
         id=sn_id,
@@ -341,7 +338,6 @@ def _make_refine_name_item(
         "physics_domain": ["core_profiles"],
         "validation_status": None,
         "reviewer_score_name": reviewer_score,
-        "reviewer_verdict_name": "revise",
         "reviewer_comments_per_dim_name": None,
         "chain_length": chain_length,
         "name_stage": "refining",
@@ -366,7 +362,6 @@ def _make_generate_docs_item(sn_id: str, *, claim_token: str) -> dict:
         "tags": ["test"],
         "reviewer_score_name": 0.85,
         "reviewer_comments_name": "Good name",
-        "reviewer_verdict_name": "accept",
         "chain_length": 0,
         "docs_stage": "pending",
         "name_stage": "accepted",
@@ -408,7 +403,6 @@ def _make_refine_docs_item(
     docs_chain_length: int,
     reviewer_score: float = 0.55,
     reviewer_comments: str = "Needs improvement",
-    reviewer_verdict: str = "reject",
 ) -> dict:
     return {
         "id": sn_id,
@@ -428,7 +422,6 @@ def _make_refine_docs_item(
         "reviewer_score_docs": reviewer_score,
         "reviewer_comments_docs": reviewer_comments,
         "reviewer_comments_per_dim_docs": None,
-        "reviewer_verdict_docs": reviewer_verdict,
         "docs_chain_history": [],
     }
 
@@ -451,7 +444,6 @@ def _do_review_name(
     sn_id: str,
     *,
     scores: StandardNameQualityScoreNameOnly,
-    verdict: str,
     chain_length: int = 0,
 ) -> str:
     """Claim + run review_name worker. Returns new name_stage."""
@@ -461,7 +453,6 @@ def _do_review_name(
             source_id=sn_id,
             standard_name=sn_id,
             scores=scores,
-            verdict=StandardNameReviewVerdict(verdict),
             reasoning="E2E test reviewer reasoning",
         ),
     )
@@ -532,7 +523,6 @@ def _do_review_docs(
     sn_id: str,
     *,
     scores: StandardNameQualityScoreDocs,
-    verdict: str,
     docs_chain_length: int = 0,
 ) -> str:
     """Claim + run review_docs worker. Returns new docs_stage."""
@@ -542,7 +532,6 @@ def _do_review_docs(
             source_id=sn_id,
             standard_name=sn_id,
             scores=scores,
-            verdict=StandardNameReviewVerdict(verdict),
             reasoning="E2E docs reviewer reasoning",
         ),
     )
@@ -588,7 +577,6 @@ def _do_refine_docs(
     current_doc = row["documentation"] or ""
     reviewer_score = row.get("reviewer_score_docs")
     reviewer_comments = row.get("reviewer_comments_docs") or "Needs improvement"
-    reviewer_verdict = row.get("reviewer_verdict_docs") or "reject"
     # Atomically transition to 'refining' + set claim
     _set_claim_and_stage(gc, sn_id, token, "docs_stage", "refining")
     item = _make_refine_docs_item(
@@ -599,7 +587,6 @@ def _do_refine_docs(
         docs_chain_length=docs_chain_length,
         reviewer_score=reviewer_score if reviewer_score is not None else 0.55,
         reviewer_comments=reviewer_comments,
-        reviewer_verdict=reviewer_verdict,
     )
     stop_event = asyncio.Event()
     n = asyncio.run(
@@ -647,9 +634,7 @@ def test_e2e_full_rotation_to_acceptance(_gc, _clean, mock_llm):
     assert row["chain_length"] == 0
 
     # Step 2: review_name reject → reviewed
-    stage = _do_review_name(
-        _gc, mock_llm, sn_v1, scores=_SCORE_REJECT_NAME, verdict="reject"
-    )
+    stage = _do_review_name(_gc, mock_llm, sn_v1, scores=_SCORE_REJECT_NAME)
     assert stage == "reviewed", f"Expected 'reviewed', got {stage!r}"
 
     # Step 3: refine_name SN_v1 → SN_v2
@@ -674,7 +659,6 @@ def test_e2e_full_rotation_to_acceptance(_gc, _clean, mock_llm):
         mock_llm,
         sn_v2,
         scores=_SCORE_ACCEPT_NAME,
-        verdict="accept",
         chain_length=1,
     )
     assert stage == "accepted", f"Expected 'accepted', got {stage!r}"
@@ -687,9 +671,7 @@ def test_e2e_full_rotation_to_acceptance(_gc, _clean, mock_llm):
     assert row_v2["documentation"] != ""
 
     # Step 6: review_docs reject → reviewed
-    stage = _do_review_docs(
-        _gc, mock_llm, sn_v2, scores=_SCORE_REJECT_DOCS, verdict="reject"
-    )
+    stage = _do_review_docs(_gc, mock_llm, sn_v2, scores=_SCORE_REJECT_DOCS)
     assert stage == "reviewed", f"Expected 'reviewed', got {stage!r}"
 
     # Step 7: refine_docs → DocsRevision_v0 created, docs_chain=1
@@ -704,7 +686,6 @@ def test_e2e_full_rotation_to_acceptance(_gc, _clean, mock_llm):
         mock_llm,
         sn_v2,
         scores=_SCORE_ACCEPT_DOCS,
-        verdict="accept",
         docs_chain_length=1,
     )
     assert stage == "accepted", f"Expected 'accepted', got {stage!r}"
@@ -737,11 +718,9 @@ def test_e2e_full_rotation_to_acceptance(_gc, _clean, mock_llm):
 
     # Reviewer fields populated for name review
     assert row_v2["reviewer_score_name"] == pytest.approx(0.85, abs=0.01)
-    assert row_v2["reviewer_verdict_name"] == "accept"
 
     # Reviewer fields populated for docs review
     assert row_v2["reviewer_score_docs"] == pytest.approx(0.85, abs=0.01)
-    assert row_v2["reviewer_verdict_docs"] == "accept"
 
     # chain_history walker finds 1 predecessor (SN_v1)
     hist = name_chain_history(sn_v2)
@@ -782,9 +761,7 @@ def test_e2e_immediate_acceptance_no_rotation(_gc, _clean, mock_llm):
     _do_generate_name(_gc, src_id, sn_id)
 
     # Step 2: review_name accept immediately
-    stage = _do_review_name(
-        _gc, mock_llm, sn_id, scores=_SCORE_ACCEPT_NAME_HIGH, verdict="accept"
-    )
+    stage = _do_review_name(_gc, mock_llm, sn_id, scores=_SCORE_ACCEPT_NAME_HIGH)
     assert stage == "accepted", f"Expected 'accepted', got {stage!r}"
 
     # Step 3: generate_docs (cross-pipeline gate: name accepted)
@@ -795,9 +772,7 @@ def test_e2e_immediate_acceptance_no_rotation(_gc, _clean, mock_llm):
     assert row["documentation"] != ""
 
     # Step 4: review_docs accept immediately
-    stage = _do_review_docs(
-        _gc, mock_llm, sn_id, scores=_SCORE_ACCEPT_DOCS, verdict="accept"
-    )
+    stage = _do_review_docs(_gc, mock_llm, sn_id, scores=_SCORE_ACCEPT_DOCS)
     assert stage == "accepted", f"Expected 'accepted', got {stage!r}"
 
     # ── Final assertions ─────────────────────────────────────────────────
@@ -821,9 +796,7 @@ def test_e2e_immediate_acceptance_no_rotation(_gc, _clean, mock_llm):
 
     # Reviewer fields populated for both axes
     assert row["reviewer_score_name"] == pytest.approx(0.90, abs=0.01)
-    assert row["reviewer_verdict_name"] == "accept"
     assert row["reviewer_score_docs"] == pytest.approx(0.85, abs=0.01)
-    assert row["reviewer_verdict_docs"] == "accept"
 
 
 # ===========================================================================
@@ -874,9 +847,7 @@ def test_e2e_name_rotates_then_docs_rotates(_gc, _clean, mock_llm):
     _do_generate_name(_gc, src_id, sn_v1)
 
     # Step 2: review_name reject 0.55
-    stage = _do_review_name(
-        _gc, mock_llm, sn_v1, scores=_SCORE_REJECT_NAME, verdict="reject"
-    )
+    stage = _do_review_name(_gc, mock_llm, sn_v1, scores=_SCORE_REJECT_NAME)
     assert stage == "reviewed"
 
     # Step 3: refine_name v1 → v2 (chain_length of old=0)
@@ -892,7 +863,6 @@ def test_e2e_name_rotates_then_docs_rotates(_gc, _clean, mock_llm):
         mock_llm,
         sn_v2,
         scores=_SCORE_REJECT_NAME_MED,
-        verdict="reject",
         chain_length=1,
     )
     assert stage == "reviewed"
@@ -910,7 +880,6 @@ def test_e2e_name_rotates_then_docs_rotates(_gc, _clean, mock_llm):
         mock_llm,
         sn_v3,
         scores=_SCORE_ACCEPT_NAME_MED,
-        verdict="accept",
         chain_length=2,
     )
     assert stage == "accepted"
@@ -927,9 +896,7 @@ def test_e2e_name_rotates_then_docs_rotates(_gc, _clean, mock_llm):
     assert row_v3["description"] != "Test quantity"
 
     # Step 8: review_docs reject 0.50
-    stage = _do_review_docs(
-        _gc, mock_llm, sn_v3, scores=_SCORE_REJECT_DOCS_LOW, verdict="reject"
-    )
+    stage = _do_review_docs(_gc, mock_llm, sn_v3, scores=_SCORE_REJECT_DOCS_LOW)
     assert stage == "reviewed"
 
     # Step 9: refine_docs → DocsRev_v0, docs_chain=1
@@ -944,7 +911,6 @@ def test_e2e_name_rotates_then_docs_rotates(_gc, _clean, mock_llm):
         mock_llm,
         sn_v3,
         scores=_SCORE_REJECT_DOCS,
-        verdict="reject",
         docs_chain_length=1,
     )
     assert stage == "reviewed"
@@ -961,7 +927,6 @@ def test_e2e_name_rotates_then_docs_rotates(_gc, _clean, mock_llm):
         mock_llm,
         sn_v3,
         scores=_SCORE_ACCEPT_DOCS,
-        verdict="accept",
         docs_chain_length=2,
     )
     assert stage == "accepted"
@@ -1007,9 +972,7 @@ def test_e2e_name_rotates_then_docs_rotates(_gc, _clean, mock_llm):
 
     # Reviewer fields on SN_v3
     assert row_v3["reviewer_score_name"] == pytest.approx(0.825, abs=0.02)
-    assert row_v3["reviewer_verdict_name"] == "accept"
     assert row_v3["reviewer_score_docs"] == pytest.approx(0.85, abs=0.01)
-    assert row_v3["reviewer_verdict_docs"] == "accept"
 
     # Verify refine_name model calls (2 × language model, no escalation with
     # DEFAULT_REFINE_ROTATIONS=3 and chain lengths 0,1 both < 2)

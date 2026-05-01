@@ -13,7 +13,7 @@ import pytest
 
 
 def test_fetch_docs_review_feedback_returns_full_payload():
-    """Happy path: SN with docs review returns score + comments + per-dim + verdict."""
+    """Happy path: SN with docs review returns score + comments + per-dim."""
     from imas_codex.standard_names.graph_ops import (
         fetch_docs_review_feedback_for_standard_names,
     )
@@ -27,7 +27,6 @@ def test_fetch_docs_review_feedback_returns_full_payload():
                 '{"description_quality": 14, "documentation_quality": 9, '
                 '"completeness": 12, "physics_accuracy": 16}'
             ),
-            "reviewer_verdict": "revise",
             "validation_issues": ["doc_too_short", "missing_units_in_prose"],
         }
     ]
@@ -47,7 +46,6 @@ def test_fetch_docs_review_feedback_returns_full_payload():
     assert entry["reviewer_score"] == 0.62
     assert entry["reviewer_comments"].startswith("Documentation does not")
     assert entry["reviewer_scores"]["documentation_quality"] == 9
-    assert entry["reviewer_verdict"] == "revise"
     assert entry["validation_issues"] == ["doc_too_short", "missing_units_in_prose"]
 
 

@@ -116,8 +116,7 @@ def _create_sn_accepted(gc, sn_id: str) -> None:
             sn.kind              = 'scalar',
             sn.unit              = 'eV',
             sn.physics_domain    = ['core_profiles'],
-            sn.reviewer_score_name   = 0.85,
-            sn.reviewer_verdict_name = 'accept'
+            sn.reviewer_score_name   = 0.85
         """,
         id=sn_id,
     )
@@ -220,7 +219,6 @@ def _generate_docs(gc, sn_id: str) -> str:
 def _review_docs(
     gc,
     sn_id: str,
-    verdict: str,
     score: float,
     rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
 ) -> str:
@@ -231,7 +229,6 @@ def _review_docs(
         sn_id=sn_id,
         claim_token=token,
         score=score,
-        verdict=verdict,
         comments="Test reviewer comment",
         model="test/model",
         min_score=0.75,
@@ -250,8 +247,7 @@ def _refine_docs(gc, sn_id: str, iteration: int = 0) -> dict:
         RETURN sn.description            AS description,
                sn.documentation          AS documentation,
                sn.reviewer_score_docs    AS reviewer_score_docs,
-               sn.reviewer_comments_docs AS reviewer_comments_docs,
-               sn.reviewer_verdict_docs  AS reviewer_verdict_docs
+               sn.reviewer_comments_docs AS reviewer_comments_docs
         """,
         id=sn_id,
     )
@@ -261,7 +257,6 @@ def _refine_docs(gc, sn_id: str, iteration: int = 0) -> dict:
     current_doc = snap["documentation"] or ""
     snap_score = snap.get("reviewer_score_docs")
     snap_comments = snap.get("reviewer_comments_docs")
-    snap_verdict = snap.get("reviewer_verdict_docs")
     # Transition to 'refining' + set claim
     gc.query(
         """
@@ -286,7 +281,6 @@ def _refine_docs(gc, sn_id: str, iteration: int = 0) -> dict:
         reviewer_score_to_snapshot=snap_score,
         reviewer_comments_to_snapshot=snap_comments or "Needs improvement",
         reviewer_comments_per_dim_to_snapshot=None,
-        reviewer_verdict_to_snapshot=snap_verdict or "reject",
     )
     return result
 
@@ -317,7 +311,7 @@ def test_full_docs_acceptance_path(_gc, _clean):
     assert row["claim_token"] is None  # cleared after generate
 
     # Step 2: review with accept
-    result = _review_docs(_gc, sn_id, verdict="accept", score=0.85)
+    result = _review_docs(_gc, sn_id, score=0.85)
 
     assert result == "accepted", f"Expected 'accepted', got {result!r}"
 
@@ -352,7 +346,7 @@ def test_docs_rotation_to_acceptance(_gc, _clean):
     original_desc = _fetch_sn_docs(_gc, sn_id)["description"]
 
     # Step 2: reject review
-    r1 = _review_docs(_gc, sn_id, verdict="reject", score=0.5)
+    r1 = _review_docs(_gc, sn_id, score=0.5)
     assert r1 == "reviewed", f"Expected 'reviewed', got {r1!r}"
 
     # Step 3: refine → DocsRevision_v0 created
@@ -365,7 +359,7 @@ def test_docs_rotation_to_acceptance(_gc, _clean):
     assert row["docs_chain_length"] == 1
 
     # Step 4: accept review
-    r2 = _review_docs(_gc, sn_id, verdict="accept", score=0.85)
+    r2 = _review_docs(_gc, sn_id, score=0.85)
     assert r2 == "accepted", f"Expected 'accepted', got {r2!r}"
 
     row = _fetch_sn_docs(_gc, sn_id)
@@ -400,19 +394,19 @@ def test_docs_exhaustion_path(_gc, _clean):
 
     # Cycle 1: generate → review reject → refine
     _generate_docs(_gc, sn_id)
-    r1 = _review_docs(_gc, sn_id, verdict="reject", score=0.5)
+    r1 = _review_docs(_gc, sn_id, score=0.5)
     assert r1 == "reviewed"
     result1 = _refine_docs(_gc, sn_id, iteration=0)
     assert result1["docs_chain_length"] == 1
 
     # Cycle 2: review reject → refine
-    r2 = _review_docs(_gc, sn_id, verdict="reject", score=0.5)
+    r2 = _review_docs(_gc, sn_id, score=0.5)
     assert r2 == "reviewed"
     result2 = _refine_docs(_gc, sn_id, iteration=1)
     assert result2["docs_chain_length"] == 2
 
     # Cycle 3: review reject at chain_length=2, rotation_cap=3 → exhausted
-    r3 = _review_docs(_gc, sn_id, verdict="reject", score=0.5, rotation_cap=3)
+    r3 = _review_docs(_gc, sn_id, score=0.5, rotation_cap=3)
     assert r3 == "exhausted", f"Expected 'exhausted', got {r3!r}"
 
     row = _fetch_sn_docs(_gc, sn_id)
@@ -489,7 +483,6 @@ def test_docs_escalation_at_final_attempt(_gc, _clean, mock_llm):
         "reviewer_score_docs": 0.5,
         "reviewer_comments_docs": "Needs improvement",
         "reviewer_comments_per_dim_docs": None,
-        "reviewer_verdict_docs": "reject",
     }
     stop_event = asyncio.Event()
 
@@ -579,17 +572,17 @@ def test_revisions_preserve_full_history(_gc, _clean):
 
     # Cycle 1: generate → review reject → refine
     _generate_docs(_gc, sn_id)
-    _review_docs(_gc, sn_id, verdict="reject", score=0.4)
+    _review_docs(_gc, sn_id, score=0.4)
     result0 = _refine_docs(_gc, sn_id, iteration=0)
     rev0_id = result0["revision_id"]
 
     # Cycle 2: review reject → refine
-    _review_docs(_gc, sn_id, verdict="reject", score=0.55)
+    _review_docs(_gc, sn_id, score=0.55)
     result1 = _refine_docs(_gc, sn_id, iteration=1)
     rev1_id = result1["revision_id"]
 
     # Accept
-    r_final = _review_docs(_gc, sn_id, verdict="accept", score=0.85)
+    r_final = _review_docs(_gc, sn_id, score=0.85)
     assert r_final == "accepted"
 
     # Both revisions exist
@@ -625,9 +618,9 @@ def test_chain_history_walks_revisions(_gc, _clean):
 
     # Build 2-revision chain
     _generate_docs(_gc, sn_id)
-    _review_docs(_gc, sn_id, verdict="reject", score=0.3)
+    _review_docs(_gc, sn_id, score=0.3)
     _refine_docs(_gc, sn_id, iteration=0)
-    _review_docs(_gc, sn_id, verdict="reject", score=0.55)
+    _review_docs(_gc, sn_id, score=0.55)
     _refine_docs(_gc, sn_id, iteration=1)
 
     history = docs_chain_history(sn_id)
@@ -680,7 +673,6 @@ def test_docs_acceptance_overrides_chain_length_at_cap(_gc, _clean):
         sn_id=sn_id,
         claim_token=token,
         score=0.85,
-        verdict="accept",
         model="test/model",
         min_score=0.75,
         rotation_cap=3,
@@ -768,7 +760,6 @@ def test_concurrent_review_docs_does_not_double_advance(_gc, _clean):
         sn_id=sn_id,
         claim_token=t1,
         score=0.85,
-        verdict="accept",
         model="test/model",
         min_score=0.75,
         rotation_cap=3,
@@ -780,7 +771,6 @@ def test_concurrent_review_docs_does_not_double_advance(_gc, _clean):
         sn_id=sn_id,
         claim_token=t2,
         score=0.30,
-        verdict="reject",
         model="test/model",
         min_score=0.75,
         rotation_cap=3,

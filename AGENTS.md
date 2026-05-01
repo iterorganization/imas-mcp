@@ -780,7 +780,7 @@ Azure Web App has continuous deployment enabled on ACR. When a new image appears
 | 5 | `REVIEW_DOCS` | `docs_stage='drafted'` | RD-quorum scores docs; atomic transition → `accepted` / `reviewed` / `exhausted` |
 | 6 | `REFINE_DOCS` | `docs_stage='reviewed' AND rds<min AND docs_chain_length<cap` | Rewrites docs in-place; prior content snapshotted on a `DocsRevision` node via `DOCS_REVISION_OF`; `docs_stage → 'drafted'` |
 
-**Acceptance always overrides cap:** even at `chain_length == cap − 1`, an `accepted` verdict wins (no forced exhaustion on a good result). **Escalation:** on the final refine attempt (`chain_length == cap − 1`), the pool switches to `DEFAULT_ESCALATION_MODEL` (default `openrouter/anthropic/claude-opus-4.6`). **Backlog throttle:** when refine_name backlog > 0.5 × generate_name backlog, `BudgetManager.pool_admit` dampens generate_name effective weight by 0.5×.
+**Acceptance always overrides cap:** even at `chain_length == cap − 1`, a passing score wins (no forced exhaustion on a good result). **Escalation:** on the final refine attempt (`chain_length == cap − 1`), the pool switches to `DEFAULT_ESCALATION_MODEL` (default `openrouter/anthropic/claude-opus-4.6`). **Backlog throttle:** when refine_name backlog > 0.5 × generate_name backlog, `BudgetManager.pool_admit` dampens generate_name effective weight by 0.5×.
 
 **EXTRACT → COMPOSE** sub-pipeline runs inside GENERATE_NAME (pool path) or via `pool_adapter.run_explicit_paths()` (single-pass path): DD paths queried (filtered by `SN_SOURCE_CATEGORIES`), classified, clustered, batched; ISN 3-layer validation (Pydantic → semantic → description) + grammar round-trip; cross-batch dedup; conflict-detecting Neo4j writes.
 
@@ -956,7 +956,7 @@ name_stage:  pending → drafted → reviewed ─┬─→ accepted   (terminal;
 - **pending** → not yet generated
 - **drafted** → LLM output written; awaiting review
 - **reviewed** → scored by reviewer; rsn below threshold; eligible for refine
-- **accepted** → reviewer verdict passed threshold (terminal — good)
+- **accepted** → reviewer score met or exceeded `min_score` threshold (terminal — good)
 - **refining** → claim held by a refine worker; orphan sweep reverts to `reviewed` after 300 s timeout
 - **exhausted** → refine chain hit cap and Opus escalation still scored below threshold (terminal — bad)
 - **superseded** → predecessor SN in a REFINED_FROM chain; source edges migrated to the latest
@@ -1203,10 +1203,17 @@ by the model.
 independent column families so a docs-only pass cannot clobber a prior name-only review's
 per-dimension JSON (and vice-versa). Axis-specific reviews write to five paired slots per axis:
 
-| Axis | Scalar | Per-dim JSON | Comments | Per-dim comments | Verdict | Model |
-|------|--------|--------------|----------|-----------------|---------|-------|
-| name | `reviewer_score_name` | `reviewer_scores_name` | `reviewer_comments_name` | `reviewer_comments_per_dim_name` | `reviewer_verdict_name` | `reviewer_model_name` |
-| docs | `reviewer_score_docs` | `reviewer_scores_docs` | `reviewer_comments_docs` | `reviewer_comments_per_dim_docs` | `reviewer_verdict_docs` | `reviewer_model_docs` |
+| Axis | Scalar | Per-dim JSON | Comments | Per-dim comments | Model |
+|------|--------|--------------|----------|-----------------|-------|
+| name | `reviewer_score_name` | `reviewer_scores_name` | `reviewer_comments_name` | `reviewer_comments_per_dim_name` | `reviewer_model_name` |
+| docs | `reviewer_score_docs` | `reviewer_scores_docs` | `reviewer_comments_docs` | `reviewer_comments_per_dim_docs` | `reviewer_model_docs` |
+
+**Score-canonical policy:** the rubric-driven numeric ``score`` (0–1) is the
+sole accept/refine signal. There is no separate ``verdict`` field on
+``StandardName`` or ``Review`` — empirical evidence (commit ``09443def``)
+showed reviewer verdicts disagreed with score frequently and stranded
+high-score names in ``reviewed``. The reviewer LLM is asked for scores plus
+optional ``revised_name`` / ``suggested_name`` only.
 
 Reader queries use `coalesce(axis_col, shared_col)` so any pre-axis-split rows still surface
 on the name axis. Same-axis re-review requires `--force` to overwrite — guard helper is
@@ -1358,7 +1365,7 @@ Four context channels are injected per-item into compose, review, and enrich pro
 Compose and review prompts use shared fragments via `{% include %}`:
 - `{% include "sn/_grammar_reference.md" %}` — grammar vocabulary and segment order (used in `compose_system.md`)
 - `llm/prompts/shared/sn/_scoring_rubric.md` — 6-dimension scoring rubric (shared reference)
-- `llm/config/sn_review_criteria.yaml` — scoring dimensions, tiers, verdict rules (loaded via `load_prompt_config()`)
+- `llm/config/sn_review_criteria.yaml` — scoring dimensions and tiers (loaded via `load_prompt_config()`)
 - ISN context keys (`quick_start`, `common_patterns`, `critical_distinctions`) rendered in compose prompt
 
 **Axis review prompts:** `review_names.md` (4-dim rubric: grammar/semantic/convention/completeness)
@@ -1370,10 +1377,12 @@ escalator (context-aware). Cycles 0 and 1 never receive this block (blindness en
 
 Wave 2 added per-dimension review properties to `StandardName` nodes. Pre-p39-2 graphs may
 still have the now-removed **shared** slots (`reviewer_score`, `reviewer_scores`,
-`reviewer_comments`, `reviewer_comments_per_dim`, `reviewer_verdict`, `reviewer_model`,
-`reviewed_at`, `review_mode`) on existing nodes. These fields are no longer written by any
-pipeline code path but **will not cause errors** — they simply become stale orphan properties
-until the node is re-reviewed or manually cleaned up.
+`reviewer_comments`, `reviewer_comments_per_dim`, `reviewer_model`,
+`reviewed_at`, `review_mode`) on existing nodes. The `reviewer_verdict_*` family
+of slots was also removed (score-canonical policy). These fields are no longer
+written by any pipeline code path but **will not cause errors** — they simply
+become stale orphan properties until the node is re-reviewed or manually
+cleaned up.
 
 Reader queries use `coalesce(sn.reviewer_score_name, sn.reviewer_score)` for backward
 compatibility; pre-migration nodes surface correctly on the name axis until backfilled.

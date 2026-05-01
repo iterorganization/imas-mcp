@@ -84,7 +84,6 @@ def test_docs_batch_model_parses_minimal_json() -> None:
                         "completeness": 17,
                         "physics_accuracy": 20,
                     },
-                    "verdict": "accept",
                     "reasoning": "ok",
                 }
             ]
@@ -102,14 +101,12 @@ def test_docs_batch_model_parses_minimal_json() -> None:
 def _make_docs_review(source_id: str, name: str, **scores: int):
     from imas_codex.standard_names.models import (
         StandardNameQualityScoreDocs,
-        StandardNameReviewVerdict,
     )
 
     return SimpleNamespace(
         source_id=source_id,
         standard_name=name,
         scores=StandardNameQualityScoreDocs(**scores),
-        verdict=StandardNameReviewVerdict.accept,
         reasoning="test",
         revised_description=None,
         revised_documentation=None,
@@ -152,7 +149,6 @@ def test_match_name_entries_for_target_names() -> None:
         scores=StandardNameQualityScoreNameOnly(
             grammar=20, semantic=18, convention=19, completeness=18
         ),
-        verdict=_accept_verdict(),
         reasoning="ok",
         revised_name=None,
         revised_fields=None,
@@ -161,12 +157,6 @@ def test_match_name_entries_for_target_names() -> None:
     scored, _u, _r = _match_reviews_to_entries([review], names, wlog, target="names")
     assert len(scored) == 1
     assert scored[0]["reviewer_score"] == pytest.approx(75 / 80)
-
-
-def _accept_verdict():
-    from imas_codex.standard_names.models import StandardNameReviewVerdict
-
-    return StandardNameReviewVerdict.accept
 
 
 # ---------------------------------------------------------------------------

@@ -107,7 +107,6 @@ class TestNameChainHistory:
                 "name": "partial_sn",
                 "model": None,
                 "reviewer_score": None,
-                "reviewer_verdict": None,
                 "reviewer_comments_per_dim": None,
                 "generated_at": None,
             }
@@ -118,7 +117,6 @@ class TestNameChainHistory:
         entry = result[0]
         assert entry["model"] == "unknown"
         assert entry["reviewer_score"] == 0.0
-        assert entry["reviewer_verdict"] == "unknown"
         assert entry["reviewer_comments_per_dim"] == {}
         assert entry["generated_at"] is None
 

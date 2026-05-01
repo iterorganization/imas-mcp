@@ -709,7 +709,6 @@ def _mock_review_name_llm_result(long_comment: str) -> Any:
     result_obj = SimpleNamespace(
         scores=SimpleNamespace(score=0.85, model_dump=lambda: {"score": 0.85}),
         comments=None,
-        verdict="accept",
         reasoning=long_comment,
     )
 
@@ -727,7 +726,6 @@ def _mock_review_docs_llm_result(long_comment: str) -> Any:
     result_obj = SimpleNamespace(
         scores=SimpleNamespace(score=0.85, model_dump=lambda: {"score": 0.85}),
         comments=None,
-        verdict="accept",
         reasoning=long_comment,
     )
 

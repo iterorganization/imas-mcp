@@ -53,14 +53,13 @@ def _parse_json_field(value: Any) -> dict:
 def _axis_projection(axis: Axis) -> dict[str, str]:
     """Cypher projection fragments for each axis.
 
-    Returns a dict with keys ``score``, ``verdict``, ``scores``,
+    Returns a dict with keys ``score``, ``scores``,
     ``comments_per_dim``, ``comments``. Each value is a Cypher expression
     that reads from the axis-specific column.
     """
     if axis == "name":
         return {
             "score": "sn.reviewer_score_name",
-            "verdict": "sn.reviewer_verdict_name",
             "scores": "sn.reviewer_scores_name",
             "comments_per_dim": "sn.reviewer_comments_per_dim_name",
             "comments": "sn.reviewer_comments_name",
@@ -68,7 +67,6 @@ def _axis_projection(axis: Axis) -> dict[str, str]:
     # docs
     return {
         "score": "sn.reviewer_score_docs",
-        "verdict": "sn.reviewer_verdict_docs",
         "scores": "sn.reviewer_scores_docs",
         "comments_per_dim": "sn.reviewer_comments_per_dim_docs",
         "comments": "sn.reviewer_comments_docs",
@@ -90,7 +88,6 @@ def _query_examples_for_target(
     """
     proj = _axis_projection(axis)
     score_expr = proj["score"]
-    verdict_expr = proj["verdict"]
     scores_expr = proj["scores"]
     cpd_expr = proj["comments_per_dim"]
     comments_expr = proj["comments"]
@@ -101,7 +98,6 @@ def _query_examples_for_target(
             f"""
             MATCH (sn:StandardName)
             WHERE {score_expr} IS NOT NULL
-              AND {verdict_expr} IS NOT NULL
               AND sn.physics_domain IN $domains
               AND abs({score_expr} - $target) <= $tolerance
             RETURN sn.id AS id,
@@ -110,7 +106,6 @@ def _query_examples_for_target(
                    sn.kind AS kind,
                    sn.unit AS unit,
                    {score_expr} AS reviewer_score,
-                   {verdict_expr} AS reviewer_verdict,
                    {scores_expr} AS reviewer_scores_json,
                    {cpd_expr} AS reviewer_comments_per_dim_json,
                    {comments_expr} AS reviewer_comments,
@@ -131,7 +126,6 @@ def _query_examples_for_target(
         f"""
         MATCH (sn:StandardName)
         WHERE {score_expr} IS NOT NULL
-          AND {verdict_expr} IS NOT NULL
           AND abs({score_expr} - $target) <= $tolerance
         RETURN sn.id AS id,
                sn.description AS description,
@@ -139,7 +133,6 @@ def _query_examples_for_target(
                sn.kind AS kind,
                sn.unit AS unit,
                {score_expr} AS reviewer_score,
-               {verdict_expr} AS reviewer_verdict,
                {scores_expr} AS reviewer_scores_json,
                {cpd_expr} AS reviewer_comments_per_dim_json,
                {comments_expr} AS reviewer_comments,
@@ -159,7 +152,7 @@ def _project_example(row: dict[str, Any], target: float) -> dict[str, Any]:
 
     Template keys:
       - id, description, documentation, kind, unit
-      - reviewer_score (float), reviewer_verdict (str)
+      - reviewer_score (float)
       - scores (dict — parsed from reviewer_scores_json)
       - dimension_comments (dict — parsed from reviewer_comments_per_dim_json)
       - reviewer_comments (str)
@@ -168,10 +161,8 @@ def _project_example(row: dict[str, Any], target: float) -> dict[str, Any]:
 
     Template aliases (backwards-compat with existing template variables):
       - score → reviewer_score
-      - tier → reviewer_verdict
       - domain → physics_domain
       - issues → [] (not tracked at row level)
-      - verdict → reviewer_verdict
     """
     scores = _parse_json_field(row.get("reviewer_scores_json"))
     comments = _parse_json_field(row.get("reviewer_comments_per_dim_json"))
@@ -185,7 +176,6 @@ def _project_example(row: dict[str, Any], target: float) -> dict[str, Any]:
         "unit": row.get("unit", ""),
         # Review fields
         "reviewer_score": row.get("reviewer_score"),
-        "reviewer_verdict": row.get("reviewer_verdict", ""),
         "scores": scores,
         "dimension_comments": comments,
         "reviewer_comments": row.get("reviewer_comments", ""),
@@ -193,10 +183,8 @@ def _project_example(row: dict[str, Any], target: float) -> dict[str, Any]:
         "target_score": target,
         # Template aliases
         "score": row.get("reviewer_score"),
-        "tier": row.get("reviewer_verdict", ""),
         "domain": row.get("physics_domain", ""),
         "issues": [],
-        "verdict": row.get("reviewer_verdict", ""),
     }
 
 
@@ -265,7 +253,7 @@ def load_compose_examples(
 
     Returns list of dicts projecting only fields the prompt needs::
 
-        {id, description, documentation, reviewer_score, reviewer_verdict,
+        {id, description, documentation, reviewer_score,
          scores (parsed dict), dimension_comments (parsed dict),
          physics_domain, ...}
     """

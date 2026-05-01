@@ -73,11 +73,12 @@ Map the normalized score (0-1) to a tier:
 - **inadequate** (≥0.40): Acceptable but needs enrichment
 - **poor** (<0.40): Needs fundamental rework
 
-## Verdict Rules
+## Score Bands & Suggestions
 
-Derive your verdict from the scores:
-- **accept**: Normalized score ≥ 0.60 AND no dimension scores 0
-- **reject**: Normalized score < 0.40 OR any dimension scores 0
-- **revise**: Otherwise → fixable issues; provide `revised_name` and `revised_fields`
+The numeric score is the decision — downstream code uses
+``score >= min_score`` to accept the entry. **Do not** add a separate
+accept/reject vote. If you would offer a concrete improvement, populate
+the suggestion fields (``revised_name`` / ``revised_fields``); otherwise
+leave them ``null``.
 
 When revising, fix ONLY grammar and naming issues. Do not rewrite documentation.

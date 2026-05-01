@@ -96,7 +96,6 @@ def _make_refine_docs_item(
             {"completeness": "Missing edge cases"}
         ),
         "reviewer_comments_docs": "Needs more detail on measurement methods.",
-        "reviewer_verdict_docs": "revise",
         "tags": ["electron", "temperature"],
         "claim_token": "tok-docs-abc-123",
         "docs_chain_history": [],
@@ -142,7 +141,6 @@ class TestClaimRefineDocsEligible:
                         "reviewer_score_docs": 0.5,
                         "reviewer_comments_per_dim_docs": None,
                         "reviewer_comments_docs": None,
-                        "reviewer_verdict_docs": "revise",
                     }
                 ],
             ]
@@ -177,25 +175,6 @@ class TestClaimRefineDocsEligible:
         seed_cypher = tx.run.call_args_list[0].args[0]
         assert "docs_chain_length" in seed_cypher
         assert "$rotation_cap" in seed_cypher
-
-    def test_claim_excludes_accepted_verdict(self):
-        """reviewer_verdict_docs='accept' → not claimed (defensive guard)."""
-        from imas_codex.standard_names.graph_ops import (
-            claim_refine_docs_batch,
-        )
-
-        gc, tx = _mock_gc_tx()
-        # Empty seed = no eligible items
-        tx.run = MagicMock(side_effect=[[]])
-
-        with _patch_gc(gc), _patch_docs_chain_history():
-            items = claim_refine_docs_batch(batch_size=1)
-
-        assert items == []
-
-        # Verify the WHERE clause excludes accept verdict
-        seed_cypher = tx.run.call_args_list[0].args[0]
-        assert "accept" in seed_cypher
 
     def test_claim_enriches_chain_history(self):
         """Each claimed item gets docs_chain_history from docs_chain_history()."""
@@ -233,7 +212,6 @@ class TestClaimRefineDocsEligible:
                         "reviewer_score_docs": 0.5,
                         "reviewer_comments_per_dim_docs": None,
                         "reviewer_comments_docs": None,
-                        "reviewer_verdict_docs": "revise",
                     }
                 ],
             ]
@@ -283,7 +261,6 @@ class TestPersistRefinedDocs:
                 reviewer_score_to_snapshot=0.5,
                 reviewer_comments_to_snapshot="Needs work",
                 reviewer_comments_per_dim_to_snapshot='{"completeness": "Missing"}',
-                reviewer_verdict_to_snapshot="revise",
             )
 
         assert result["docs_chain_length"] == 1
@@ -399,7 +376,6 @@ class TestPersistRefinedDocs:
         cypher = tx.run.call_args.args[0]
         # The Cypher must SET reviewer fields to null on the SN
         assert "sn.reviewer_score_docs" in cypher
-        assert "sn.reviewer_verdict_docs" in cypher
         assert "sn.reviewer_comments_docs" in cypher
         assert "null" in cypher
 
@@ -668,7 +644,6 @@ class TestRefineDocsRoundTrip:
                 reviewer_score_to_snapshot=0.5,
                 reviewer_comments_to_snapshot="Needs improvement",
                 reviewer_comments_per_dim_to_snapshot='{"phys": "weak"}',
-                reviewer_verdict_to_snapshot="revise",
             )
 
         # Verify result
@@ -691,7 +666,6 @@ class TestRefineDocsRoundTrip:
         assert params["sn_id"] == "electron_temperature"
         assert params["cur_desc"] == "Old electron temp description"
         assert params["snap_score"] == 0.5
-        assert params["snap_verdict"] == "revise"
         assert params["new_desc"] == "Refined electron temp description"
 
 

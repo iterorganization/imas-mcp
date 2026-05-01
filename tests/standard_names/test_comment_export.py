@@ -27,7 +27,6 @@ _REVIEW_ROWS = [
         "domain": "kinetics",
         "reviewer_model": "claude-haiku-4",
         "score": 0.72,
-        "verdict": "revise",
         "comments_per_dim_json": '{"grammar": "Name too long", "semantic": "OK"}',
         "comments": "Name too long. Semantic is fine.",
         "review_axis": "names",
@@ -39,7 +38,6 @@ _REVIEW_ROWS = [
         "domain": "magnetics",
         "reviewer_model": "claude-haiku-4",
         "score": 0.88,
-        "verdict": "accept",
         "comments_per_dim_json": '{"grammar": "Good", "semantic": "Good"}',
         "comments": "Looks great.",
         "review_axis": "names",
@@ -51,7 +49,6 @@ _REVIEW_ROWS = [
         "domain": "kinetics",
         "reviewer_model": "claude-opus-3",
         "score": 0.55,
-        "verdict": "reject",
         "comments_per_dim_json": '{"grammar": "Wrong base term", "semantic": "Misleading"}',
         "comments": "Wrong base term and misleading.",
         "review_axis": "docs",
@@ -95,7 +92,6 @@ class TestExportReviewComments:
         assert "domain" in first
         assert "reviewer_model" in first
         assert "score" in first
-        assert "verdict" in first
         assert "comments_per_dim" in first
         assert isinstance(first["comments_per_dim"], dict)
         assert "reviewed_at" in first

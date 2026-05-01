@@ -205,8 +205,6 @@ def _build_review_record(
         ),
         "scores_json": scores_json,
         "tier": (tier if tier is not None else item.get("review_tier")) or "unknown",
-        # verdict is the accept/reject/revise decision from the LLM reviewer.
-        "verdict": item.get("reviewer_verdict") or "",
         "comments": (
             comments if comments is not None else item.get("reviewer_comments")
         )
@@ -1647,8 +1645,6 @@ def _match_reviews_to_entries(
     entries with review scores applied and *unmatched* contains entries that
     the LLM did not return a review for.
     """
-    from imas_codex.standard_names.models import StandardNameReviewVerdict
-
     # Build lookup: source_id → entry, id → entry
     entry_map: dict[str, dict] = {}
     for entry in names:
@@ -1691,11 +1687,9 @@ def _match_reviews_to_entries(
             original["reviewer_comments_per_dim"] = json.dumps(
                 review.comments.model_dump()
             )
-        original["reviewer_verdict"] = review.verdict.value
 
         # Capture reviewer's suggested-name + justification.
-        # Per the W37 prompt rewrite, the reviewer offers a concrete
-        # alternative for revise/reject verdicts (and null for accept).
+        # The reviewer may offer a concrete alternative regardless of score.
         suggested_name = getattr(review, "suggested_name", None)
         suggestion_justification = getattr(review, "suggestion_justification", None)
         if suggested_name and not _valid_sn_id(suggested_name):
@@ -1715,22 +1709,21 @@ def _match_reviews_to_entries(
         # validation_status. Regeneration targeting is driven by the
         # ``sn run --min-score F`` threshold instead, which selects names
         # purely by reviewer_score without touching lifecycle state.
-        if review.verdict == StandardNameReviewVerdict.revise and getattr(
-            review, "revised_name", None
-        ):
-            if not _valid_sn_id(review.revised_name):
+        revised_name = getattr(review, "revised_name", None)
+        if revised_name:
+            if not _valid_sn_id(revised_name):
                 # Reviewer hallucinated garbage into revised_name (e.g. embedded
                 # stream-of-consciousness reasoning). Keep original and log.
                 wlog.warning(
                     "Rejecting malformed revised_name (len=%d) for %r — keeping original",
-                    len(review.revised_name) if review.revised_name else 0,
+                    len(revised_name),
                     review.standard_name,
                 )
                 scored.append(original)
                 continue
             revised_entry = dict(original)
             revised_entry["_original_id"] = original["id"]  # preserve real SN id
-            revised_entry["_suggested_name"] = review.revised_name  # record suggestion
+            revised_entry["_suggested_name"] = revised_name  # record suggestion
             # do NOT overwrite revised_entry["id"] — keeps MATCH on SN node correct
             if review.revised_fields:
                 for key, value in review.revised_fields.items():
@@ -1741,13 +1734,13 @@ def _match_reviews_to_entries(
             wlog.debug(
                 "Revised %r → %r (score %.2f): %s",
                 review.standard_name,
-                review.revised_name,
+                revised_name,
                 review.scores.score,
                 review.reasoning[:120],
             )
         else:
             scored.append(original)
-            if review.verdict == StandardNameReviewVerdict.reject:
+            if review.scores.score < 0.40:
                 wlog.debug(
                     "Low score %r (%.2f, %s): %s",
                     review.standard_name,
@@ -2138,7 +2131,6 @@ def _build_prior_reviews_context(
                 "standard_name": it.get("id", ""),
                 "score": it.get("reviewer_score", 0.0),
                 "tier": it.get("review_tier", "unknown"),
-                "verdict": it.get("reviewer_verdict", "accept"),
                 "scores_json": it.get("reviewer_scores", "{}"),
                 "comments_per_dim_json": it.get("reviewer_comments_per_dim"),
                 "reasoning": it.get("reviewer_comments", ""),

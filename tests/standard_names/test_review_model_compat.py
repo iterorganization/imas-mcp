@@ -155,7 +155,6 @@ async def test_review_single_batch_no_explicit_temperature() -> None:
         StandardNameQualityReviewNameOnly,
         StandardNameQualityReviewNameOnlyBatch,
         StandardNameQualityScoreNameOnly,
-        StandardNameReviewVerdict,
     )
 
     fake_review = StandardNameQualityReviewNameOnly(
@@ -164,7 +163,6 @@ async def test_review_single_batch_no_explicit_temperature() -> None:
         scores=StandardNameQualityScoreNameOnly(
             grammar=18, semantic=18, convention=18, completeness=16
         ),
-        verdict=StandardNameReviewVerdict.accept,
         reasoning="Well formed name following CF conventions.",
     )
     fake_review_result = StandardNameQualityReviewNameOnlyBatch(reviews=[fake_review])

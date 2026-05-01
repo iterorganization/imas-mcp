@@ -63,10 +63,8 @@ def _stub_item() -> dict[str, Any]:
         "docs_stage": "pending",
         "reviewer_score_name": 0.9,
         "reviewer_comments_name": "Looks good.",
-        "reviewer_verdict_name": "accept",
         "reviewer_score_docs": 0.85,
         "reviewer_comments_docs": "Solid docs.",
-        "reviewer_verdict_docs": "accept",
         "reviewer_comments_per_dim_name": None,
         "reviewer_comments_per_dim_docs": None,
         "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
@@ -97,7 +95,6 @@ def _stub_review_name_response() -> StandardNameQualityReviewNameOnly:
             convention="ok",
             completeness="ok",
         ),
-        verdict="accept",
         reasoning="All dimensions are strong.",
     )
 
@@ -118,7 +115,6 @@ def _stub_review_docs_response() -> StandardNameQualityReviewDocs:
             completeness="ok",
             physics_accuracy="ok",
         ),
-        verdict="accept",
         reasoning="All dimensions are strong.",
     )
 

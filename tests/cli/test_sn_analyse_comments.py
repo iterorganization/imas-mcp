@@ -27,7 +27,6 @@ _RECORDS = [
         "domain": "kinetics",
         "reviewer_model": "claude-haiku-4",
         "score": 0.72,
-        "verdict": "revise",
         "comments_per_dim": {
             "grammar": "Name too long, redundant qualifiers present",
             "semantic": "Missing sign convention for COCOS-dependent field",
@@ -42,7 +41,6 @@ _RECORDS = [
         "domain": "kinetics",
         "reviewer_model": "claude-haiku-4",
         "score": 0.55,
-        "verdict": "reject",
         "comments_per_dim": {
             "grammar": "Wrong base term, redundant qualifiers detected",
             "semantic": "Misleading coordinate convention",
@@ -57,7 +55,6 @@ _RECORDS = [
         "domain": "magnetics",
         "reviewer_model": "claude-haiku-4",
         "score": 0.88,
-        "verdict": "accept",
         "comments_per_dim": {
             "grammar": "Good",
             "semantic": "Good",
@@ -73,7 +70,6 @@ _RECORDS = [
         "domain": "kinetics",
         "reviewer_model": "claude-opus-3",
         "score": 0.81,
-        "verdict": "revise",
         "comments_per_dim": {
             "grammar": "Better but still slightly long",
             "semantic": "Sign convention now mentioned, OK",

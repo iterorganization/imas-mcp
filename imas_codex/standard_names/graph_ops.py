@@ -863,7 +863,6 @@ def fetch_docs_review_feedback_for_standard_names(
         - ``reviewer_scores`` (dict | None): parsed docs-axis dimensional
           scores (description_quality / documentation_quality /
           completeness / physics_accuracy).
-        - ``reviewer_verdict`` (str | None): accept / revise / reject.
         - ``validation_issues`` (list[str] | None): tagged ISN validation
           issue strings, when present.
 
@@ -887,7 +886,6 @@ def fetch_docs_review_feedback_for_standard_names(
                    sn.reviewer_score_docs AS reviewer_score,
                    sn.reviewer_comments_docs AS reviewer_comments,
                    sn.reviewer_scores_docs AS reviewer_scores_json,
-                   sn.reviewer_verdict_docs AS reviewer_verdict,
                    sn.validation_issues AS validation_issues
             """,
             ids=ids,
@@ -914,7 +912,6 @@ def fetch_docs_review_feedback_for_standard_names(
             "reviewer_score": row.get("reviewer_score"),
             "reviewer_comments": row.get("reviewer_comments"),
             "reviewer_scores": scores_dict,
-            "reviewer_verdict": row.get("reviewer_verdict"),
             "validation_issues": issues if issues else None,
         }
     return mapping
@@ -1602,7 +1599,6 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
                 r.score = b.score,
                 r.scores_json = b.scores_json,
                 r.tier = b.tier,
-                r.verdict = b.verdict,
                 r.comments = b.comments,
                 r.comments_per_dim_json = b.comments_per_dim_json,
                 r.suggested_name = b.suggested_name,
@@ -1637,8 +1633,6 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
                     "score": float(r.get("score") or 0.0),
                     "scores_json": _ensure_json(r.get("scores_json") or "{}"),
                     "tier": r.get("tier") or "unknown",
-                    # verdict is the accept/reject/revise decision from the LLM
-                    "verdict": r.get("verdict") or "",
                     "comments": r.get("comments") or "",
                     "comments_per_dim_json": _ensure_json(
                         r.get("comments_per_dim_json")
@@ -1796,7 +1790,6 @@ def write_name_review_results(
                 sn.reviewer_scores_name = coalesce(b.reviewer_scores_name, sn.reviewer_scores_name),
                 sn.reviewer_comments_name = coalesce(b.reviewer_comments_name, sn.reviewer_comments_name),
                 sn.reviewer_comments_per_dim_name = coalesce(b.reviewer_comments_per_dim_name, sn.reviewer_comments_per_dim_name),
-                sn.reviewer_verdict_name = coalesce(b.reviewer_verdict_name, sn.reviewer_verdict_name),
                 sn.reviewer_model_name = coalesce(b.reviewer_model_name, sn.reviewer_model_name),
                 sn.review_tier = coalesce(b.review_tier, sn.review_tier),
                 sn.review_input_hash = b.review_input_hash,
@@ -1816,7 +1809,6 @@ def write_name_review_results(
                     "reviewer_comments_per_dim_name": _ensure_json(
                         e.get("reviewer_comments_per_dim")
                     ),
-                    "reviewer_verdict_name": e.get("reviewer_verdict"),
                     "reviewer_model_name": e.get("reviewer_model"),
                     "review_tier": e.get("review_tier"),
                     "review_input_hash": e.get("review_input_hash"),
@@ -1919,7 +1911,6 @@ def write_docs_review_results(
                 sn.reviewer_scores_docs = coalesce(b.reviewer_scores_docs, sn.reviewer_scores_docs),
                 sn.reviewer_comments_docs = coalesce(b.reviewer_comments_docs, sn.reviewer_comments_docs),
                 sn.reviewer_comments_per_dim_docs = coalesce(b.reviewer_comments_per_dim_docs, sn.reviewer_comments_per_dim_docs),
-                sn.reviewer_verdict_docs = coalesce(b.reviewer_verdict_docs, sn.reviewer_verdict_docs),
                 sn.reviewer_model_docs = coalesce(b.reviewer_model_docs, sn.reviewer_model_docs),
                 sn.review_input_hash = b.review_input_hash,
                 sn.llm_cost_review_docs = coalesce(sn.llm_cost_review_docs, 0.0) + coalesce(b.llm_cost_review_docs, 0.0),
@@ -1936,7 +1927,6 @@ def write_docs_review_results(
                     "reviewer_comments_per_dim_docs": _ensure_json(
                         e.get("reviewer_comments_per_dim")
                     ),
-                    "reviewer_verdict_docs": e.get("reviewer_verdict"),
                     "reviewer_model_docs": e.get("reviewer_model"),
                     "review_input_hash": e.get("review_input_hash"),
                     "llm_cost_review_docs": e.get("llm_cost") or 0.0,
@@ -4885,7 +4875,6 @@ def export_review_comments(
     * ``domain`` — ``StandardName.physics_domain``
     * ``reviewer_model`` — the model that produced the review
     * ``score`` — numeric score (0–1)
-    * ``verdict`` — accept / reject / revise
     * ``comments_per_dim`` — parsed dict of per-dimension comments
     * ``comments`` — full free-text comment string
     * ``review_axis`` — "names" or "docs"
@@ -4922,7 +4911,6 @@ def export_review_comments(
                sn.physics_domain AS domain,
                r.reviewer_model AS reviewer_model,
                r.score AS score,
-               r.verdict AS verdict,
                r.comments_per_dim_json AS comments_per_dim_json,
                r.comments AS comments,
                r.review_axis AS review_axis,
@@ -4961,7 +4949,6 @@ def export_review_comments(
                 "domain": row.get("domain"),
                 "reviewer_model": row.get("reviewer_model"),
                 "score": row.get("score"),
-                "verdict": row.get("verdict"),
                 "comments_per_dim": cpd,
                 "comments": row.get("comments"),
                 "review_axis": row.get("review_axis"),
@@ -5946,7 +5933,6 @@ def persist_reviewed_name(
     scores: dict[str, Any] | None = None,
     comments: str | None = None,
     comments_per_dim: dict[str, Any] | None = None,
-    verdict: str,
     model: str,
     min_score: float = DEFAULT_MIN_SCORE,
     rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
@@ -5957,7 +5943,7 @@ def persist_reviewed_name(
 
     1. Verify ``claim_token`` matches the stored token.
     2. Compute target stage:
-       - ``'accepted'`` if ``score >= min_score`` (score-canonical, verdict informational)
+       - ``'accepted'`` if ``score >= min_score`` (score-canonical)
        - ``'exhausted'`` if ``chain_length >= rotation_cap - 1`` and score below min_score
          (cap reached, no further refine)
        - ``'reviewed'`` otherwise (eligible for refine_name pickup)
@@ -5979,8 +5965,6 @@ def persist_reviewed_name(
     comments_per_dim:
         Per-dimension comments dict (written as JSON to
         ``reviewer_comments_per_dim_name``).
-    verdict:
-        LLM verdict string (``'accept'``, ``'reject'``, or ``'revise'``).
     model:
         LLM model slug used for this review.
     min_score:
@@ -6021,27 +6005,13 @@ def persist_reviewed_name(
     chain_length: int = int(rows[0]["chain_length"])
 
     # ── Stage decision ────────────────────────────────────────────────
-    # Score is canonical (rubric-driven 0–1). Verdict is informational
-    # only — the LLM reviewer is over-conservative and frequently emits
-    # ``revise`` even at rsn>=0.85, which previously stranded names in
-    # ``reviewed`` (above min_score so refine wouldn't pick them up,
-    # below verdict=accept so they wouldn't promote). Trust the score.
+    # Score is canonical (rubric-driven 0–1).
     if score >= min_score:
         target_stage = "accepted"
     elif chain_length >= rotation_cap - 1:
         target_stage = "exhausted"
     else:
         target_stage = "reviewed"
-
-    if verdict in ("revise", "reject") and score >= min_score:
-        logger.info(
-            "persist_reviewed_name: score-canonical override for %s — "
-            "verdict=%s rsn=%.3f >= min_score=%.3f → accepted",
-            sn_id,
-            verdict,
-            score,
-            min_score,
-        )
 
     scores_json = _json.dumps(scores) if scores is not None else None
     comments_per_dim_json = (
@@ -6057,7 +6027,6 @@ def persist_reviewed_name(
                 sn.reviewer_scores_name       = $scores_json,
                 sn.reviewer_comments_name     = $comments,
                 sn.reviewer_comments_per_dim_name = $comments_per_dim_json,
-                sn.reviewer_verdict_name      = $verdict,
                 sn.reviewer_model_name        = $model,
                 sn.reviewed_name_at           = datetime(),
                 sn.name_stage                 = $target_stage,
@@ -6070,7 +6039,6 @@ def persist_reviewed_name(
             scores_json=scores_json,
             comments=comments,
             comments_per_dim_json=comments_per_dim_json,
-            verdict=verdict,
             model=model,
             target_stage=target_stage,
         )
@@ -6143,7 +6111,6 @@ def persist_reviewed_docs(
     scores: dict[str, Any] | None = None,
     comments: str | None = None,
     comments_per_dim: dict[str, Any] | None = None,
-    verdict: str,
     model: str,
     min_score: float = DEFAULT_MIN_SCORE,
     rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
@@ -6154,7 +6121,7 @@ def persist_reviewed_docs(
 
     1. Verify ``claim_token`` matches the stored token.
     2. Compute target stage:
-       - ``'accepted'`` if ``score >= min_score`` (score-canonical, verdict informational)
+       - ``'accepted'`` if ``score >= min_score`` (score-canonical)
        - ``'exhausted'`` if ``docs_chain_length >= rotation_cap - 1``
          (cap reached, no further refine)
        - ``'reviewed'`` otherwise (eligible for refine_docs pickup)
@@ -6176,8 +6143,6 @@ def persist_reviewed_docs(
     comments_per_dim:
         Per-dimension comments dict (written as JSON to
         ``reviewer_comments_per_dim_docs``).
-    verdict:
-        LLM verdict string (``'accept'``, ``'reject'``, or ``'revise'``).
     model:
         LLM model slug used for this review.
     min_score:
@@ -6226,16 +6191,6 @@ def persist_reviewed_docs(
     else:
         target_stage = "reviewed"
 
-    if verdict in ("revise", "reject") and score >= min_score:
-        logger.info(
-            "persist_reviewed_docs: score-canonical override for %s — "
-            "verdict=%s rds=%.3f >= min_score=%.3f → accepted",
-            sn_id,
-            verdict,
-            score,
-            min_score,
-        )
-
     scores_json = _json.dumps(scores) if scores is not None else None
     comments_per_dim_json = (
         _json.dumps(comments_per_dim) if comments_per_dim is not None else None
@@ -6250,7 +6205,6 @@ def persist_reviewed_docs(
                 sn.reviewer_scores_docs       = $scores_json,
                 sn.reviewer_comments_docs     = $comments,
                 sn.reviewer_comments_per_dim_docs = $comments_per_dim_json,
-                sn.reviewer_verdict_docs      = $verdict,
                 sn.reviewer_model_docs        = $model,
                 sn.reviewed_docs_at           = datetime(),
                 sn.docs_stage                 = $target_stage,
@@ -6263,7 +6217,6 @@ def persist_reviewed_docs(
             scores_json=scores_json,
             comments=comments,
             comments_per_dim_json=comments_per_dim_json,
-            verdict=verdict,
             model=model,
             target_stage=target_stage,
         )
@@ -6318,7 +6271,6 @@ def claim_refine_name_batch(
         timeout_seconds=timeout_seconds,
         extra_return_fields=(
             ", sn.reviewer_score_name AS reviewer_score_name"
-            ", sn.reviewer_verdict_name AS reviewer_verdict_name"
             ", sn.reviewer_comments_per_dim_name"
             "     AS reviewer_comments_per_dim_name"
             ", sn.chain_length AS chain_length"
@@ -6996,7 +6948,6 @@ def claim_generate_docs_batch(
             ", sn.tags AS tags"
             ", sn.reviewer_score_name AS reviewer_score_name"
             ", sn.reviewer_comments_name AS reviewer_comments_name"
-            ", sn.reviewer_verdict_name AS reviewer_verdict_name"
             ", sn.chain_length AS chain_length"
             ", sn.docs_stage AS docs_stage"
             ", sn.name_stage AS name_stage"
@@ -7166,7 +7117,7 @@ def release_generate_docs_failed_claims(
 # refine_docs — claim / persist / release (DocsRevision snapshot architecture)
 # =============================================================================
 # Stage gate: docs_stage='reviewed' AND reviewer_score_docs < min_score
-#             AND docs_chain_length < rotation_cap AND verdict != 'accept'
+#             AND docs_chain_length < rotation_cap
 # Fundamentally different from refine_name: docs refine is IN-PLACE on the
 # existing SN node.  The OLD docs are snapshotted into a DocsRevision node
 # linked via DOCS_REVISION_OF before the SN is updated.
@@ -7184,8 +7135,7 @@ def claim_refine_docs_batch(
 
     Eligibility: ``docs_stage = 'reviewed'`` AND
     ``reviewer_score_docs < min_score`` AND
-    ``docs_chain_length < rotation_cap`` AND
-    ``reviewer_verdict_docs != 'accept'``.
+    ``docs_chain_length < rotation_cap``.
 
     The claim atomically transitions ``docs_stage`` from ``'reviewed'``
     to ``'refining'`` via :func:`_claim_sn_atomic`.
@@ -7202,7 +7152,6 @@ def claim_refine_docs_batch(
         " AND sn.reviewer_score_docs IS NOT NULL"
         " AND sn.reviewer_score_docs < $min_score"
         " AND coalesce(sn.docs_chain_length, 0) < $rotation_cap"
-        " AND coalesce(sn.reviewer_verdict_docs, 'revise') <> 'accept'"
     )
     items = _claim_sn_atomic(
         eligibility_where=where,
@@ -7223,7 +7172,6 @@ def claim_refine_docs_batch(
             ", sn.reviewer_comments_per_dim_docs"
             "     AS reviewer_comments_per_dim_docs"
             ", sn.reviewer_comments_docs AS reviewer_comments_docs"
-            ", sn.reviewer_verdict_docs AS reviewer_verdict_docs"
         ),
         stage_field="docs_stage",
         to_stage="refining",
@@ -7261,7 +7209,6 @@ def persist_refined_docs(
     reviewer_score_to_snapshot: float | None = None,
     reviewer_comments_to_snapshot: str | None = None,
     reviewer_comments_per_dim_to_snapshot: str | None = None,
-    reviewer_verdict_to_snapshot: str | None = None,
 ) -> dict[str, Any]:
     """Persist a refined docs revision with DocsRevision snapshot.
 
@@ -7305,7 +7252,6 @@ def persist_refined_docs(
                           rev.reviewer_score_docs            = $snap_score,
                           rev.reviewer_comments_docs         = $snap_comments,
                           rev.reviewer_comments_per_dim_docs = $snap_comments_dim,
-                          rev.reviewer_verdict_docs          = $snap_verdict,
                           rev.created_at                     = datetime()
 
                         // 3. Link SN → revision
@@ -7328,7 +7274,6 @@ def persist_refined_docs(
                             sn.reviewer_scores_docs           = null,
                             sn.reviewer_comments_per_dim_docs = null,
                             sn.reviewer_comments_docs         = null,
-                            sn.reviewer_verdict_docs          = null,
                             sn.reviewer_model_docs            = null,
                             sn.reviewed_docs_at               = null
 
@@ -7344,7 +7289,6 @@ def persist_refined_docs(
                         snap_score=reviewer_score_to_snapshot,
                         snap_comments=reviewer_comments_to_snapshot,
                         snap_comments_dim=reviewer_comments_per_dim_to_snapshot,
-                        snap_verdict=reviewer_verdict_to_snapshot,
                         new_desc=description,
                         new_doc=documentation,
                         model=model,

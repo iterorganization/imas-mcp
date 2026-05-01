@@ -556,7 +556,6 @@ def test_match_reviews_all_matched():
     from imas_codex.standard_names.models import (
         StandardNameQualityReview,
         StandardNameQualityScore,
-        StandardNameReviewVerdict,
     )
     from imas_codex.standard_names.review.pipeline import _match_reviews_to_entries
 
@@ -578,7 +577,6 @@ def test_match_reviews_all_matched():
                 completeness=18,
                 compliance=18,
             ),
-            verdict=StandardNameReviewVerdict.accept,
             reasoning="Good name.",
         ),
         StandardNameQualityReview(
@@ -592,7 +590,6 @@ def test_match_reviews_all_matched():
                 completeness=16,
                 compliance=16,
             ),
-            verdict=StandardNameReviewVerdict.accept,
             reasoning="Good name.",
         ),
     ]
@@ -615,7 +612,6 @@ def test_match_reviews_partial_response():
     from imas_codex.standard_names.models import (
         StandardNameQualityReview,
         StandardNameQualityScore,
-        StandardNameReviewVerdict,
     )
     from imas_codex.standard_names.review.pipeline import _match_reviews_to_entries
 
@@ -639,7 +635,6 @@ def test_match_reviews_partial_response():
                 completeness=18,
                 compliance=18,
             ),
-            verdict=StandardNameReviewVerdict.accept,
             reasoning="Good name.",
         ),
     ]
@@ -667,7 +662,6 @@ def test_match_reviews_fallback_to_standard_name():
     from imas_codex.standard_names.models import (
         StandardNameQualityReview,
         StandardNameQualityScore,
-        StandardNameReviewVerdict,
     )
     from imas_codex.standard_names.review.pipeline import _match_reviews_to_entries
 
@@ -689,7 +683,6 @@ def test_match_reviews_fallback_to_standard_name():
                 completeness=18,
                 compliance=18,
             ),
-            verdict=StandardNameReviewVerdict.accept,
             reasoning="Good name.",
         ),
     ]
@@ -716,7 +709,6 @@ def test_review_single_batch_retries_unmatched():
         StandardNameQualityReview,
         StandardNameQualityReviewBatch,
         StandardNameQualityScore,
-        StandardNameReviewVerdict,
     )
     from imas_codex.standard_names.review.pipeline import _review_single_batch
 
@@ -744,7 +736,6 @@ def test_review_single_batch_retries_unmatched():
                 source_id="core/te",
                 standard_name="electron_temperature",
                 scores=score_18,
-                verdict=StandardNameReviewVerdict.accept,
                 reasoning="Good.",
             ),
         ]
@@ -756,7 +747,6 @@ def test_review_single_batch_retries_unmatched():
                 source_id="core/ti",
                 standard_name="ion_temperature",
                 scores=score_18,
-                verdict=StandardNameReviewVerdict.accept,
                 reasoning="Good.",
             ),
         ]
@@ -818,7 +808,6 @@ def test_review_single_batch_no_retry_when_all_matched():
         StandardNameQualityReview,
         StandardNameQualityReviewBatch,
         StandardNameQualityScore,
-        StandardNameReviewVerdict,
     )
     from imas_codex.standard_names.review.pipeline import _review_single_batch
 
@@ -841,7 +830,6 @@ def test_review_single_batch_no_retry_when_all_matched():
                     completeness=18,
                     compliance=18,
                 ),
-                verdict=StandardNameReviewVerdict.accept,
                 reasoning="Good.",
             ),
         ]

@@ -5,7 +5,7 @@ Previously reviewed standard names spanning the quality spectrum.
 **Emulate** Outstanding/Good examples; **avoid** the patterns in Threshold/Inadequate ones.
 
 {% for ex in compose_scored_examples %}
-### {{ ex.reviewer_verdict }} example (score {{ "%.2f"|format(ex.reviewer_score) }}, band {{ "%.2f"|format(ex.target_score) }}){% if ex.target_score >= 0.80 %} ✅ EMULATE{% else %} ⚠️ AVOID{% endif %}
+### Score {{ "%.2f"|format(ex.reviewer_score) }} example (band {{ "%.2f"|format(ex.target_score) }}){% if ex.target_score >= 0.80 %} ✅ EMULATE{% else %} ⚠️ AVOID{% endif %}
 
 **`{{ ex.id }}`** [{{ ex.unit or 'dimensionless' }}, kind={{ ex.kind }}]
 Description: {{ ex.description }}

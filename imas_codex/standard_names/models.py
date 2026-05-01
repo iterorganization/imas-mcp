@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -149,23 +148,14 @@ class StandardNamePublishBatch(BaseModel):
 # =============================================================================
 
 
-class StandardNameReviewVerdict(StrEnum):
-    """Review decision for a standard name candidate."""
-
-    accept = "accept"
-    reject = "reject"
-    revise = "revise"
-
-
 class StandardNameReviewItem(BaseModel):
     """Review of a single standard name candidate."""
 
     source_id: str = Field(description="Source entity ID being reviewed")
     standard_name: str = Field(description="The standard name under review")
-    verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
-    reason: str = Field(description="Justification for the verdict")
+    reason: str = Field(description="Justification for the review")
     revised_name: str | None = Field(
-        default=None, description="Suggested revision if verdict is revise"
+        default=None, description="Suggested revised name, if any"
     )
     revised_fields: dict[str, Any] | None = Field(
         default=None, description="Revised grammar fields"
@@ -286,10 +276,9 @@ class StandardNameQualityReview(BaseModel):
     comments: StandardNameQualityComments | None = Field(
         default=None, description="Per-dimension reviewer comments"
     )
-    verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
     reasoning: str = Field(description="Specific justification per dimension")
     revised_name: str | None = Field(
-        default=None, description="Suggested revision if verdict is revise"
+        default=None, description="Suggested revised name, if any"
     )
     revised_fields: dict[str, Any] | None = Field(
         default=None, description="Revised grammar fields"
@@ -297,8 +286,8 @@ class StandardNameQualityReview(BaseModel):
     suggested_name: str | None = Field(
         default=None,
         description=(
-            "Reviewer-recommended improved name. Required for verdict=revise "
-            "or verdict=reject; null for verdict=accept."
+            "Reviewer-recommended improved name when the candidate could be "
+            "improved; null when no better name is offered."
         ),
     )
     suggestion_justification: str | None = Field(
@@ -368,10 +357,9 @@ class StandardNameQualityReviewNameOnly(BaseModel):
     comments: StandardNameQualityCommentsNameOnly | None = Field(
         default=None, description="Per-dimension reviewer comments"
     )
-    verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
     reasoning: str = Field(description="Specific justification per dimension")
     revised_name: str | None = Field(
-        default=None, description="Suggested revision if verdict is revise"
+        default=None, description="Suggested revised name, if any"
     )
     revised_fields: dict[str, Any] | None = Field(
         default=None, description="Revised grammar fields"
@@ -379,8 +367,8 @@ class StandardNameQualityReviewNameOnly(BaseModel):
     suggested_name: str | None = Field(
         default=None,
         description=(
-            "Reviewer-recommended improved name. Required for verdict=revise "
-            "or verdict=reject; null for verdict=accept."
+            "Reviewer-recommended improved name when the candidate could be "
+            "improved; null when no better name is offered."
         ),
     )
     suggestion_justification: str | None = Field(
@@ -469,10 +457,9 @@ class StandardNameQualityReviewDocs(BaseModel):
     comments: StandardNameQualityCommentsDocs | None = Field(
         default=None, description="Per-dimension reviewer comments"
     )
-    verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
     reasoning: str = Field(description="Specific justification per dimension")
     revised_description: str | None = Field(
-        default=None, description="Suggested revised description if verdict is revise"
+        default=None, description="Suggested revised description, if any"
     )
     revised_documentation: str | None = Field(
         default=None, description="Suggested revised documentation body"

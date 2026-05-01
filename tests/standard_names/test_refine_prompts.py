@@ -142,9 +142,6 @@ class TestRefineNamePrompt:
         assert "0.42" in rendered
         assert "0.61" in rendered
 
-    def test_reviewer_verdicts_rendered(self, rendered: str):
-        assert "revise" in rendered
-
     def test_per_dimension_comments_rendered(self, rendered: str):
         assert "grammar" in rendered
         assert "abbreviated" in rendered

@@ -9,7 +9,6 @@ import pytest
 from imas_codex.standard_names.models import (
     StandardNameReviewBatch,
     StandardNameReviewItem,
-    StandardNameReviewVerdict,
 )
 
 # =============================================================================
@@ -20,49 +19,37 @@ from imas_codex.standard_names.models import (
 class TestSNReviewModels:
     """Test review Pydantic model instantiation and validation."""
 
-    def test_review_verdict_enum_values(self):
-        """All three verdict values are valid."""
-        assert StandardNameReviewVerdict.accept == "accept"
-        assert StandardNameReviewVerdict.reject == "reject"
-        assert StandardNameReviewVerdict.revise == "revise"
-
-    def test_review_item_accept(self):
-        """Accept verdict with minimal fields."""
+    def test_review_item_minimal(self):
+        """Score-canonical review item with minimal fields."""
         item = StandardNameReviewItem(
             source_id="equilibrium/time_slice/profiles_1d/psi",
             standard_name="poloidal_flux",
-            verdict=StandardNameReviewVerdict.accept,
             reason="Name correctly captures the physics quantity",
         )
-        assert item.verdict == StandardNameReviewVerdict.accept
         assert item.revised_name is None
         assert item.revised_fields is None
         assert item.issues == []
 
-    def test_review_item_reject(self):
-        """Reject verdict with issues."""
+    def test_review_item_with_issues(self):
+        """Review item with issues populated."""
         item = StandardNameReviewItem(
             source_id="magnetics/flux_loop/flux/data",
             standard_name="invalid_name",
-            verdict=StandardNameReviewVerdict.reject,
             reason="Name does not represent a valid physics quantity",
             issues=["Invalid physical_base", "No matching grammar rule"],
         )
-        assert item.verdict == StandardNameReviewVerdict.reject
         assert len(item.issues) == 2
 
-    def test_review_item_revise(self):
-        """Revise verdict with revised name and fields."""
+    def test_review_item_with_revised(self):
+        """Review item with revised_name and revised_fields."""
         item = StandardNameReviewItem(
             source_id="core_profiles/profiles_1d/electrons/temperature",
             standard_name="electron_temp",
-            verdict=StandardNameReviewVerdict.revise,
             reason="Physical base should be 'temperature' not 'temp'",
             revised_name="electron_temperature",
             revised_fields={"physical_base": "temperature", "subject": "electron"},
             issues=["Abbreviated physical_base"],
         )
-        assert item.verdict == StandardNameReviewVerdict.revise
         assert item.revised_name == "electron_temperature"
         assert item.revised_fields == {
             "physical_base": "temperature",
@@ -76,20 +63,16 @@ class TestSNReviewModels:
                 StandardNameReviewItem(
                     source_id="src1",
                     standard_name="electron_temperature",
-                    verdict=StandardNameReviewVerdict.accept,
                     reason="Good",
                 ),
                 StandardNameReviewItem(
                     source_id="src2",
                     standard_name="bad_name",
-                    verdict=StandardNameReviewVerdict.reject,
                     reason="Invalid",
                 ),
             ]
         )
         assert len(batch.reviews) == 2
-        assert batch.reviews[0].verdict == StandardNameReviewVerdict.accept
-        assert batch.reviews[1].verdict == StandardNameReviewVerdict.reject
 
     def test_empty_review_batch(self):
         """Empty review batch is valid."""
@@ -221,7 +204,6 @@ class TestSNQualityReviewModels:
         from imas_codex.standard_names.models import (
             StandardNameQualityReview,
             StandardNameQualityScore,
-            StandardNameReviewVerdict,
         )
 
         review = StandardNameQualityReview(
@@ -235,12 +217,10 @@ class TestSNQualityReviewModels:
                 completeness=16,
                 compliance=15,
             ),
-            verdict=StandardNameReviewVerdict.accept,
             reasoning="Excellent entry with rich documentation",
         )
         assert review.scores.total == 105
         assert review.scores.tier == "outstanding"
-        assert review.verdict == StandardNameReviewVerdict.accept
 
     def test_quality_review_batch(self):
         """StandardNameQualityReviewBatch wraps quality reviews."""
@@ -248,7 +228,6 @@ class TestSNQualityReviewModels:
             StandardNameQualityReview,
             StandardNameQualityReviewBatch,
             StandardNameQualityScore,
-            StandardNameReviewVerdict,
         )
 
         batch = StandardNameQualityReviewBatch(
@@ -264,7 +243,6 @@ class TestSNQualityReviewModels:
                         completeness=16,
                         compliance=15,
                     ),
-                    verdict=StandardNameReviewVerdict.accept,
                     reasoning="Good",
                 ),
             ]

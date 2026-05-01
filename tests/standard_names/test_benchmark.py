@@ -999,7 +999,6 @@ class TestQualityReviewModel:
         from imas_codex.standard_names.models import (
             StandardNameQualityReview,
             StandardNameQualityScore,
-            StandardNameReviewVerdict,
         )
 
         score = StandardNameQualityScore(
@@ -1014,7 +1013,6 @@ class TestQualityReviewModel:
             source_id="test/path",
             standard_name="electron_temperature",
             scores=score,
-            verdict=StandardNameReviewVerdict.accept,
             reasoning="Excellent entry",
         )
         assert review.scores.total == 112
@@ -1100,7 +1098,6 @@ class TestQualityReviewModel:
             StandardNameQualityReview,
             StandardNameQualityReviewBatch,
             StandardNameQualityScore,
-            StandardNameReviewVerdict,
         )
 
         batch = StandardNameQualityReviewBatch(
@@ -1116,7 +1113,6 @@ class TestQualityReviewModel:
                         completeness=15,
                         compliance=14,
                     ),
-                    verdict=StandardNameReviewVerdict.accept,
                     reasoning="Good entry",
                 ),
             ]

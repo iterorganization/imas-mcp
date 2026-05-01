@@ -21,16 +21,13 @@ kind, unit, tags, or any other identity field.
 
 ## Why this name was accepted (reviewer feedback)
 
-{% if item.reviewer_verdict_name %}
-- **Reviewer verdict:** {{ item.reviewer_verdict_name }}
-{% endif %}
 {% if item.reviewer_score_name is defined and item.reviewer_score_name is not none %}
 - **Reviewer score:** {{ "%.2f"|format(item.reviewer_score_name) }}
 {% endif %}
 {% if item.reviewer_comments_name %}
 - **Reviewer comments:** {{ item.reviewer_comments_name }}
 {% endif %}
-{% if not item.reviewer_verdict_name and (item.reviewer_score_name is not defined or item.reviewer_score_name is none) and not item.reviewer_comments_name %}
+{% if (item.reviewer_score_name is not defined or item.reviewer_score_name is none) and not item.reviewer_comments_name %}
 _(no reviewer feedback available)_
 {% endif %}
 

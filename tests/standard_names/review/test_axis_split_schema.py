@@ -61,7 +61,6 @@ class TestAxisIsolationNameMode:
             "reviewer_scores_name",
             "reviewer_comments_name",
             "reviewer_comments_per_dim_name",
-            "reviewer_verdict_name",
             "reviewer_model_name",
         ):
             assert col in cypher, f"expected {col} in SET clause"
@@ -71,7 +70,6 @@ class TestAxisIsolationNameMode:
             "reviewer_scores_docs",
             "reviewer_comments_docs",
             "reviewer_comments_per_dim_docs",
-            "reviewer_verdict_docs",
             "reviewer_model_docs",
         ):
             assert col not in cypher, f"docs-axis {col} must NOT be touched"
@@ -118,7 +116,6 @@ class TestAxisIsolationDocsMode:
             "reviewer_scores_docs",
             "reviewer_comments_docs",
             "reviewer_comments_per_dim_docs",
-            "reviewer_verdict_docs",
             "reviewer_model_docs",
         ):
             assert col in cypher, f"expected {col} in SET clause"
@@ -127,7 +124,6 @@ class TestAxisIsolationDocsMode:
             "reviewer_scores_name",
             "reviewer_comments_name",
             "reviewer_comments_per_dim_name",
-            "reviewer_verdict_name",
             "reviewer_model_name",
         ):
             assert col not in cypher, f"name-axis {col} must NOT be touched"
