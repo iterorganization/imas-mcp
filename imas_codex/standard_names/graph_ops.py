@@ -5034,6 +5034,25 @@ def create_sn_run_open(
         logger.warning("Failed to pre-create SNRun %s: %s", run_id, exc)
 
 
+def update_sn_run_progress(run_id: str, *, cost_spent: float) -> None:
+    """Periodic in-progress sync of ``SNRun.cost_spent``.
+
+    Mirrors the running spend total onto the graph node so ``imas-codex sn
+    status`` reflects real progress even when a run is interrupted or
+    crashes before :func:`finalize_sn_run` runs.  Best-effort: any graph
+    error is logged at DEBUG and swallowed so we never poison the loop.
+    """
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                "MATCH (rr:SNRun {id: $run_id}) SET rr.cost_spent = $cost_spent",
+                run_id=run_id,
+                cost_spent=round(float(cost_spent), 6),
+            )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug("update_sn_run_progress(%s) failed: %s", run_id, exc)
+
+
 def finalize_sn_run(
     run_id: str,
     *,

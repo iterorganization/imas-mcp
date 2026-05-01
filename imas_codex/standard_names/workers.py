@@ -4114,6 +4114,15 @@ async def process_refine_name_batch(
                         "release_refine_name_failed_claims also failed for %s",
                         sn_id,
                     )
+            finally:
+                # Always return the unused portion of the lease to the pool.
+                # Without this the unspent remainder leaks every iteration
+                # and the pool exhausts at ~25 % of cost_limit.
+                if lease is not None:
+                    try:
+                        lease.release_unused()
+                    except Exception:
+                        pass
 
     return processed
 
@@ -4289,11 +4298,6 @@ async def process_review_name_batch(
 
         except Exception:
             logger.exception("review_name failed for %s", sn_id)
-            if lease:
-                try:
-                    lease.release_unused()
-                except Exception:
-                    pass
             token = item.get("claim_token") or ""
             if token:
                 try:
@@ -4309,6 +4313,15 @@ async def process_review_name_batch(
                         "release_review_names_failed_claims also failed for %s",
                         sn_id,
                     )
+        finally:
+            # Always return the unused portion of the lease to the pool.
+            # Without this the unspent remainder leaks every iteration and
+            # the pool exhausts at ~25 % of cost_limit.
+            if lease is not None:
+                try:
+                    lease.release_unused()
+                except Exception:
+                    pass
 
     return processed
 
@@ -4452,6 +4465,15 @@ async def process_generate_docs_batch(
                     "release_generate_docs_failed_claims also failed for %s",
                     sn_id,
                 )
+        finally:
+            # Always return the unused portion of the lease to the pool.
+            # Without this the unspent remainder leaks every iteration and
+            # the pool exhausts at ~25 % of cost_limit.
+            if lease is not None:
+                try:
+                    lease.release_unused()
+                except Exception:
+                    pass
 
     return processed
 
@@ -4640,11 +4662,6 @@ async def process_review_docs_batch(
 
         except Exception:
             logger.exception("review_docs failed for %s", sn_id)
-            if lease:
-                try:
-                    lease.release_unused()
-                except Exception:
-                    pass
             token = item.get("claim_token") or ""
             if token:
                 try:
@@ -4660,6 +4677,15 @@ async def process_review_docs_batch(
                         "release_review_docs_failed_claims also failed for %s",
                         sn_id,
                     )
+        finally:
+            # Always return the unused portion of the lease to the pool.
+            # Without this the unspent remainder leaks every iteration and
+            # the pool exhausts at ~25 % of cost_limit.
+            if lease is not None:
+                try:
+                    lease.release_unused()
+                except Exception:
+                    pass
 
     return processed
 
@@ -4865,5 +4891,14 @@ async def process_refine_docs_batch(
                     "release_refine_docs_failed_claims also failed for %s",
                     sn_id,
                 )
+        finally:
+            # Always return the unused portion of the lease to the pool.
+            # Without this the unspent remainder leaks every iteration and
+            # the pool exhausts at ~25 % of cost_limit.
+            if lease is not None:
+                try:
+                    lease.release_unused()
+                except Exception:
+                    pass
 
     return processed

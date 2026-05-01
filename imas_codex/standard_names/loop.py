@@ -414,6 +414,18 @@ async def run_sn_loop(
             summary.cost_spent = max(shared_mgr.spent, summary.cost_spent + phase_sum)
             summary.domains_touched.add(dom)
 
+            # Persist periodic cost_spent snapshot so ``imas-codex sn status``
+            # reflects real spend even if the run is interrupted before
+            # ``finalize_sn_run`` runs.
+            try:
+                from imas_codex.standard_names.graph_ops import (
+                    update_sn_run_progress,
+                )
+
+                update_sn_run_progress(summary.run_id, cost_spent=summary.cost_spent)
+            except Exception:  # noqa: BLE001 — never poison the loop
+                pass
+
             # done_domains counter removed — graph pending counts replace it.
 
             # Update phase-level cost breakdowns from shared manager.
@@ -1116,6 +1128,35 @@ async def run_sn_pools(
             ),
             name="orphan_sweep",
         )
+
+        # Periodic ``SNRun.cost_spent`` sync so ``imas-codex sn status``
+        # reflects real spend even when the run is interrupted or crashes
+        # before ``finalize_sn_run`` runs.
+        async def _cost_spent_sync_loop() -> None:
+            from imas_codex.standard_names.graph_ops import (
+                update_sn_run_progress,
+            )
+
+            while not stop_event.is_set():
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=15.0)
+                except TimeoutError:
+                    pass
+                try:
+                    spent = max(
+                        summary.cost_spent,
+                        await shared_mgr.get_total_spent(),
+                    )
+                    summary.cost_spent = spent
+                    await asyncio.to_thread(
+                        update_sn_run_progress, run_id, cost_spent=spent
+                    )
+                except Exception:  # noqa: BLE001 — never poison the loop
+                    pass
+
+        cost_sync_task = asyncio.create_task(
+            _cost_spent_sync_loop(), name="cost_spent_sync"
+        )
         try:
             health_map = await run_pools(
                 specs, shared_mgr, stop_event, pending_fn=pending_fn
@@ -1123,7 +1164,9 @@ async def run_sn_pools(
         finally:
             if not sweep_task.done():
                 sweep_task.cancel()
-            await asyncio.gather(sweep_task, return_exceptions=True)
+            if not cost_sync_task.done():
+                cost_sync_task.cancel()
+            await asyncio.gather(sweep_task, cost_sync_task, return_exceptions=True)
         logger.info("run_sn_pools: all pools exited — %s", health_map)
 
         # ── A3: per-pool cost observability ────────────────────────
