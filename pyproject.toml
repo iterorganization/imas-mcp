@@ -424,8 +424,8 @@ reviewer-model = "anthropic/claude-opus-4.6"
 
 [tool.imas-codex.sn.fanout]
 # Plan 39 — Structured fan-out for the SN compose pipeline.
-# Master switch.  Default off until Phase 1 telemetry rollout.
-enabled = false
+# Master switch.  Phase 1B shipped at 6f0bb52b; enabled for smoke + rotation.
+enabled = true
 # Hard cap on Stage A query count (parse-time bound).
 max-fan-degree = 3
 # Per-runner and total Stage B timeouts.
@@ -455,7 +455,7 @@ refine-trigger-comment-chars = 800
 [tool.imas-codex.sn.fanout.sites]
 # Per-site enable flags.  Phase 1 flips refine_name to true after 1B
 # wires the worker; the master `enabled` switch above gates everything.
-refine_name = false
+refine_name = true
 
 [tool.imas-codex.llm]
 # LiteLLM proxy settings. Port base = 18400, offset by location index.
