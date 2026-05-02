@@ -4323,6 +4323,184 @@ async def process_review_name_batch(
     return processed
 
 
+# =============================================================================
+# DD context enrichment for generate_docs
+# =============================================================================
+
+_DOCS_GEN_ENRICH_QUERY = """
+MATCH (sn:StandardName {id: $sn_id})
+OPTIONAL MATCH (sn)<-[:HAS_STANDARD_NAME]-(imas:IMASNode)
+RETURN sn.source_paths AS source_paths,
+       collect(DISTINCT {
+           id: imas.id,
+           documentation: coalesce(imas.documentation, ''),
+           description: coalesce(imas.description, ''),
+           alias: imas.alias,
+           unit: coalesce(imas.units, '')
+       }) AS dd_nodes
+"""
+
+_DOCS_GEN_NEARBY_QUERY = """
+MATCH (sn:StandardName)
+WHERE sn.name_stage = 'accepted'
+  AND sn.physics_domain = $domain
+  AND sn.id <> $sn_id
+OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
+RETURN sn.id AS id,
+       sn.description AS description,
+       sn.kind AS kind,
+       coalesce(u.id, sn.unit) AS unit
+LIMIT 20
+"""
+
+
+def _enrich_for_docs_gen(gc: Any, items: list[dict]) -> None:
+    """Enrich generate_docs items with DD source context.
+
+    Populates per-item keys (all guarded by ``if`` in the prompt template):
+
+    - ``source_paths``: bare DD paths (``dd:`` prefix stripped).
+    - ``dd_source_docs``: list of ``{id, documentation, unit}`` from linked
+      :class:`~imas_codex.graph.models.IMASNode` nodes.
+    - ``dd_aliases``: list of alias strings from IMASNodes.
+    - ``related_neighbours``: graph-relationship neighbours derived from the
+      first DD source path (via :func:`_related_path_neighbours`).
+    - ``nearest_peers``: vector-similar :class:`StandardName` neighbours from
+      :func:`_search_nearby_names` formatted as ``{tag, unit, physics_domain,
+      doc_short, cocos_label}``.
+
+    Modifies *items* in-place.  Never raises — individual item failures are
+    debug-logged and the item is left without the missing key.
+    """
+    for item in items:
+        sn_id = item.get("id")
+        if not sn_id:
+            continue
+
+        # ── 1. Source paths + linked IMASNode documentation ───────────
+        try:
+            rows = list(gc.query(_DOCS_GEN_ENRICH_QUERY, sn_id=sn_id))
+        except Exception:
+            logger.debug(
+                "_enrich_for_docs_gen: graph query failed for %s",
+                sn_id,
+                exc_info=True,
+            )
+            continue
+
+        if not rows:
+            continue
+        row = rows[0]
+
+        raw_paths = row.get("source_paths") or []
+        if isinstance(raw_paths, str):
+            raw_paths = [raw_paths]
+        source_paths = [
+            strip_dd_prefix(p) for p in raw_paths if p and isinstance(p, str)
+        ]
+        if source_paths:
+            item["source_paths"] = source_paths
+
+        dd_nodes = [n for n in (row.get("dd_nodes") or []) if n and n.get("id")]
+        if dd_nodes:
+            item["dd_source_docs"] = [
+                {
+                    "id": n["id"],
+                    "documentation": (
+                        n.get("documentation") or n.get("description") or ""
+                    ),
+                    "unit": n.get("unit") or "",
+                }
+                for n in dd_nodes[:5]
+            ]
+            aliases = [n["alias"] for n in dd_nodes if n.get("alias")]
+            if aliases:
+                item["dd_aliases"] = aliases
+
+        # ── 2. Graph-relationship neighbours from first DD source path ─
+        if source_paths:
+            try:
+                related = _related_path_neighbours(gc, source_paths[0])
+                if related:
+                    item["related_neighbours"] = related
+            except Exception:
+                logger.debug(
+                    "_enrich_for_docs_gen: related_neighbours failed for %s",
+                    sn_id,
+                    exc_info=True,
+                )
+
+        # ── 3. Vector-similar SN neighbours ───────────────────────────
+        description = item.get("description") or sn_id.replace("_", " ")
+        try:
+            peers_raw = _search_nearby_names(description, k=6)
+            peers = [
+                {
+                    "tag": f"name:{p['id']}",
+                    "unit": p.get("unit") or "",
+                    "physics_domain": p.get("physics_domain") or "",
+                    "doc_short": (p.get("description") or "")[:120],
+                    "cocos_label": p.get("cocos_label") or "",
+                }
+                for p in peers_raw
+                if p.get("id") and p.get("id") != sn_id
+            ][:5]
+            if peers:
+                item["nearest_peers"] = peers
+        except Exception:
+            logger.debug(
+                "_enrich_for_docs_gen: nearest_peers failed for %s",
+                sn_id,
+                exc_info=True,
+            )
+
+
+def _nearby_names_for_docs_gen(gc: Any, items: list[dict]) -> list[dict]:
+    """Return accepted StandardNames in the same physics domain(s) as *items*.
+
+    Queries up to 20 accepted SNs per unique domain found across the batch.
+    Results are deduplicated and capped at 40 total.  Used to populate the
+    batch-level ``nearby_existing_names`` context key in
+    :func:`process_generate_docs_batch`.
+    """
+    domains: set[str] = set()
+    for item in items:
+        dom = item.get("physics_domain")
+        if isinstance(dom, list):
+            domains.update(dom)
+        elif dom:
+            domains.add(dom)
+
+    nearby: list[dict] = []
+    seen_ids: set[str] = set()
+    batch_ids: set[str] = {item["id"] for item in items if item.get("id")}
+
+    for domain in sorted(domains):
+        # Use the first batch item id as the exclusion anchor; the query
+        # already uses != so any id from the batch suffices.
+        anchor = next(iter(batch_ids), "")
+        try:
+            rows = list(gc.query(_DOCS_GEN_NEARBY_QUERY, domain=domain, sn_id=anchor))
+        except Exception:
+            logger.debug(
+                "_nearby_names_for_docs_gen: query failed for domain=%s",
+                domain,
+                exc_info=True,
+            )
+            continue
+        for r in rows:
+            nid = r.get("id")
+            if nid and nid not in seen_ids and nid not in batch_ids:
+                seen_ids.add(nid)
+                nearby.append(dict(r))
+                if len(nearby) >= 40:
+                    break
+        if len(nearby) >= 40:
+            break
+
+    return nearby
+
+
 async def process_generate_docs_batch(
     batch: list[dict[str, Any]],
     mgr: BudgetManager,
@@ -4334,22 +4512,26 @@ async def process_generate_docs_batch(
 
     For each item in the batch:
 
-    1. Render prompt via ``render_prompt("sn/generate_docs_user", {...})`` with
-       reviewer feedback (reviewer_score_name, reviewer_comments_name,
-       reviewer feedback and chain history as context.
-    2. Use ``get_model("language")`` — bulk content generation model.
-    3. Call ``acall_llm_structured`` with ``service="standard-names"`` and
+    1. Enrich items with DD source context via :func:`_enrich_for_docs_gen`
+       and :func:`_nearby_names_for_docs_gen` (source_paths, dd_source_docs,
+       dd_aliases, nearest_peers, related_neighbours, nearby_existing_names).
+    2. Render prompt via ``render_prompt("sn/generate_docs_user", {...})`` with
+       reviewer feedback (reviewer_score_name, reviewer_comments_name),
+       chain history, and the new DD context as context.
+    3. Use ``get_model("language")`` — bulk content generation model.
+    4. Call ``acall_llm_structured`` with ``service="standard-names"`` and
        response_model=``GeneratedDocs``.
-    4. Reserve budget and charge ``LLMCostEvent``.
-    5. Persist via ``persist_generated_docs`` (transitions docs_stage → 'drafted').
-    6. On error: ``release_generate_docs_failed_claims``.
-    7. Stream per-item progress: name + first 100 chars of generated description.
+    5. Reserve budget and charge ``LLMCostEvent``.
+    6. Persist via ``persist_generated_docs`` (transitions docs_stage → 'drafted').
+    7. On error: ``release_generate_docs_failed_claims``.
+    8. Stream per-item progress: name + first 100 chars of generated description.
 
     Returns count of items successfully processed.
     """
     import asyncio as _asyncio
 
     from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.graph.client import GraphClient
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.settings import get_model
     from imas_codex.standard_names.budget import LLMCostEvent
@@ -4361,6 +4543,19 @@ async def process_generate_docs_batch(
 
     model = get_model("language")
     processed = 0
+
+    # ── Enrich batch with DD context (source paths, docs, peers) ──────────
+    nearby_existing_names: list[dict] = []
+    try:
+
+        def _do_enrich() -> list[dict]:
+            with GraphClient() as gc:
+                _enrich_for_docs_gen(gc, batch)
+                return _nearby_names_for_docs_gen(gc, batch)
+
+        nearby_existing_names = await _asyncio.to_thread(_do_enrich)
+    except Exception:
+        logger.debug("process_generate_docs_batch: enrichment failed", exc_info=True)
 
     for item in batch:
         if stop_event.is_set():
@@ -4374,6 +4569,7 @@ async def process_generate_docs_batch(
         prompt_context: dict[str, Any] = {
             "item": item,
             "chain_history": chain_history,
+            "nearby_existing_names": nearby_existing_names,
         }
 
         try:

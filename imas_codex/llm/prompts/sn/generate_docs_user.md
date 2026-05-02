@@ -52,6 +52,59 @@ to understand what the name represents and how reviewers refined it.
 {{ item.description }}
 {% endif %}
 
+{% if item.source_paths %}
+## IMAS DD Paths
+
+This standard name is sourced from the following IMAS Data Dictionary paths.
+Cite at least one verbatim in the documentation prose.
+
+{% for p in item.source_paths %}- `{{ p }}`
+{% endfor %}{% endif %}
+
+{% if item.dd_source_docs %}
+## DD Source Documentation
+
+Reference material from the Data Dictionary nodes linked to this standard name.
+Use these definitions to anchor descriptions; do NOT copy them verbatim.
+
+{% for p in item.dd_source_docs %}- `{{ p.id }}` [{{ p.unit }}]: {{ p.documentation }}
+{% endfor %}{% endif %}
+
+{% if item.dd_aliases %}
+## DD Aliases
+
+These abbreviated forms appear in the DD for this quantity.
+Mention the alias at least once (e.g. "In the IMAS DD this is aliased as `{{ item.dd_aliases[0] }}`.")
+
+{{ item.dd_aliases | join(', ') }}
+{% endif %}
+
+{% if item.nearest_peers %}
+## Nearest Peer Standard Names
+
+Concept-similar names already in the catalog.
+Use these for inline cross-references `[label](name:bare_id)` where naturally relevant.
+
+{% for n in item.nearest_peers %}- `{{ n.tag }}` [{{ n.unit }}, {{ n.physics_domain }}]: {{ n.doc_short }}{% if n.cocos_label %} (COCOS {{ n.cocos_label }}){% endif %}
+{% endfor %}{% endif %}
+
+{% if item.related_neighbours %}
+## DD-Related Paths
+
+Cross-IDS related paths sharing cluster membership, coordinates, or units.
+
+{% for r in item.related_neighbours %}- `{{ r.path }}` ({{ r.ids }}) — {{ r.relationship_type }}{% if r.via %} via {{ r.via }}{% endif %}
+{% endfor %}{% endif %}
+
+{% if nearby_existing_names %}
+## Nearby Existing Names (same physics domain)
+
+For consistency, compare your documentation style and cross-references against these
+accepted names in the same physics domain.
+
+{% for n in nearby_existing_names %}- **{{ n.id }}**: {{ n.description | default('', true) }} ({{ n.kind | default('scalar', true) }}, {{ n.unit | default('dimensionless', true) }})
+{% endfor %}{% endif %}
+
 ## Output schema
 
 Return a JSON object with exactly these two fields:
