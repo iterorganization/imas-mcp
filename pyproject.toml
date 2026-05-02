@@ -392,6 +392,23 @@ models = [
 ]
 disagreement-threshold = 0.15
 
+[tool.imas-codex.sn.review.names.profiles.quality-cost-balanced]
+# Quality-preserving cost reduction: Sonnet 4.6 primary + GPT-5.4 secondary
+# (cross-vendor) + Opus 4.6 arbiter (disputes only, authoritative).
+# Rationale: Sonnet 4.6 benchmarked at 76.5 avg compose quality vs Opus
+# equivalent; reviewer benchmark expected similar.  Opus retained as
+# escalator so disputed names still get the strongest model's verdict.
+# Expected cost: ~70-80% reduction vs default (Opus on every name → Opus
+# only on disagreements). NO Haiku — quality floor preserved.
+# Validate on ≥30 already-accepted names (per-dim score divergence ≤0.05,
+# tier agreement ≥90%, net cost ≤40% of default) before adopting as default.
+models = [
+  "openrouter/anthropic/claude-sonnet-4.6",  # cycle 0 primary (blind)
+  "openrouter/openai/gpt-5.4",               # cycle 1 secondary (blind, cross-vendor)
+  "openrouter/anthropic/claude-opus-4.6",    # cycle 2 escalator (disputes only, authoritative)
+]
+disagreement-threshold = 0.20
+
 [tool.imas-codex.sn.review.names.profiles.opus-only]
 # Single-model mode: no quorum, no escalator. Maximum quality, maximum cost.
 models = ["openrouter/anthropic/claude-opus-4.6"]
