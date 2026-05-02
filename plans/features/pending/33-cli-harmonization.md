@@ -1,6 +1,32 @@
 # Feature 33 — CLI option harmonization
 
-**Status:** In progress (Phase 1 + 2 landed, Phase 3/4 deferred)
+**Status:** Partially implemented — moved to pending/ (2025-05-xx)
+
+## Gaps remaining
+
+- **Phase 4 — Subcommand consolidation (deferred)**: reduce `sn` from 15
+  visible subcommands to 10; fold `sn seed` into `sn import --source {isn|west|all}`;
+  hide `sn resolve-links` and `sn reconcile` as internal debug commands (still callable).
+  Deferred because it is user-visible and requires a migration note + deprecation period.
+- **Phase 3 partial deferral — `-f` freeing**: free `-f` on facility-aware
+  commands (`sn clear`, `discover paths/signals/code/wiki/documents`) so `-f` can
+  consistently mean `--facility`. Requires coordinated touch of 6+ files.
+- **Phase 3 partial deferral — `--limit` harmonisation**: harmonise
+  `--limit`/`-n` vs `--path-limit`/`--signal-limit`/`--max-pages` on `discover`
+  subcommands (add aliases on every subcommand).
+- **Phase 3 partial deferral — `sn generate` rename**: harmonise `sn generate`'s
+  option names to canonical vocabulary (was explicitly deferred until
+  extraction-batching PR merged; extraction PR has since landed, this is now
+  unblocked).
+
+## Shipped (do not re-implement)
+
+- Phase 1: Research + enum foundations (`StandardNameReviewMode`, `review_mode`)
+- Phase 2: `sn review --name-only` + `StandardNameQualityScoreNameOnly` models
+- Phase 3 core: `--physics-domain`/`--domain` alias on all sn + imas subcommands;
+  `--ids`/`--ids-filter` alias on `imas dd build`; `--format`/`--export` on `sn gaps`;
+  `--source`/`--source-type` on `sn reconcile`. Cross-group audit confirmed
+  `graph`/`embed`/`llm`/`tunnel`/`config` groups need no renames.
 **Owner:** imas-codex maintainers
 **Research:** `plans/research/cli-option-matrix.md` (777-line audit — source of truth)
 
