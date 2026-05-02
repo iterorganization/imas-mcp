@@ -92,6 +92,27 @@ class TestSettingsFunctions:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    @pytest.mark.parametrize(
+        "section",
+        ["reasoning", "dd-enrichment", "sn-run", "sn-enrich"],
+    )
+    def test_openrouter_prefix_present(self, monkeypatch, section):
+        """OpenRouter-billed sections must carry the 'openrouter/' prefix.
+
+        Without it, calls silently route through the LiteLLM proxy, which
+        strips cache_control breakpoints (~80% cache discount lost) and
+        zeroes response_cost (cost telemetry broken). Regression guard.
+        """
+        settings._load_pyproject_settings.cache_clear()
+        env_var = settings._MODEL_ENV_VARS[section]
+        monkeypatch.delenv(env_var, raising=False)
+
+        result = settings.get_model(section)
+        assert result.startswith("openrouter/"), (
+            f"[{section}] model='{result}' missing openrouter/ prefix — "
+            "this re-enables proxy routing which strips cache_control."
+        )
+
     def test_get_labeling_batch_size_default(self, monkeypatch):
         """get_labeling_batch_size returns default when env not set."""
         settings._load_pyproject_settings.cache_clear()

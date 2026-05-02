@@ -269,13 +269,17 @@ model = "google/gemini-3.1-flash-lite-preview"
 batch-size = 50
 
 [tool.imas-codex.dd-enrichment]
-model = "anthropic/claude-sonnet-4.6"
+# openrouter/ prefix required so direct-path bypass preserves cache_control
+# and response_cost. Without it, calls silently route through the proxy,
+# stripping cache discounts (often 80%+) and zeroing cost telemetry.
+model = "openrouter/anthropic/claude-sonnet-4.6"
 
 [tool.imas-codex.vision]
 model = "google/gemini-3.1-flash-lite-preview"
 
 [tool.imas-codex.reasoning]
-model = "anthropic/claude-sonnet-4.6"
+# openrouter/ prefix — see [dd-enrichment] note above.
+model = "openrouter/anthropic/claude-sonnet-4.6"
 
 [tool.imas-codex.sn-compose]
 # Maximum concurrent LLM requests issued by the compose worker.
@@ -288,7 +292,10 @@ model = "anthropic/claude-sonnet-4.6"
 max-concurrency = 96
 
 [tool.imas-codex.sn-run]
-model = "anthropic/claude-sonnet-4.6"
+# openrouter/ prefix — see [dd-enrichment] note above.
+# Compose pool was billing 358 calls on unprefixed name (cache_control
+# stripped via proxy). Re-prefixed 2026-05-02 to restore cache discounts.
+model = "openrouter/anthropic/claude-sonnet-4.6"
 batch-size = 25
 # Batch size used when ``sn generate --name-only`` groups paths by
 # ``(physics_domain × unit)`` rather than ``(cluster × unit)``.  The

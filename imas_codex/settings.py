@@ -97,11 +97,11 @@ _MODEL_DEFAULTS: dict[str, str] = {
     "embedding": "Qwen/Qwen3-Embedding-0.6B",
     "language": "google/gemini-3.1-flash-lite-preview",
     "vision": "google/gemini-3.1-flash-lite-preview",
-    "agent": "anthropic/claude-sonnet-4.6",
-    "compaction": "anthropic/claude-haiku-4.5",
-    "reasoning": "anthropic/claude-sonnet-4.6",
-    "dd-enrichment": "anthropic/claude-sonnet-4.6",
-    "sn-run": "anthropic/claude-sonnet-4.6",
+    "agent": "openrouter/anthropic/claude-sonnet-4.6",
+    "compaction": "openrouter/anthropic/claude-haiku-4.5",
+    "reasoning": "openrouter/anthropic/claude-sonnet-4.6",
+    "dd-enrichment": "openrouter/anthropic/claude-sonnet-4.6",
+    "sn-run": "openrouter/anthropic/claude-sonnet-4.6",
     "sn-enrich": "openrouter/anthropic/claude-opus-4.6",
 }
 
