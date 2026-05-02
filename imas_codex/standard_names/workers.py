@@ -4138,7 +4138,7 @@ async def process_review_name_batch(
 
     For each item in the batch:
 
-    1. Build a name-only review prompt via ``render_prompt("sn/review_name_only", ...)``.
+    1. Build a name-axis review prompt via ``render_prompt("sn/review_names_user", ...)``.
     2. Call LLM using the primary model from ``[sn.review.names].models[0]``.
     3. Persist via :func:`~imas_codex.standard_names.graph_ops.persist_reviewed_name`,
        which transitions ``name_stage`` to ``'accepted'``, ``'reviewed'``, or
@@ -4226,15 +4226,20 @@ async def process_review_name_batch(
             **_build_enum_lists(),
         }
         try:
-            user_prompt = render_prompt("sn/review_name_only", prompt_context)
+            user_prompt = render_prompt("sn/review_names_user", prompt_context)
+            system_prompt = render_prompt("sn/review_names_system", prompt_context)
         except Exception:
             logger.debug("review_name: prompt render failed for %s", sn_id)
             user_prompt = (
                 f"Review the standard name: {item.get('id', sn_id)}\n"
                 f"Description: {item.get('description', '')}"
             )
+            system_prompt = (
+                "You are a quality reviewer for IMAS standard names in "
+                "fusion plasma physics."
+            )
 
-        _system_prompt = "You are a quality reviewer for IMAS standard names in fusion plasma physics."
+        _system_prompt = system_prompt
 
         # ── Budget reservation ─────────────────────────────────────────
         estimated = 0.05
@@ -4258,10 +4263,11 @@ async def process_review_name_batch(
             if lease:
                 _event = LLMCostEvent(
                     model=model,
-                    tokens_in=0,
-                    tokens_out=0,
-                    tokens_cached_read=0,
-                    tokens_cached_write=0,
+                    tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                    tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                    tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
+                    tokens_cached_write=getattr(llm_out, "cache_creation_tokens", 0)
+                    or 0,
                     sn_ids=(sn_id,),
                     phase="review_name",
                     service="standard-names",
@@ -4783,6 +4789,7 @@ async def process_review_docs_batch(
         }
         try:
             user_prompt = render_prompt("sn/review_docs_user", prompt_context)
+            system_prompt = render_prompt("sn/review_docs_user_system", prompt_context)
         except Exception:
             logger.debug("review_docs: prompt render failed for %s", sn_id)
             user_prompt = (
@@ -4790,8 +4797,12 @@ async def process_review_docs_batch(
                 f"Description: {item.get('description', '')}\n"
                 f"Documentation: {item.get('documentation', '')}"
             )
+            system_prompt = (
+                "You are a quality reviewer for IMAS standard name "
+                "documentation in fusion plasma physics."
+            )
 
-        _system_prompt = "You are a quality reviewer for IMAS standard name documentation in fusion plasma physics."
+        _system_prompt = system_prompt
 
         # ── Budget reservation ─────────────────────────────────────────
         estimated = 0.05
@@ -4815,10 +4826,11 @@ async def process_review_docs_batch(
             if lease:
                 _event = LLMCostEvent(
                     model=model,
-                    tokens_in=0,
-                    tokens_out=0,
-                    tokens_cached_read=0,
-                    tokens_cached_write=0,
+                    tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                    tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                    tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
+                    tokens_cached_write=getattr(llm_out, "cache_creation_tokens", 0)
+                    or 0,
                     sn_ids=(sn_id,),
                     phase="review_docs",
                     service="standard-names",

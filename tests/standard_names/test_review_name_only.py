@@ -231,7 +231,7 @@ def test_review_name_only_renders_candidate() -> None:
     }
 
     ctx = {"items": [item], **_build_enum_lists()}
-    prompt = render_prompt("sn/review_name_only", ctx)
+    prompt = render_prompt("sn/review_names_user", ctx)
 
     assert "electron_temperature" in prompt, (
         "candidate standard_name missing from prompt"

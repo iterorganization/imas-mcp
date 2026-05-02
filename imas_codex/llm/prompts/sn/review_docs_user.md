@@ -7,9 +7,7 @@ dynamic: true
 schema_needs: []
 ---
 
-Evaluate the documentation quality of the following IMAS standard name entry.
-Focus **only** on the documentation text — the name itself was already reviewed
-and accepted in a prior pass.
+Apply the rubric (provided in the system prompt) to the candidate below.
 
 ## Candidate
 
@@ -22,49 +20,5 @@ and accepted in a prior pass.
 
 {{ item.documentation | default('(missing)', true) }}
 
-## Scoring Dimensions (0-20 each, total 0-80)
-
-1. **Description Quality** — precision, single-line physical definition, no filler
-2. **Documentation Quality** — defining equations, variable definitions with units, sign conventions, LaTeX correctness
-3. **Completeness** — required fields populated, DD aliases mentioned, IMAS path citations, value ranges
-4. **Physics Accuracy** — equations correct, unit conversions, qualifier appropriateness, no false equivalences
-
-## Quality Tiers
-
-- **outstanding** (68-80): Publishable docs
-- **good** (48-67): Solid docs with minor polish
-- **inadequate** (32-47): Needs refinement
-- **poor** (0-31): Fundamental issues — needs rewrite
-
-## Verdict Rules
-
-- **accept**: Total ≥ 48 AND no dimension scores 0
-- **reject**: Total < 32 OR any dimension scores 0
-- **revise**: Otherwise — provide `revised_description` and/or `revised_documentation`
-
-## Output Format
-
-Return a JSON object:
-
-```json
-{
-  "source_id": "{{ item.id }}",
-  "standard_name": "{{ item.id }}",
-  "scores": {
-    "description_quality": 0,
-    "documentation_quality": 0,
-    "completeness": 0,
-    "physics_accuracy": 0
-  },
-  "comments": {
-    "description_quality": null,
-    "documentation_quality": null,
-    "completeness": null,
-    "physics_accuracy": null
-  },
-  "reasoning": "Specific justification covering each dimension",
-  "revised_description": null,
-  "revised_documentation": null,
-  "issues": []
-}
-```
+Return JSON matching the schema defined in the system prompt; set
+`source_id` and `standard_name` to `{{ item.id }}`.
