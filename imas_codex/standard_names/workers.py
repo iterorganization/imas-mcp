@@ -4888,7 +4888,10 @@ async def process_review_docs_batch(
             model = None
 
     if model is None:
-        model = get_model("language")
+        # Refine tier (Sonnet 4.6) — defensive fallback only when neither
+        # the explicit reviewer chain nor [sn.review.names].models is set.
+        # Must NOT be flash-lite per the 2026-05-03 quality mandate.
+        model = get_model("refine")
 
     processed = 0
 

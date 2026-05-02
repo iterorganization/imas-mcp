@@ -272,7 +272,10 @@ location = "iter"
 # refine_name and refine_docs were peeled off into [tool.imas-codex.refine]
 # on 2026-05-03 after E3 telemetry showed flash-lite refines accept at
 # ~5% vs ~42% for Sonnet-4.6 compose.
-model = "openrouter/google/gemini-3.1-flash-lite-preview"
+# 2026-05-03 (post-E3 audit): per user mandate, NO flash-lite in the SN
+# pipeline. generate_docs is now on Sonnet 4.6 — bulk doc gen quality
+# matters because it drives the docs-axis review and downstream YAML.
+model = "openrouter/anthropic/claude-sonnet-4.6"
 batch-size = 50
 
 [tool.imas-codex.refine]
@@ -475,10 +478,11 @@ evidence-token-cap-baseline = 2000
 evidence-token-cap-escalation = 800
 # Stage A LLM model + sampling.
 # NOTE: Anthropic's structured-output API rejects schemas with `oneOf`
-# (FanoutPlan uses a discriminated union over fn_id). Use a provider that
-# supports oneOf (Gemini, OpenAI). Tested: gemini-3.1-flash-lite-preview
-# accepts the schema and returns valid plans cheaply.
-proposer-model = "openrouter/google/gemini-3.1-flash-lite-preview"
+# (FanoutPlan uses a discriminated union over fn_id). Gemini and OpenAI
+# accept oneOf cleanly. Per 2026-05-03 user mandate (NO flash-lite in
+# pipeline), proposer is now on Gemini 3.1 Pro Preview which supports
+# oneOf and provides production-tier quality.
+proposer-model = "openrouter/google/gemini-3.1-pro-preview"
 proposer-temperature = 0.1
 # Cost padding added to the parent lease at refine-cycle start (tiered, plan §7.3).
 fanout-cost-estimate-baseline = 0.005
