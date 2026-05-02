@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -5954,6 +5955,13 @@ def persist_reviewed_name(
     model: str,
     min_score: float = DEFAULT_MIN_SCORE,
     rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
+    llm_cost: float | None = None,
+    llm_tokens_in: int | None = None,
+    llm_tokens_out: int | None = None,
+    llm_tokens_cached_read: int | None = None,
+    llm_tokens_cached_write: int | None = None,
+    llm_at: str | None = None,
+    llm_service: str | None = None,
 ) -> str:
     """Persist name-review results and transition ``name_stage``.
 
@@ -6069,6 +6077,68 @@ def persist_reviewed_name(
         chain_length,
         rotation_cap,
     )
+
+    # ── Write StandardNameReview node + HAS_REVIEW edge (Finding 1 fix) ──
+    # The single-reviewer worker path was previously SETting reviewer_*
+    # fields on the SN node only — no Review node was ever created.
+    # Mirror the RD-quorum schema: cycle_index=0, role='primary',
+    # canonical=True, fresh review_group_id per call.
+    try:
+        import uuid as _uuid
+        from datetime import datetime as _dt
+
+        _now_iso = llm_at or _dt.now(UTC).isoformat()
+        _group_id = str(_uuid.uuid4())
+        _review_id = f"{sn_id}:names:{_group_id}:0"
+        # Map normalised score (0-1) to tier name per the rubric.
+        if score >= 0.85:
+            _tier = "outstanding"
+        elif score >= 0.60:
+            _tier = "good"
+        elif score >= 0.40:
+            _tier = "inadequate"
+        else:
+            _tier = "poor"
+        write_reviews(
+            [
+                {
+                    "id": _review_id,
+                    "standard_name_id": sn_id,
+                    "model": model,
+                    "reviewer_model": model,
+                    "model_family": "other",
+                    "is_canonical": True,
+                    "score": float(score),
+                    "scores_json": scores_json or "{}",
+                    "tier": _tier,
+                    "comments": comments or "",
+                    "comments_per_dim_json": comments_per_dim_json,
+                    "suggested_name": "",
+                    "suggestion_justification": "",
+                    "reviewed_at": _now_iso,
+                    "review_axis": "names",
+                    "cycle_index": 0,
+                    "review_group_id": _group_id,
+                    "resolution_role": "primary",
+                    "resolution_method": None,
+                    "llm_model": model,
+                    "llm_cost": llm_cost,
+                    "llm_tokens_in": llm_tokens_in,
+                    "llm_tokens_out": llm_tokens_out,
+                    "llm_tokens_cached_read": llm_tokens_cached_read,
+                    "llm_tokens_cached_write": llm_tokens_cached_write,
+                    "llm_at": _now_iso,
+                    "llm_service": llm_service or "standard-names",
+                }
+            ],
+        )
+    except Exception:
+        # Don't let review-node bookkeeping fail the stage transition.
+        logger.exception(
+            "persist_reviewed_name: failed to write StandardNameReview for %s",
+            sn_id,
+        )
+
     return target_stage
 
 
@@ -6132,6 +6202,13 @@ def persist_reviewed_docs(
     model: str,
     min_score: float = DEFAULT_MIN_SCORE,
     rotation_cap: int = DEFAULT_REFINE_ROTATIONS,
+    llm_cost: float | None = None,
+    llm_tokens_in: int | None = None,
+    llm_tokens_out: int | None = None,
+    llm_tokens_cached_read: int | None = None,
+    llm_tokens_cached_write: int | None = None,
+    llm_at: str | None = None,
+    llm_service: str | None = None,
 ) -> str:
     """Persist docs-review results and transition ``docs_stage``.
 
@@ -6247,6 +6324,62 @@ def persist_reviewed_docs(
         docs_chain_length,
         rotation_cap,
     )
+
+    # ── Write StandardNameReview node + HAS_REVIEW edge (Finding 1 fix) ──
+    try:
+        import uuid as _uuid
+        from datetime import datetime as _dt
+
+        _now_iso = llm_at or _dt.now(UTC).isoformat()
+        _group_id = str(_uuid.uuid4())
+        _review_id = f"{sn_id}:docs:{_group_id}:0"
+        if score >= 0.85:
+            _tier = "outstanding"
+        elif score >= 0.60:
+            _tier = "good"
+        elif score >= 0.40:
+            _tier = "inadequate"
+        else:
+            _tier = "poor"
+        write_reviews(
+            [
+                {
+                    "id": _review_id,
+                    "standard_name_id": sn_id,
+                    "model": model,
+                    "reviewer_model": model,
+                    "model_family": "other",
+                    "is_canonical": True,
+                    "score": float(score),
+                    "scores_json": scores_json or "{}",
+                    "tier": _tier,
+                    "comments": comments or "",
+                    "comments_per_dim_json": comments_per_dim_json,
+                    "suggested_name": "",
+                    "suggestion_justification": "",
+                    "reviewed_at": _now_iso,
+                    "review_axis": "docs",
+                    "cycle_index": 0,
+                    "review_group_id": _group_id,
+                    "resolution_role": "primary",
+                    "resolution_method": None,
+                    "llm_model": model,
+                    "llm_cost": llm_cost,
+                    "llm_tokens_in": llm_tokens_in,
+                    "llm_tokens_out": llm_tokens_out,
+                    "llm_tokens_cached_read": llm_tokens_cached_read,
+                    "llm_tokens_cached_write": llm_tokens_cached_write,
+                    "llm_at": _now_iso,
+                    "llm_service": llm_service or "standard-names",
+                }
+            ],
+        )
+    except Exception:
+        logger.exception(
+            "persist_reviewed_docs: failed to write StandardNameReview for %s",
+            sn_id,
+        )
+
     return target_stage
 
 

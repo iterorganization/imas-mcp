@@ -4302,6 +4302,13 @@ async def process_review_name_batch(
                 model=model,
                 min_score=DEFAULT_MIN_SCORE,
                 rotation_cap=DEFAULT_REFINE_ROTATIONS,
+                llm_cost=cost,
+                llm_tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                llm_tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                llm_tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
+                llm_tokens_cached_write=getattr(llm_out, "cache_creation_tokens", 0)
+                or 0,
+                llm_service="standard-names",
             )
 
             if new_stage:
@@ -4865,6 +4872,13 @@ async def process_review_docs_batch(
                 model=model,
                 min_score=DEFAULT_MIN_SCORE,
                 rotation_cap=DEFAULT_REFINE_ROTATIONS,
+                llm_cost=cost,
+                llm_tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
+                llm_tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
+                llm_tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
+                llm_tokens_cached_write=getattr(llm_out, "cache_creation_tokens", 0)
+                or 0,
+                llm_service="standard-names",
             )
 
             if new_stage:

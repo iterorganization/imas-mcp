@@ -720,3 +720,119 @@ class TestQuarantinedSkipsLLM:
 
         assert result == 1
         assert mock_llm.calls_for("review_name") == 1
+
+
+# =============================================================================
+# StandardNameReview node persistence (Finding 1 — was missing entirely)
+# =============================================================================
+
+
+class TestPersistWritesReviewNode:
+    def test_persist_reviewed_name_calls_write_reviews(self):
+        """persist_reviewed_name must MERGE a :StandardNameReview node via write_reviews."""
+        gc = _mock_gc_query(return_values=[[{"chain_length": 0}], []])
+
+        with (
+            _patch_gc(gc),
+            patch(
+                "imas_codex.standard_names.graph_ops.write_reviews"
+            ) as mock_write_reviews,
+        ):
+            from imas_codex.standard_names.graph_ops import persist_reviewed_name
+
+            persist_reviewed_name(
+                sn_id="electron_temperature",
+                claim_token="tok",
+                score=0.82,
+                scores={"grammar": 16, "semantic": 17},
+                comments="Solid name.",
+                comments_per_dim={"grammar": "ok"},
+                model="openrouter/anthropic/claude-opus-4.6",
+                min_score=0.75,
+                rotation_cap=3,
+                llm_cost=0.025,
+                llm_tokens_in=1234,
+                llm_tokens_out=200,
+                llm_tokens_cached_read=900,
+                llm_tokens_cached_write=300,
+                llm_service="standard-names",
+            )
+
+        assert mock_write_reviews.called, (
+            "persist_reviewed_name must call write_reviews to create StandardNameReview"
+        )
+        records = mock_write_reviews.call_args[0][0]
+        assert len(records) == 1
+        rec = records[0]
+        assert rec["standard_name_id"] == "electron_temperature"
+        assert rec["review_axis"] == "names"
+        assert rec["cycle_index"] == 0
+        assert rec["resolution_role"] == "primary"
+        assert rec["is_canonical"] is True
+        assert rec["score"] == 0.82
+        assert rec["tier"] == "good"  # 0.82 ∈ [0.6, 0.85)
+        assert rec["llm_cost"] == 0.025
+        assert rec["llm_tokens_in"] == 1234
+        assert rec["llm_tokens_out"] == 200
+        assert rec["llm_tokens_cached_read"] == 900
+        assert rec["llm_tokens_cached_write"] == 300
+        # Composite id format
+        assert rec["id"].startswith("electron_temperature:names:")
+        assert rec["id"].endswith(":0")
+
+    def test_persist_reviewed_docs_calls_write_reviews(self):
+        """persist_reviewed_docs must MERGE a :StandardNameReview node with axis='docs'."""
+        gc = _mock_gc_query(return_values=[[{"docs_chain_length": 0}], []])
+
+        with (
+            _patch_gc(gc),
+            patch(
+                "imas_codex.standard_names.graph_ops.write_reviews"
+            ) as mock_write_reviews,
+        ):
+            from imas_codex.standard_names.graph_ops import persist_reviewed_docs
+
+            persist_reviewed_docs(
+                sn_id="electron_temperature",
+                claim_token="tok",
+                score=0.91,
+                scores={"description_quality": 19},
+                comments="Outstanding docs.",
+                comments_per_dim=None,
+                model="openrouter/anthropic/claude-opus-4.6",
+                llm_cost=0.04,
+                llm_tokens_in=2000,
+                llm_tokens_out=300,
+            )
+
+        assert mock_write_reviews.called
+        rec = mock_write_reviews.call_args[0][0][0]
+        assert rec["review_axis"] == "docs"
+        assert rec["tier"] == "outstanding"  # 0.91 >= 0.85
+        assert rec["id"].startswith("electron_temperature:docs:")
+        assert rec["llm_cost"] == 0.04
+
+    def test_persist_does_not_fail_when_write_reviews_raises(self):
+        """A failure inside write_reviews must NOT block the stage transition."""
+        gc = _mock_gc_query(return_values=[[{"chain_length": 0}], []])
+
+        with (
+            _patch_gc(gc),
+            patch(
+                "imas_codex.standard_names.graph_ops.write_reviews",
+                side_effect=RuntimeError("graph down"),
+            ),
+        ):
+            from imas_codex.standard_names.graph_ops import persist_reviewed_name
+
+            new_stage = persist_reviewed_name(
+                sn_id="x",
+                claim_token="tok",
+                score=0.9,
+                model="m",
+                min_score=0.75,
+                rotation_cap=3,
+            )
+
+        # Stage transition must still succeed even if review-node write fails
+        assert new_stage == "accepted"
