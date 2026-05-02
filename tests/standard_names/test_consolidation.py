@@ -111,19 +111,34 @@ class TestUnitConflicts:
         assert result.approved[0]["id"] == "electron_temperature"
 
     def test_none_unit_vs_specific_unit_conflict(self):
-        """Dimensionless (None) vs specific unit → conflict."""
+        """Dimensionless (None) vs specific unit → conflict.
+
+        Post-B1 invariant (plan-mcp-and-units.md): unit=None means the
+        DD HAS_UNIT lookup failed.  We do NOT silently absorb a None
+        candidate into a specific-unit group — that fabricated
+        "dimensionless" semantics.  Instead the mixed set surfaces as
+        a unit_mismatch so the human reviewer sees it.
+        """
         candidates = [
             _candidate("safety_factor", "eq/q", unit=None),
             _candidate("safety_factor", "eq/q2", unit="m"),
         ]
         result = consolidate_candidates(candidates)
 
-        # None is discarded in the unit check, so {None, "m"} → {"m"} → 1 unit
-        # This means no unit_mismatch — None is treated as "unspecified/dimensionless"
-        assert len(result.conflicts) == 0
+        # {None, "m"} has size 2 → unit_mismatch surfaced.
+        assert len(result.conflicts) == 1
+        assert result.conflicts[0].conflict_type == "unit_mismatch"
+        assert "None" in result.conflicts[0].details
+        assert "m" in result.conflicts[0].details
+        assert len(result.approved) == 0
 
     def test_two_nones_no_conflict(self):
-        """Two candidates with unit=None → no conflict."""
+        """Two candidates with unit=None → no conflict.
+
+        Two None values still collapse to a single-element set ({None})
+        so no unit_mismatch is raised here.  This case will only arise
+        if upstream invariants regress — kept as a regression guard.
+        """
         candidates = [
             _candidate("safety_factor", "eq/q", unit=None),
             _candidate("safety_factor", "eq/q2", unit=None),

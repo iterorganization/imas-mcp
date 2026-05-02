@@ -211,7 +211,13 @@ def consolidate_candidates(
     # ------------------------------------------------------------------
     for name, group in by_name.items():
         units = {c.get("unit") for c in group}
-        units.discard(None)  # None means dimensionless, not a conflict with itself
+        # B1 invariant (plan-mcp-and-units.md): every candidate must
+        # carry a DD-derived unit.  ``None`` indicates a missing DD
+        # HAS_UNIT lookup, which the compose path now hard-skips
+        # upstream.  Keep ``None`` in the set so it surfaces as a
+        # unit_mismatch instead of being silently treated as
+        # "dimensionless" — that fabricated meaning is exactly what
+        # this clean-up removes.
         if len(units) > 1:
             result.conflicts.append(
                 ConflictRecord(
