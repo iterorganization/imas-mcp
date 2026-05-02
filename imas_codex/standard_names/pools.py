@@ -288,8 +288,18 @@ async def _budget_watchdog(
     mgr: BudgetManager,
     stop_event: asyncio.Event,
     poll: float = 5.0,
+    *,
+    near_exhaust_event: asyncio.Event | None = None,
 ) -> None:
-    """Poll ``mgr.hard_exhausted()`` and set ``stop_event`` when budget runs out.
+    """Poll ``mgr`` and set ``stop_event`` when budget runs out.
+
+    Two stop conditions:
+
+    1. ``mgr.hard_exhausted()`` — committed spend ≥ cost limit.
+    2. ``mgr.near_exhausted()`` — remaining budget < ``MIN_VIABLE_TURN``
+       (default $0.75).  Avoids the long tail where, e.g., a $3.00 run
+       at $2.97 keeps spinning trying to spend the remaining pennies
+       on turns that no individual pool can complete.
 
     Uses ``hard_exhausted()`` (committed spend ≥ cost limit) instead of
     ``exhausted()`` (pool ≤ 0) so that a large in-flight reservation does
@@ -305,12 +315,94 @@ async def _budget_watchdog(
             logger.info(
                 "run_pools: budget exhausted (spend >= limit) — signalling graceful shutdown"
             )
+            if near_exhaust_event is not None:
+                near_exhaust_event.set()
+            stop_event.set()
+            return
+        if mgr.near_exhausted():
+            logger.info(
+                "run_pools: budget near-exhausted (remaining < MIN_VIABLE_TURN) "
+                "— signalling graceful shutdown"
+            )
+            if near_exhaust_event is not None:
+                near_exhaust_event.set()
             stop_event.set()
             return
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=poll)
         except TimeoutError:
             continue
+
+
+async def _idle_exhaustion_watchdog(
+    pools: list[PoolSpec],
+    stop_event: asyncio.Event,
+    idle_exhausted_event: asyncio.Event,
+    *,
+    poll: float = 1.0,
+    idle_polls: int = 30,
+) -> None:
+    """Set ``stop_event`` after sustained genuine idleness across all pools.
+
+    Watches every pool every *poll* seconds.  A poll is considered
+    "globally idle" iff **all** pools simultaneously satisfy:
+
+    * ``pending_count == 0`` (no eligible work in scope), AND
+    * ``total_processed`` did not increase since the last poll (no
+      pool is currently making progress).
+
+    After *idle_polls* consecutive globally-idle observations
+    (default 30 polls × 1s ≈ 30s), the watchdog logs the stop reason,
+    sets ``idle_exhausted_event`` so the caller can map the run to
+    ``stop_reason='no_eligible_work'``, then sets ``stop_event`` to
+    drive cooperative shutdown.
+
+    Why this exists
+    ---------------
+    Without this watchdog ``pool_loop`` never exits autonomously — it
+    only stops when ``stop_event`` is set externally.  When a
+    domain-restricted run (or any run that genuinely runs out of
+    eligible work) sees its pending counts drop to zero, the pools
+    enter an indefinite empty-claim spin.  This wastes resources and
+    leaves SNRun nodes un-finalised when the user finally has to kill
+    the process.
+
+    Counter resets on any forward progress so the watchdog does not
+    misfire during a transient lull (e.g. a slow generate batch
+    feeding the review pool).
+    """
+    snapshots: dict[str, int] = {p.name: p.health.total_processed for p in pools}
+    consecutive_idle = 0
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=poll)
+            return
+        except TimeoutError:
+            pass
+
+        all_idle = True
+        for p in pools:
+            if p.health.pending_count > 0:
+                all_idle = False
+            current = p.health.total_processed
+            if current > snapshots.get(p.name, 0):
+                all_idle = False
+            snapshots[p.name] = current
+
+        if all_idle:
+            consecutive_idle += 1
+            if consecutive_idle >= idle_polls:
+                logger.info(
+                    "run_pools: no eligible work for %d consecutive polls "
+                    "(~%.0fs) — signalling graceful shutdown",
+                    consecutive_idle,
+                    consecutive_idle * poll,
+                )
+                idle_exhausted_event.set()
+                stop_event.set()
+                return
+        else:
+            consecutive_idle = 0
 
 
 async def _pending_count_watchdog(
@@ -370,6 +462,9 @@ async def run_pools(
     pending_poll_interval: float = 5.0,
     grace_period: float = 60.0,
     weights: dict[str, float] = POOL_WEIGHTS,
+    idle_exhausted_event: asyncio.Event | None = None,
+    idle_exhaustion_poll: float = 1.0,
+    idle_exhaustion_polls: int = 30,
 ) -> dict[str, PoolHealth]:
     """Run all pool loops concurrently and orchestrate cooperative shutdown.
 
@@ -457,8 +552,25 @@ async def run_pools(
     ]
 
     watchdog_task = asyncio.create_task(
-        _budget_watchdog(mgr, stop_event),
+        _budget_watchdog(mgr, stop_event, near_exhaust_event=None),
         name="budget_watchdog",
+    )
+
+    # Idle-exhaustion watchdog: exits the run when all pools have been
+    # genuinely idle (pending_count == 0 and no progress) for a sustained
+    # window.  Without this, ``pool_loop`` never exits autonomously and a
+    # run that exhausts its scope (e.g. ``--physics-domain X`` with no
+    # remaining sources) spins forever until SIGINT.
+    idle_event = idle_exhausted_event or asyncio.Event()
+    idle_watchdog_task = asyncio.create_task(
+        _idle_exhaustion_watchdog(
+            pools,
+            stop_event,
+            idle_event,
+            poll=idle_exhaustion_poll,
+            idle_polls=idle_exhaustion_polls,
+        ),
+        name="idle_exhaustion_watchdog",
     )
 
     # Optional: pending-count watchdog for headless / --quiet mode.
@@ -502,6 +614,10 @@ async def run_pools(
     if not watchdog_task.done():
         watchdog_task.cancel()
     await asyncio.gather(watchdog_task, return_exceptions=True)
+
+    if not idle_watchdog_task.done():
+        idle_watchdog_task.cancel()
+    await asyncio.gather(idle_watchdog_task, return_exceptions=True)
 
     if pending_watchdog_task is not None:
         if not pending_watchdog_task.done():

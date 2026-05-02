@@ -206,6 +206,7 @@ _STOP_TO_STATUS: dict[str, str] = {
     "budget_exhausted": "completed",
     "stalled": "completed",
     "no_work": "completed",
+    "no_eligible_work": "completed",
     "dry_run": "completed",
     "interrupted": "interrupted",
     "failed": "failed",
@@ -1006,6 +1007,10 @@ async def run_sn_pools(
 
     if stop_event is None:
         stop_event = asyncio.Event()
+    # Set when the idle-exhaustion watchdog detects sustained
+    # zero-pending across all pools.  Lets the stop-reason logic
+    # distinguish "out of eligible work" from "interrupted by user".
+    idle_exhausted_event = asyncio.Event()
 
     # Shared BudgetManager — all six pools draw from the same pot.
     shared_mgr = BudgetManager(cost_limit, run_id=run_id)
@@ -1159,7 +1164,11 @@ async def run_sn_pools(
         )
         try:
             health_map = await run_pools(
-                specs, shared_mgr, stop_event, pending_fn=pending_fn
+                specs,
+                shared_mgr,
+                stop_event,
+                pending_fn=pending_fn,
+                idle_exhausted_event=idle_exhausted_event,
             )
         finally:
             if not sweep_task.done():
@@ -1204,8 +1213,13 @@ async def run_sn_pools(
         # Check exhaustion before stop_event: the budget watchdog sets
         # stop_event when exhausted, so checking stop_event first would
         # misclassify budget-exhausted runs as "interrupted".
-        if shared_mgr.hard_exhausted():
+        # Likewise for the idle-exhaustion watchdog — when it fires, the
+        # run finished its scope and must be classified as completed via
+        # ``no_eligible_work`` rather than mistaken for a user interrupt.
+        if shared_mgr.hard_exhausted() or shared_mgr.near_exhausted():
             summary.stop_reason = "budget_exhausted"
+        elif idle_exhausted_event.is_set():
+            summary.stop_reason = "no_eligible_work"
         elif stop_event.is_set():
             summary.stop_reason = "interrupted"
         else:
@@ -1236,19 +1250,41 @@ async def run_sn_pools(
                 "run_sn_pools: orphan sweep failed (non-fatal): %s", _orphan_exc
             )
 
-        # Drain pending LLMCost graph writes.
-        cost_is_exact = await shared_mgr.drain_pending()
+        # Drain pending LLMCost graph writes.  Awaits in this finally
+        # block may be hit by a CancelledError if the task is being
+        # cancelled (e.g. by a second-press SIGINT).  We *must* still
+        # reach :func:`finalize_sn_run` below or the SNRun row stays
+        # in ``status='running'`` forever — so each await is shielded
+        # and individually try/excepted.
+        cost_is_exact = True
+        try:
+            cost_is_exact = await asyncio.shield(shared_mgr.drain_pending())
+        except (asyncio.CancelledError, Exception) as _drain_exc:  # noqa: BLE001
+            logger.warning(
+                "run_sn_pools: drain_pending interrupted (%s); "
+                "marking cost_is_exact=False and continuing finalization",
+                _drain_exc,
+            )
+            cost_is_exact = False
         if not cost_is_exact and summary.stop_reason not in (
             "interrupted",
             "failed",
         ):
             summary.stop_reason = "degraded"
 
-        # Refresh final cost from graph.
-        summary.cost_spent = max(
-            summary.cost_spent,
-            await shared_mgr.get_total_spent(force_refresh=True),
-        )
+        # Refresh final cost from graph (best-effort under cancellation).
+        try:
+            graph_spent = await asyncio.shield(
+                shared_mgr.get_total_spent(force_refresh=True)
+            )
+            summary.cost_spent = max(summary.cost_spent, graph_spent)
+        except (asyncio.CancelledError, Exception) as _spend_exc:  # noqa: BLE001
+            logger.warning(
+                "run_sn_pools: get_total_spent interrupted (%s); "
+                "using last-known cost_spent=$%.4f",
+                _spend_exc,
+                summary.cost_spent,
+            )
 
         # Phase-level cost breakdowns.
         phase_spent = shared_mgr.phase_spent
@@ -1275,26 +1311,37 @@ async def run_sn_pools(
         except Exception:  # noqa: BLE001
             pass
 
-        # Finalize the SNRun node.
+        # Finalize the SNRun node.  This is the *critical* write that
+        # converts the open ``status='running'`` row into a closed run
+        # — must run on every exit path (clean, budget-exhausted,
+        # idle-exhausted, SIGINT, or task cancellation).
         from imas_codex.standard_names.graph_ops import finalize_sn_run
 
-        finalize_sn_run(
-            run_id,
-            status=_STOP_TO_STATUS.get(summary.stop_reason, "completed"),
-            cost_spent=summary.cost_spent,
-            cost_is_exact=cost_is_exact,
-            ended_at=summary.ended_at,
-            cost_limit=round(summary.cost_limit, 6),
-            compose_cost=round(summary.compose_cost, 6),
-            review_cost=round(summary.review_cost, 6),
-            min_score=summary.min_score,
-            names_composed=summary.names_composed,
-            names_enriched=summary.names_enriched,
-            names_reviewed=summary.names_reviewed,
-            names_regenerated=summary.names_regenerated,
-            stop_reason=summary.stop_reason,
-            pipeline_hash=_pipeline_hash,
-            pipeline_hash_detail=_pipeline_hash_detail,
-        )
+        try:
+            finalize_sn_run(
+                run_id,
+                status=_STOP_TO_STATUS.get(summary.stop_reason, "completed"),
+                cost_spent=summary.cost_spent,
+                cost_is_exact=cost_is_exact,
+                ended_at=summary.ended_at,
+                cost_limit=round(summary.cost_limit, 6),
+                compose_cost=round(summary.compose_cost, 6),
+                review_cost=round(summary.review_cost, 6),
+                min_score=summary.min_score,
+                names_composed=summary.names_composed,
+                names_enriched=summary.names_enriched,
+                names_reviewed=summary.names_reviewed,
+                names_regenerated=summary.names_regenerated,
+                stop_reason=summary.stop_reason,
+                pipeline_hash=_pipeline_hash,
+                pipeline_hash_detail=_pipeline_hash_detail,
+            )
+        except Exception as _final_exc:  # noqa: BLE001
+            logger.error(
+                "run_sn_pools: finalize_sn_run failed for run_id=%s: %s",
+                run_id,
+                _final_exc,
+                exc_info=True,
+            )
 
     return summary

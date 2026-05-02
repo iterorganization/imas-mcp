@@ -148,6 +148,14 @@ def _run_sn_loop_cmd(
                             CALL {
                               MATCH (s:StandardNameSource {status: 'extracted'})
                               WHERE NOT (s)-[:PRODUCED_NAME]->(:StandardName)
+                                AND (
+                                  $domain IS NULL
+                                  OR EXISTS {
+                                    MATCH (s)-[:FROM_DD_PATH]->(n:IMASNode)
+                                    WHERE n.physics_domain = $domain
+                                  }
+                                  OR s.physics_domain = $domain
+                                )
                               RETURN count(s) AS draft
                             }
                             CALL {
@@ -156,6 +164,7 @@ def _run_sn_loop_cmd(
                                 AND sn.reviewer_score_name IS NOT NULL
                                 AND sn.reviewer_score_name < coalesce($min_score, 1.0)
                                 AND coalesce(sn.chain_length, 0) < 3
+                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
                               RETURN count(sn) AS revise
                             }
                             CALL {
@@ -164,6 +173,7 @@ def _run_sn_loop_cmd(
                                 AND sn.enriched_at IS NULL
                                 AND (sn.claimed_at IS NULL
                                      OR sn.claimed_at < datetime() - duration({minutes: 30}))
+                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
                               RETURN count(sn) AS enrich
                             }
                             CALL {
@@ -171,6 +181,7 @@ def _run_sn_loop_cmd(
                               WHERE sn.validation_status = 'valid'
                                 AND sn.reviewed_name_at IS NULL
                                 AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
+                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
                               RETURN count(sn) AS review_names
                             }
                             CALL {
@@ -179,6 +190,7 @@ def _run_sn_loop_cmd(
                                 AND sn.enriched_at IS NOT NULL
                                 AND sn.reviewed_name_at IS NOT NULL
                                 AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
+                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
                               RETURN count(sn) AS review_docs
                             }
                             // ── Completed counts (graph baseline for restart) ──
@@ -208,6 +220,7 @@ def _run_sn_loop_cmd(
                                    review_names_done, review_docs_done
                             """,
                             min_score=min_score,
+                            domain=only_domain,
                         )
                     )
                 if not rows:
@@ -283,6 +296,14 @@ def _run_sn_loop_cmd(
                             CALL {
                               MATCH (s:StandardNameSource {status: 'extracted'})
                               WHERE NOT (s)-[:PRODUCED_NAME]->(:StandardName)
+                                AND (
+                                  $domain IS NULL
+                                  OR EXISTS {
+                                    MATCH (s)-[:FROM_DD_PATH]->(n:IMASNode)
+                                    WHERE n.physics_domain = $domain
+                                  }
+                                  OR s.physics_domain = $domain
+                                )
                               RETURN count(s) AS draft
                             }
                             CALL {
@@ -291,6 +312,7 @@ def _run_sn_loop_cmd(
                                 AND sn.reviewer_score_name IS NOT NULL
                                 AND sn.reviewer_score_name < coalesce($min_score, 1.0)
                                 AND coalesce(sn.chain_length, 0) < 3
+                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
                               RETURN count(sn) AS revise
                             }
                             CALL {
@@ -299,6 +321,7 @@ def _run_sn_loop_cmd(
                                 AND sn.enriched_at IS NULL
                                 AND (sn.claimed_at IS NULL
                                      OR sn.claimed_at < datetime() - duration({minutes: 30}))
+                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
                               RETURN count(sn) AS enrich
                             }
                             CALL {
@@ -306,6 +329,7 @@ def _run_sn_loop_cmd(
                               WHERE sn.validation_status = 'valid'
                                 AND sn.reviewed_name_at IS NULL
                                 AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
+                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
                               RETURN count(sn) AS review_names
                             }
                             CALL {
@@ -314,11 +338,13 @@ def _run_sn_loop_cmd(
                                 AND sn.enriched_at IS NOT NULL
                                 AND sn.reviewed_name_at IS NOT NULL
                                 AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
+                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
                               RETURN count(sn) AS review_docs
                             }
                             RETURN draft, revise, enrich, review_names, review_docs
                             """,
                             min_score=min_score,
+                            domain=only_domain,
                         )
                     )
                 if not rows:

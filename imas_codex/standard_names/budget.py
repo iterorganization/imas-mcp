@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 
 EPSILON = 1e-9
 
+# Minimum remaining budget required to start another turn.  When the
+# remaining budget drops below this floor, the pool orchestrator stops
+# accepting new turns even if the hard cost cap has not been reached.
+# Used by :meth:`BudgetManager.near_exhausted` and the pool budget
+# watchdog so that runs at e.g. $2.97 of $3.00 finalize promptly
+# instead of spinning until pennies are exhausted.
+MIN_VIABLE_TURN: float = 0.75
+
 # Writer retry parameters (matches retry_on_deadlock defaults)
 _WRITER_MAX_RETRIES = 5
 _WRITER_BASE_DELAY = 0.1
@@ -690,6 +698,22 @@ class BudgetManager:
         """
         with self._lock:
             return self._spent >= self._total - EPSILON
+
+    def near_exhausted(self, min_remaining: float = MIN_VIABLE_TURN) -> bool:
+        """Return ``True`` when the remaining budget is below *min_remaining*.
+
+        Implements the "remaining budget < MIN_VIABLE_TURN" stop check
+        described in ``AGENTS.md``.  A run at, say, $2.97 of $3.00 has
+        only $0.03 left — well below the cost of one LLM call — so it
+        should finalize rather than spin admitting cheap-but-fruitless
+        turns.
+
+        The check is based on committed spend (``_spent``), matching
+        :meth:`hard_exhausted`, so transient reservation spikes do not
+        cause premature shutdown.
+        """
+        with self._lock:
+            return (self._total - self._spent) < (min_remaining - EPSILON)
 
     # ------------------------------------------------------------------
     # Graph-aware reads
