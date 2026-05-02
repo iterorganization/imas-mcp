@@ -296,6 +296,12 @@ model = "openrouter/anthropic/claude-sonnet-4.6"
 
 [tool.imas-codex.vision]
 # openrouter/ prefix — see [language] note above.
+# flash-lite is INTENTIONAL here: this section drives image OCR only
+# (wiki/document page image captioning via discovery/wiki and related
+# doc-ingestion paths). It is NOT used in the SN compose/review/refine
+# pipeline. Flash-lite is adequate for OCR-quality transcription and
+# keeps image-processing costs minimal. Any SN-pipeline model must go
+# through [sn-run], [sn-enrich], [refine], or [sn.review.*] — never vision.
 model = "openrouter/google/gemini-3.1-flash-lite-preview"
 
 [tool.imas-codex.reasoning]
