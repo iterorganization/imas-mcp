@@ -1212,7 +1212,10 @@ def search_standard_names_with_documentation(
                     "name": nm,
                     "description": d.get("description") or "",
                     "documentation": d.get("documentation") or "",
-                    "unit": d.get("unit") or "1",
+                    # Pass through the stored unit verbatim — never coerce
+                    # missing/empty to "1" (user invariant: only DD or
+                    # explicit dimensionless storage may produce "1").
+                    "unit": d.get("unit") or "",
                 }
             )
             if len(out) >= k:

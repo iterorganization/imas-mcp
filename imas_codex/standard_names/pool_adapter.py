@@ -149,7 +149,7 @@ async def _seed_explicit_paths(
                        n.description AS description,
                        n.physics_domain AS physics_domain,
                        n.data_type AS data_type,
-                       coalesce(u.id, n.units) AS unit
+                       coalesce(u.id, n.unit) AS unit
                 """,
                 paths=paths,
             )

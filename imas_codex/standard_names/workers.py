@@ -527,11 +527,12 @@ def _search_nearby_names(query: str, k: int = 5) -> list[dict]:
 _DD_CONTEXT_QUERY = """
 MATCH (n:IMASNode {id: $path})
 OPTIONAL MATCH (n)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
+OPTIONAL MATCH (n)-[:HAS_UNIT]->(u:Unit)
 OPTIONAL MATCH (n)-[:HAS_PARENT]->(parent:IMASNode)
 OPTIONAL MATCH (parent)-[:HAS_CHILD]->(sibling:IMASNode)
 WHERE sibling.id <> $path
   AND NOT (sibling.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
-WITH n, ident, parent,
+WITH n, ident, u, parent,
      collect(DISTINCT {
          path: sibling.id,
          description: sibling.description,
@@ -547,6 +548,7 @@ RETURN n.coordinate1_same_as AS coordinate1,
        ident.name AS identifier_schema_name,
        ident.documentation AS identifier_schema_doc,
        ident.options AS identifier_options,
+       u.id AS unit_from_rel,
        parent.id AS parent_path,
        parent.description AS parent_description,
        sibling_fields
@@ -889,6 +891,19 @@ def _enrich_batch_items(items: list[dict]) -> None:
                 continue
 
             row = rows[0]
+
+            # BUG 9 fix: propagate authoritative DD unit from HAS_UNIT into
+            # the batch item so compose_batch's unit-safety skip and the
+            # downstream persist see the real DD unit (Pa, m, m^-2.W, …)
+            # rather than None.  StandardNameSource does not (yet) carry a
+            # ``unit`` property in the schema, so we re-derive it from the
+            # IMASNode at enrich time.  When HAS_UNIT is absent, ``unit``
+            # remains None and the skip ("dd_unit_unresolvable") fires —
+            # which is the correct conservative behaviour.
+            if not item.get("unit"):
+                unit_from_rel = row.get("unit_from_rel")
+                if unit_from_rel:
+                    item["unit"] = unit_from_rel
 
             # Coordinate context
             coords = []
@@ -1986,13 +2001,46 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 (item for item in batch.items if item.get("path") == c.source_id),
                 None,
             )
-            # Inject unit from DD (authoritative, not LLM output)
+            # Inject unit from DD (authoritative, not LLM output).
+            #
+            # User invariant (AGENTS.md "Unit safety"): the LLM never
+            # decides units; the DD source must provide one. Missing,
+            # empty, '-', or 'mixed' is invalid input — we record the
+            # skip on the StandardNameSource for audit and drop the
+            # candidate. NEVER silently coerce to "1": that masks a
+            # vocabulary gap and produces a bad SN.
             raw_unit = source_item.get("unit") if source_item else None
-            # Normalize: '-', 'mixed', and None/empty are invalid in ISN
             if raw_unit in ("-", "mixed", None, ""):
-                unit = "1"
-            else:
-                unit = raw_unit
+                wlog.warning(
+                    "compose: dd_unit_unresolvable, skipping source=%s raw_unit=%r",
+                    c.source_id,
+                    raw_unit,
+                )
+                if c.source_id and not state.dry_run:
+                    try:
+                        from imas_codex.graph.client import GraphClient
+                        from imas_codex.standard_names.graph_ops import (
+                            mark_source_skipped,
+                        )
+
+                        _prefix = "dd" if state.source == "dd" else "signals"
+                        with GraphClient() as _gc:
+                            mark_source_skipped(
+                                _gc,
+                                c.source_id,
+                                reason="dd_unit_unresolvable",
+                                detail=str(raw_unit),
+                                source_type=_prefix,
+                            )
+                    except Exception as exc:
+                        wlog.debug(
+                            "Failed to mark source %s skipped: %s",
+                            c.source_id,
+                            exc,
+                        )
+                state.compose_stats.errors += 1
+                continue
+            unit = raw_unit
 
             # Inject physics_domain from DD (authoritative, like unit).
             # Post-refactor: scalar primary + source_domains list.
@@ -2480,7 +2528,16 @@ def _validate_via_isn(
     }
     # ISN metadata kind forbids unit field entirely
     if isn_dict["kind"] != "metadata":
-        unit = entry.get("unit") or "1"  # ISN requires '1' for dimensionless
+        # User invariant: by the time we build the ISN dict, the unit
+        # must come from DD (B1a above filters invalid units before this
+        # path is reachable). Defensively assert so a logic regression
+        # surfaces in tests rather than silently pollute the catalog
+        # with `unit="1"`.
+        unit = entry.get("unit")
+        assert unit, (
+            f"ISN dict missing unit for {entry.get('id')!r}; "
+            "B1a (dd_unit_unresolvable skip) invariant violation"
+        )
         isn_dict["unit"] = unit
 
     # Layer 1: Pydantic model construction (fires 18 validators)
@@ -3394,8 +3451,40 @@ async def compose_batch(
                 (item for item in batch if item.get("path") == c.source_id),
                 None,
             )
+            # User invariant (AGENTS.md "Unit safety"): never coerce a
+            # missing DD unit to "1". Skip the candidate and record the
+            # source as ``skipped`` with reason ``dd_unit_unresolvable``.
             raw_unit = source_item.get("unit") if source_item else None
-            unit = "1" if raw_unit in ("-", "mixed", None, "") else raw_unit
+            if raw_unit in ("-", "mixed", None, ""):
+                wlog.warning(
+                    "compose(pool): dd_unit_unresolvable, skipping "
+                    "source=%s raw_unit=%r",
+                    c.source_id,
+                    raw_unit,
+                )
+                if c.source_id:
+                    try:
+                        from imas_codex.graph.client import GraphClient
+                        from imas_codex.standard_names.graph_ops import (
+                            mark_source_skipped,
+                        )
+
+                        with GraphClient() as _gc:
+                            mark_source_skipped(
+                                _gc,
+                                c.source_id,
+                                reason="dd_unit_unresolvable",
+                                detail=str(raw_unit),
+                                source_type=source_kind,
+                            )
+                    except Exception as exc:
+                        wlog.debug(
+                            "Failed to mark pool source %s skipped: %s",
+                            c.source_id,
+                            exc,
+                        )
+                continue
+            unit = raw_unit
 
             raw_domain = source_item.get("physics_domain") if source_item else None
             physics_domain = raw_domain or None
@@ -4403,7 +4492,7 @@ RETURN sn.source_paths AS source_paths,
            documentation: coalesce(imas.documentation, ''),
            description: coalesce(imas.description, ''),
            alias: imas.alias,
-           unit: coalesce(imas.units, '')
+           unit: coalesce(imas.unit, '')
        }) AS dd_nodes
 """
 

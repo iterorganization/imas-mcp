@@ -4231,6 +4231,60 @@ def mark_sources_failed(
         return result[0]["affected"] if result else 0
 
 
+def mark_source_skipped(
+    gc: GraphClient,
+    source_id: str,
+    *,
+    reason: str,
+    detail: str | None = None,
+    source_type: str = "dd",
+) -> int:
+    """Mark a single StandardNameSource as skipped with audit trail.
+
+    Used by the compose worker when a candidate cannot be promoted to a
+    StandardName because the source DD path lacks a usable unit string
+    (user invariant — the LLM never decides units, the DD source must
+    provide one). The graph node id is derived as ``{source_type}:{source_id}``
+    matching the convention in :func:`merge_standard_name_sources` and
+    :func:`write_skipped_sources`.
+
+    Args:
+        gc: Open GraphClient. The caller is responsible for the connection
+            lifecycle so this can be called from inside an existing
+            ``with GraphClient() as gc:`` block.
+        source_id: Bare DD path (or signal id). The full StandardNameSource
+            id is derived as ``{source_type}:{source_id}``.
+        reason: Machine-readable skip classification (e.g.
+            ``'dd_unit_unresolvable'``).
+        detail: Free-text detail (e.g. the raw DD unit string that
+            triggered the skip).
+        source_type: ``'dd'`` (default) or ``'signals'``.
+
+    Returns:
+        Number of StandardNameSource nodes updated (0 if no matching node
+        exists; that is expected for sources that pre-date the
+        StandardNameSource pipeline).
+    """
+    if not source_id:
+        return 0
+    sns_id = f"{source_type}:{source_id}"
+    result = gc.query(
+        """
+        MATCH (sns:StandardNameSource {id: $sns_id})
+        SET sns.status = 'skipped',
+            sns.skip_reason = $reason,
+            sns.skip_reason_detail = $detail,
+            sns.claimed_at = null,
+            sns.claim_token = null
+        RETURN count(sns) AS affected
+        """,
+        sns_id=sns_id,
+        reason=reason,
+        detail=detail or "",
+    )
+    return result[0]["affected"] if result else 0
+
+
 def mark_sources_stale(source_ids: list[str]) -> int:
     """Mark sources as stale (source entity no longer exists).
 

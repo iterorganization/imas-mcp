@@ -520,7 +520,10 @@ def synonym_check(
         return issues
 
     cand_name = candidate.get("id") or candidate.get("standard_name") or ""
-    cand_unit = candidate.get("unit") or "1"
+    # User invariant: do NOT coerce missing units to "1"; treat them as
+    # unknown so cross-name comparisons cannot be silently performed
+    # against a fabricated dimensionless default.
+    cand_unit = candidate.get("unit")
 
     # Get candidate embedding
     cand_embedding = candidate.get("description_embedding")
@@ -536,7 +539,12 @@ def synonym_check(
         ex_name = existing.get("name") or existing.get("id") or ""
         if ex_name == cand_name:
             continue
-        ex_unit = existing.get("unit") or "1"
+        ex_unit = existing.get("unit")
+        # Skip the comparison if either side has no stored unit — we
+        # cannot meaningfully assert duplicate-by-unit when the truth is
+        # unknown, and fabricating "1" hides the gap.
+        if cand_unit is None or ex_unit is None:
+            continue
         if ex_unit != cand_unit:
             continue
         ex_embedding = existing.get("description_embedding")
