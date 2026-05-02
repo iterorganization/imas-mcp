@@ -386,6 +386,35 @@ def ensure_model_prefix(model: str) -> str:
     return model
 
 
+_PREFIX_WARNED: set[str] = set()
+
+
+def _warn_if_missing_openrouter_prefix(model: str) -> None:
+    """Warn once per model if it lacks ``openrouter/`` and a direct key is set.
+
+    Unprefixed model IDs silently route through the LiteLLM proxy, which
+    strips ``cache_control`` (eliminating prompt-cache discounts of 80%+ on
+    warm calls) and zeroes ``response_cost`` (breaking cost telemetry).
+    Local model prefixes (ollama/, hosted_vllm/, openai/localhost) are
+    intentionally exempt.
+    """
+    if model in _PREFIX_WARNED:
+        return
+    if any(model.startswith(p) for p in _LOCAL_MODEL_PREFIXES):
+        return
+    if model.startswith("openrouter/"):
+        return
+    if not os.getenv("OPENROUTER_API_KEY_IMAS_CODEX"):
+        return
+    _PREFIX_WARNED.add(model)
+    logger.warning(
+        "model=%s missing openrouter/ prefix — cache_control will be "
+        "stripped and response_cost will be 0. Add the prefix in pyproject "
+        "or env override to restore cache discounts and cost telemetry.",
+        model,
+    )
+
+
 # ---------------------------------------------------------------------------
 # JSON schema format — always convert Pydantic models to json_schema dicts
 # ---------------------------------------------------------------------------
@@ -776,6 +805,8 @@ def _build_kwargs(
     enable prompt caching via OpenRouter.
     """
     from imas_codex.settings import get_llm_location, get_llm_proxy_url
+
+    _warn_if_missing_openrouter_prefix(model)
 
     limits = get_model_limits(model)
 
