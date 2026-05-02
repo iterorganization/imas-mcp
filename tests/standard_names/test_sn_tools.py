@@ -1,10 +1,36 @@
-"""Tests for standard name MCP tools."""
+"""Tests for standard name MCP tools.
+
+Plan-MCP-and-units Track A: signatures dropped ``tag``/``tags`` MCP kwargs
+(every prior call raised ``TypeError`` because the backing functions never
+accepted them). New canonical filter is ``physics_domain``, which is
+pushed into Cypher in all three search branches (segment-filter, vector,
+keyword) and into the WHERE clause of ``_list_standard_names``.
+"""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+def _row(**overrides):
+    """Return a minimal row dict matching the columns returned by the
+    three ``_*_search_standard_names`` helpers, with optional overrides."""
+    base = {
+        "name": "electron_temperature",
+        "description": "Te",
+        "kind": "scalar",
+        "unit": "eV",
+        "pipeline_status": "drafted",
+        "documentation": None,
+        "physics_domain": "transport",
+        "cocos_transformation_type": None,
+        "cocos": None,
+        "score": 1.0,
+    }
+    base.update(overrides)
+    return base
 
 
 class TestSearchStandardNames:
@@ -15,22 +41,7 @@ class TestSearchStandardNames:
         from imas_codex.llm.sn_tools import _search_standard_names
 
         mock_gc = MagicMock()
-        mock_gc.query = MagicMock(
-            return_value=[
-                {
-                    "name": "electron_temperature",
-                    "description": "Te",
-                    "kind": "scalar",
-                    "unit": "eV",
-                    "tags": ["core_profiles"],
-                    "pipeline_status": "drafted",
-                    "documentation": None,
-                    "physical_base": "temperature",
-                    "subject": "electron",
-                    "score": 1.0,
-                }
-            ]
-        )
+        mock_gc.query = MagicMock(return_value=[_row()])
 
         # Patch Encoder to fail (trigger keyword fallback)
         with patch(
@@ -40,6 +51,9 @@ class TestSearchStandardNames:
 
         assert "electron_temperature" in result
         mock_gc.query.assert_called()
+        # Default physics_domain=None must be forwarded as $pd=None
+        call_kwargs = mock_gc.query.call_args.kwargs
+        assert call_kwargs.get("pd") is None
 
     def test_empty_results(self):
         """Empty results produce informative message."""
@@ -55,6 +69,23 @@ class TestSearchStandardNames:
 
         assert "No" in result or "0" in result
 
+    def test_no_args_no_typeerror(self):
+        """Plan-MCP regression: search with only the query must not raise.
+
+        Before this plan landed, the MCP wrapper forwarded ``tags=None``
+        unconditionally, which the backing function never accepted →
+        ``TypeError`` on every call.
+        """
+        from imas_codex.llm.sn_tools import _search_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        with patch(
+            "imas_codex.llm.sn_tools.Encoder", side_effect=Exception("no embeddings")
+        ):
+            # Must not raise
+            _search_standard_names("temperature", gc=mock_gc)
+
     def test_kind_filter(self):
         """Kind filter is applied to results."""
         from imas_codex.llm.sn_tools import _search_standard_names
@@ -62,30 +93,8 @@ class TestSearchStandardNames:
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(
             return_value=[
-                {
-                    "name": "electron_temperature",
-                    "description": "Te",
-                    "kind": "scalar",
-                    "unit": "eV",
-                    "tags": [],
-                    "pipeline_status": "drafted",
-                    "documentation": None,
-                    "physical_base": "temperature",
-                    "subject": None,
-                    "score": 1.0,
-                },
-                {
-                    "name": "velocity_field",
-                    "description": "v",
-                    "kind": "vector",
-                    "unit": "m/s",
-                    "tags": [],
-                    "pipeline_status": "drafted",
-                    "documentation": None,
-                    "physical_base": None,
-                    "subject": None,
-                    "score": 0.8,
-                },
+                _row(kind="scalar"),
+                _row(name="velocity_field", kind="vector", unit="m/s"),
             ]
         )
 
@@ -104,30 +113,8 @@ class TestSearchStandardNames:
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(
             return_value=[
-                {
-                    "name": "drafted_name",
-                    "description": "d",
-                    "kind": "scalar",
-                    "unit": "eV",
-                    "tags": [],
-                    "pipeline_status": "drafted",
-                    "documentation": None,
-                    "physical_base": None,
-                    "subject": None,
-                    "score": 1.0,
-                },
-                {
-                    "name": "published_name",
-                    "description": "p",
-                    "kind": "scalar",
-                    "unit": "A",
-                    "tags": [],
-                    "pipeline_status": "published",
-                    "documentation": None,
-                    "physical_base": None,
-                    "subject": None,
-                    "score": 0.9,
-                },
+                _row(name="drafted_name", pipeline_status="drafted"),
+                _row(name="published_name", pipeline_status="published", unit="A"),
             ]
         )
 
@@ -141,69 +128,88 @@ class TestSearchStandardNames:
         assert "drafted_name" in result
         assert "published_name" not in result
 
-    def test_tags_filter(self):
-        """tags filter is applied."""
+    def test_physics_domain_pushed_into_cypher_keyword(self):
+        """physics_domain is pushed into the keyword Cypher as $pd."""
         from imas_codex.llm.sn_tools import _search_standard_names
 
         mock_gc = MagicMock()
-        mock_gc.query = MagicMock(
-            return_value=[
-                {
-                    "name": "electron_temperature",
-                    "description": "Te",
-                    "kind": "scalar",
-                    "unit": "eV",
-                    "tags": ["core_profiles", "kinetics"],
-                    "pipeline_status": "drafted",
-                    "documentation": None,
-                    "physical_base": None,
-                    "subject": None,
-                    "score": 1.0,
-                },
-                {
-                    "name": "equilibrium_shape",
-                    "description": "shape",
-                    "kind": "scalar",
-                    "unit": "m",
-                    "tags": ["equilibrium"],
-                    "pipeline_status": "drafted",
-                    "documentation": None,
-                    "physical_base": None,
-                    "subject": None,
-                    "score": 0.8,
-                },
-            ]
-        )
+        mock_gc.query = MagicMock(return_value=[_row(physics_domain="transport")])
 
         with patch(
             "imas_codex.llm.sn_tools.Encoder", side_effect=Exception("no embeddings")
         ):
-            result = _search_standard_names(
-                "temperature", tags=["core_profiles"], gc=mock_gc
+            _search_standard_names(
+                "temperature", physics_domain="transport", gc=mock_gc
             )
 
-        assert "electron_temperature" in result
-        assert "equilibrium_shape" not in result
+        call = mock_gc.query.call_args
+        cypher = call.args[0] if call.args else ""
+        assert "$pd" in cypher, "physics_domain not pushed into Cypher"
+        assert call.kwargs.get("pd") == "transport"
+
+    def test_physics_domain_pushed_into_cypher_vector(self):
+        """physics_domain is forwarded as $pd to the vector branch."""
+        from imas_codex.llm.sn_tools import _search_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[_row(physics_domain="equilibrium")])
+
+        # Make Encoder succeed so we hit the vector branch
+        mock_enc = MagicMock()
+        mock_enc.embed_texts = MagicMock(return_value=[[0.1] * 8])
+        with patch("imas_codex.llm.sn_tools.Encoder", return_value=mock_enc):
+            _search_standard_names(
+                "temperature", physics_domain="equilibrium", gc=mock_gc
+            )
+
+        call = mock_gc.query.call_args
+        cypher = call.args[0] if call.args else ""
+        assert "vector.queryNodes" in cypher
+        assert "$pd" in cypher
+        assert call.kwargs.get("pd") == "equilibrium"
+
+    def test_physics_domain_pushed_into_cypher_segment(self):
+        """physics_domain is pushed into the segment-filter branch as $pd."""
+        from imas_codex.llm.sn_tools import _search_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[_row()])
+
+        with patch(
+            "imas_codex.llm.sn_tools.Encoder", side_effect=Exception("no embeddings")
+        ):
+            _search_standard_names(
+                "temperature",
+                physics_domain="transport",
+                physical_base="temperature",
+                gc=mock_gc,
+            )
+
+        call = mock_gc.query.call_args
+        cypher = call.args[0] if call.args else ""
+        assert "$pd" in cypher
+        assert call.kwargs.get("pd") == "transport"
+
+    def test_physics_domain_default_null(self):
+        """When physics_domain is None, $pd=null short-circuits the filter."""
+        from imas_codex.llm.sn_tools import _search_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[_row()])
+
+        with patch(
+            "imas_codex.llm.sn_tools.Encoder", side_effect=Exception("no embeddings")
+        ):
+            _search_standard_names("temperature", gc=mock_gc)
+
+        assert mock_gc.query.call_args.kwargs.get("pd") is None
 
     def test_result_format_no_grammar_fields(self):
         """Result format no longer includes grammar_* fields (vNext)."""
         from imas_codex.llm.sn_tools import _search_standard_names
 
         mock_gc = MagicMock()
-        mock_gc.query = MagicMock(
-            return_value=[
-                {
-                    "name": "electron_temperature",
-                    "description": "Te",
-                    "kind": "scalar",
-                    "unit": "eV",
-                    "tags": [],
-                    "pipeline_status": "drafted",
-                    "documentation": None,
-                    "score": 0.92,
-                }
-            ]
-        )
+        mock_gc.query = MagicMock(return_value=[_row(score=0.92)])
 
         with patch(
             "imas_codex.llm.sn_tools.Encoder", side_effect=Exception("no embeddings")
@@ -232,17 +238,10 @@ class TestFetchStandardNames:
                     "documentation": "The $T_e$ profile",
                     "kind": "scalar",
                     "unit": "eV",
-                    "tags": ["core_profiles"],
                     "links": ["ion_temperature"],
-                    "dd_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                    "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
                     "constraints": ["T_e > 0"],
                     "validity_domain": "core plasma",
-                    "physical_base": "temperature",
-                    "subject": "electron",
-                    "component": None,
-                    "coordinate": None,
-                    "position": None,
-                    "process": None,
                     "pipeline_status": "drafted",
                     "model": "test",
                     "source_ids": ["core_profiles/profiles_1d/electrons/temperature"],
@@ -268,17 +267,10 @@ class TestFetchStandardNames:
                     "documentation": None,
                     "kind": "scalar",
                     "unit": "eV",
-                    "tags": [],
                     "links": [],
-                    "dd_paths": [],
+                    "source_paths": [],
                     "constraints": [],
                     "validity_domain": None,
-                    "physical_base": "temperature",
-                    "subject": "electron",
-                    "component": None,
-                    "coordinate": None,
-                    "position": None,
-                    "process": None,
                     "pipeline_status": "drafted",
                     "model": None,
                     "source_ids": [],
@@ -290,17 +282,10 @@ class TestFetchStandardNames:
                     "documentation": None,
                     "kind": "scalar",
                     "unit": "A",
-                    "tags": [],
                     "links": [],
-                    "dd_paths": [],
+                    "source_paths": [],
                     "constraints": [],
                     "validity_domain": None,
-                    "physical_base": None,
-                    "subject": None,
-                    "component": None,
-                    "coordinate": None,
-                    "position": None,
-                    "process": None,
                     "pipeline_status": "drafted",
                     "model": None,
                     "source_ids": [],
@@ -337,17 +322,10 @@ class TestFetchStandardNames:
                     "documentation": None,
                     "kind": "scalar",
                     "unit": "eV",
-                    "tags": [],
                     "links": [],
-                    "dd_paths": [],
+                    "source_paths": [],
                     "constraints": [],
                     "validity_domain": None,
-                    "physical_base": None,
-                    "subject": None,
-                    "component": None,
-                    "coordinate": None,
-                    "position": None,
-                    "process": None,
                     "pipeline_status": "drafted",
                     "model": None,
                     "source_ids": [],
@@ -392,7 +370,21 @@ class TestListStandardNames:
         assert "electron_temperature" in result
         assert "plasma_current" in result
 
-    def test_list_with_tag_filter(self):
+    def test_list_no_args_no_typeerror(self):
+        """Plan-MCP regression: list with no args must not raise.
+
+        Before this plan landed, the MCP wrapper forwarded ``tag=None``
+        unconditionally, which the backing function never accepted.
+        """
+        from imas_codex.llm.sn_tools import _list_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        # Must not raise
+        _list_standard_names(gc=mock_gc)
+
+    def test_list_with_physics_domain_filter(self):
+        """physics_domain filter is pushed into the Cypher WHERE clause."""
         from imas_codex.llm.sn_tools import _list_standard_names
 
         mock_gc = MagicMock()
@@ -408,9 +400,12 @@ class TestListStandardNames:
             ]
         )
 
-        result = _list_standard_names(tag="core_profiles", gc=mock_gc)
+        result = _list_standard_names(physics_domain="transport", gc=mock_gc)
         assert "electron_temperature" in result
-        mock_gc.query.assert_called_once()
+        call = mock_gc.query.call_args
+        cypher = call.args[0] if call.args else ""
+        assert "physics_domain" in cypher
+        assert call.kwargs.get("physics_domain") == "transport"
 
     def test_list_empty_results(self):
         from imas_codex.llm.sn_tools import _list_standard_names
@@ -418,7 +413,7 @@ class TestListStandardNames:
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
-        result = _list_standard_names(tag="nonexistent_tag", gc=mock_gc)
+        result = _list_standard_names(physics_domain="nonexistent_domain", gc=mock_gc)
         assert "No standard names" in result
 
     def test_list_filter_info_in_header(self):
@@ -440,6 +435,26 @@ class TestListStandardNames:
 
         result = _list_standard_names(kind="scalar", gc=mock_gc)
         assert "kind=scalar" in result
+
+    def test_list_physics_domain_in_header(self):
+        """physics_domain filter shows in header."""
+        from imas_codex.llm.sn_tools import _list_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(
+            return_value=[
+                {
+                    "name": "electron_temperature",
+                    "kind": "scalar",
+                    "unit": "eV",
+                    "pipeline_status": "drafted",
+                    "description": "Te",
+                },
+            ]
+        )
+
+        result = _list_standard_names(physics_domain="transport", gc=mock_gc)
+        assert "physics_domain=transport" in result
 
     def test_list_table_format(self):
         """Output is a markdown table."""
@@ -464,7 +479,7 @@ class TestListStandardNames:
 
 
 class TestMCPToolRegistration:
-    """Test that SN tools are importable and callable."""
+    """Test that SN tools are importable and have the post-plan signatures."""
 
     def test_tools_importable(self):
         """SN tools should be importable from sn_tools."""
@@ -479,7 +494,7 @@ class TestMCPToolRegistration:
         assert callable(_list_standard_names)
 
     def test_search_signature(self):
-        """search_standard_names accepts expected kwargs."""
+        """search_standard_names accepts physics_domain (not tags)."""
         import inspect
 
         from imas_codex.llm.sn_tools import _search_standard_names
@@ -488,10 +503,13 @@ class TestMCPToolRegistration:
         params = set(sig.parameters.keys())
         assert "query" in params
         assert "kind" in params
-        assert "tags" in params
+        assert "physics_domain" in params
         assert "pipeline_status" in params
         assert "k" in params
         assert "gc" in params
+        # The legacy ``tags`` filter has been dropped (Plan MCP+units Track A)
+        assert "tags" not in params
+        assert "tag" not in params
 
     def test_fetch_signature(self):
         """fetch_standard_names accepts expected kwargs."""
@@ -505,14 +523,31 @@ class TestMCPToolRegistration:
         assert "gc" in params
 
     def test_list_signature(self):
-        """list_standard_names accepts expected kwargs."""
+        """list_standard_names accepts physics_domain (not tag)."""
         import inspect
 
         from imas_codex.llm.sn_tools import _list_standard_names
 
         sig = inspect.signature(_list_standard_names)
         params = set(sig.parameters.keys())
-        assert "tag" in params
+        assert "physics_domain" in params
         assert "kind" in params
         assert "pipeline_status" in params
         assert "gc" in params
+        # The legacy ``tag`` filter has been dropped
+        assert "tag" not in params
+        assert "tags" not in params
+
+    def test_mcp_wrapper_no_tags_tag(self):
+        """MCP wrappers must not declare tag/tags parameters."""
+        # Server module must import cleanly and contain no `tag`/`tags`
+        # default parameters in the SN wrapper signatures.
+        import inspect
+
+        from imas_codex.llm import server  # noqa: F401
+
+        src = inspect.getsource(server)
+        # Anchor checks to the SN tool definitions, not surrounding prose.
+        assert "tags: list[str] | None = None" not in src
+        # The list_standard_names wrapper must not declare ``tag``.
+        assert "def list_standard_names(\n                tag:" not in src

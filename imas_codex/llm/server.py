@@ -3087,7 +3087,7 @@ class AgentsServer:
             def search_standard_names(
                 query: str,
                 kind: str | None = None,
-                tags: list[str] | None = None,
+                physics_domain: str | None = None,
                 review_status: str | None = None,
                 k: int = 20,
                 cocos_type: str | None = None,
@@ -3111,7 +3111,9 @@ class AgentsServer:
                     query: Natural-language description of the quantity to find
                         (e.g. "electron temperature", "plasma boundary shape").
                     kind: Filter by kind (e.g. "scalar", "vector", "metadata").
-                    tags: Filter by tags (e.g. ["equilibrium", "core_profiles"]).
+                    physics_domain: Filter by physics domain (e.g. "equilibrium",
+                        "transport", "core_profiles"). Matches either the promoted
+                        scalar ``physics_domain`` or any value in ``source_domains``.
                     review_status: Filter by review status (e.g. "drafted", "published").
                     k: Maximum results to return (default 20).
                     cocos_type: Filter by COCOS transformation type (e.g. "psi_like",
@@ -3152,7 +3154,7 @@ class AgentsServer:
                 return _ssn(
                     query,
                     kind=kind,
-                    tags=tags,
+                    physics_domain=physics_domain,
                     pipeline_status=review_status,
                     k=k,
                     cocos_type=cocos_type,
@@ -3188,7 +3190,7 @@ class AgentsServer:
 
             @self.mcp.tool()
             def list_standard_names(
-                tag: str | None = None,
+                physics_domain: str | None = None,
                 kind: str | None = None,
                 review_status: str | None = None,
                 cocos_type: str | None = None,
@@ -3198,7 +3200,9 @@ class AgentsServer:
                 Returns name, description, kind, unit, status for each entry.
 
                 Args:
-                    tag: Filter by tag (e.g. "equilibrium", "magnetics").
+                    physics_domain: Filter by physics domain (e.g. "equilibrium",
+                        "magnetics", "transport"). Matches either the promoted
+                        scalar ``physics_domain`` or any value in ``source_domains``.
                     kind: Filter by kind (e.g. "scalar", "vector").
                     review_status: Filter by review status (e.g. "drafted").
                     cocos_type: Filter by COCOS transformation type (e.g. "psi_like",
@@ -3210,7 +3214,7 @@ class AgentsServer:
                 from imas_codex.llm.sn_tools import _list_standard_names as _lsn
 
                 return _lsn(
-                    tag=tag,
+                    physics_domain=physics_domain,
                     kind=kind,
                     pipeline_status=review_status,
                     cocos_type=cocos_type,

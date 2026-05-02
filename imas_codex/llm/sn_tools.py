@@ -52,6 +52,7 @@ def _search_standard_names(
     kind: str | None = None,
     pipeline_status: str | None = None,
     cocos_type: str | None = None,
+    physics_domain: str | None = None,
     physical_base: str | None = None,
     subject: str | None = None,
     transformation: str | None = None,
@@ -83,6 +84,7 @@ def _search_standard_names(
             kind,
             pipeline_status,
             cocos_type,
+            physics_domain,
             physical_base,
             subject,
             transformation,
@@ -144,11 +146,17 @@ def _search_standard_names(
 
     try:
         if segment_filters:
-            rows = _segment_filter_search_standard_names(gc, query, k, segment_filters)
+            rows = _segment_filter_search_standard_names(
+                gc, query, k, segment_filters, physics_domain=physics_domain
+            )
         elif has_embedding:
-            rows = _vector_search_standard_names(gc, embedding, k)
+            rows = _vector_search_standard_names(
+                gc, embedding, k, physics_domain=physics_domain
+            )
         else:
-            rows = _keyword_search_standard_names(gc, query, k)
+            rows = _keyword_search_standard_names(
+                gc, query, k, physics_domain=physics_domain
+            )
     except ServiceUnavailable:
         return NEO4J_NOT_RUNNING_MSG
     except Exception as e:
@@ -176,6 +184,8 @@ def _segment_filter_search_standard_names(
     query: str,
     k: int,
     segment_filters: dict[str, str],
+    *,
+    physics_domain: str | None = None,
 ) -> list[dict]:
     """Bare-name column segment-filter search.
 
@@ -211,7 +221,7 @@ def _segment_filter_search_standard_names(
         "geometry",
     )
 
-    params: dict = {"k": k}
+    params: dict = {"k": k, "pd": physics_domain}
     where: list[str] = []
 
     for i, (segment, token_value) in enumerate(segment_filters.items()):
@@ -224,6 +234,12 @@ def _segment_filter_search_standard_names(
     if not where:
         return []
 
+    # Plan-MCP: physics_domain filter pushed into Cypher (covers promoted
+    # scalar and source list).  $pd=null short-circuits to true.
+    where.append(
+        "($pd IS NULL OR sn.physics_domain = $pd OR $pd IN coalesce(sn.source_domains, []))"
+    )
+
     cypher = (
         "MATCH (sn:StandardName)\nWHERE "
         + " AND ".join(where)
@@ -235,6 +251,7 @@ RETURN sn.id AS name, sn.description AS description,
        sn.documentation AS documentation,
        sn.cocos_transformation_type AS cocos_transformation_type,
        sn.cocos AS cocos,
+       sn.physics_domain AS physics_domain,
        1.0 AS score
 LIMIT $k
 """
@@ -243,13 +260,19 @@ LIMIT $k
 
 
 def _vector_search_standard_names(
-    gc: GraphClient, embedding: list[float], k: int
+    gc: GraphClient,
+    embedding: list[float],
+    k: int,
+    *,
+    physics_domain: str | None = None,
 ) -> list[dict]:
     """Run vector search on StandardName nodes."""
     cypher = """
 CALL db.index.vector.queryNodes('standard_name_desc_embedding', $k, $embedding)
 YIELD node AS sn, score
 WHERE sn.id IS NOT NULL
+  AND ($pd IS NULL OR sn.physics_domain = $pd
+       OR $pd IN coalesce(sn.source_domains, []))
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.description AS description,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
@@ -257,19 +280,28 @@ RETURN sn.id AS name, sn.description AS description,
        sn.documentation AS documentation,
        sn.cocos_transformation_type AS cocos_transformation_type,
        sn.cocos AS cocos,
+       sn.physics_domain AS physics_domain,
        score
 ORDER BY score DESC
 """
-    return gc.query(cypher, embedding=embedding, k=k)
+    return gc.query(cypher, embedding=embedding, k=k, pd=physics_domain)
 
 
-def _keyword_search_standard_names(gc: GraphClient, query: str, k: int) -> list[dict]:
+def _keyword_search_standard_names(
+    gc: GraphClient,
+    query: str,
+    k: int,
+    *,
+    physics_domain: str | None = None,
+) -> list[dict]:
     """Run keyword search on StandardName nodes."""
     cypher = """
 MATCH (sn:StandardName)
-WHERE toLower(sn.id) CONTAINS toLower($keyword)
-   OR toLower(sn.description) CONTAINS toLower($keyword)
-   OR toLower(coalesce(sn.documentation, '')) CONTAINS toLower($keyword)
+WHERE (toLower(sn.id) CONTAINS toLower($keyword)
+       OR toLower(sn.description) CONTAINS toLower($keyword)
+       OR toLower(coalesce(sn.documentation, '')) CONTAINS toLower($keyword))
+  AND ($pd IS NULL OR sn.physics_domain = $pd
+       OR $pd IN coalesce(sn.source_domains, []))
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.description AS description,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
@@ -277,10 +309,11 @@ RETURN sn.id AS name, sn.description AS description,
        sn.documentation AS documentation,
        sn.cocos_transformation_type AS cocos_transformation_type,
        sn.cocos AS cocos,
+       sn.physics_domain AS physics_domain,
        1.0 AS score
 LIMIT $k
 """
-    return gc.query(cypher, keyword=query, k=k)
+    return gc.query(cypher, keyword=query, k=k, pd=physics_domain)
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +533,7 @@ def _list_standard_names(
     kind: str | None = None,
     pipeline_status: str | None = None,
     cocos_type: str | None = None,
+    physics_domain: str | None = None,
     gc: GraphClient | None = None,
 ) -> str:
     """List standard names with optional filters."""
@@ -524,6 +558,13 @@ def _list_standard_names(
     if cocos_type:
         conditions.append("sn.cocos_transformation_type = $cocos_type")
         params["cocos_type"] = cocos_type
+    if physics_domain:
+        # Match either the promoted scalar or any source_domain.
+        conditions.append(
+            "(sn.physics_domain = $physics_domain "
+            "OR $physics_domain IN coalesce(sn.source_domains, []))"
+        )
+        params["physics_domain"] = physics_domain
 
     where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -548,7 +589,11 @@ ORDER BY sn.id
         return f"List failed: {_neo4j_error_message(e)}"
 
     return _format_list_report(
-        rows, kind=kind, pipeline_status=pipeline_status, cocos_type=cocos_type
+        rows,
+        kind=kind,
+        pipeline_status=pipeline_status,
+        cocos_type=cocos_type,
+        physics_domain=physics_domain,
     )
 
 
@@ -558,6 +603,7 @@ def _format_list_report(
     kind: str | None = None,
     pipeline_status: str | None = None,
     cocos_type: str | None = None,
+    physics_domain: str | None = None,
 ) -> str:
     """Format list results as a markdown table."""
     filter_parts = []
@@ -567,6 +613,8 @@ def _format_list_report(
         filter_parts.append(f"status={pipeline_status}")
     if cocos_type:
         filter_parts.append(f"cocos_type={cocos_type}")
+    if physics_domain:
+        filter_parts.append(f"physics_domain={physics_domain}")
     filter_str = f" (filtered by: {', '.join(filter_parts)})" if filter_parts else ""
 
     if not rows:

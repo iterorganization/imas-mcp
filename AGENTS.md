@@ -1145,16 +1145,19 @@ sn export → sn preview → sn publish → GitHub PR review → PR merged → s
 
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
-| `search_standard_names` | Semantic + keyword search over StandardName descriptions | `query`, `kind`, `tags`, `review_status`, `cocos_type`, `k`, `grammar_physical_base`, `grammar_subject`, `grammar_component`, `grammar_coordinate`, `grammar_transformation`, `grammar_position`, `grammar_process`, `grammar_object`, `grammar_geometry`, `grammar_geometric_base`, `grammar_device` |
+| `search_standard_names` | Semantic + keyword search over StandardName descriptions | `query`, `kind`, `physics_domain`, `review_status`, `cocos_type`, `k`, `physical_base`, `subject`, `component`, `coordinate`, `transformation`, `position`, `process`, `region`, `geometric_base`, `device` |
 | `fetch_standard_names` | Fetch full entries by name ID | `names` (space/comma separated) |
-| `list_standard_names` | List with optional filters | `tag`, `kind`, `review_status`, `cocos_type` |
+| `list_standard_names` | List with optional filters | `physics_domain`, `kind`, `review_status`, `cocos_type` |
 | `list_grammar_vocabulary` | Distinct tokens + usage counts for a grammar segment | `segment` (one of: physical_base, subject, component, coordinate, transformation, position, process, geometry, object, geometric_base, device, region, secondary_base, binary_operator) |
 
-The `grammar_*` filters on `search_standard_names` post-filter the
-hybrid-search result set by exact (case-insensitive) match against the
-parsed `sn.grammar_<segment>` property. Use `list_grammar_vocabulary`
-to discover valid tokens before filtering — especially for the open
-`physical_base` slot, where the vocabulary is not a closed enum.
+The grammar-segment filters (`physical_base`, `subject`, …) on
+`search_standard_names` filter the result set by exact match against the
+parsed `sn.<segment>` property. Use `list_grammar_vocabulary` to discover
+valid tokens before filtering — especially for the open `physical_base`
+slot, where the vocabulary is not a closed enum. The `physics_domain`
+filter (canonical scalar + `source_domains` list) is pushed into Cypher
+in all three search branches (segment-filter, vector, keyword) so it does
+not lose results below `LIMIT $k`.
 
 **Open vs closed grammar segments.** Only `physical_base` is
 open-vocabulary by design (the ISN v0.7 `SEGMENT_TOKEN_MAP` exposes an
