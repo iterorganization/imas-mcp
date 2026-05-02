@@ -94,11 +94,11 @@ async def run_explicit_paths(
         composed = 0
 
     state.stats["generate_name_count"] = composed
-    state.stats["compose_cost"] = mgr.total_spent
+    state.stats["compose_cost"] = mgr.spent
     logger.info(
         "Pool adapter: composed %d candidates (cost=$%.4f)",
         composed,
-        mgr.total_spent,
+        mgr.spent,
     )
 
 
