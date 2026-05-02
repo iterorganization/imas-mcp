@@ -354,16 +354,25 @@ max-cycles = 3
 #   4+       → rejected at config load time (ValueError)
 #
 # 3-model RD-quorum chain (full escalator).
-# Opus primary, GPT-5.4 secondary (cross-vendor independence), Sonnet escalator.
+# Sonnet 4.6 primary, GPT-5.4 secondary (cross-vendor independence), Opus 4.6 escalator.
+#
+# Why Sonnet primary (not Opus): As of 2026-05, OpenRouter's prompt-cache
+# discount is broken for `anthropic/claude-opus-4.6` across all upstream
+# providers (Anthropic-native, Google Vertex, Amazon Bedrock all return
+# cache_creation=0 / cache_read=0 despite cache_control blocks). Sonnet 4.6
+# caches correctly (90% discount on warm calls). Probe: research/cache_probe.py.
+# Reverting to Opus primary as soon as upstream caching is restored will
+# require a single-line edit here.
+#
 # Gemini 3.1-pro-preview removed: Phase 7 probe showed it returns prose despite
 # response_format=json_object — structurally unreliable as a reviewer despite
 # _sanitize_content prose-extraction.  GPT-5.4 provides cross-vendor bias signal
 # while staying inside a validated structured-output family.
 # Temperature: GPT-5.4 rejects temperature=0.0; llm.py auto-clamps to None.
 models = [
-  "openrouter/anthropic/claude-opus-4.6",     # cycle 0 primary (blind)
+  "openrouter/anthropic/claude-sonnet-4.6",  # cycle 0 primary (blind, cache-enabled)
   "openrouter/openai/gpt-5.4",               # cycle 1 secondary (blind, cross-vendor)
-  "openrouter/anthropic/claude-sonnet-4.6",  # cycle 2 escalator (sees both, cheaper than Opus)
+  "openrouter/anthropic/claude-opus-4.6",    # cycle 2 escalator (disputes only, no cache)
 ]
 disagreement-threshold = 0.20
 
@@ -374,10 +383,11 @@ disagreement-threshold = 0.20
 
 [tool.imas-codex.sn.review.names.profiles.default]
 # Mirror of the top-level [sn.review.names] keys; used when no profile is set.
+# See top-level [sn.review.names] for rationale on Sonnet-primary ordering.
 models = [
-  "openrouter/anthropic/claude-opus-4.6",     # cycle 0 primary (blind)
+  "openrouter/anthropic/claude-sonnet-4.6",  # cycle 0 primary (blind, cache-enabled)
   "openrouter/openai/gpt-5.4",               # cycle 1 secondary (blind, cross-vendor)
-  "openrouter/anthropic/claude-sonnet-4.6",  # cycle 2 escalator (sees both, cheaper than Opus)
+  "openrouter/anthropic/claude-opus-4.6",    # cycle 2 escalator (disputes only, no cache)
 ]
 disagreement-threshold = 0.20
 
@@ -405,11 +415,12 @@ disagreement-threshold = 1.0  # never escalate (single-model)
 
 [tool.imas-codex.sn.review.docs]
 # Reviewer model chain for the documentation-quality axis.
-# Same length semantics as [sn.review.names]. Same 3-model RD-quorum chain.
+# Same length semantics as [sn.review.names]. Sonnet primary for cache discount —
+# see [sn.review.names] block for rationale.
 models = [
-  "openrouter/anthropic/claude-opus-4.6",
-  "openrouter/openai/gpt-5.4",
   "openrouter/anthropic/claude-sonnet-4.6",
+  "openrouter/openai/gpt-5.4",
+  "openrouter/anthropic/claude-opus-4.6",
 ]
 disagreement-threshold = 0.20
 
