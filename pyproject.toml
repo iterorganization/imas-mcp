@@ -265,7 +265,12 @@ triage-offset = 0.15
 location = "iter"
 
 [tool.imas-codex.language]
-model = "google/gemini-3.1-flash-lite-preview"
+# openrouter/ prefix required so direct-path bypass preserves cache_control
+# and response_cost. Without it, calls silently route through the proxy,
+# stripping cache discounts (often 80%+) and zeroing cost telemetry.
+# Powers refine_name, generate_docs, refine_docs, refine_name+fanout —
+# 1502 unprefixed calls/24h before this prefix was added (2026-05-02).
+model = "openrouter/google/gemini-3.1-flash-lite-preview"
 batch-size = 50
 
 [tool.imas-codex.dd-enrichment]
@@ -275,7 +280,8 @@ batch-size = 50
 model = "openrouter/anthropic/claude-sonnet-4.6"
 
 [tool.imas-codex.vision]
-model = "google/gemini-3.1-flash-lite-preview"
+# openrouter/ prefix — see [language] note above.
+model = "openrouter/google/gemini-3.1-flash-lite-preview"
 
 [tool.imas-codex.reasoning]
 # openrouter/ prefix — see [dd-enrichment] note above.
