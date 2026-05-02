@@ -41,9 +41,9 @@ Plans validated against 62 existing standard names, current scoring architecture
 | ~~P1j~~ | features/standard-names/completed/44-sn-graph-renames-batched-embed.md | ✅ Completed (2026-04-30 → `completed/`) — `StandardNameReview` rename; multi-valued `HAS_PHYSICS_DOMAIN`; batch embedding; `sn clear`. | — |
 | ~~P8.1~~ | features/standard-names/completed/38-grammar-vnext.md | ✅ Completed — six-pool generate/review/refine architecture; `REFINED_FROM`; `DocsRevision`; `--min-score`/`--rotation-cap`/`--escalation-model`; commit `51fb80dd`. | — |
 | ~~—~~ | features/standard-names/completed/superseded/37-grammar-identity-prefix.md | ❌ Superseded (2026-04-30) by plan 38 — preposition-stripping rejected by RD + self-review. | — |
-| **P2** | [features/dd-server-cleanup.md](features/dd-server-cleanup.md) | 3 surgical fixes: truncation count, migration API, fuzzy matcher | 1-3 agents |
-| **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Careful ranking fixes (accessor de-ranking, IDS preference), evaluation alignment | 2 agents |
-| **P4** | [features/docs-refresh.md](features/docs-refresh.md) | Fix 7 stale docs, rewrite docs/README.md (17+ missing entries) | 1 agent |
+| **P2** | [features/docs-refresh.md](features/docs-refresh.md) | Fix stale docs: graph backup/restore CLI, LLM proxy port, llamaindex-agents references, docs/README.md (17+ missing entries) | 1 agent |
+| ~~P2~~ | ~~features/dd-server-cleanup.md~~ | ✅ Completed — list_dd_paths COUNT query, migration guide include_recipes wiring, PathFuzzyMatcher in check_dd_paths (commit `fb21ef4e`) | — |
+| ~~P3~~ | ~~features/search-quality-improvements.md~~ | ✅ Completed — Phase 1A accessor de-ranking, Phase 1B IDS preference (commit `64abde14`); evaluation alignment (commit `1d264f23`); cluster_labels populated in core search; Lucene fuzzy BM25 (commit `ebd311b6`). Phase 1C explicitly deferred. | — |
 | ~~P5~~ | ~~features/sn-extraction-coverage-gaps.md~~ | ✅ Completed — StandardNameSource graph-primary architecture, naming standardization, extraction coverage gap fixes | — |
 | ~~P6~~ | ~~features/standard-names/30-dd-semantic-categories.md~~ | ✅ Completed — `fit_artifact` & `representation` NodeCategory enums, DD classifier rules (F1/F2/R1/R2/R4), SN classifier simplified to S0+S1+S2, graph migration (269 fit_artifact, 2209 representation) | — |
 
@@ -64,6 +64,14 @@ Plans validated against 62 existing standard names, current scoring architecture
 Fully implemented plans archived in `features/completed/` and `features/standard-names/completed/`.
 
 Notable recent completions:
+- `dd-rebuild.md` — geometry NodeCategory, Pass 2 refine_worker, bug fixes; commits `a975c7f9`, `5541de01`, `49a0b850`, `d79bb9ef`
+- `dd-search-quality-ab.md` — find_related_dd_paths unit_companions fix, cocos_transformation_type filter; commit `fddfecd0`
+- `dd-server-cleanup.md` — list_dd_paths COUNT, migration recipes, IDS fuzzy validation; commit `fb21ef4e`
+- `search-quality-improvements.md` — accessor de-ranking, IDS preference, evaluation alignment, Lucene fuzzy; commits `64abde14`, `1d264f23`, `ebd311b6`
+- `sn-unit-integrity-tests.md` — test_sn_unit_integrity.py + backfill; commit `9d8207e9`
+- `sn-bootstrap-loop.md` — three-layer review pipeline (deterministic audits, batched LLM, consolidation); commit `eefd8506`
+- `sn-enrichment-rotation.md` — enrichment absorbed into `sn run --target docs`; commit `a0bc4a9f`
+- `sn-coverage-closure.md` — coverage expansion infrastructure shipped; `sn generate` → `sn run`
 - `dd-unified-classification.md` — superseded by dd-rebuild.md (merged with multi-pass enrichment)
 - `dd-multi-pass-enrichment.md` — superseded by dd-rebuild.md (merged with classification)
 - `isn-standard-name-kind.md` — ISN StandardNameKind assessed: no changes needed (scalar/vector/metadata sufficient)
@@ -75,17 +83,17 @@ Partially implemented plans kept as reference for gap documents.
 
 | Plan | Scope | Status |
 |------|-------|--------|
+| [33-cli-harmonization.md](features/pending/33-cli-harmonization.md) | CLI option harmonization: Phases 1–3 landed; Phase 4 subcommand consolidation + `-f` freeing + `--limit` harmonisation deferred | Phase 4 pending |
 | [35-catalog-schema-redesign.md](features/standard-names/pending/35-catalog-schema-redesign.md) | Catalog schema v2: export/preview/publish/import round-trip, protection model, origin tracking | Phases 0-7 done; Phase 8 (ISNC clean-break regeneration) pending |
 
 ## Documentation Gaps
 
-Docs review (2026-04-14) found these gaps — addressed in P4 docs-refresh plan:
+Docs review (2026-04-14) found these gaps — addressed in P2 docs-refresh plan:
 
-1. **docs/README.md** — only lists 6 of 17+ architecture docs
+1. **docs/README.md** — only lists 6 of 17+ architecture docs; lists non-existent `west-access-justification.md`
 2. **graph.md** — documents non-existent `backup`/`restore` CLI commands
 3. **services.md** — wrong LLM proxy port (18790 vs 18400)
-4. **standard-names.md** — references non-existent `boundary.md`
-5. **llamaindex-agents.md** — references removed `create_enrichment_agent()`
+4. **llamaindex-agents.md** — references removed `create_enrichment_agent()`
 
 ## Research
 

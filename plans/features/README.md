@@ -79,34 +79,33 @@ priority list. Status as of HEAD (2026-04-30):
 ## Active plans (DD / search / docs)
 
 These are independent of the SN workstream and sequenceable in any order.
-They're pinned to lower priority (P2–P4) in `../README.md`:
 
 | Priority | Plan | Scope |
 |----------|------|-------|
-| P2 | [dd-server-cleanup.md](dd-server-cleanup.md) | 3 surgical fixes: truncation count, migration API, fuzzy matcher |
-| P3 | [search-quality-improvements.md](search-quality-improvements.md) | Ranking fixes: accessor de-ranking, IDS preference, evaluation alignment |
-| P4 | [docs-refresh.md](docs-refresh.md) | Fix 7 stale docs, rewrite docs/README.md (17+ missing entries) |
-| — | [33-cli-harmonization.md](33-cli-harmonization.md) | Phases 1+2 landed; 3+4 deferred |
-| — | [dd-rebuild.md](dd-rebuild.md) | DD graph rebuild w/ multi-pass enrichment + classification (consolidates plan 30) |
-| — | [dd-search-quality-ab.md](dd-search-quality-ab.md) | DD search A/B-motivated improvements |
+| P2 | [docs-refresh.md](docs-refresh.md) | Fix stale docs: graph backup/restore CLI, LLM proxy port, llamaindex-agents references, docs/README.md (17+ missing entries) |
 
-## Stale orphan plans (audit follow-up)
+### Recently completed (w3 audit, 2026-05-xx)
 
-The following four top-level SN plans pre-date the architectural pivot
-(plan 29) and the StandardNameSource graph-primary refactor. They should
-be re-evaluated against the current pipeline before re-activation or
-deletion:
+| Plan | Commits | Notes |
+|------|---------|-------|
+| `dd-rebuild.md` | `a975c7f9`, `5541de01`, `49a0b850`, `d79bb9ef` | geometry NodeCategory, Pass 2 refine_worker, bug fixes |
+| `dd-search-quality-ab.md` | `fddfecd0` | find_related_dd_paths fix, cocos_transformation_type filter |
+| `dd-server-cleanup.md` | `fb21ef4e` | list_dd_paths COUNT, migration recipes, fuzzy check_dd_paths |
+| `search-quality-improvements.md` | `64abde14`, `1d264f23`, `ebd311b6` | accessor de-ranking, IDS preference, evaluation alignment, Lucene fuzzy |
+| `sn-unit-integrity-tests.md` | `9d8207e9` | test_sn_unit_integrity.py + backfill |
+| `sn-bootstrap-loop.md` | `eefd8506` | three-layer review pipeline |
+| `sn-enrichment-rotation.md` | `a0bc4a9f` | absorbed into `sn run --target docs` |
+| `sn-coverage-closure.md` | — | infrastructure shipped; `sn generate` → `sn run` |
 
-- [sn-bootstrap-loop.md](sn-bootstrap-loop.md) — predates 6-pool polling architecture (plan 42)
-- [sn-coverage-closure.md](sn-coverage-closure.md) — predates StandardNameSource (plan 30 / P5)
-- [sn-enrichment-rotation.md](sn-enrichment-rotation.md) — predates docs-stage pool (plan 38)
-- [sn-unit-integrity-tests.md](sn-unit-integrity-tests.md) — unit-injection has since been hard-wired in compose worker (`workers.py`)
+## Pending plans (partial implementations)
 
-Action: read each against the current code on a future audit pass; either
-delete (absorbed) or move to `pending/` (gaps remain). Not blocking the
-active workstream.
+Plans with gaps that are worth tracking:
 
-## Recently relocated (2026-04-30)
+| Plan | Gaps |
+|------|------|
+| [pending/33-cli-harmonization.md](pending/33-cli-harmonization.md) | Phase 4 subcommand consolidation; `-f` freeing on facility-aware commands; `--limit` harmonisation on discover subcommands |
+
+## Recently relocated (2026-04-30 → 2026-05-xx)
 
 | Plan | Destination | Reason |
 |------|-------------|--------|
@@ -115,6 +114,15 @@ active workstream.
 | `44-sn-graph-renames-batched-embed.md` | `standard-names/completed/` | `StandardNameReview` rename + multi-valued `HAS_PHYSICS_DOMAIN` + batch embedding + `sn clear` shipped (commit `9ef134c9`) |
 | `37-grammar-identity-prefix.md` | `standard-names/completed/superseded/` | Self-marked superseded by plan 38 |
 | `38-grammar-vnext.md` | `standard-names/completed/` (earlier) | Six-pool refactor shipped in `51fb80dd` |
+| `33-cli-harmonization.md` | `pending/` | Phases 1–3 shipped; Phase 4 + partial Phase 3 items deferred |
+| `dd-rebuild.md` | DELETED | All code steps shipped (commits `a975c7f9`, `d79bb9ef`, `49a0b850`) |
+| `dd-search-quality-ab.md` | DELETED | All features shipped in `fddfecd0` |
+| `dd-server-cleanup.md` | DELETED | All 3 fixes shipped in `fb21ef4e` |
+| `search-quality-improvements.md` | DELETED | All non-deferred phases shipped |
+| `sn-unit-integrity-tests.md` | DELETED | All 3 phases shipped in `9d8207e9` |
+| `sn-bootstrap-loop.md` | DELETED | Three-layer review shipped in `eefd8506` |
+| `sn-enrichment-rotation.md` | DELETED | Enrichment absorbed into `sn run --target docs` (`a0bc4a9f`) |
+| `sn-coverage-closure.md` | DELETED | Expansion infrastructure shipped; protocol was operational only |
 
 ## Conventions
 
