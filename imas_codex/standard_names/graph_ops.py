@@ -6028,9 +6028,12 @@ def persist_reviewed_name(
     1. Verify ``claim_token`` matches the stored token.
     2. Compute target stage:
        - ``'accepted'`` if ``score >= min_score`` (score-canonical)
-       - ``'exhausted'`` if ``chain_length >= rotation_cap - 1`` and score below min_score
-         (cap reached, no further refine)
-       - ``'reviewed'`` otherwise (eligible for refine_name pickup)
+       - ``'exhausted'`` if ``chain_length >= rotation_cap`` and score below min_score
+         (cap reached, no further refine — the escalated final attempt
+         at chain_length == rotation_cap-1 has already been spent)
+       - ``'reviewed'`` otherwise (eligible for refine_name pickup;
+         at chain_length == rotation_cap-1 this routes through the
+         Opus escalator in process_refine_name_batch)
     3. SET reviewer fields, ``name_stage``, clear claim state.
 
     Parameters
@@ -6090,9 +6093,14 @@ def persist_reviewed_name(
 
     # ── Stage decision ────────────────────────────────────────────────
     # Score is canonical (rubric-driven 0–1).
+    # Exhaustion fires only at chain_length >= rotation_cap so that
+    # chain_length == rotation_cap-1 stays 'reviewed' and routes through
+    # the Opus escalator in process_refine_name_batch (the dead branch
+    # gated by `escalate = chain_length >= rotation_cap - 1`).  Pre-fix
+    # the SN was marked 'exhausted' before the escalator could fire.
     if score >= min_score:
         target_stage = "accepted"
-    elif chain_length >= rotation_cap - 1:
+    elif chain_length >= rotation_cap:
         target_stage = "exhausted"
     else:
         target_stage = "reviewed"
@@ -6275,9 +6283,12 @@ def persist_reviewed_docs(
     1. Verify ``claim_token`` matches the stored token.
     2. Compute target stage:
        - ``'accepted'`` if ``score >= min_score`` (score-canonical)
-       - ``'exhausted'`` if ``docs_chain_length >= rotation_cap - 1``
-         (cap reached, no further refine)
-       - ``'reviewed'`` otherwise (eligible for refine_docs pickup)
+       - ``'exhausted'`` if ``docs_chain_length >= rotation_cap``
+         (cap reached, no further refine — the escalated final
+         attempt at chain == rotation_cap-1 has already been spent)
+       - ``'reviewed'`` otherwise (eligible for refine_docs pickup;
+         at docs_chain_length == rotation_cap-1 this routes through
+         the Opus escalator in process_refine_docs_batch)
     3. SET reviewer_docs fields, ``docs_stage``, clear claim state.
 
     Parameters
@@ -6336,10 +6347,11 @@ def persist_reviewed_docs(
     docs_chain_length: int = int(rows[0]["docs_chain_length"])
 
     # ── Stage decision ────────────────────────────────────────────────
-    # Score is canonical (see persist_reviewed_name for rationale).
+    # Score is canonical (see persist_reviewed_name for rationale,
+    # including the rotation_cap-1 vs rotation_cap escalator gate).
     if score >= min_score:
         target_stage = "accepted"
-    elif docs_chain_length >= rotation_cap - 1:
+    elif docs_chain_length >= rotation_cap:
         target_stage = "exhausted"
     else:
         target_stage = "reviewed"

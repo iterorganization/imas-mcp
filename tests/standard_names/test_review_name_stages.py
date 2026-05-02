@@ -254,8 +254,14 @@ class TestPersistToReviewed:
 
 
 class TestPersistToExhausted:
-    def test_persist_to_exhausted_at_cap(self):
-        """score=0.5, chain_length=2, rotation_cap=3 → 'exhausted'."""
+    def test_persist_to_reviewed_at_escalator_attempt(self):
+        """score=0.5, chain_length=2, rotation_cap=3 → 'reviewed'.
+
+        Pre-fix this returned 'exhausted', pre-empting the Opus escalator
+        in process_refine_name_batch (which fires at chain_length ==
+        rotation_cap-1).  Post-fix the SN stays 'reviewed' so the final
+        escalated refine attempt can fire.
+        """
         gc = _mock_gc_query(
             return_values=[
                 [{"chain_length": 2}],
@@ -275,13 +281,41 @@ class TestPersistToExhausted:
                 rotation_cap=3,
             )
 
+        assert result == "reviewed"
+
+    def test_persist_to_exhausted_post_escalator(self):
+        """score=0.5, chain_length=3, rotation_cap=3 → 'exhausted'.
+
+        After the escalated final refine has produced a chain_length=3
+        SN, the next review step must mark it exhausted (no further
+        refines).
+        """
+        gc = _mock_gc_query(
+            return_values=[
+                [{"chain_length": 3}],
+                [],
+            ]
+        )
+
+        with _patch_gc(gc):
+            from imas_codex.standard_names.graph_ops import persist_reviewed_name
+
+            result = persist_reviewed_name(
+                sn_id="test_name",
+                claim_token="tok",
+                score=0.5,
+                model="m",
+                min_score=0.75,
+                rotation_cap=3,
+            )
+
         assert result == "exhausted"
 
     def test_accept_overrides_chain_length(self):
-        """verdict='accept' with chain_length=2, rotation_cap=3 → 'accepted' (acceptance wins)."""
+        """verdict='accept' with chain_length=3, rotation_cap=3 → 'accepted' (acceptance wins)."""
         gc = _mock_gc_query(
             return_values=[
-                [{"chain_length": 2}],
+                [{"chain_length": 3}],
                 [],
             ]
         )

@@ -384,10 +384,11 @@ def test_docs_rotation_to_acceptance(_gc, _clean):
 @pytest.mark.graph
 @pytest.mark.integration
 def test_docs_exhaustion_path(_gc, _clean):
-    """Two refine rotations → review_docs reject → docs_stage='exhausted'.
+    """Three refine rotations → review_docs reject → docs_stage='exhausted'.
 
-    With rotation_cap=3, docs_chain_length=2 is the final attempt.
-    Asserts 2 DocsRevision nodes and SN not eligible for further refine.
+    With rotation_cap=3, docs_chain_length=2 is the Opus escalator
+    attempt; exhaustion fires at chain=3.  Pre-2026-05-03 this fired
+    at chain=2 directly, pre-empting the escalator.
     """
     sn_id = _uid("exhaust_v1")
     _create_sn_accepted(_gc, sn_id)
@@ -405,15 +406,24 @@ def test_docs_exhaustion_path(_gc, _clean):
     result2 = _refine_docs(_gc, sn_id, iteration=1)
     assert result2["docs_chain_length"] == 2
 
-    # Cycle 3: review reject at chain_length=2, rotation_cap=3 → exhausted
+    # Cycle 3: review reject at chain_length=2 stays 'reviewed'
+    # (escalator gate); refine then advances to chain=3.
     r3 = _review_docs(_gc, sn_id, score=0.5, rotation_cap=3)
-    assert r3 == "exhausted", f"Expected 'exhausted', got {r3!r}"
+    assert r3 == "reviewed", (
+        f"chain=2/cap=3 must remain 'reviewed' for Opus escalator; got {r3!r}"
+    )
+    result3 = _refine_docs(_gc, sn_id, iteration=2)
+    assert result3["docs_chain_length"] == 3
+
+    # Cycle 4: review reject at chain_length=3 → exhausted
+    r4 = _review_docs(_gc, sn_id, score=0.5, rotation_cap=3)
+    assert r4 == "exhausted", f"Expected 'exhausted', got {r4!r}"
 
     row = _fetch_sn_docs(_gc, sn_id)
     assert row["docs_stage"] == "exhausted"
 
-    # Two DocsRevision snapshots
-    assert _count_docs_revisions(_gc, sn_id) == 2
+    # Three DocsRevision snapshots
+    assert _count_docs_revisions(_gc, sn_id) == 3
 
     # SN is NOT eligible for further refine (docs_stage != 'reviewed')
     rows = _gc.query(
@@ -650,18 +660,20 @@ def test_chain_history_walks_revisions(_gc, _clean):
 def test_docs_acceptance_overrides_chain_length_at_cap(_gc, _clean):
     """Accept verdict wins even at rotation-cap chain_length (not exhausted).
 
-    SN at docs_chain_length=2, rotation_cap=3, score>=min → 'accepted', not 'exhausted'.
+    SN at docs_chain_length=3, rotation_cap=3, score>=min → 'accepted',
+    not 'exhausted'.  (Exhaustion gate moved from chain=2 to chain=3
+    on 2026-05-03 to keep the Opus escalator at chain=2 reachable.)
     """
     sn_id = _uid("cap_accept_docs")
     token = f"tok-cap-{uuid.uuid4().hex[:8]}"
 
     _create_sn_accepted(_gc, sn_id)
-    # Directly set docs_chain_length=2 (would be exhausted on reject)
+    # Directly set docs_chain_length=3 (would be exhausted on reject)
     _gc.query(
         """
         MATCH (sn:StandardName {id: $id})
         SET sn.docs_stage        = 'drafted',
-            sn.docs_chain_length = 2,
+            sn.docs_chain_length = 3,
             sn.description       = 'Test',
             sn.documentation     = 'Test docs'
         """,

@@ -235,11 +235,44 @@ class TestPersistToReviewedLowScore:
 
 
 class TestPersistToExhaustedAtCap:
-    def test_persist_to_exhausted_at_cap(self):
-        """score=0.5, docs_chain_length=2, rotation_cap=3 → 'exhausted'."""
+    def test_persist_to_reviewed_at_escalator_attempt(self):
+        """score=0.5, docs_chain_length=2, rotation_cap=3 → 'reviewed'.
+
+        Pre-fix this returned 'exhausted', pre-empting the Opus
+        escalator in process_refine_docs_batch (which fires at
+        docs_chain_length == rotation_cap-1).  Post-fix the SN stays
+        'reviewed' so the final escalated refine attempt can fire.
+        """
         gc = _mock_gc_query(
             return_values=[
                 [{"docs_chain_length": 2}],
+                [],
+            ]
+        )
+
+        with _patch_gc(gc):
+            from imas_codex.standard_names.graph_ops import persist_reviewed_docs
+
+            result = persist_reviewed_docs(
+                sn_id="test_name",
+                claim_token="tok",
+                score=0.5,
+                model="m",
+                min_score=0.75,
+                rotation_cap=3,
+            )
+
+        assert result == "reviewed"
+
+    def test_persist_to_exhausted_post_escalator(self):
+        """score=0.5, docs_chain_length=3, rotation_cap=3 → 'exhausted'.
+
+        After the escalated final refine has produced a chain=3 SN,
+        the next review step must mark it exhausted.
+        """
+        gc = _mock_gc_query(
+            return_values=[
+                [{"docs_chain_length": 3}],
                 [],
             ]
         )
@@ -286,10 +319,10 @@ class TestPersistToReviewedBelowCap:
 
 class TestAcceptOverridesChainLengthAtCap:
     def test_accept_overrides_chain_length_at_cap(self):
-        """docs_chain_length=2, rotation_cap=3 → 'accepted'."""
+        """docs_chain_length=3, rotation_cap=3 → 'accepted' (acceptance wins)."""
         gc = _mock_gc_query(
             return_values=[
-                [{"docs_chain_length": 2}],
+                [{"docs_chain_length": 3}],
                 [],
             ]
         )

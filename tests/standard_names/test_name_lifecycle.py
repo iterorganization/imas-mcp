@@ -397,24 +397,33 @@ def test_rotation_to_acceptance(_gc, _clean):
 @pytest.mark.graph
 @pytest.mark.integration
 def test_exhaustion_path(_gc, _clean):
-    """Three-step rejection chain leads to 'exhausted' at rotation_cap=3.
+    """Four-step rejection chain leads to 'exhausted' at rotation_cap=3.
 
-    SN_v3 (chain_length=2) is rejected after two prior refine attempts →
-    name_stage='exhausted'.  The SN is no longer eligible for refine_name.
+    SN_v4 (chain_length=3) is rejected after three prior refine attempts
+    (the final one routed through the Opus escalator at chain_length=2)
+    → name_stage='exhausted'.  The SN is no longer eligible for
+    refine_name.
+
+    Pre-2026-05-03: exhaustion fired at chain=2 directly, pre-empting
+    the escalator.  Post-fix: chain=2 stays 'reviewed' so the escalator
+    can spend its final attempt; exhaustion fires only at chain=3.
     """
     src_id = _uid("src_exhaust")
     sn_v1 = _uid("exhaust_v1")
     sn_v2 = _uid("exhaust_v2")
     sn_v3 = _uid("exhaust_v3")
+    sn_v4 = _uid("exhaust_v4")
 
     _create_source(_gc, src_id)
     _create_sn(_gc, sn_v1, name_stage="drafted", chain_length=0)
     _link_source_sn(_gc, src_id, sn_v1)
 
-    # Review + refine loop × 2
+    # Review + refine loop × 3 (third cycle is the escalator attempt
+    # that previously could not run because of premature exhaustion).
     for old_sn, new_sn, old_chain in [
         (sn_v1, sn_v2, 0),
         (sn_v2, sn_v3, 1),
+        (sn_v3, sn_v4, 2),
     ]:
         tok = f"tok-ex-{uuid.uuid4().hex[:8]}"
         _set_claim(_gc, old_sn, tok)
@@ -437,24 +446,24 @@ def test_exhaustion_path(_gc, _clean):
             model="test/model",
         )
 
-    # Final review on SN_v3 (chain_length=2, rotation_cap=3 → exhausted)
-    tok3 = f"tok-ex3-{uuid.uuid4().hex[:8]}"
-    _set_claim(_gc, sn_v3, tok3)
-    r3 = persist_reviewed_name(
-        sn_id=sn_v3,
-        claim_token=tok3,
+    # Final review on SN_v4 (chain_length=3, rotation_cap=3 → exhausted)
+    tok4 = f"tok-ex4-{uuid.uuid4().hex[:8]}"
+    _set_claim(_gc, sn_v4, tok4)
+    r4 = persist_reviewed_name(
+        sn_id=sn_v4,
+        claim_token=tok4,
         score=0.5,
         model="test/model",
         min_score=0.75,
         rotation_cap=3,
     )
-    assert r3 == "exhausted", f"Expected 'exhausted', got {r3!r}"
+    assert r4 == "exhausted", f"Expected 'exhausted', got {r4!r}"
 
-    row_v3 = _fetch_sn(_gc, sn_v3)
-    assert row_v3["name_stage"] == "exhausted"
-    assert row_v3["chain_length"] == 2
+    row_v4 = _fetch_sn(_gc, sn_v4)
+    assert row_v4["name_stage"] == "exhausted"
+    assert row_v4["chain_length"] == 3
 
-    # SN_v3 is NOT eligible for further refine_name (name_stage != 'reviewed')
+    # SN_v4 is NOT eligible for further refine_name (name_stage != 'reviewed')
     rows = _gc.query(
         """
         MATCH (sn:StandardName {id: $id})
@@ -462,7 +471,7 @@ def test_exhaustion_path(_gc, _clean):
            OR sn.name_stage = 'refining'
         RETURN sn.id AS id
         """,
-        id=sn_v3,
+        id=sn_v4,
     )
     assert not rows, "Exhausted SN should not be eligible for refine_name"
 
@@ -535,13 +544,15 @@ def test_escalation_at_final_attempt(_gc, _clean, mock_llm):
 def test_acceptance_overrides_chain_length_at_cap(_gc, _clean):
     """Accept verdict always wins even at the rotation-cap chain_length.
 
-    SN at chain_length=2, rotation_cap=3 → would be 'exhausted' on reject,
-    but a score-≥-min + accept verdict produces 'accepted' instead.
+    SN at chain_length=3, rotation_cap=3 → would be 'exhausted' on
+    reject, but a score-≥-min + accept verdict produces 'accepted'
+    instead.  (Pre-2026-05-03 the gate was at chain=2 — moved to
+    chain=3 to keep the Opus escalator at chain=2 reachable.)
     """
     sn_id = _uid("cap_accept")
     token = f"tok-cap-{uuid.uuid4().hex[:8]}"
 
-    _create_sn(_gc, sn_id, name_stage="drafted", chain_length=2)
+    _create_sn(_gc, sn_id, name_stage="drafted", chain_length=3)
     _set_claim(_gc, sn_id, token)
 
     result = persist_reviewed_name(

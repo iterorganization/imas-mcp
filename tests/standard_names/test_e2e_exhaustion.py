@@ -378,40 +378,51 @@ def test_e2e_name_exhausted_blocks_docs_pipeline(_gc, _clean):
     assert r1 == "reviewed", f"Expected 'reviewed', got {r1!r}"
     _refine_name(_gc, sn_v1, sn_v2, old_chain=0)
 
-    # Cycle 2: review reject → refine (v2 → v3)
+    # Cycle 2: review reject → refine (v2 → v3, chain_length=2)
     r2 = _reject_name(_gc, sn_v2)
     assert r2 == "reviewed"
     _refine_name(_gc, sn_v2, sn_v3, old_chain=1)
 
-    # Final review on v3 (chain_length=2, cap=3) → exhausted
+    # Cycle 3: review reject at chain_length=2 stays 'reviewed' so the
+    # Opus escalator in process_refine_name_batch can fire on the
+    # final attempt (cl == cap-1).  Pre-fix this used to mark exhausted
+    # immediately at cl=2, pre-empting the escalator.
+    sn_v4 = f"{local_prefix}_v4"
     r3 = _reject_name(_gc, sn_v3)
-    assert r3 == "exhausted", f"Expected 'exhausted' on cap, got {r3!r}"
+    assert r3 == "reviewed", (
+        f"chain=2/cap=3 must remain 'reviewed' for Opus escalator; got {r3!r}"
+    )
+    _refine_name(_gc, sn_v3, sn_v4, old_chain=2)
+
+    # Final review on v4 (chain_length=3, cap=3) → exhausted
+    r4 = _reject_name(_gc, sn_v4)
+    assert r4 == "exhausted", f"Expected 'exhausted' on cap, got {r4!r}"
 
     # --- Assertions on graph state ---
-    row_v3 = _fetch_sn(_gc, sn_v3)
-    assert row_v3["name_stage"] == "exhausted"
-    assert row_v3["docs_stage"] == "pending", (
+    row_v4 = _fetch_sn(_gc, sn_v4)
+    assert row_v4["name_stage"] == "exhausted"
+    assert row_v4["docs_stage"] == "pending", (
         "docs_stage must remain 'pending' — name never accepted"
     )
-    assert row_v3["claim_token"] is None
+    assert row_v4["claim_token"] is None
 
     # No DocsRevision nodes for this chain
-    for sn_id in (sn_v1, sn_v2, sn_v3):
+    for sn_id in (sn_v1, sn_v2, sn_v3, sn_v4):
         assert _count_docs_revisions(_gc, sn_id) == 0
 
-    # generate_docs must NOT claim v3 (name_stage='exhausted', not 'accepted')
+    # generate_docs must NOT claim v4 (name_stage='exhausted', not 'accepted')
     claimed_docs = claim_generate_docs_batch(batch_size=50)
     claimed_ids = {item["id"] for item in claimed_docs}
-    assert sn_v3 not in claimed_ids, (
+    assert sn_v4 not in claimed_ids, (
         "Exhausted SN must not appear in generate_docs claim"
     )
 
-    # refine_name must NOT claim v3 (name_stage='exhausted', not 'reviewed')
+    # refine_name must NOT claim v4 (name_stage='exhausted', not 'reviewed')
     claimed_refine = claim_refine_name_batch(
         min_score=0.75, rotation_cap=_CAP, batch_size=50
     )
     claimed_refine_ids = {item["id"] for item in claimed_refine}
-    assert sn_v3 not in claimed_refine_ids, (
+    assert sn_v4 not in claimed_refine_ids, (
         "Exhausted SN must not appear in refine_name claim"
     )
 
@@ -449,9 +460,19 @@ def test_e2e_docs_exhausted_keeps_name_accepted(_gc, _clean):
     result2 = _refine_docs(_gc, sn_id, iteration=1)
     assert result2["docs_chain_length"] == 2
 
-    # Cycle 3: final reject at docs_chain_length=2 → exhausted
+    # Cycle 3: review reject at docs_chain_length=2 stays 'reviewed' so
+    # the Opus escalator in process_refine_docs_batch can fire on the
+    # final attempt (cl == cap-1).  Pre-fix marked exhausted immediately.
     rd3 = _reject_docs(_gc, sn_id, rotation_cap=_CAP)
-    assert rd3 == "exhausted", f"Expected 'exhausted', got {rd3!r}"
+    assert rd3 == "reviewed", (
+        f"docs_chain=2/cap=3 must remain 'reviewed' for Opus escalator; got {rd3!r}"
+    )
+    result3 = _refine_docs(_gc, sn_id, iteration=2)
+    assert result3["docs_chain_length"] == 3
+
+    # Cycle 4: final reject at docs_chain_length=3 → exhausted
+    rd4 = _reject_docs(_gc, sn_id, rotation_cap=_CAP)
+    assert rd4 == "exhausted", f"Expected 'exhausted', got {rd4!r}"
 
     # --- Assertions ---
     row = _fetch_sn(_gc, sn_id)
@@ -459,12 +480,12 @@ def test_e2e_docs_exhausted_keeps_name_accepted(_gc, _clean):
         "name_stage must remain 'accepted' after docs exhaustion"
     )
     assert row["docs_stage"] == "exhausted"
-    assert row["docs_chain_length"] == 2
+    assert row["docs_chain_length"] == 3
     assert row["claim_token"] is None
 
-    # Both DocsRevision snapshots preserved
-    assert _count_docs_revisions(_gc, sn_id) == 2, (
-        f"Expected 2 DocsRevision nodes, got {_count_docs_revisions(_gc, sn_id)}"
+    # All three DocsRevision snapshots preserved
+    assert _count_docs_revisions(_gc, sn_id) == 3, (
+        f"Expected 3 DocsRevision nodes, got {_count_docs_revisions(_gc, sn_id)}"
     )
 
     # Exhausted SN must not be claimed by refine_docs (docs_stage != 'reviewed')
@@ -496,7 +517,7 @@ def test_e2e_docs_exhausted_keeps_name_accepted(_gc, _clean):
 def test_e2e_acceptance_at_cap_overrides_exhaustion(_gc, _clean):
     """Accept verdict always wins even at the rotation cap.
 
-    SN_v3 at chain_length=2 with rotation_cap=3 would be 'exhausted' on
+    SN_v4 at chain_length=3 with rotation_cap=3 would be 'exhausted' on
     reject, but an 'accept' verdict with score >= min → 'accepted' instead.
     """
     local_prefix = _uid("cap_acc")
@@ -504,6 +525,7 @@ def test_e2e_acceptance_at_cap_overrides_exhaustion(_gc, _clean):
     sn_v1 = f"{local_prefix}_v1"
     sn_v2 = f"{local_prefix}_v2"
     sn_v3 = f"{local_prefix}_v3"
+    sn_v4 = f"{local_prefix}_v4"
 
     _create_source(_gc, src_id)
     _create_sn(_gc, sn_v1, name_stage="drafted", chain_length=0)
@@ -519,23 +541,28 @@ def test_e2e_acceptance_at_cap_overrides_exhaustion(_gc, _clean):
     assert r2 == "reviewed"
     _refine_name(_gc, sn_v2, sn_v3, old_chain=1)
 
-    # Final review: ACCEPT at chain_length=2 — acceptance overrides cap logic
-    r3 = _accept_name(_gc, sn_v3)
-    assert r3 == "accepted", f"Accept must win over exhaustion cap; got {r3!r}"
+    # Cycle 3: review reject at chain=2 → 'reviewed' (escalator gate)
+    r3 = _reject_name(_gc, sn_v3)
+    assert r3 == "reviewed"
+    _refine_name(_gc, sn_v3, sn_v4, old_chain=2)
+
+    # Final review: ACCEPT at chain_length=3 — acceptance overrides cap logic
+    r4 = _accept_name(_gc, sn_v4)
+    assert r4 == "accepted", f"Accept must win over exhaustion cap; got {r4!r}"
 
     # --- Assertions ---
-    row_v3 = _fetch_sn(_gc, sn_v3)
-    assert row_v3["name_stage"] == "accepted"
-    assert row_v3["chain_length"] == 2
-    assert row_v3["claim_token"] is None
+    row_v4 = _fetch_sn(_gc, sn_v4)
+    assert row_v4["name_stage"] == "accepted"
+    assert row_v4["chain_length"] == 3
+    assert row_v4["claim_token"] is None
 
-    # Source PRODUCED_NAME → SN_v3
-    assert _fetch_produced_name_target(_gc, src_id) == sn_v3
+    # Source PRODUCED_NAME → SN_v4
+    assert _fetch_produced_name_target(_gc, src_id) == sn_v4
 
-    # generate_docs CAN claim SN_v3 (name_stage='accepted', docs_stage='pending')
+    # generate_docs CAN claim SN_v4 (name_stage='accepted', docs_stage='pending')
     claimed = claim_generate_docs_batch(batch_size=50)
     claimed_ids = {item["id"] for item in claimed}
-    assert sn_v3 in claimed_ids, (
+    assert sn_v4 in claimed_ids, (
         "Accepted SN at rotation cap should be eligible for generate_docs"
     )
 
