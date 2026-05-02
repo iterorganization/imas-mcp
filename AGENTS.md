@@ -47,6 +47,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | `[graph]` | Neo4j connection, graph name/location | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()`, `resolve_graph()` |
 | `[embedding]` | Embedding model, dimension, location, scheduler | `get_model("embedding")`, `get_embedding_location()` |
 | `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_model("language")` |
+| `[refine]` | SN refine_name + refine_docs tier (Sonnet 4.6 default) | `get_model("refine")` |
 | `[vision]` | Image/document tasks | `get_model("vision")` |
 | `[reasoning]` | Complex structured output (IMAS mapping, multi-step reasoning) | `get_model("reasoning")` |
 | `[discovery]` | Discovery threshold for high-value processing | `get_discovery_threshold()` |

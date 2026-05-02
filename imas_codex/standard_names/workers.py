@@ -3937,7 +3937,11 @@ async def process_refine_name_batch(
             if escalate:
                 model = DEFAULT_ESCALATION_MODEL
             else:
-                model = get_model("language")
+                # Refine tier (Sonnet 4.6 by default) — peeled off
+                # [language] on 2026-05-03 after E3 acceptance audit
+                # showed flash-lite refines lifted critiqued names at
+                # ~5% vs ~42% for Sonnet compose.
+                model = get_model("refine")
 
             # ── Build prompt context ──────────────────────────────────
             path = item.get("source_paths", [""])[0] if item.get("source_paths") else ""
@@ -5122,7 +5126,9 @@ async def process_refine_docs_batch(
         if escalate:
             model = DEFAULT_ESCALATION_MODEL
         else:
-            model = get_model("language")
+            # Refine tier (Sonnet 4.6 by default) — see refine_name
+            # comment + 2026-05-03 E3 acceptance audit.
+            model = get_model("refine")
 
         # ── Build prompt context ──────────────────────────────────
         prompt_context: dict[str, Any] = {

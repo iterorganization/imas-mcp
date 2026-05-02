@@ -89,6 +89,7 @@ MODEL_SECTIONS = frozenset(
         "dd-enrichment",
         "sn-run",
         "sn-enrich",
+        "refine",
     }
 )
 
@@ -103,6 +104,11 @@ _MODEL_DEFAULTS: dict[str, str] = {
     "dd-enrichment": "openrouter/anthropic/claude-sonnet-4.6",
     "sn-run": "openrouter/anthropic/claude-sonnet-4.6",
     "sn-enrich": "openrouter/anthropic/claude-opus-4.6",
+    # Refine pass for SN names + docs.  E3 telemetry showed flash-lite
+    # could not lift critiqued names (cl=0 accepted at ~42%, cl=1+ at
+    # ~5%).  Sonnet 4.6 matches compose tier so the refine pass is
+    # capable enough to recover from reviewer feedback.
+    "refine": "openrouter/anthropic/claude-sonnet-4.6",
 }
 
 # Environment variable names per section
@@ -116,6 +122,7 @@ _MODEL_ENV_VARS: dict[str, str] = {
     "dd-enrichment": "IMAS_CODEX_DD_ENRICHMENT_MODEL",
     "sn-run": "IMAS_CODEX_SN_RUN_MODEL",
     "sn-enrich": "IMAS_CODEX_SN_ENRICH_MODEL",
+    "refine": "IMAS_CODEX_REFINE_MODEL",
 }
 
 

@@ -268,10 +268,22 @@ location = "iter"
 # openrouter/ prefix required so direct-path bypass preserves cache_control
 # and response_cost. Without it, calls silently route through the proxy,
 # stripping cache discounts (often 80%+) and zeroing cost telemetry.
-# Powers refine_name, generate_docs, refine_docs, refine_name+fanout —
-# 1502 unprefixed calls/24h before this prefix was added (2026-05-02).
+# Powers generate_docs (and any other bulk-content non-refine fanouts).
+# refine_name and refine_docs were peeled off into [tool.imas-codex.refine]
+# on 2026-05-03 after E3 telemetry showed flash-lite refines accept at
+# ~5% vs ~42% for Sonnet-4.6 compose.
 model = "openrouter/google/gemini-3.1-flash-lite-preview"
 batch-size = 50
+
+[tool.imas-codex.refine]
+# openrouter/ prefix — see [language] note above.
+# Powers process_refine_name_batch and process_refine_docs_batch.
+# Routed onto Sonnet 4.6 (matches [sn-run] compose tier) on 2026-05-03
+# because flash-lite refines accepted at ~5% vs ~42% for Sonnet compose
+# in the E3 acceptance audit. Kept as a separate section so the refine
+# tier can diverge from compose later (e.g. always-on Opus) without
+# affecting the compose pass.
+model = "openrouter/anthropic/claude-sonnet-4.6"
 
 [tool.imas-codex.dd-enrichment]
 # openrouter/ prefix required so direct-path bypass preserves cache_control
