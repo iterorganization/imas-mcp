@@ -812,7 +812,7 @@ def _validate_review_models(models: list[str], axis: str) -> list[str]:
 
 
 _VALID_REVIEWER_PROFILES: frozenset[str] = frozenset(
-    {"default", "pilot", "opus-only", "haiku-only"}
+    {"default", "quality-cost-balanced", "opus-only"}
 )
 
 
@@ -823,8 +823,8 @@ def get_sn_review_active_profile() -> str:
       1. ``IMAS_CODEX_SN_REVIEW_PROFILE`` environment variable.
       2. Hard-coded default: ``"default"``.
 
-    Valid profile names: ``"default"``, ``"pilot"``, ``"opus-only"``,
-    ``"haiku-only"``.
+    Valid profile names: ``"default"``, ``"quality-cost-balanced"``,
+    ``"opus-only"``. (Reviewer floor is Sonnet 4.6 — no Haiku profiles.)
 
     Returns:
         Profile name string (not validated here — validation happens in
@@ -849,8 +849,8 @@ def get_sn_review_profile_models(profile: str) -> list[str]:
       * 4+       → rejected (``ValueError``)
 
     Args:
-        profile: Profile name — one of ``"default"``, ``"pilot"``,
-            ``"opus-only"``, ``"haiku-only"``.
+        profile: Profile name — one of ``"default"``,
+            ``"quality-cost-balanced"``, ``"opus-only"``.
 
     Raises:
         ValueError: If *profile* is not in :data:`_VALID_REVIEWER_PROFILES`

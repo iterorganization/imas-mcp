@@ -381,17 +381,6 @@ models = [
 ]
 disagreement-threshold = 0.20
 
-[tool.imas-codex.sn.review.names.profiles.pilot]
-# Pattern D (rd2): Haiku×2 as primary/secondary + Opus arbiter on disagreement.
-# Cost: ~$0.004/name vs ~$0.027 for default (~85% reduction).
-# Use for cost-reduction pilot; validate quality before adopting as default.
-models = [
-  "openrouter/anthropic/claude-haiku-4.5",  # cycle 0 primary (blind, cheap)
-  "openrouter/anthropic/claude-haiku-4.5",  # cycle 1 secondary (blind, cross-instance variance)
-  "openrouter/anthropic/claude-opus-4.6",   # cycle 2 arbiter (disputes only, authoritative)
-]
-disagreement-threshold = 0.15
-
 [tool.imas-codex.sn.review.names.profiles.quality-cost-balanced]
 # Quality-preserving cost reduction: Sonnet 4.6 primary + GPT-5.4 secondary
 # (cross-vendor) + Opus 4.6 arbiter (disputes only, authoritative).
@@ -412,11 +401,6 @@ disagreement-threshold = 0.20
 [tool.imas-codex.sn.review.names.profiles.opus-only]
 # Single-model mode: no quorum, no escalator. Maximum quality, maximum cost.
 models = ["openrouter/anthropic/claude-opus-4.6"]
-disagreement-threshold = 1.0  # never escalate (single-model)
-
-[tool.imas-codex.sn.review.names.profiles.haiku-only]
-# Single-model mode: cheapest option. Useful for bulk drafting passes.
-models = ["openrouter/anthropic/claude-haiku-4.5"]
 disagreement-threshold = 1.0  # never escalate (single-model)
 
 [tool.imas-codex.sn.review.docs]

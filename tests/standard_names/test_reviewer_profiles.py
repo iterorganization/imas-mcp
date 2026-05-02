@@ -61,16 +61,16 @@ def test_env_var_overrides_default_profile(monkeypatch):
     """IMAS_CODEX_SN_REVIEW_PROFILE env var is honoured."""
     from imas_codex import settings as settings_mod
 
-    monkeypatch.setenv("IMAS_CODEX_SN_REVIEW_PROFILE", "pilot")
-    assert settings_mod.get_sn_review_active_profile() == "pilot"
+    monkeypatch.setenv("IMAS_CODEX_SN_REVIEW_PROFILE", "quality-cost-balanced")
+    assert settings_mod.get_sn_review_active_profile() == "quality-cost-balanced"
 
 
-def test_env_var_haiku_only(monkeypatch):
-    """Env var set to 'haiku-only' is returned verbatim."""
+def test_env_var_opus_only(monkeypatch):
+    """Env var set to 'opus-only' is returned verbatim."""
     from imas_codex import settings as settings_mod
 
-    monkeypatch.setenv("IMAS_CODEX_SN_REVIEW_PROFILE", "haiku-only")
-    assert settings_mod.get_sn_review_active_profile() == "haiku-only"
+    monkeypatch.setenv("IMAS_CODEX_SN_REVIEW_PROFILE", "opus-only")
+    assert settings_mod.get_sn_review_active_profile() == "opus-only"
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +83,8 @@ _DEFAULT_MODELS = [
     "openrouter/anthropic/claude-sonnet-4.6",
 ]
 _PILOT_MODELS = [
-    "openrouter/anthropic/claude-haiku-4.5",
-    "openrouter/anthropic/claude-haiku-4.5",
+    "openrouter/anthropic/claude-sonnet-4.6",
+    "openrouter/openai/gpt-5.4",
     "openrouter/anthropic/claude-opus-4.6",
 ]
 
@@ -108,23 +108,24 @@ def test_default_profile_loads_three_models(monkeypatch):
 
 
 def test_pilot_profile_loads_haiku_primary(monkeypatch):
-    """'pilot' profile's first model contains 'haiku'."""
+    """'quality-cost-balanced' profile is sonnet-primary + opus arbiter (no Haiku)."""
     from imas_codex import settings as settings_mod
 
     _patch_profiles(
         monkeypatch,
         {
-            "pilot": {
+            "quality-cost-balanced": {
                 "models": _PILOT_MODELS,
-                "disagreement-threshold": 0.15,
+                "disagreement-threshold": 0.20,
             }
         },
     )
-    models = settings_mod.get_sn_review_profile_models("pilot")
+    models = settings_mod.get_sn_review_profile_models("quality-cost-balanced")
     assert len(models) == 3
-    assert "haiku" in models[0].lower()
-    assert "haiku" in models[1].lower()
+    assert "sonnet" in models[0].lower()
     assert "opus" in models[2].lower()
+    # HARD CONSTRAINT: no Haiku ever in reviewer chain
+    assert not any("haiku" in m.lower() for m in models)
 
 
 def test_opus_only_loads_one_model(monkeypatch):
@@ -146,21 +147,15 @@ def test_opus_only_loads_one_model(monkeypatch):
 
 
 def test_haiku_only_loads_one_model(monkeypatch):
-    """'haiku-only' profile returns exactly one model containing 'haiku'."""
+    """Removed: haiku-only profile dropped (Sonnet 4.6 reviewer floor).
+
+    Asserting it is now an unknown profile preserves the constraint.
+    """
     from imas_codex import settings as settings_mod
 
-    _patch_profiles(
-        monkeypatch,
-        {
-            "haiku-only": {
-                "models": ["openrouter/anthropic/claude-haiku-4.5"],
-                "disagreement-threshold": 1.0,
-            }
-        },
-    )
-    models = settings_mod.get_sn_review_profile_models("haiku-only")
-    assert len(models) == 1
-    assert "haiku" in models[0].lower()
+    _patch_profiles(monkeypatch, {})
+    with pytest.raises(ValueError, match="Unknown reviewer profile"):
+        settings_mod.get_sn_review_profile_models("haiku-only")
 
 
 def test_unknown_profile_raises_value_error(monkeypatch):
@@ -191,14 +186,21 @@ def test_profile_threshold_default(monkeypatch):
 
 
 def test_profile_threshold_pilot(monkeypatch):
-    """Pilot profile threshold is 0.15 (tighter quorum for Haiku)."""
+    """quality-cost-balanced profile threshold is 0.20."""
     from imas_codex import settings as settings_mod
 
     _patch_profiles(
         monkeypatch,
-        {"pilot": {"models": _PILOT_MODELS, "disagreement-threshold": 0.15}},
+        {
+            "quality-cost-balanced": {
+                "models": _PILOT_MODELS,
+                "disagreement-threshold": 0.20,
+            }
+        },
     )
-    assert settings_mod.get_sn_review_profile_threshold("pilot") == pytest.approx(0.15)
+    assert settings_mod.get_sn_review_profile_threshold(
+        "quality-cost-balanced"
+    ) == pytest.approx(0.20)
 
 
 def test_profile_threshold_opus_only(monkeypatch):
@@ -268,13 +270,13 @@ def test_legacy_accessor_respects_active_env_var_profile(monkeypatch):
     _patch_profiles(
         monkeypatch,
         {
-            "pilot": {
+            "quality-cost-balanced": {
                 "models": _PILOT_MODELS,
-                "disagreement-threshold": 0.15,
+                "disagreement-threshold": 0.20,
             }
         },
     )
-    monkeypatch.setenv("IMAS_CODEX_SN_REVIEW_PROFILE", "pilot")
+    monkeypatch.setenv("IMAS_CODEX_SN_REVIEW_PROFILE", "quality-cost-balanced")
 
     models = settings_mod.get_sn_review_names_models()
-    assert "haiku" in models[0].lower()
+    assert "sonnet" in models[0].lower()
