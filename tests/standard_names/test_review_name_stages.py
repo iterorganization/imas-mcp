@@ -630,3 +630,93 @@ class TestFailedReleaseRevertsTo:
         assert rc.get("from_stage") == "drafted"
         assert rc.get("to_stage") == "drafted"
         assert "tok-failed" in str(rc.get("claim_token", ""))
+
+
+# =============================================================================
+# 5. Quarantined-skip optimization
+# =============================================================================
+
+
+class TestQuarantinedSkipsLLM:
+    def test_quarantined_skips_llm_and_persists_zero_score(self, mock_llm):
+        """Quarantined names skip the reviewer LLM and persist score=0 directly."""
+        persist_calls: list[dict[str, Any]] = []
+
+        def _fake_persist(**kwargs):
+            persist_calls.append(kwargs)
+            return "exhausted"
+
+        with (
+            patch(
+                "imas_codex.settings.get_sn_review_names_models",
+                return_value=["openrouter/test/review-model"],
+            ),
+            patch(
+                "imas_codex.standard_names.graph_ops.persist_reviewed_name",
+                side_effect=_fake_persist,
+            ),
+        ):
+            from imas_codex.standard_names.workers import process_review_name_batch
+
+            items = [
+                _make_reviewed_item(
+                    sn_id="bad_name",
+                    validation_status="quarantined",
+                    claim_token="tok-q",
+                )
+            ]
+            mgr = _mock_budget_manager()
+
+            result = asyncio.run(process_review_name_batch(items, mgr, asyncio.Event()))
+
+        # Persisted once, with score 0 and skip-marker model name
+        assert result == 1
+        assert len(persist_calls) == 1
+        kw = persist_calls[0]
+        assert kw["sn_id"] == "bad_name"
+        assert kw["claim_token"] == "tok-q"
+        assert kw["score"] == 0.0
+        assert kw["model"].startswith("(skipped")
+        # No LLM call was issued for the quarantined item
+        assert mock_llm.calls_for("review_name") == 0
+
+    def test_valid_status_still_calls_llm(self, mock_llm):
+        """Names with validation_status='valid' must NOT be skipped."""
+        from imas_codex.standard_names.models import (
+            StandardNameQualityReviewNameOnly,
+            StandardNameQualityScoreNameOnly,
+        )
+
+        review_response = StandardNameQualityReviewNameOnly(
+            source_id="electron_temperature",
+            standard_name="electron_temperature",
+            scores=StandardNameQualityScoreNameOnly(
+                grammar=16, semantic=18, convention=17, completeness=16
+            ),
+            reasoning="ok",
+        )
+        mock_llm.add_response("review_name", response=review_response, model=None)
+
+        with (
+            patch(
+                "imas_codex.settings.get_sn_review_names_models",
+                return_value=["openrouter/test/review-model"],
+            ),
+            patch(
+                "imas_codex.standard_names.graph_ops.persist_reviewed_name",
+                return_value="accepted",
+            ),
+            patch(
+                "imas_codex.llm.prompt_loader.render_prompt",
+                return_value="Review this name.",
+            ),
+        ):
+            from imas_codex.standard_names.workers import process_review_name_batch
+
+            items = [_make_reviewed_item(validation_status="valid")]
+            mgr = _mock_budget_manager()
+
+            result = asyncio.run(process_review_name_batch(items, mgr, asyncio.Event()))
+
+        assert result == 1
+        assert mock_llm.calls_for("review_name") == 1

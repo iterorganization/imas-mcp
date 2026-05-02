@@ -4180,6 +4180,44 @@ async def process_review_name_batch(
         sn_id = item["id"]
         claim_token = item.get("claim_token") or ""
 
+        # ── Skip review for quarantined names ──────────────────────────
+        # Names that failed ISN 3-layer validation (validation_status =
+        # 'quarantined') already have a low-tier verdict from grammar/
+        # audit signals — running an Opus reviewer on them is pure waste.
+        # Persist a zero-score review directly so the state machine
+        # transitions to 'reviewed' or 'exhausted' without an LLM call.
+        if item.get("validation_status") == "quarantined":
+            try:
+                persist_reviewed_name(
+                    sn_id=sn_id,
+                    claim_token=claim_token,
+                    score=0.0,
+                    scores={
+                        "grammar": 0.0,
+                        "semantic": 0.0,
+                        "convention": 0.0,
+                        "completeness": 0.0,
+                    },
+                    comments="quarantined: skipped reviewer LLM call",
+                    comments_per_dim=None,
+                    model="(skipped: quarantined)",
+                )
+                processed += 1
+                if on_event:
+                    on_event(
+                        {
+                            "type": "review_name_skipped_quarantined",
+                            "sn_id": sn_id,
+                        }
+                    )
+            except Exception:
+                logger.debug(
+                    "review_name: persist failed for quarantined %s",
+                    sn_id,
+                    exc_info=True,
+                )
+            continue
+
         # ── Build prompt context ───────────────────────────────────────
         from imas_codex.standard_names.context import _build_enum_lists
 
