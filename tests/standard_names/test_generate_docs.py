@@ -586,3 +586,30 @@ def test_release_generate_docs_claims_empty_ids():
 
     assert count == 0
     gc.query.assert_not_called()
+
+
+# =============================================================================
+# 12. test_generate_docs_prompt_includes_metadata_requirements
+# =============================================================================
+
+
+def test_generate_docs_prompt_includes_metadata_requirements():
+    """generate_docs_system prompt contains all three structural metadata requirements."""
+    from imas_codex.llm.prompt_loader import render_prompt
+
+    rendered = render_prompt("sn/generate_docs_system", {})
+
+    # 1. DD Path citation requirement
+    assert "DD Path citation" in rendered or "imas dd path" in rendered.lower(), (
+        "System prompt must instruct LLM to cite an IMAS DD path"
+    )
+
+    # 2. DD alias mention requirement
+    assert "alias" in rendered.lower(), (
+        "System prompt must instruct LLM to mention DD aliases (e.g. gm1-gm9)"
+    )
+
+    # 3. Cross-reference inline-link form requirement
+    assert "name:" in rendered.lower(), (
+        "System prompt must instruct LLM to use name: inline link form for cross-refs"
+    )

@@ -43,6 +43,23 @@ For each name, the documentation field should cover (where applicable):
 - Kind (scalar / vector / metadata).
 - Unit (authoritative from the Data Dictionary).
 
+## Required structural metadata
+
+Your documentation must reference the supplied DD context structurally, not just rhetorically:
+
+1. **IMAS DD Path citation** — Cite at least one of the supplied `source_paths`
+   verbatim in the documentation prose. Example phrasing:
+   "This quantity corresponds to the IMAS DD path `equilibrium/time_slice/profiles_1d/q`."
+
+2. **DD alias mention** — If the supplied DD context lists abbreviated forms
+   (e.g., `gm1`–`gm9` in equilibrium GGD geometry, `Te`/`ne` in core_profiles),
+   mention the alias once. Example: "In the IMAS DD this is aliased as `gm3`."
+
+3. **Cross-references to related standard names** — When discussing related
+   physics quantities, use the inline link form `[label](name:bare_id)`
+   wherever it flows naturally. Aim for 1-3 inline links if there are
+   genuinely related SNs in the supplied context.
+
 ## Output Schema
 
 Return a JSON object with an `items` array. Each item conforms to:
