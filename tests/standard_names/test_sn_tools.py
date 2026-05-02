@@ -551,3 +551,117 @@ class TestMCPToolRegistration:
         assert "tags: list[str] | None = None" not in src
         # The list_standard_names wrapper must not declare ``tag``.
         assert "def list_standard_names(\n                tag:" not in src
+
+
+class TestSupersededExclusion:
+    """Superseded SNs must not appear in search or list results."""
+
+    def _superseded_row(self, name: str = "electron_heating_power") -> dict:
+        return {
+            "name": name,
+            "description": "Superseded fossil",
+            "kind": "scalar",
+            "unit": "1",
+            "pipeline_status": "superseded",
+            "documentation": None,
+            "physics_domain": "transport",
+            "cocos_transformation_type": None,
+            "cocos": None,
+            "score": 0.99,
+        }
+
+    def _active_row(self, name: str = "electron_temperature") -> dict:
+        return {
+            "name": name,
+            "description": "Electron temperature",
+            "kind": "scalar",
+            "unit": "eV",
+            "pipeline_status": "drafted",
+            "documentation": None,
+            "physics_domain": "transport",
+            "cocos_transformation_type": None,
+            "cocos": None,
+            "score": 0.85,
+        }
+
+    def test_keyword_cypher_excludes_superseded(self):
+        """Keyword-branch Cypher must include name_stage <> 'superseded'."""
+        from imas_codex.llm.sn_tools import _keyword_search_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        _keyword_search_standard_names(mock_gc, "electron temperature", k=5)
+        cypher = mock_gc.query.call_args.args[0]
+        assert "name_stage" in cypher and "superseded" in cypher
+
+    def test_vector_cypher_excludes_superseded(self):
+        """Vector-branch Cypher must include name_stage <> 'superseded'."""
+        from imas_codex.llm.sn_tools import _vector_search_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        _vector_search_standard_names(mock_gc, [0.1] * 8, k=5)
+        cypher = mock_gc.query.call_args.args[0]
+        assert "name_stage" in cypher and "superseded" in cypher
+
+    def test_segment_filter_cypher_excludes_superseded(self):
+        """Segment-filter Cypher must include name_stage <> 'superseded'."""
+        from imas_codex.llm.sn_tools import _segment_filter_search_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        _segment_filter_search_standard_names(
+            mock_gc, "temperature", 5, {"physical_base": "temperature"}
+        )
+        cypher = mock_gc.query.call_args.args[0]
+        assert "name_stage" in cypher and "superseded" in cypher
+
+    def test_search_superseded_row_filtered_by_default(self):
+        """Cypher guard must contain name_stage <> 'superseded' in all branches.
+
+        Validates the Cypher-level fix is in place (DB will exclude superseded
+        nodes before returning rows).  The mock returns an empty list since the
+        Cypher guard is what prevents fossils from appearing in production.
+        """
+        from imas_codex.llm.sn_tools import _search_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+
+        with patch(
+            "imas_codex.llm.sn_tools.Encoder", side_effect=Exception("no embeddings")
+        ):
+            result = _search_standard_names("electron temperature", gc=mock_gc)
+
+        # The Cypher itself must include the name_stage guard.
+        call_cypher = mock_gc.query.call_args.args[0]
+        assert "name_stage" in call_cypher, (
+            "name_stage guard missing from keyword Cypher"
+        )
+        assert "superseded" in call_cypher, (
+            "'superseded' literal missing from keyword Cypher"
+        )
+
+        # No superseded fossil should appear in the formatted output.
+        assert "electron_heating_power" not in result
+
+    def test_list_excludes_superseded_by_default(self):
+        """_list_standard_names must exclude superseded by default."""
+        from imas_codex.llm.sn_tools import _list_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        _list_standard_names(gc=mock_gc)
+        cypher = mock_gc.query.call_args.args[0]
+        assert "name_stage" in cypher and "superseded" in cypher
+
+    def test_list_include_superseded_flag(self):
+        """With include_superseded=True, no name_stage guard in Cypher."""
+        from imas_codex.llm.sn_tools import _list_standard_names
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+        _list_standard_names(include_superseded=True, gc=mock_gc)
+        cypher = mock_gc.query.call_args.args[0]
+        # The guard should be absent when caller opts-in to superseded
+        assert "name_stage" not in cypher or "superseded" not in cypher

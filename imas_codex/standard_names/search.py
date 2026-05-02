@@ -95,6 +95,7 @@ def vector_stream(
               AND coalesce(sn.validation_status, '') <> 'quarantined'
               AND coalesce(sn.pipeline_status, '') <> 'superseded'
               AND coalesce(sn.name_stage, '') <> 'exhausted'
+              AND coalesce(sn.name_stage, '') <> 'superseded'
             RETURN sn.id AS id, score
             ORDER BY score DESC
             """,
@@ -126,6 +127,8 @@ def keyword_stream(
             WHERE toLower(sn.id) CONTAINS toLower($keyword)
                OR toLower(coalesce(sn.description, '')) CONTAINS toLower($keyword)
                OR toLower(coalesce(sn.documentation, '')) CONTAINS toLower($keyword)
+            WITH sn
+            WHERE coalesce(sn.name_stage, '') <> 'superseded'
             RETURN sn.id AS id
             LIMIT $k
             """,
@@ -171,6 +174,7 @@ def grammar_stream(
                 WHERE sn.{seg} IN $tokens
                   AND coalesce(sn.validation_status, '') <> 'quarantined'
                   AND coalesce(sn.pipeline_status, '') <> 'superseded'
+                  AND coalesce(sn.name_stage, '') <> 'superseded'
                 RETURN sn.id AS id
                 """,
                 tokens=tokens,
@@ -402,6 +406,8 @@ def _segment_filter_search(
         where.append(f"sn.{seg} = ${param_key}")
     if not where:
         return []
+    # Always exclude superseded names.
+    where.append("coalesce(sn.name_stage, '') <> 'superseded'")
     cypher = (
         "MATCH (sn:StandardName)\nWHERE "
         + " AND ".join(where)

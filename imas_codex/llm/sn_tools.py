@@ -240,6 +240,9 @@ def _segment_filter_search_standard_names(
         "($pd IS NULL OR sn.physics_domain = $pd OR $pd IN coalesce(sn.source_domains, []))"
     )
 
+    # Always exclude superseded names from search results.
+    where.append("coalesce(sn.name_stage, '') <> 'superseded'")
+
     cypher = (
         "MATCH (sn:StandardName)\nWHERE "
         + " AND ".join(where)
@@ -271,6 +274,7 @@ def _vector_search_standard_names(
 CALL db.index.vector.queryNodes('standard_name_desc_embedding', $k, $embedding)
 YIELD node AS sn, score
 WHERE sn.id IS NOT NULL
+  AND coalesce(sn.name_stage, '') <> 'superseded'
   AND ($pd IS NULL OR sn.physics_domain = $pd
        OR $pd IN coalesce(sn.source_domains, []))
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
@@ -300,6 +304,7 @@ MATCH (sn:StandardName)
 WHERE (toLower(sn.id) CONTAINS toLower($keyword)
        OR toLower(sn.description) CONTAINS toLower($keyword)
        OR toLower(coalesce(sn.documentation, '')) CONTAINS toLower($keyword))
+  AND coalesce(sn.name_stage, '') <> 'superseded'
   AND ($pd IS NULL OR sn.physics_domain = $pd
        OR $pd IN coalesce(sn.source_domains, []))
 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
@@ -534,9 +539,14 @@ def _list_standard_names(
     pipeline_status: str | None = None,
     cocos_type: str | None = None,
     physics_domain: str | None = None,
+    include_superseded: bool = False,
     gc: GraphClient | None = None,
 ) -> str:
-    """List standard names with optional filters."""
+    """List standard names with optional filters.
+
+    Superseded names (``name_stage='superseded'``) are excluded by default.
+    Pass ``include_superseded=True`` to include them.
+    """
     try:
         if gc is None:
             gc = GraphClient()
@@ -548,6 +558,10 @@ def _list_standard_names(
     # Build WHERE clause
     conditions = []
     params: dict = {}
+
+    # Always exclude superseded names unless explicitly requested.
+    if not include_superseded:
+        conditions.append("coalesce(sn.name_stage, '') <> 'superseded'")
 
     if kind:
         conditions.append("toLower(sn.kind) = toLower($kind)")
