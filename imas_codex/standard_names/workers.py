@@ -2005,14 +2005,21 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
             #
             # User invariant (AGENTS.md "Unit safety"): the LLM never
             # decides units; the DD source must provide one. Missing,
-            # empty, '-', or 'mixed' is invalid input — we record the
-            # skip on the StandardNameSource for audit and drop the
-            # candidate. NEVER silently coerce to "1": that masks a
-            # vocabulary gap and produces a bad SN.
+            # empty, or '-' is unresolvable; 'mixed' is non-standard by
+            # definition (heterogeneous dimensions). We record the skip
+            # on the StandardNameSource for audit and drop the candidate.
+            # NEVER silently coerce to "1": that masks a vocabulary gap
+            # and produces a bad SN.
             raw_unit = source_item.get("unit") if source_item else None
             if raw_unit in ("-", "mixed", None, ""):
+                _skip_reason = (
+                    "dd_unit_mixed_non_standard"
+                    if raw_unit == "mixed"
+                    else "dd_unit_unresolvable"
+                )
                 wlog.warning(
-                    "compose: dd_unit_unresolvable, skipping source=%s raw_unit=%r",
+                    "compose: %s, skipping source=%s raw_unit=%r",
+                    _skip_reason,
                     c.source_id,
                     raw_unit,
                 )
@@ -2028,7 +2035,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             mark_source_skipped(
                                 _gc,
                                 c.source_id,
-                                reason="dd_unit_unresolvable",
+                                reason=_skip_reason,
                                 detail=str(raw_unit),
                                 source_type=_prefix,
                             )
@@ -3453,12 +3460,18 @@ async def compose_batch(
             )
             # User invariant (AGENTS.md "Unit safety"): never coerce a
             # missing DD unit to "1". Skip the candidate and record the
-            # source as ``skipped`` with reason ``dd_unit_unresolvable``.
+            # source as ``skipped``. 'mixed' gets its own reason since
+            # it is permanently ineligible (heterogeneous dimensions).
             raw_unit = source_item.get("unit") if source_item else None
             if raw_unit in ("-", "mixed", None, ""):
+                _skip_reason = (
+                    "dd_unit_mixed_non_standard"
+                    if raw_unit == "mixed"
+                    else "dd_unit_unresolvable"
+                )
                 wlog.warning(
-                    "compose(pool): dd_unit_unresolvable, skipping "
-                    "source=%s raw_unit=%r",
+                    "compose(pool): %s, skipping source=%s raw_unit=%r",
+                    _skip_reason,
                     c.source_id,
                     raw_unit,
                 )
@@ -3473,7 +3486,7 @@ async def compose_batch(
                             mark_source_skipped(
                                 _gc,
                                 c.source_id,
-                                reason="dd_unit_unresolvable",
+                                reason=_skip_reason,
                                 detail=str(raw_unit),
                                 source_type=source_kind,
                             )

@@ -35,8 +35,11 @@ def _is_unparseable_dd_unit(unit: str) -> bool:
     if not unit or not unit.strip():
         return True
     unit = unit.strip()
-    # Dimensionless sentinels are valid
-    if unit in ("1", "dimensionless", "-", "mixed", "none"):
+    # Dimensionless sentinels are valid.
+    # NOTE: "mixed" is NOT included — paths with DD unit 'mixed' are
+    # non-standard by definition and must be rejected at source extraction
+    # (see _apply_mixed_unit_filter).
+    if unit in ("1", "dimensionless", "-", "none"):
         return False
     # C1: whitespace in unit string
     if re.search(r"\s", unit):
@@ -48,6 +51,73 @@ def _is_unparseable_dd_unit(unit: str) -> bool:
     from imas_codex.units import normalize_unit_symbol
 
     return normalize_unit_symbol(unit) is None
+
+
+def _apply_mixed_unit_filter(
+    results: list[dict],
+    *,
+    source_type: str = "dd",
+    write_skipped: bool = True,
+) -> list[dict]:
+    """Hard-reject DD paths whose authoritative unit is ``'mixed'``.
+
+    IMAS paths with ``unit='mixed'`` carry heterogeneous physical dimensions
+    (e.g. metric-tensor components ``g11_covariant`` whose unit depends on
+    the coordinate system).  By definition these are non-standard and **can
+    never** have a standard name.
+
+    This filter runs *before* ``_apply_unit_overrides`` so that ``'mixed'``
+    sources are caught at the earliest possible point.  Matching sources are
+    recorded as ``StandardNameSource(status='skipped',
+    skip_reason='dd_unit_mixed_non_standard')`` for audit traceability.
+
+    Returns the filtered list of kept rows (mixed-unit ones removed).
+    """
+    kept: list[dict] = []
+    skip_records: list[dict] = []
+
+    for row in results:
+        unit = row.get("unit")
+        if unit == "mixed":
+            skip_records.append(
+                {
+                    "source_type": source_type,
+                    "source_id": row.get("path") or "",
+                    "skip_reason": "dd_unit_mixed_non_standard",
+                    "skip_reason_detail": (
+                        "DD unit is 'mixed' — heterogeneous dimensions "
+                        "are non-standard and ineligible for standard names"
+                    ),
+                    "description": row.get("description") or "",
+                }
+            )
+            continue
+        kept.append(row)
+
+    if skip_records:
+        logger.info(
+            "Mixed-unit filter rejected %d paths (%d kept)",
+            len(skip_records),
+            len(kept),
+        )
+
+    if write_skipped and skip_records:
+        try:
+            from imas_codex.standard_names.graph_ops import write_skipped_sources
+
+            written = write_skipped_sources(skip_records)
+            logger.info(
+                "Recorded %d skipped DD sources (dd_unit_mixed_non_standard)",
+                written,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "Failed to write mixed-unit DD sources to graph: %s (%d records)",
+                exc,
+                len(skip_records),
+            )
+
+    return kept
 
 
 def _apply_unit_overrides(
@@ -614,6 +684,13 @@ def extract_dd_candidates(
         for row in results:
             row["unit"] = row.get("unit_from_rel") or row.get("unit") or None
 
+        # Hard-reject paths with DD unit 'mixed' — heterogeneous dimensions
+        # are non-standard by definition and ineligible for standard names.
+        results = _apply_mixed_unit_filter(results, source_type="dd")
+        if not results:
+            logger.info("No DD paths remain after mixed-unit filtering")
+            return []
+
         # Apply DD unit override/skip config — fixes upstream defects and
         # records unresolvable paths as skipped StandardNameSource records.
         results = _apply_unit_overrides(results, source_type="dd")
@@ -827,10 +904,12 @@ def extract_specific_paths(
     for row in results:
         row["unit"] = row.get("unit_from_rel") or row.get("unit") or None
 
-    results = _apply_unit_overrides(results, source_type="dd")
+    results = _apply_mixed_unit_filter(results, source_type="dd")
     if not results:
-        logger.info("No targeted DD paths remain after unit override filtering")
+        logger.info("No targeted DD paths remain after mixed-unit filtering")
         return []
+
+    results = _apply_unit_overrides(results, source_type="dd")
 
     results = _apply_skip_by_design(results, source_type="dd")
     if not results:

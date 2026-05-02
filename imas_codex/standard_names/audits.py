@@ -631,7 +631,7 @@ def unit_validity_check(candidate: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     raw_unit = (candidate.get("unit") or "").strip()
     unit = raw_unit.lower()
-    if not unit or unit in ("1", "dimensionless", "-", "mixed", "none"):
+    if not unit or unit in ("1", "dimensionless", "-", "none"):
         return issues
 
     # C.8: whitespace in unit string → dd_upstream severity
@@ -676,7 +676,7 @@ def unit_dimension_check(candidate: dict[str, Any]) -> list[str]:
     unit = candidate.get("unit") or ""
     description = (candidate.get("description") or "").lower()
 
-    if not unit or unit in ("1", "dimensionless", "-", "mixed") or not description:
+    if not unit or unit in ("1", "dimensionless", "-") or not description:
         return issues
 
     # Check all unit keys for a match
@@ -724,7 +724,7 @@ def name_unit_consistency_check(
     unit = (candidate.get("unit") or "").strip()
     if not name or not unit:
         return issues
-    if unit in ("1", "dimensionless", "-", "mixed", "none"):
+    if unit in ("1", "dimensionless", "-", "none"):
         dimensionless = True
     else:
         dimensionless = False
