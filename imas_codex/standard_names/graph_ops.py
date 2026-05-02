@@ -5165,15 +5165,19 @@ def record_llm_cost(
     # Guard: reject obvious test fixture leaks. Tests that monkeypatch
     # ``get_model`` to return ``"test-model"`` have leaked ~50 orphan
     # LLMCost nodes into the production graph. Refuse them at the write
-    # boundary unless explicitly opted in (PYTEST_CURRENT_TEST set, or
-    # IMAS_CODEX_ALLOW_TEST_MODEL=1 for fixture-author override).
-    if model == "test-model" and not (
-        os.environ.get("PYTEST_CURRENT_TEST")
-        or os.environ.get("IMAS_CODEX_ALLOW_TEST_MODEL") == "1"
-    ):
+    # boundary unless the fixture author EXPLICITLY opts in via
+    # ``IMAS_CODEX_ALLOW_TEST_MODEL=1`` (and uses a test-scoped graph
+    # profile, never `codex`).
+    #
+    # NOTE: ``PYTEST_CURRENT_TEST`` does NOT bypass this guard. Tests
+    # should mock ``record_llm_cost`` / ``GraphClient.query`` rather
+    # than write fixture rows into a live graph.
+    if model == "test-model" and os.environ.get("IMAS_CODEX_ALLOW_TEST_MODEL") != "1":
         logger.warning(
             "record_llm_cost: refusing model='test-model' (run=%s phase=%s) — "
-            "fixture leak guard. Set IMAS_CODEX_ALLOW_TEST_MODEL=1 to override.",
+            "fixture leak guard. Mock the write or set "
+            "IMAS_CODEX_ALLOW_TEST_MODEL=1 against a test-scoped graph "
+            "profile (never `codex`).",
             run_id,
             phase,
         )
