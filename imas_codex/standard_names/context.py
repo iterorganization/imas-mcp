@@ -457,3 +457,168 @@ def render_cocos_guidance(label: str, cocos_params: dict) -> str:
         guidance = guidance.replace(f"{{{var_name}}}", replacement)
 
     return guidance
+
+
+# ---------------------------------------------------------------------------
+# Reviewer neighbourhood (third-party-critic context)
+# ---------------------------------------------------------------------------
+
+
+def _path_ids_prefix(path: str) -> str | None:
+    """Extract the leading IDS segment from a DD path.
+
+    ``equilibrium/time_slice/0/global_quantities/ip`` -> ``equilibrium``.
+    Returns ``None`` for empty input.
+    """
+    if not path:
+        return None
+    head = path.split("/", 1)[0]
+    return head or None
+
+
+def fetch_review_neighbours(
+    sn: dict[str, Any],
+    *,
+    gc: Any = None,
+    n_vector: int = 5,
+    n_same_base: int = 3,
+    n_same_path: int = 2,
+) -> dict[str, list[dict[str, Any]]]:
+    """Fetch nearest-neighbour SNs to inject into reviewer prompts.
+
+    Returns three lists used as third-party comparators by the reviewer:
+
+    * ``vector_neighbours`` — up to ``n_vector`` accepted SNs nearest to the
+      candidate description by embedding similarity (vector index lookup).
+    * ``same_base_neighbours`` — up to ``n_same_base`` accepted SNs sharing
+      the candidate's ``physical_base`` token (sibling-by-base comparator).
+    * ``same_path_neighbours`` — up to ``n_same_path`` accepted SNs whose
+      ``source_paths`` share the candidate's leading IDS prefix.
+
+    All result lists exclude the candidate itself by ``id``. On any failure
+    (no graph client, missing index, etc.) the corresponding list is empty
+    and the function logs at DEBUG level — never raises.
+
+    Each entry dict contains:
+        ``id, name, description, kind, unit, score`` (score only for vector).
+
+    The candidate ``sn`` dict must contain at least ``id``; ``description``
+    drives the vector lookup, ``physical_base`` the same-base lookup, and
+    ``source_paths`` the same-path lookup.
+    """
+    sn_id = sn.get("id") or sn.get("name") or ""
+    desc = sn.get("description") or sn.get("name") or sn.get("id") or ""
+    physical_base = sn.get("physical_base") or (
+        (sn.get("grammar_fields") or {}).get("physical_base")
+    )
+    source_paths = sn.get("source_paths") or []
+    ids_prefix = next(
+        (p for p in (_path_ids_prefix(sp) for sp in source_paths) if p), None
+    )
+
+    out: dict[str, list[dict[str, Any]]] = {
+        "vector_neighbours": [],
+        "same_base_neighbours": [],
+        "same_path_neighbours": [],
+    }
+
+    own_gc = False
+    _gc_ctx: Any = None
+    if gc is None:
+        try:
+            from imas_codex.graph.client import GraphClient
+
+            _gc_ctx = GraphClient()
+            gc = _gc_ctx.__enter__() if hasattr(_gc_ctx, "__enter__") else _gc_ctx
+            own_gc = True
+        except Exception:
+            logger.debug("fetch_review_neighbours: GraphClient unavailable")
+            return out
+
+    try:
+        # --- Vector nearest --------------------------------------------------
+        if desc:
+            try:
+                from imas_codex.standard_names.search import (
+                    search_standard_names_vector,
+                )
+
+                rows = search_standard_names_vector(
+                    desc, k=n_vector + 1, gc=gc, include_superseded=False
+                )
+                out["vector_neighbours"] = [r for r in rows if r.get("id") != sn_id][
+                    :n_vector
+                ]
+            except Exception:
+                logger.debug("fetch_review_neighbours: vector lookup failed")
+
+        # --- Same physical_base ---------------------------------------------
+        if physical_base:
+            try:
+                rows = (
+                    gc.query(
+                        """
+                        MATCH (sn:StandardName)
+                        WHERE sn.physical_base = $base
+                          AND sn.id <> $sn_id
+                          AND coalesce(sn.validation_status, '') <> 'quarantined'
+                          AND coalesce(sn.name_stage, '') = 'accepted'
+                        OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
+                        RETURN sn.id AS id,
+                               sn.name AS name,
+                               sn.description AS description,
+                               sn.kind AS kind,
+                               coalesce(u.id, sn.unit) AS unit
+                        ORDER BY sn.id
+                        LIMIT $k
+                        """,
+                        base=physical_base,
+                        sn_id=sn_id,
+                        k=n_same_base,
+                    )
+                    or []
+                )
+                out["same_base_neighbours"] = [dict(r) for r in rows]
+            except Exception:
+                logger.debug("fetch_review_neighbours: same-base lookup failed")
+
+        # --- Same DD IDS prefix ---------------------------------------------
+        if ids_prefix:
+            try:
+                rows = (
+                    gc.query(
+                        """
+                        MATCH (sn:StandardName)
+                        WHERE sn.id <> $sn_id
+                          AND coalesce(sn.validation_status, '') <> 'quarantined'
+                          AND coalesce(sn.name_stage, '') = 'accepted'
+                          AND ANY(p IN sn.source_paths WHERE p STARTS WITH $prefix)
+                        OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
+                        RETURN sn.id AS id,
+                               sn.name AS name,
+                               sn.description AS description,
+                               sn.kind AS kind,
+                               coalesce(u.id, sn.unit) AS unit
+                        ORDER BY sn.id
+                        LIMIT $k
+                        """,
+                        sn_id=sn_id,
+                        prefix=ids_prefix + "/",
+                        k=n_same_path,
+                    )
+                    or []
+                )
+                out["same_path_neighbours"] = [dict(r) for r in rows]
+            except Exception:
+                logger.debug("fetch_review_neighbours: same-path lookup failed")
+
+        return out
+    finally:
+        if own_gc and _gc_ctx is not None:
+            try:
+                if hasattr(_gc_ctx, "__exit__"):
+                    _gc_ctx.__exit__(None, None, None)
+                else:
+                    gc.close()
+            except Exception:
+                pass

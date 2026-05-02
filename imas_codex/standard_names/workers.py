@@ -4219,10 +4219,26 @@ async def process_review_name_batch(
             continue
 
         # ── Build prompt context ───────────────────────────────────────
-        from imas_codex.standard_names.context import _build_enum_lists
+        from imas_codex.standard_names.context import (
+            _build_enum_lists,
+            fetch_review_neighbours,
+        )
+
+        try:
+            neighbours = fetch_review_neighbours(item)
+        except Exception:
+            logger.debug(
+                "review_name: neighbour fetch failed for %s", sn_id, exc_info=True
+            )
+            neighbours = {
+                "vector_neighbours": [],
+                "same_base_neighbours": [],
+                "same_path_neighbours": [],
+            }
 
         prompt_context: dict[str, Any] = {
             "items": [item],
+            **neighbours,
             **_build_enum_lists(),
         }
         try:
@@ -4791,8 +4807,23 @@ async def process_review_docs_batch(
         claim_token = item.get("claim_token") or ""
 
         # ── Build prompt context ───────────────────────────────────────
+        from imas_codex.standard_names.context import fetch_review_neighbours
+
+        try:
+            neighbours = fetch_review_neighbours(item)
+        except Exception:
+            logger.debug(
+                "review_docs: neighbour fetch failed for %s", sn_id, exc_info=True
+            )
+            neighbours = {
+                "vector_neighbours": [],
+                "same_base_neighbours": [],
+                "same_path_neighbours": [],
+            }
+
         prompt_context: dict[str, Any] = {
             "item": item,
+            **neighbours,
         }
         try:
             user_prompt = render_prompt("sn/review_docs_user", prompt_context)

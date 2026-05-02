@@ -36,6 +36,35 @@ Every name MUST have either a `physical_base` (open vocabulary) or a `geometric_
 {{ batch_context }}
 {% endif %}
 
+## Sibling-Comparison Context
+
+Use these accepted, in-catalog names as your **third-party reference set**. They are NOT to be reviewed. Score the candidate(s) below against the **patterns** these siblings establish (decomposition style, segment usage, naming consistency). Cite specific sibling `id`s when you dock points.
+
+{% if vector_neighbours %}
+### Nearest by description (vector similarity)
+{% for n in vector_neighbours %}
+- **`{{ n.id }}`** ({{ n.kind | default('scalar', true) }}, {{ n.unit | default('dimensionless', true) }}) — {{ n.description | default('', true) }}{% if n.score is defined %} [sim={{ '%.2f' | format(n.score) }}]{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if same_base_neighbours %}
+### Same `physical_base` (sibling decomposition pattern)
+{% for n in same_base_neighbours %}
+- **`{{ n.id }}`** ({{ n.kind | default('scalar', true) }}, {{ n.unit | default('dimensionless', true) }}) — {{ n.description | default('', true) }}
+{% endfor %}
+{% endif %}
+
+{% if same_path_neighbours %}
+### Same DD IDS source family
+{% for n in same_path_neighbours %}
+- **`{{ n.id }}`** ({{ n.kind | default('scalar', true) }}, {{ n.unit | default('dimensionless', true) }}) — {{ n.description | default('', true) }}
+{% endfor %}
+{% endif %}
+
+{% if not vector_neighbours and not same_base_neighbours and not same_path_neighbours %}
+*No accepted siblings found — score on grammar + DD provenance alone.*
+{% endif %}
+
 {% if nearby_existing_names %}
 ## Nearby Existing Standard Names
 

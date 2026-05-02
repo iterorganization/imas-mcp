@@ -15,10 +15,48 @@ Apply the rubric (provided in the system prompt) to the candidate below.
 - **Unit**: {{ item.unit | default('N/A', true) }}
 - **Kind**: {{ item.kind | default('N/A', true) }}
 - **Tags**: {{ item.tags | default([], true) | join(', ') }}
+{% if item.source_paths %}- **DD source paths**: {{ item.source_paths | join(', ') }}
+{% endif %}
+{% if item.cocos_label %}- **COCOS label**: `{{ item.cocos_label }}`
+{% endif %}
+{% if item.physics_domain %}- **Physics domain**: {{ item.physics_domain }}
+{% endif %}
 - **Description**: {{ item.description | default('(missing)', true) }}
 - **Documentation**:
 
 {{ item.documentation | default('(missing)', true) }}
+
+## Sibling-Comparison Context
+
+Use these accepted, in-catalog names as your **third-party reference set**.
+They are NOT to be re-reviewed. Compare the candidate's documentation
+*depth*, *terminology*, and *conventions* to them. Cite specific sibling
+`id`s when you dock points.
+
+{% if vector_neighbours %}
+### Nearest by description (vector similarity)
+{% for n in vector_neighbours %}
+- **`{{ n.id }}`** ({{ n.kind | default('scalar', true) }}, {{ n.unit | default('dimensionless', true) }}) — {{ n.description | default('', true) }}{% if n.score is defined %} [sim={{ '%.2f' | format(n.score) }}]{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if same_base_neighbours %}
+### Same `physical_base` (terminology consistency)
+{% for n in same_base_neighbours %}
+- **`{{ n.id }}`** ({{ n.kind | default('scalar', true) }}, {{ n.unit | default('dimensionless', true) }}) — {{ n.description | default('', true) }}
+{% endfor %}
+{% endif %}
+
+{% if same_path_neighbours %}
+### Same DD IDS source family (provenance phrasing)
+{% for n in same_path_neighbours %}
+- **`{{ n.id }}`** ({{ n.kind | default('scalar', true) }}, {{ n.unit | default('dimensionless', true) }}) — {{ n.description | default('', true) }}
+{% endfor %}
+{% endif %}
+
+{% if not vector_neighbours and not same_base_neighbours and not same_path_neighbours %}
+*No accepted siblings found — score on physics correctness alone.*
+{% endif %}
 
 Return JSON matching the schema defined in the system prompt; set
 `source_id` and `standard_name` to `{{ item.id }}`.
