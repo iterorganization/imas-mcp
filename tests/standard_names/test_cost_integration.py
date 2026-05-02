@@ -18,6 +18,24 @@ from imas_codex.standard_names.budget import BudgetManager, LLMCostEvent
 
 pytestmark = pytest.mark.graph
 
+
+@pytest.fixture(autouse=True)
+def _allow_test_model_writes(monkeypatch):
+    """Opt this module into the ``test-model`` write path.
+
+    ``record_llm_cost`` rejects ``model='test-model'`` by default to
+    prevent fixture leaks into the production graph. These tests
+    legitimately exercise the graph-backed write path and clean up by
+    unique ``run_id`` via :func:`_cleanup_run`, so they explicitly
+    bypass the guard.
+
+    NB: requires the active graph profile to be a test-scoped one,
+    NEVER ``codex``. Cleanup is by ``run_id`` so a stray run only
+    leaks its own ``test-...`` rows, not anyone else's.
+    """
+    monkeypatch.setenv("IMAS_CODEX_ALLOW_TEST_MODEL", "1")
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
