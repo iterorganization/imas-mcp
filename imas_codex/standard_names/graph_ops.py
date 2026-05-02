@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -5159,6 +5160,23 @@ def record_llm_cost(
     spend_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, id_seed))
 
     sn_ids_clean = list(sn_ids) if sn_ids else []
+
+    # Guard: reject obvious test fixture leaks. Tests that monkeypatch
+    # ``get_model`` to return ``"test-model"`` have leaked ~50 orphan
+    # LLMCost nodes into the production graph. Refuse them at the write
+    # boundary unless explicitly opted in (PYTEST_CURRENT_TEST set, or
+    # IMAS_CODEX_ALLOW_TEST_MODEL=1 for fixture-author override).
+    if model == "test-model" and not (
+        os.environ.get("PYTEST_CURRENT_TEST")
+        or os.environ.get("IMAS_CODEX_ALLOW_TEST_MODEL") == "1"
+    ):
+        logger.warning(
+            "record_llm_cost: refusing model='test-model' (run=%s phase=%s) — "
+            "fixture leak guard. Set IMAS_CODEX_ALLOW_TEST_MODEL=1 to override.",
+            run_id,
+            phase,
+        )
+        return spend_id
 
     cypher = """
         CREATE (c:LLMCost {
