@@ -101,7 +101,7 @@ class TestRunSummary:
             run_id="abc123",
             turn_number=3,
             started_at=datetime(2025, 1, 1, tzinfo=UTC),
-            ended_at=datetime(2025, 1, 1, 0, 5, tzinfo=UTC),
+            stopped_at=datetime(2025, 1, 1, 0, 5, tzinfo=UTC),
             cost_spent=1.2345,
             cost_limit=5.0,
             names_composed=10,

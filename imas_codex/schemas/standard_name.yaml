@@ -1351,8 +1351,8 @@ classes:
         description: When the run started
         required: true
         range: datetime
-      ended_at:
-        description: When the run completed (null if interrupted)
+      stopped_at:
+        description: When the run stopped (null if still running or interrupted before finalize)
         range: datetime
       cost_spent:
         description: Total LLM cost spent across all phases (USD)

@@ -6,7 +6,7 @@ stops when remaining budget can no longer fund a single unit of work.
 
 Covers:
   - ``select_next_domain`` stale-first ordering
-  - ``_pick_stalest_domain`` with null / dated SNRun.ended_at
+  - ``_pick_stalest_domain`` with null / dated SNRun.stopped_at
   - Budget gate enforcement (soft limit via ``EST_UNIT_COST``)
   - Loop iteration with domain rotation
   - Explicit ``--physics-domain`` bypass
@@ -42,7 +42,7 @@ class TestPickStalestDomain:
         assert _pick_stalest_domain([entry]) is entry
 
     def test_picks_oldest_last_run(self):
-        """Domain with the oldest SNRun.ended_at is selected."""
+        """Domain with the oldest SNRun.stopped_at is selected."""
         candidates = [
             {"domain": "equilibrium", "remaining": 5},
             {"domain": "magnetics", "remaining": 5},

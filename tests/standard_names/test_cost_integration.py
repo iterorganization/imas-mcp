@@ -354,7 +354,7 @@ class TestFinalizeDrainFailure:
                 status="degraded",
                 cost_spent=0.10,
                 cost_is_exact=False,
-                ended_at=datetime.now(UTC),
+                stopped_at=datetime.now(UTC),
             )
 
             with GraphClient() as gc:

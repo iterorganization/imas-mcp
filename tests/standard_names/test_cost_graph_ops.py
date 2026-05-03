@@ -83,7 +83,7 @@ class TestFinalizeSNRun:
                 status="completed",
                 cost_spent=3.14,
                 cost_is_exact=True,
-                ended_at=_TS,
+                stopped_at=_TS,
                 stop_reason="budget_exhausted",
                 names_composed=42,
             )
@@ -116,7 +116,7 @@ class TestFinalizeSNRun:
                     _RUN_ID,
                     status="failed",
                     cost_spent=0.0,
-                    ended_at=_TS,
+                    stopped_at=_TS,
                 )
             assert "no SNRun found" in caplog.text
         finally:

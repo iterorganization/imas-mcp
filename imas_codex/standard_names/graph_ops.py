@@ -5073,8 +5073,9 @@ def create_sn_run_open(
     try:
         with GraphClient() as gc:
             gc.create_nodes("SNRun", [props])
-    except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("Failed to pre-create SNRun %s: %s", run_id, exc)
+    except Exception as exc:
+        logger.error("Failed to pre-create SNRun %s: %s", run_id, exc)
+        raise
 
 
 def update_sn_run_progress(run_id: str, *, cost_spent: float) -> None:
@@ -5102,7 +5103,7 @@ def finalize_sn_run(
     status: str,
     cost_spent: float,
     cost_is_exact: bool = True,
-    ended_at: Any,
+    stopped_at: Any,
     **summary_fields: Any,
 ) -> None:
     """Update an existing ``SNRun`` node at run end.
@@ -5118,14 +5119,16 @@ def finalize_sn_run(
         "rr.status = $status",
         "rr.cost_spent = $cost_spent",
         "rr.cost_is_exact = $cost_is_exact",
-        "rr.ended_at = datetime($ended_at)",
+        "rr.stopped_at = datetime($stopped_at)",
     ]
     params: dict[str, Any] = {
         "run_id": run_id,
         "status": status,
         "cost_spent": round(cost_spent, 6),
         "cost_is_exact": cost_is_exact,
-        "ended_at": ended_at if isinstance(ended_at, str) else ended_at.isoformat(),
+        "stopped_at": stopped_at
+        if isinstance(stopped_at, str)
+        else stopped_at.isoformat(),
     }
 
     for key, value in summary_fields.items():

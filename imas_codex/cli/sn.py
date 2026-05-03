@@ -417,6 +417,7 @@ def _run_sn_loop_cmd(
     async def async_main(stop_event, service_monitor):
         summary = await run_sn_pools(
             cost_limit=cost_limit,
+            turn_number=turn_number,
             min_score=min_score,
             rotation_cap=rotation_cap,
             escalation_model=escalation_model,
@@ -1774,7 +1775,7 @@ def sn_status() -> None:
                 MATCH (rr:SNRun)
                 RETURN rr.id AS id,
                        rr.started_at AS started_at,
-                       rr.ended_at AS ended_at,
+                       rr.stopped_at AS stopped_at,
                        rr.stop_reason AS stop_reason,
                        rr.passes AS passes,
                        rr.cost_spent AS cost_spent,
@@ -1802,7 +1803,7 @@ def sn_status() -> None:
         rr_table.add_column("Value")
         rr_table.add_row("id", str(rr["id"]))
         rr_table.add_row("started_at", str(rr["started_at"]))
-        rr_table.add_row("ended_at", str(rr["ended_at"] or "—"))
+        rr_table.add_row("stopped_at", str(rr["stopped_at"] or "—"))
         rr_table.add_row("stop_reason", str(rr["stop_reason"] or "—"))
         rr_table.add_row("passes", str(rr["passes"] or 0))
         rr_table.add_row(

@@ -35,7 +35,7 @@ class RunSummary:
     run_id: str
     turn_number: int
     started_at: datetime
-    ended_at: datetime | None = None
+    stopped_at: datetime | None = None
     cost_spent: float = 0.0
     cost_limit: float = 0.0
     min_score: float | None = None
@@ -112,7 +112,7 @@ def _existing_domain_targets(
 def _pick_stalest_domain(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     """From eligible domains, pick the one whose last SNRun is oldest.
 
-    Queries the graph for the most recent ``SNRun.ended_at`` per candidate
+    Queries the graph for the most recent ``SNRun.stopped_at`` per candidate
     domain (via ``domains_touched``).  Returns the candidate with the
     oldest last run.  Tiebreak: domain with more remaining work wins.
     Domains never previously run (no matching SNRun) sort first.
@@ -128,8 +128,8 @@ def _pick_stalest_domain(candidates: list[dict[str, Any]]) -> dict[str, Any]:
         UNWIND $domains AS dom
         OPTIONAL MATCH (rr:SNRun)
           WHERE dom IN rr.domains_touched
-            AND rr.ended_at IS NOT NULL
-        WITH dom, max(rr.ended_at) AS last_run
+            AND rr.stopped_at IS NOT NULL
+        WITH dom, max(rr.stopped_at) AS last_run
         RETURN dom AS domain, last_run
     """
     with GraphClient() as gc:
@@ -236,7 +236,7 @@ async def run_sn_loop(
     """Drive the ``sn run`` loop with one-domain-per-turn rotation.
 
     Each iteration picks ONE domain via stale-first rotation (oldest
-    ``SNRun.ended_at`` wins, eligible-source count as tiebreak) and
+    ``SNRun.stopped_at`` wins, eligible-source count as tiebreak) and
     runs a full turn on it with the entire remaining budget.  The loop
     stops when the remaining budget can no longer fund a single unit of
     work (< :data:`EST_UNIT_COST`) or no domain has eligible work.
@@ -280,7 +280,7 @@ async def run_sn_loop(
                 ],
             }
         )
-        summary.ended_at = datetime.now(UTC)
+        summary.stopped_at = datetime.now(UTC)
         summary.stop_reason = "dry_run"
         return summary
 
@@ -506,7 +506,7 @@ async def run_sn_loop(
         summary.stop_reason = "interrupted"
         logger.warning("sn run interrupted by user")
     finally:
-        summary.ended_at = datetime.now(UTC)
+        summary.stopped_at = datetime.now(UTC)
 
         # Drain pending LLMCost graph writes.
         cost_is_exact = await shared_mgr.drain_pending()
@@ -548,7 +548,7 @@ async def run_sn_loop(
             status=_STOP_TO_STATUS.get(summary.stop_reason, "completed"),
             cost_spent=summary.cost_spent,
             cost_is_exact=cost_is_exact,
-            ended_at=summary.ended_at,
+            stopped_at=summary.stopped_at,
             turn_number=summary.turn_number,
             cost_limit=round(summary.cost_limit, 6),
             compose_cost=round(summary.compose_cost, 6),
@@ -573,10 +573,10 @@ def summary_table(summary: RunSummary) -> dict[str, Any]:
         "run_id": summary.run_id,
         "turn_number": summary.turn_number,
         "started_at": summary.started_at.isoformat(),
-        "ended_at": summary.ended_at.isoformat() if summary.ended_at else None,
+        "stopped_at": summary.stopped_at.isoformat() if summary.stopped_at else None,
         "elapsed_s": (
-            (summary.ended_at - summary.started_at).total_seconds()
-            if summary.ended_at
+            (summary.stopped_at - summary.started_at).total_seconds()
+            if summary.stopped_at
             else None
         ),
         "cost_spent": round(summary.cost_spent, 6),
@@ -931,6 +931,7 @@ async def _seed_domain_sources(
 async def run_sn_pools(
     cost_limit: float,
     *,
+    turn_number: int = 1,
     min_score: float | None = None,
     rotation_cap: int | None = None,
     escalation_model: str | None = None,
@@ -999,7 +1000,7 @@ async def run_sn_pools(
     run_id = str(uuid.uuid4())
     summary = RunSummary(
         run_id=run_id,
-        turn_number=1,
+        turn_number=turn_number,
         started_at=started,
         cost_limit=cost_limit,
         min_score=min_score,
@@ -1023,8 +1024,25 @@ async def run_sn_pools(
         run_id,
         started_at=started,
         cost_limit=cost_limit,
+        turn_number=turn_number,
         min_score=min_score,
     )
+
+    # Post-create assertion: verify the SNRun node exists in the graph.
+    # Fail fast if the node wasn't persisted — without it, all LLMCost
+    # FOR_RUN edges will be orphaned and telemetry is silently lost.
+    from imas_codex.graph.client import GraphClient as _GC
+
+    with _GC() as _gc:
+        _sn_count = _gc.query(
+            "MATCH (rr:SNRun {id: $rid}) RETURN count(rr) AS cnt",
+            rid=run_id,
+        )
+        if not _sn_count or _sn_count[0]["cnt"] == 0:
+            raise RuntimeError(
+                f"SNRun {run_id} not found in graph after create_sn_run_open — "
+                "aborting to prevent telemetry blackhole"
+            )
 
     cost_is_exact = True
 
@@ -1232,7 +1250,7 @@ async def run_sn_pools(
         summary.stop_reason = "failed"
         logger.error("run_sn_pools failed: %s", exc, exc_info=True)
     finally:
-        summary.ended_at = datetime.now(UTC)
+        summary.stopped_at = datetime.now(UTC)
 
         # Release any orphaned claims left by batches in flight at shutdown.
         try:
@@ -1323,7 +1341,7 @@ async def run_sn_pools(
                 status=_STOP_TO_STATUS.get(summary.stop_reason, "completed"),
                 cost_spent=summary.cost_spent,
                 cost_is_exact=cost_is_exact,
-                ended_at=summary.ended_at,
+                stopped_at=summary.stopped_at,
                 cost_limit=round(summary.cost_limit, 6),
                 compose_cost=round(summary.compose_cost, 6),
                 review_cost=round(summary.review_cost, 6),
@@ -1342,6 +1360,14 @@ async def run_sn_pools(
                 run_id,
                 _final_exc,
                 exc_info=True,
+            )
+
+        # Surface write failures even in Rich mode where loggers are
+        # suppressed.  This ensures operators always see the warning.
+        if shared_mgr.write_failed:
+            logger.error(
+                "run_sn_pools: LLMCost write failure detected — "
+                "cost_is_exact=False. Check logs for details."
             )
 
     return summary
