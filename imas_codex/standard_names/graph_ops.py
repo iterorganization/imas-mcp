@@ -5980,7 +5980,10 @@ def claim_review_name_batch(
     ``unit``, ``tags``, ``physics_domain``, ``chain_length``,
     ``claim_token``.
     """
-    where = "sn.name_stage = 'drafted'"
+    where = (
+        "sn.name_stage = 'drafted'"
+        " AND NOT (sn.name_stage IN ['superseded', 'exhausted'])"
+    )
     if facility is not None:
         where += " AND sn.facility = $facility"
         query_params: dict[str, Any] = {"facility": facility}
@@ -6235,7 +6238,10 @@ def claim_review_docs_batch(
     ``unit``, ``tags``, ``physics_domain``, ``docs_chain_length``,
     ``claim_token``.
     """
-    where = "sn.docs_stage = 'drafted'"
+    where = (
+        "sn.docs_stage = 'drafted'"
+        " AND NOT (sn.name_stage IN ['superseded', 'exhausted'])"
+    )
     if facility is not None:
         where += " AND sn.facility = $facility"
         query_params: dict[str, Any] = {"facility": facility}
@@ -6487,6 +6493,7 @@ def claim_refine_name_batch(
         " AND sn.reviewer_score_name IS NOT NULL"
         " AND sn.reviewer_score_name < $min_score"
         " AND coalesce(sn.chain_length, 0) < $rotation_cap"
+        " AND NOT (sn.name_stage IN ['superseded', 'exhausted'])"
     )
     items = _claim_sn_atomic(
         eligibility_where=where,
@@ -7171,7 +7178,10 @@ def claim_generate_docs_batch(
     """
     from imas_codex.standard_names.chain_history import name_chain_history
 
-    where = "sn.name_stage = 'accepted' AND sn.docs_stage = 'pending'"
+    where = (
+        "sn.name_stage = 'accepted' AND sn.docs_stage = 'pending'"
+        " AND NOT (sn.name_stage IN ['superseded', 'exhausted'])"
+    )
 
     items = _claim_sn_atomic(
         eligibility_where=where,
@@ -7390,6 +7400,7 @@ def claim_refine_docs_batch(
         " AND sn.reviewer_score_docs IS NOT NULL"
         " AND sn.reviewer_score_docs < $min_score"
         " AND coalesce(sn.docs_chain_length, 0) < $rotation_cap"
+        " AND NOT (sn.name_stage IN ['superseded', 'exhausted'])"
     )
     items = _claim_sn_atomic(
         eligibility_where=where,
