@@ -284,22 +284,23 @@ async def pool_loop(
     logger.info("pool[%s] exiting cleanly", spec.name)
 
 
+# Consecutive reserve-failure threshold across all pools before declaring
+# budget saturation.  When every pool has failed to reserve budget this many
+# times in a row, the remaining budget is too small to fund any batch —
+# equivalent to "remaining < smallest batch" but signal-driven.
+SATURATION_THRESHOLD: int = 10
+
+
 async def _budget_watchdog(
     mgr: BudgetManager,
     stop_event: asyncio.Event,
     poll: float = 5.0,
     *,
-    near_exhaust_event: asyncio.Event | None = None,
+    budget_saturated_event: asyncio.Event | None = None,
 ) -> None:
     """Poll ``mgr`` and set ``stop_event`` when budget runs out.
 
-    Two stop conditions:
-
-    1. ``mgr.hard_exhausted()`` — committed spend ≥ cost limit.
-    2. ``mgr.near_exhausted()`` — remaining budget < ``MIN_VIABLE_TURN``
-       (default $0.75).  Avoids the long tail where, e.g., a $3.00 run
-       at $2.97 keeps spinning trying to spend the remaining pennies
-       on turns that no individual pool can complete.
+    Stop condition: ``mgr.hard_exhausted()`` — committed spend ≥ cost limit.
 
     Uses ``hard_exhausted()`` (committed spend ≥ cost limit) instead of
     ``exhausted()`` (pool ≤ 0) so that a large in-flight reservation does
@@ -315,17 +316,42 @@ async def _budget_watchdog(
             logger.info(
                 "run_pools: budget exhausted (spend >= limit) — signalling graceful shutdown"
             )
-            if near_exhaust_event is not None:
-                near_exhaust_event.set()
+            if budget_saturated_event is not None:
+                budget_saturated_event.set()
             stop_event.set()
             return
-        if mgr.near_exhausted():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=poll)
+        except TimeoutError:
+            continue
+
+
+async def _budget_saturation_watchdog(
+    mgr: BudgetManager,
+    stop_event: asyncio.Event,
+    budget_saturated_event: asyncio.Event,
+    *,
+    poll: float = 2.0,
+    pool_names: tuple[str, ...] = POOL_NAMES,
+) -> None:
+    """Set ``stop_event`` when all pools have saturated the budget.
+
+    Polls ``mgr.all_pools_budget_saturated(pool_names)`` every *poll*
+    seconds.  The BudgetManager tracks per-pool consecutive reserve-failure
+    counts internally; when every pool has failed ≥ ``SATURATION_THRESHOLD``
+    times in a row, the remaining budget cannot fund any batch.
+
+    This replaces the old ``near_exhausted()`` shutdown gate (which used
+    a magic $0.75 floor) with a signal-driven equivalent.
+    """
+    while not stop_event.is_set():
+        if mgr.all_pools_budget_saturated(pool_names):
             logger.info(
-                "run_pools: budget near-exhausted (remaining < MIN_VIABLE_TURN) "
-                "— signalling graceful shutdown"
+                "run_pools: budget saturated — all pools exceeded "
+                "consecutive reserve-failure threshold — signalling "
+                "graceful shutdown"
             )
-            if near_exhaust_event is not None:
-                near_exhaust_event.set()
+            budget_saturated_event.set()
             stop_event.set()
             return
         try:
@@ -463,6 +489,7 @@ async def run_pools(
     grace_period: float = 60.0,
     weights: dict[str, float] = POOL_WEIGHTS,
     idle_exhausted_event: asyncio.Event | None = None,
+    budget_saturated_event: asyncio.Event | None = None,
     idle_exhaustion_poll: float = 1.0,
     idle_exhaustion_polls: int = 30,
 ) -> dict[str, PoolHealth]:
@@ -552,8 +579,22 @@ async def run_pools(
     ]
 
     watchdog_task = asyncio.create_task(
-        _budget_watchdog(mgr, stop_event, near_exhaust_event=None),
+        _budget_watchdog(
+            mgr, stop_event, budget_saturated_event=budget_saturated_event
+        ),
         name="budget_watchdog",
+    )
+
+    # Budget-saturation watchdog: signal-driven replacement for the old
+    # ``near_exhausted()`` shutdown gate.  Instead of a magic dollar floor,
+    # watches for all pools consecutively failing to reserve budget.
+    sat_event = budget_saturated_event or asyncio.Event()
+    pool_name_tuple = tuple(p.name for p in pools)
+    saturation_watchdog_task = asyncio.create_task(
+        _budget_saturation_watchdog(
+            mgr, stop_event, sat_event, pool_names=pool_name_tuple
+        ),
+        name="budget_saturation_watchdog",
     )
 
     # Idle-exhaustion watchdog: exits the run when all pools have been
@@ -618,6 +659,10 @@ async def run_pools(
     if not idle_watchdog_task.done():
         idle_watchdog_task.cancel()
     await asyncio.gather(idle_watchdog_task, return_exceptions=True)
+
+    if not saturation_watchdog_task.done():
+        saturation_watchdog_task.cancel()
+    await asyncio.gather(saturation_watchdog_task, return_exceptions=True)
 
     if pending_watchdog_task is not None:
         if not pending_watchdog_task.done():

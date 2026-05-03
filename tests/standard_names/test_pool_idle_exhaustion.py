@@ -1,15 +1,17 @@
-"""Tests for the idle-exhaustion watchdog and near-exhausted budget detection.
+"""Tests for the idle-exhaustion watchdog and budget detection.
 
 These tests guard the fixes for the long-running idle-loop hang described
 in ``plans/`` (SN pipeline workers don't exit when work is exhausted):
 
 1. ``BudgetManager.near_exhausted`` returns True when remaining budget
-   drops below :data:`MIN_VIABLE_TURN`.
-2. ``_budget_watchdog`` sets ``stop_event`` on near-exhaustion (not just
-   on full exhaustion).
-3. ``_idle_exhaustion_watchdog`` sets ``stop_event`` after a sustained
+   drops below :data:`MIN_VIABLE_TURN` (retained for dampening; no
+   longer used for shutdown).
+2. ``_budget_watchdog`` sets ``stop_event`` on hard exhaustion.
+3. ``_budget_saturation_watchdog`` sets ``stop_event`` when all pools
+   exceed consecutive reserve-failure threshold.
+4. ``_idle_exhaustion_watchdog`` sets ``stop_event`` after a sustained
    window of zero pending counts and zero progress.
-4. ``run_pools`` exits with the supplied ``idle_exhausted_event`` set
+5. ``run_pools`` exits with the supplied ``idle_exhausted_event`` set
    when the idle watchdog fires.
 """
 
@@ -210,28 +212,28 @@ class TestIdleExhaustionWatchdog:
 
 
 # ---------------------------------------------------------------------------
-# Budget watchdog: near-exhausted variant (Fix 3)
+# Budget saturation watchdog (Phase C replacement for near-exhausted)
 # ---------------------------------------------------------------------------
 
 
-class TestBudgetWatchdogNearExhausted:
+class TestBudgetSaturationWatchdog:
     @pytest.mark.asyncio
-    async def test_watchdog_fires_on_near_exhausted(self) -> None:
-        """When remaining budget drops below MIN_VIABLE_TURN ($0.75),
-        the watchdog must set stop_event even though hard_exhausted()
-        is still False."""
+    async def test_watchdog_fires_on_budget_saturation(self) -> None:
+        """When all pools exceed the consecutive reserve-failure threshold,
+        the saturation watchdog must set stop_event."""
         mgr = BudgetManager(total_budget=3.0)
         stop_event = asyncio.Event()
-        idle_exhausted = asyncio.Event()
+        budget_saturated = asyncio.Event()
 
         pools = [_make_idle_spec("generate", pending=1)]
 
-        async def near_exhaust_after_delay() -> None:
+        async def saturate_budget() -> None:
             await asyncio.sleep(0.1)
-            # Mirrors the production hang: $2.97/$3.00 → $0.03 remaining.
-            mgr._spent = 2.97
+            # The saturation watchdog checks pool names derived from the
+            # actual PoolSpec list — here just "generate".
+            mgr._consecutive_reserve_failures["generate"] = mgr.SATURATION_THRESHOLD
 
-        burner = asyncio.create_task(near_exhaust_after_delay())
+        saturator = asyncio.create_task(saturate_budget())
         try:
             await asyncio.wait_for(
                 run_pools(
@@ -240,7 +242,8 @@ class TestBudgetWatchdogNearExhausted:
                     stop_event,
                     grace_period=0.5,
                     weights={"generate": 1.0},
-                    idle_exhausted_event=idle_exhausted,
+                    idle_exhausted_event=asyncio.Event(),
+                    budget_saturated_event=budget_saturated,
                     # Disable idle watchdog by raising threshold high.
                     idle_exhaustion_poll=10.0,
                     idle_exhaustion_polls=1000,
@@ -248,11 +251,11 @@ class TestBudgetWatchdogNearExhausted:
                 timeout=10.0,
             )
         finally:
-            burner.cancel()
-            await asyncio.gather(burner, return_exceptions=True)
+            saturator.cancel()
+            await asyncio.gather(saturator, return_exceptions=True)
 
         assert stop_event.is_set()
-        assert mgr.near_exhausted()
+        assert budget_saturated.is_set()
         assert not mgr.hard_exhausted(), (
-            "fix 3 must trip on near-exhaustion, not full exhaustion"
+            "saturation watchdog should fire before hard exhaustion"
         )

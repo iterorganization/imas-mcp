@@ -204,6 +204,7 @@ def select_next_domain(
 _STOP_TO_STATUS: dict[str, str] = {
     "completed": "completed",
     "budget_exhausted": "completed",
+    "budget_saturated": "completed",
     "stalled": "completed",
     "no_work": "completed",
     "no_eligible_work": "completed",
@@ -1012,6 +1013,9 @@ async def run_sn_pools(
     # zero-pending across all pools.  Lets the stop-reason logic
     # distinguish "out of eligible work" from "interrupted by user".
     idle_exhausted_event = asyncio.Event()
+    # Set when the budget-saturation watchdog detects all pools have
+    # consecutively failed to reserve budget SATURATION_THRESHOLD times.
+    budget_saturated_event = asyncio.Event()
 
     # Shared BudgetManager — all six pools draw from the same pot.
     shared_mgr = BudgetManager(cost_limit, run_id=run_id)
@@ -1187,6 +1191,7 @@ async def run_sn_pools(
                 stop_event,
                 pending_fn=pending_fn,
                 idle_exhausted_event=idle_exhausted_event,
+                budget_saturated_event=budget_saturated_event,
             )
         finally:
             if not sweep_task.done():
@@ -1234,8 +1239,10 @@ async def run_sn_pools(
         # Likewise for the idle-exhaustion watchdog — when it fires, the
         # run finished its scope and must be classified as completed via
         # ``no_eligible_work`` rather than mistaken for a user interrupt.
-        if shared_mgr.hard_exhausted() or shared_mgr.near_exhausted():
+        if shared_mgr.hard_exhausted():
             summary.stop_reason = "budget_exhausted"
+        elif budget_saturated_event.is_set():
+            summary.stop_reason = "budget_saturated"
         elif idle_exhausted_event.is_set():
             summary.stop_reason = "no_eligible_work"
         elif stop_event.is_set():

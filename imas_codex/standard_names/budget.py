@@ -40,12 +40,11 @@ logger = logging.getLogger(__name__)
 
 EPSILON = 1e-9
 
-# Minimum remaining budget required to start another turn.  When the
-# remaining budget drops below this floor, the pool orchestrator stops
-# accepting new turns even if the hard cost cap has not been reached.
-# Used by :meth:`BudgetManager.near_exhausted` and the pool budget
-# watchdog so that runs at e.g. $2.97 of $3.00 finalize promptly
-# instead of spinning until pennies are exhausted.
+# DEPRECATED (Phase C): MIN_VIABLE_TURN is no longer used in runtime
+# shutdown logic.  Retained only for backward-compatible test fixtures
+# that exercise :meth:`BudgetManager.near_exhausted` as a unit method.
+# The pool orchestrator now uses a signal-driven ``budget_saturated``
+# watchdog instead of a magic dollar threshold.
 MIN_VIABLE_TURN: float = 0.75
 
 # Writer retry parameters (matches retry_on_deadlock defaults)
@@ -303,6 +302,15 @@ class BudgetManager:
         self._graph_total_ts: float = 0.0  # monotonic timestamp of last fetch
         self._graph_cache_ttl: float = 1.0  # seconds
 
+        # ── Budget-saturation tracking (Phase C) ─────────────────────
+        # Per-pool consecutive reserve-failure counter.  Incremented each
+        # time ``reserve()`` returns ``None`` for a given phase, reset to 0
+        # on success.  When ALL tracked pools exceed
+        # ``SATURATION_THRESHOLD`` simultaneously, the budget is too small
+        # to fund any batch.
+        self._consecutive_reserve_failures: dict[str, int] = {}
+        self.SATURATION_THRESHOLD: int = 10
+
     # ------------------------------------------------------------------
     # Async lifecycle
     # ------------------------------------------------------------------
@@ -433,6 +441,13 @@ class BudgetManager:
             llm_at=event.llm_at or datetime.now(UTC),
         )
         try:
+            qsize = self._write_queue.qsize()
+            if qsize > 256:
+                logger.warning(
+                    "Write queue backpressure: qsize=%d — persist workers may be "
+                    "falling behind LLM throughput",
+                    qsize,
+                )
             self._write_queue.put_nowait(pw)
         except asyncio.QueueFull:  # pragma: no cover — unbounded queue
             logger.error("Write queue full — dropping LLMCost event")
@@ -450,6 +465,9 @@ class BudgetManager:
         Returns a :class:`BudgetLease` on success, ``None`` if the pool
         has insufficient funds or the named *phase* would exceed its hard
         cap (``phase_caps[phase] × 1.5``).
+
+        Also tracks consecutive reserve failures per *phase* for the
+        ``budget_saturated`` shutdown signal.
 
         Args:
             amount: Amount to reserve.
@@ -472,9 +490,17 @@ class BudgetManager:
                         amount,
                         cap * 1.5,
                     )
+                    if phase:
+                        self._consecutive_reserve_failures[phase] = (
+                            self._consecutive_reserve_failures.get(phase, 0) + 1
+                        )
                     return None
             # ── Global pool check ──────────────────────────────────────────
             if self._pool < amount - EPSILON:
+                if phase:
+                    self._consecutive_reserve_failures[phase] = (
+                        self._consecutive_reserve_failures.get(phase, 0) + 1
+                    )
                 return None
             lease_id = str(uuid.uuid4())
             self._pool -= amount
@@ -484,6 +510,8 @@ class BudgetManager:
                 self._phase_committed[phase] = (
                     self._phase_committed.get(phase, 0.0) + amount
                 )
+                # Reset failure counter on successful reservation.
+                self._consecutive_reserve_failures[phase] = 0
             self._lease_phases[lease_id] = phase
             return BudgetLease(self, amount, lease_id, phase=phase)
 
@@ -715,6 +743,34 @@ class BudgetManager:
         with self._lock:
             return (self._total - self._spent) < (min_remaining - EPSILON)
 
+    def all_pools_budget_saturated(
+        self,
+        pool_names: tuple[str, ...] = (
+            "generate_name",
+            "review_name",
+            "refine_name",
+            "generate_docs",
+            "review_docs",
+            "refine_docs",
+        ),
+    ) -> bool:
+        """Return ``True`` when all *pool_names* have exceeded the
+        consecutive reserve-failure threshold.
+
+        This is the signal-driven replacement for the old
+        ``near_exhausted()`` shutdown gate.  Instead of comparing
+        remaining budget against a magic dollar floor, we observe that
+        every pool has failed to reserve budget ``SATURATION_THRESHOLD``
+        times in a row — meaning the remaining budget cannot fund any
+        batch in any pool.
+        """
+        with self._lock:
+            return all(
+                self._consecutive_reserve_failures.get(p, 0)
+                >= self.SATURATION_THRESHOLD
+                for p in pool_names
+            )
+
     # ------------------------------------------------------------------
     # Graph-aware reads
     # ------------------------------------------------------------------
@@ -765,6 +821,7 @@ class BudgetManager:
                 "phase_spent": dict(self._phase_spent),
                 "run_id": self.run_id,
                 "write_failed": self._write_failed,
+                "pending_writes": self._write_queue.qsize(),
             }
 
     def check_invariant(self) -> bool:
