@@ -1,13 +1,19 @@
 """Graceful shutdown for discovery CLI commands.
 
-Provides a single Ctrl+C clean exit via asyncio signal handlers
+Provides cooperative shutdown for both SIGINT (Ctrl+C) and SIGTERM
 with rich shutdown progress tracking:
 
-  First Ctrl+C:  Signal workers to stop, switch display to shutdown
-                 mode showing per-group drain progress.  Workers
-                 finish their current batch and exit cleanly.
-  Second Ctrl+C: Stops Rich display, cancels all async tasks.
-  Third Ctrl+C:  Immediate process exit (os._exit).
+  First SIGINT/SIGTERM: Signal workers to stop, switch display to
+                        shutdown mode showing per-group drain progress.
+                        Workers finish their current batch and exit
+                        cleanly.
+  Second SIGINT:        Stops Rich display, cancels all async tasks.
+                        Starts a 45s watchdog to outlast drain +
+                        finalize timeouts.
+  Third SIGINT:         Immediate process exit (os._exit).
+
+SIGTERM is now cooperative (same as first SIGINT).  Force-kill
+requires ``kill -9`` (SIGKILL).
 
 Usage in discovery CLIs::
 
@@ -183,18 +189,21 @@ def install_shutdown_handlers(
     stop_event: asyncio.Event,
     display: object | None = None,
 ) -> None:
-    """Install SIGINT handlers on the running asyncio event loop.
+    """Install SIGINT and SIGTERM handlers on the running asyncio event loop.
 
     Replaces asyncio's default SIGINT handling (which raises
     KeyboardInterrupt and requires multiple presses) with a
     cooperative shutdown:
 
-    1. First Ctrl+C:  Sets stop_event, switches the progress display
-       to shutdown mode (yellow border, live worker-drain tracker).
-       Workers finish their current batch and exit.
-    2. Second Ctrl+C: Stops Rich Live display, cancels all async tasks
-       so the coroutine chain unwinds.
-    3. Third Ctrl+C:  ``os._exit(130)`` (hard exit).
+    1. First SIGINT/SIGTERM: Sets stop_event, switches the progress
+       display to shutdown mode (yellow border, live worker-drain
+       tracker).  Workers finish their current batch and exit.
+    2. Second SIGINT: Stops Rich Live display, cancels all async tasks
+       so the coroutine chain unwinds.  Starts a 45s watchdog to
+       outlast drain_pending (30s) + finalize_sn_run (10s) + buffer.
+    3. Third SIGINT: ``os._exit(130)`` (hard exit).
+
+    SIGTERM triggers the same cooperative shutdown as the first SIGINT.
 
     Args:
         stop_event: asyncio.Event that parallel runners watch to
@@ -224,10 +233,9 @@ def install_shutdown_handlers(
             # Force-kill SSH worker pools so leaked threads don't
             # block process exit.
             _force_kill_ssh_pools()
-            # Start exit watchdog NOW — loop.run_until_complete may be
-            # stuck on unkillable to_thread tasks, so the watchdog in
-            # safe_asyncio_run's finally block would never start.
-            _start_exit_watchdog(5)
+            # Start exit watchdog NOW — must outlast DRAIN_TIMEOUT (30s)
+            # + FINALIZE_TIMEOUT (10s) + buffer so finalize_sn_run lands.
+            _start_exit_watchdog(45)
             # Cancel all running tasks from the event loop so the
             # coroutine chain unwinds.
             for task in asyncio.all_tasks(loop):
@@ -237,6 +245,7 @@ def install_shutdown_handlers(
             os._exit(130)
 
     loop.add_signal_handler(signal.SIGINT, _handle_sigint)
+    loop.add_signal_handler(signal.SIGTERM, _handle_sigint)
 
 
 def _force_stop_display(display: object | None) -> None:

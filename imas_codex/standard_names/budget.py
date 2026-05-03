@@ -52,6 +52,15 @@ _WRITER_MAX_RETRIES = 5
 _WRITER_BASE_DELAY = 0.1
 _WRITER_MAX_DELAY = 2.0
 
+# Per-attempt timeout for record_llm_cost (run in a thread).
+# Chosen to sit just above the worst-case retry_on_deadlock window
+# (5 attempts × ~3s = 15s) so we don't cut into natural retries.
+_WRITER_CALL_TIMEOUT = 20.0
+
+# Heartbeat interval: how long the writer waits on an empty queue
+# before emitting a health log line.
+_WRITER_HEARTBEAT_SEC = 60.0
+
 
 # =====================================================================
 # LLMCostEvent — typed metadata for a single LLM call
@@ -296,6 +305,7 @@ class BudgetManager:
         self._pending_lock = threading.Lock()
         self._writer_task: asyncio.Task[None] | None = None
         self._write_failed: bool = False
+        self._write_dropped: int = 0
         self._started: bool = False
         # Cached graph total (refreshed at most once per second)
         self._graph_total_cache: float = 0.0
@@ -342,6 +352,20 @@ class BudgetManager:
             except Exception:  # noqa: BLE001
                 logger.exception("Writer task raised during drain")
                 self._write_failed = True
+
+        # Surface dropped-write count so operators know telemetry is incomplete.
+        if self._write_dropped > 0:
+            logger.error(
+                "drain_pending: %d LLMCost write(s) dropped after retry exhaustion",
+                self._write_dropped,
+            )
+
+        if self._write_failed:
+            logger.error(
+                "drain_pending: _write_failed=True — one or more LLMCost "
+                "writes failed terminally; cost_is_exact should be False"
+            )
+
         success = not self._write_failed
         if not success and raise_on_failure:
             raise RuntimeError(
@@ -356,9 +380,36 @@ class BudgetManager:
         On transient errors, retries with exponential backoff.  On terminal
         failure (after retries exhausted), marks ``_write_failed = True`` and
         continues processing the queue (best-effort for remaining writes).
+
+        A heartbeat fires every ``_WRITER_HEARTBEAT_SEC`` of idle time so
+        operators can confirm the writer is alive.  INFO when there is
+        pending work; DEBUG when idle and drained.
         """
         while True:
-            item = await self._write_queue.get()
+            try:
+                item = await asyncio.wait_for(
+                    self._write_queue.get(),
+                    timeout=_WRITER_HEARTBEAT_SEC,
+                )
+            except TimeoutError:
+                # Heartbeat — no items arrived within the window
+                with self._pending_lock:
+                    pc = self._pending_cost
+                qs = self._write_queue.qsize()
+                if pc > 0 or qs > 0:
+                    logger.info(
+                        "writer_loop heartbeat: pending=$%.4f qsize=%d",
+                        pc,
+                        qs,
+                    )
+                else:
+                    logger.debug(
+                        "writer_loop heartbeat: pending=$%.4f qsize=%d",
+                        pc,
+                        qs,
+                    )
+                continue
+
             if item is None:
                 # Sentinel — drain complete
                 self._write_queue.task_done()
@@ -373,40 +424,50 @@ class BudgetManager:
                     item.cost,
                 )
                 self._write_failed = True
+                self._write_dropped += 1
             finally:
                 with self._pending_lock:
                     self._pending_cost -= item.cost
                 self._write_queue.task_done()
 
     async def _write_single(self, item: _PendingWrite) -> None:
-        """Write a single ``LLMCost`` to the graph with retry."""
+        """Write a single ``LLMCost`` to the graph with retry.
+
+        Each attempt runs ``record_llm_cost`` in a thread via
+        ``asyncio.to_thread`` with a per-attempt timeout so a wedged
+        Neo4j connection cannot block the writer loop indefinitely.
+        """
         from imas_codex.standard_names.graph_ops import record_llm_cost
 
         last_exc: Exception | None = None
         for attempt in range(_WRITER_MAX_RETRIES):
             try:
-                record_llm_cost(
-                    run_id=item.run_id,
-                    phase=item.event.phase,
-                    cycle=item.event.cycle,
-                    sn_ids=list(item.event.sn_ids) if item.event.sn_ids else None,
-                    model=item.event.model,
-                    cost=item.cost,
-                    tokens_in=item.event.tokens_in,
-                    tokens_out=item.event.tokens_out,
-                    tokens_cached_read=item.event.tokens_cached_read,
-                    tokens_cached_write=item.event.tokens_cached_write,
-                    service=item.event.service,
-                    batch_id=item.event.batch_id,
-                    overspend=item.overspend,
-                    llm_at=item.llm_at,
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        record_llm_cost,
+                        run_id=item.run_id,
+                        phase=item.event.phase,
+                        cycle=item.event.cycle,
+                        sn_ids=list(item.event.sn_ids) if item.event.sn_ids else None,
+                        model=item.event.model,
+                        cost=item.cost,
+                        tokens_in=item.event.tokens_in,
+                        tokens_out=item.event.tokens_out,
+                        tokens_cached_read=item.event.tokens_cached_read,
+                        tokens_cached_write=item.event.tokens_cached_write,
+                        service=item.event.service,
+                        batch_id=item.event.batch_id,
+                        overspend=item.overspend,
+                        llm_at=item.llm_at,
+                    ),
+                    timeout=_WRITER_CALL_TIMEOUT,
                 )
                 return  # success
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 if attempt < _WRITER_MAX_RETRIES - 1:
                     delay = min(_WRITER_BASE_DELAY * (2**attempt), _WRITER_MAX_DELAY)
-                    logger.debug(
+                    logger.warning(
                         "Writer retry %d/%d for run=%s: %s",
                         attempt + 1,
                         _WRITER_MAX_RETRIES,
@@ -428,11 +489,24 @@ class BudgetManager:
 
         If no ``run_id`` is configured, the write is silently skipped
         (useful for tests without a graph).
+
+        Detects a crashed/cancelled writer task and recreates it under
+        ``_pending_lock`` to prevent TOCTOU double-recreation.
         """
         if self.run_id is None:
             return
+
+        # Check writer health under lock (B3: TOCTOU-safe).
         with self._pending_lock:
             self._pending_cost += cost
+            if self._writer_task is not None and self._writer_task.done():
+                try:
+                    exc = self._writer_task.exception()
+                except asyncio.CancelledError:
+                    exc = "cancelled"
+                logger.error("writer_task died unexpectedly (%s) — recreating", exc)
+                self._writer_task = asyncio.create_task(self._writer_loop())
+
         pw = _PendingWrite(
             cost=cost,
             event=event,
@@ -780,6 +854,14 @@ class BudgetManager:
 
         Cached for ``_graph_cache_ttl`` seconds to avoid hammering Neo4j.
         Falls back to in-memory ``_spent`` when no ``run_id`` is set.
+        """
+        return self._get_total_spent_sync(force_refresh=force_refresh)
+
+    def _get_total_spent_sync(self, *, force_refresh: bool = False) -> float:
+        """Synchronous implementation of :meth:`get_total_spent`.
+
+        Separated so callers in async shutdown paths can wrap this in
+        ``asyncio.to_thread`` + ``wait_for`` without nesting coroutines.
         """
         if self.run_id is None:
             with self._lock:

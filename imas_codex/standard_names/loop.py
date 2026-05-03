@@ -1259,31 +1259,54 @@ async def run_sn_pools(
     finally:
         summary.stopped_at = datetime.now(UTC)
 
+        # ── Shutdown timeouts ─────────────────────────────────────
+        # Each sync graph call is wrapped in to_thread + wait_for so
+        # a wedged Neo4j connection cannot block shutdown indefinitely.
+        DRAIN_TIMEOUT = 30.0
+        FINALIZE_TIMEOUT = 10.0
+        ORPHAN_TIMEOUT = 10.0
+
         # Release any orphaned claims left by batches in flight at shutdown.
         try:
             from imas_codex.standard_names.graph_ops import release_all_orphan_claims
 
-            orphan_counts = release_all_orphan_claims()
+            orphan_counts = await asyncio.wait_for(
+                asyncio.to_thread(release_all_orphan_claims),
+                timeout=ORPHAN_TIMEOUT,
+            )
             if orphan_counts.get("sn", 0) or orphan_counts.get("sns", 0):
                 logger.info(
                     "run_sn_pools: orphan sweep released %d SN + %d SNS",
                     orphan_counts.get("sn", 0),
                     orphan_counts.get("sns", 0),
                 )
+        except TimeoutError:
+            logger.warning(
+                "run_sn_pools: orphan sweep timed out after %ds (non-fatal)",
+                ORPHAN_TIMEOUT,
+            )
         except Exception as _orphan_exc:  # noqa: BLE001
             logger.warning(
                 "run_sn_pools: orphan sweep failed (non-fatal): %s", _orphan_exc
             )
 
-        # Drain pending LLMCost graph writes.  Awaits in this finally
-        # block may be hit by a CancelledError if the task is being
-        # cancelled (e.g. by a second-press SIGINT).  We *must* still
-        # reach :func:`finalize_sn_run` below or the SNRun row stays
-        # in ``status='running'`` forever — so each await is shielded
-        # and individually try/excepted.
+        # Drain pending LLMCost graph writes.  Bounded by DRAIN_TIMEOUT
+        # so a wedged writer cannot block finalize_sn_run.
         cost_is_exact = True
         try:
-            cost_is_exact = await asyncio.shield(shared_mgr.drain_pending())
+            cost_is_exact = await asyncio.wait_for(
+                asyncio.shield(shared_mgr.drain_pending()),
+                timeout=DRAIN_TIMEOUT,
+            )
+        except TimeoutError:
+            logger.error(
+                "run_sn_pools: drain_pending timed out after %ds — "
+                "cancelling writer and proceeding to finalize",
+                DRAIN_TIMEOUT,
+            )
+            if shared_mgr._writer_task is not None:
+                shared_mgr._writer_task.cancel()
+            cost_is_exact = False
         except (asyncio.CancelledError, Exception) as _drain_exc:  # noqa: BLE001
             logger.warning(
                 "run_sn_pools: drain_pending interrupted (%s); "
@@ -1299,10 +1322,20 @@ async def run_sn_pools(
 
         # Refresh final cost from graph (best-effort under cancellation).
         try:
-            graph_spent = await asyncio.shield(
-                shared_mgr.get_total_spent(force_refresh=True)
+            graph_spent = await asyncio.wait_for(
+                asyncio.to_thread(
+                    lambda: shared_mgr._get_total_spent_sync(force_refresh=True)
+                ),
+                timeout=FINALIZE_TIMEOUT,
             )
             summary.cost_spent = max(summary.cost_spent, graph_spent)
+        except TimeoutError:
+            logger.warning(
+                "run_sn_pools: get_total_spent timed out after %ds; "
+                "using last-known cost_spent=$%.4f",
+                FINALIZE_TIMEOUT,
+                summary.cost_spent,
+            )
         except (asyncio.CancelledError, Exception) as _spend_exc:  # noqa: BLE001
             logger.warning(
                 "run_sn_pools: get_total_spent interrupted (%s); "
@@ -1343,23 +1376,35 @@ async def run_sn_pools(
         from imas_codex.standard_names.graph_ops import finalize_sn_run
 
         try:
-            finalize_sn_run(
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    finalize_sn_run,
+                    run_id,
+                    status=_STOP_TO_STATUS.get(summary.stop_reason, "completed"),
+                    cost_spent=summary.cost_spent,
+                    cost_is_exact=cost_is_exact,
+                    stopped_at=summary.stopped_at,
+                    cost_limit=round(summary.cost_limit, 6),
+                    compose_cost=round(summary.compose_cost, 6),
+                    review_cost=round(summary.review_cost, 6),
+                    min_score=summary.min_score,
+                    names_composed=summary.names_composed,
+                    names_enriched=summary.names_enriched,
+                    names_reviewed=summary.names_reviewed,
+                    names_regenerated=summary.names_regenerated,
+                    stop_reason=summary.stop_reason,
+                    pipeline_hash=_pipeline_hash,
+                    pipeline_hash_detail=_pipeline_hash_detail,
+                ),
+                timeout=FINALIZE_TIMEOUT,
+            )
+        except TimeoutError:
+            logger.critical(
+                "run_sn_pools: finalize_sn_run timed out after %ds for "
+                "run_id=%s — SNRun row stays open; operator must reconcile "
+                "manually",
+                FINALIZE_TIMEOUT,
                 run_id,
-                status=_STOP_TO_STATUS.get(summary.stop_reason, "completed"),
-                cost_spent=summary.cost_spent,
-                cost_is_exact=cost_is_exact,
-                stopped_at=summary.stopped_at,
-                cost_limit=round(summary.cost_limit, 6),
-                compose_cost=round(summary.compose_cost, 6),
-                review_cost=round(summary.review_cost, 6),
-                min_score=summary.min_score,
-                names_composed=summary.names_composed,
-                names_enriched=summary.names_enriched,
-                names_reviewed=summary.names_reviewed,
-                names_regenerated=summary.names_regenerated,
-                stop_reason=summary.stop_reason,
-                pipeline_hash=_pipeline_hash,
-                pipeline_hash_detail=_pipeline_hash_detail,
             )
         except Exception as _final_exc:  # noqa: BLE001
             logger.error(
