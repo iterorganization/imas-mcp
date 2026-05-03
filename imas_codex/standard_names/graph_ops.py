@@ -6081,6 +6081,7 @@ def persist_reviewed_name(
             """
             MATCH (sn:StandardName {id: $id})
             WHERE sn.claim_token = $token
+              AND sn.name_stage = 'drafted'
             RETURN coalesce(sn.chain_length, 0) AS chain_length
             """,
             id=sn_id,
@@ -6121,6 +6122,7 @@ def persist_reviewed_name(
             """
             MATCH (sn:StandardName {id: $id})
             WHERE sn.claim_token = $token
+              AND sn.name_stage = 'drafted'
             SET sn.reviewer_score_name        = $score,
                 sn.reviewer_scores_name       = $scores_json,
                 sn.reviewer_comments_name     = $comments,
@@ -6339,6 +6341,8 @@ def persist_reviewed_docs(
             """
             MATCH (sn:StandardName {id: $id})
             WHERE sn.claim_token = $token
+              AND sn.docs_stage = 'drafted'
+              AND sn.name_stage = 'accepted'
             RETURN coalesce(sn.docs_chain_length, 0) AS docs_chain_length
             """,
             id=sn_id,
@@ -6375,6 +6379,7 @@ def persist_reviewed_docs(
             """
             MATCH (sn:StandardName {id: $id})
             WHERE sn.claim_token = $token
+              AND sn.name_stage = 'accepted'
             SET sn.reviewer_score_docs        = $score,
                 sn.reviewer_scores_docs       = $scores_json,
                 sn.reviewer_comments_docs     = $comments,
@@ -6597,6 +6602,7 @@ def persist_refined_name(
                         // 2. Link to predecessor
                         WITH new
                         MATCH (old:StandardName {{id: $old_name}})
+                        WHERE old.name_stage = 'refining'
                         MERGE (new)-[:REFINED_FROM]->(old)
 
                         // 3. Mark old as superseded, clear claim
@@ -7254,6 +7260,7 @@ def persist_generated_docs(
             """
             MATCH (sn:StandardName {id: $sn_id})
             WHERE sn.claim_token = $token
+              AND sn.name_stage = 'accepted'
             SET sn.description      = $description,
                 sn.documentation    = $documentation,
                 sn.docs_stage       = 'drafted',
@@ -7485,6 +7492,7 @@ def persist_refined_docs(
                         MATCH (sn:StandardName {id: $sn_id})
                         WHERE sn.claim_token = $token
                           AND sn.docs_stage = 'refining'
+                          AND sn.name_stage = 'accepted'
                         WITH sn, coalesce(sn.docs_chain_length, 0) AS cur_chain
 
                         // 2. Create DocsRevision snapshot (deterministic id)
