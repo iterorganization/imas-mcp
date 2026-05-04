@@ -869,6 +869,65 @@ def _build_pool_specs(
     return specs
 
 
+def _list_physics_domains_with_extractable_paths(source: str) -> list[str]:
+    """Return distinct physics domains that have extractable DD paths.
+
+    Queries the graph for distinct ``physics_domain`` values on
+    ``IMASNode`` leaves that satisfy the same base filters used by
+    :func:`~imas_codex.standard_names.sources.dd.extract_dd_candidates`:
+    non-empty description, non-structure data type, not from
+    ``core_instant_changes``.
+
+    Only meaningful for ``source='dd'``; returns ``[]`` for other sources.
+    """
+    if source != "dd":
+        return []
+
+    from imas_codex.graph.client import GraphClient
+
+    query = """
+    MATCH (ids:IDS)-[:HAS_PATH*]->(n:IMASNode)
+    WHERE n.description IS NOT NULL
+      AND n.description <> ''
+      AND NOT (n.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
+      AND ids.id <> 'core_instant_changes'
+      AND n.physics_domain IS NOT NULL
+    RETURN DISTINCT n.physics_domain AS domain
+    ORDER BY domain
+    """
+    with GraphClient() as gc:
+        rows = list(gc.query(query))
+    return [r["domain"] for r in rows if r.get("domain")]
+
+
+async def _seed_all_domains(source: str, max_sources: int | None = None) -> int:
+    """Seed sources from every physics domain except 'mixed'.
+
+    'mixed' is skipped because mixed-unit DD paths cannot map to a single
+    standard name (they violate the unit invariant per StandardName).
+    """
+    domains = await asyncio.to_thread(
+        _list_physics_domains_with_extractable_paths, source
+    )
+    total = 0
+    for d in domains:
+        if d == "mixed":
+            logger.info(
+                "Skipping 'mixed' domain (mixed-unit sources are not standardisable)"
+            )
+            continue
+        total += await _seed_domain_sources(domain=d, source=source)
+        if max_sources and total >= max_sources:
+            logger.warning("max_sources=%d reached; stopping seed sweep", max_sources)
+            break
+    if total > 1000:
+        logger.warning(
+            "Seeded %d sources — large queue; consider --max-sources to bound.",
+            total,
+        )
+    return total
+
+
 async def _seed_domain_sources(
     domain: str,
     source: str = "dd",
@@ -940,6 +999,8 @@ async def run_sn_pools(
     review_docs_backlog_cap: int | None = None,
     source: str = "dd",
     only_domain: str | None = None,
+    domains: tuple[str, ...] = (),
+    max_sources: int | None = None,
     stop_event: asyncio.Event | None = None,
     loop_state: Any | None = None,
     pending_fn: Callable[[], dict[str, int]] | None = None,
@@ -983,9 +1044,11 @@ async def run_sn_pools(
             generate_docs / refine_docs pause.  Defaults to
             ``REVIEW_DOCS_BACKLOG_CAP`` when *None*.
         source: ``"dd"`` or ``"signals"`` — scopes reconciliation.
-        only_domain: When set, restricts the *extract_phase* seeding of
-            ``StandardNameSource`` nodes to this physics domain.  The
-            pools themselves are domain-agnostic.
+        only_domain: Deprecated — use *domains* instead.
+        domains: Tuple of physics domain names to seed.  When empty
+            (default), all eligible domains are auto-seeded.
+        max_sources: Cap on total StandardNameSource nodes seeded in
+            the auto-seed sweep.  Prevents runaway queue growth.
         stop_event: Cooperative shutdown signal (set by the CLI harness).
         loop_state: Optional :class:`SNLoopState` for Rich progress.
         pending_fn: Optional callable ``() → dict[str, int]`` mapping
@@ -1089,40 +1152,27 @@ async def run_sn_pools(
             recon_result,
         )
 
-        # ── B3: Domain extract (optional) ─────────────────────────
-        # When only_domain is set, seed the generate_name pool with
-        # StandardNameSource nodes for that domain before the pools
-        # start.  The pools themselves are domain-agnostic — they
-        # claim whatever status='extracted' items already exist —
-        # so without this step, --physics-domain is a no-op.
-        if only_domain:
-            from imas_codex.standard_names.graph_ops import (
-                count_extracted_for_domain,
-            )
+        # ── B3: Domain extract (auto-seed) ────────────────────────
+        # Merge deprecated only_domain into domains for backward compat.
+        _domains = domains
+        if only_domain and not _domains:
+            _domains = (only_domain,)
 
-            n_existing = count_extracted_for_domain(only_domain, source)
+        if _domains:
+            seeded = 0
+            for d in _domains:
+                seeded += await _seed_domain_sources(
+                    domain=d, source=source, stop_event=stop_event
+                )
             logger.info(
-                "run_sn_pools: extract-seed domain=%s — %d items already extracted",
-                only_domain,
-                n_existing,
+                "Auto-seeded %d sources from %d domain(s)", seeded, len(_domains)
             )
-            if n_existing == 0:
-                logger.info(
-                    "run_sn_pools: seeding generate_name pool for domain=%s…",
-                    only_domain,
-                )
-                n_seeded = await _seed_domain_sources(
-                    domain=only_domain,
-                    source=source,
-                    stop_event=stop_event,
-                )
-                logger.info(
-                    "run_sn_pools: seeded %d sources for domain=%s",
-                    n_seeded,
-                    only_domain,
-                )
+        else:
+            seeded = await _seed_all_domains(source=source, max_sources=max_sources)
+            logger.info("Auto-seeded %d sources from all eligible domains", seeded)
 
         # ── Build pool specs ──────────────────────────────────────
+        _only_domain_for_pools = _domains[0] if len(_domains) == 1 else None
         specs = _build_pool_specs(
             shared_mgr,
             stop_event,
@@ -1132,7 +1182,7 @@ async def run_sn_pools(
             review_name_backlog_cap=review_name_backlog_cap,
             review_docs_backlog_cap=review_docs_backlog_cap,
             on_event=on_event,
-            only_domain=only_domain,
+            only_domain=_only_domain_for_pools,
         )
 
         # ── Wire pool health into display state ───────────────────

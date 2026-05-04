@@ -33,7 +33,7 @@ def sn() -> None:
 
     \b
     Run (reconcile / generate / enrich / link / review / regen):
-      sn run --source dd [--physics-domain NAME]
+      sn run --source dd [--domain NAME ...]
       sn run --source signals --facility NAME
       sn run --only link
 
@@ -44,15 +44,133 @@ def sn() -> None:
     pass
 
 
+def _split_whitespace(
+    ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Split each value on whitespace so ``--domain "a b"`` works."""
+    out: list[str] = []
+    for v in value or ():
+        out.extend(v.split())
+    return tuple(out)
+
+
+def _compute_pool_pending(
+    gc: object,
+    domains: list[str] | None,
+    rotation_cap: int,
+    min_score: float,
+) -> dict[str, int]:
+    """Return per-pool pending counts mirroring ``claim_*_batch`` predicates.
+
+    Keys: ``generate_name``, ``review_name``, ``refine_name``,
+    ``generate_docs``, ``review_docs``, ``refine_docs``.
+
+    Parameters
+    ----------
+    gc:
+        An open :class:`~imas_codex.graph.client.GraphClient` session.
+    domains:
+        When non-empty, restrict counts to these physics domains.
+        ``physics_domain`` on ``StandardName`` is a *string*, so the
+        filter uses ``sn.physics_domain IN $domains``.
+    rotation_cap:
+        Maximum chain depth — mirrors ``claim_refine_name_batch``.
+    min_score:
+        Reviewer threshold — mirrors ``claim_refine_name_batch``.
+    """
+    domain_filter_sn = "AND sn.physics_domain IN $domains" if domains else ""
+    domain_filter_src = "AND s.physics_domain IN $domains" if domains else ""
+
+    query = f"""
+    CALL {{
+      MATCH (s:StandardNameSource {{status: 'extracted'}})
+      WHERE NOT (s)-[:PRODUCED_NAME]->(:StandardName)
+        {domain_filter_src}
+      RETURN count(s) AS generate_name
+    }}
+    CALL {{
+      MATCH (sn:StandardName)
+      WHERE sn.name_stage = 'drafted'
+        AND NOT (sn.name_stage IN ['superseded', 'exhausted'])
+        {domain_filter_sn}
+      RETURN count(sn) AS review_name
+    }}
+    CALL {{
+      MATCH (sn:StandardName)
+      WHERE sn.name_stage = 'reviewed'
+        AND sn.reviewer_score_name IS NOT NULL
+        AND sn.reviewer_score_name < $min_score
+        AND coalesce(sn.chain_length, 0) < $rotation_cap
+        AND NOT (sn.name_stage IN ['superseded', 'exhausted'])
+        {domain_filter_sn}
+      RETURN count(sn) AS refine_name
+    }}
+    CALL {{
+      MATCH (sn:StandardName)
+      WHERE sn.name_stage = 'accepted'
+        AND sn.docs_stage = 'pending'
+        AND NOT (sn.name_stage IN ['superseded', 'exhausted'])
+        {domain_filter_sn}
+      RETURN count(sn) AS generate_docs
+    }}
+    CALL {{
+      MATCH (sn:StandardName)
+      WHERE sn.docs_stage = 'drafted'
+        AND NOT (sn.name_stage IN ['superseded', 'exhausted'])
+        {domain_filter_sn}
+      RETURN count(sn) AS review_docs
+    }}
+    CALL {{
+      MATCH (sn:StandardName)
+      WHERE sn.docs_stage = 'reviewed'
+        AND sn.reviewer_score_docs IS NOT NULL
+        AND sn.reviewer_score_docs < $min_score
+        AND coalesce(sn.docs_chain_length, 0) < $rotation_cap
+        AND NOT (sn.name_stage IN ['superseded', 'exhausted'])
+        {domain_filter_sn}
+      RETURN count(sn) AS refine_docs
+    }}
+    RETURN generate_name, review_name, refine_name,
+           generate_docs, review_docs, refine_docs
+    """
+    params: dict[str, object] = {
+        "rotation_cap": rotation_cap,
+        "min_score": min_score,
+    }
+    if domains:
+        params["domains"] = list(domains)
+    rows = list(gc.query(query, **params))  # type: ignore[attr-defined]
+    if not rows:
+        return {
+            "generate_name": 0,
+            "review_name": 0,
+            "refine_name": 0,
+            "generate_docs": 0,
+            "review_docs": 0,
+            "refine_docs": 0,
+        }
+    r = rows[0]
+    return {
+        k: int(r.get(k, 0))
+        for k in (
+            "generate_name",
+            "review_name",
+            "refine_name",
+            "generate_docs",
+            "review_docs",
+            "refine_docs",
+        )
+    }
+
+
 def _run_sn_loop_cmd(
     *,
     cost_limit: float,
     per_domain_limit: int | None,
     dry_run: bool,
     quiet: bool,
-    only_domain: str | None = None,
+    domains: tuple[str, ...] = (),
     verbose: bool = False,
-    turn_number: int = 1,
     min_score: float | None = None,
     rotation_cap: int | None = None,
     escalation_model: str | None = None,
@@ -63,6 +181,7 @@ def _run_sn_loop_cmd(
     source: str = "dd",
     override_edits: list[str] | None = None,
     only: str | None = None,
+    max_sources: int | None = None,
 ) -> None:
     """Execute the DD completion loop with Rich progress display.
 
@@ -115,8 +234,33 @@ def _run_sn_loop_cmd(
     # Build Rich display or fall back to plain logging
     display = None
     cli_console: Console | None = None
-    _pool_pending_counts: Callable[[], dict[str, int]] | None = None
     _on_event: Callable[[dict[str, Any]], None] | None = None
+
+    # Shared pending-count callable for both Rich and headless modes.
+    # Uses the module-level _compute_pool_pending() so there's exactly
+    # one Cypher query mirroring claim predicates.
+    from imas_codex.graph.client import GraphClient as _GC
+
+    _domains_list: list[str] | None = list(domains) if domains else None
+    _rc = rotation_cap if rotation_cap is not None else 3
+    _ms = min_score if min_score is not None else 0.75
+
+    def _pool_pending_fn() -> dict[str, int]:
+        try:
+            with _GC() as gc:
+                return _compute_pool_pending(
+                    gc, domains=_domains_list, rotation_cap=_rc, min_score=_ms
+                )
+        except Exception:
+            return {
+                "generate_name": 0,
+                "review_name": 0,
+                "refine_name": 0,
+                "generate_docs": 0,
+                "review_docs": 0,
+                "refine_docs": 0,
+            }
+
     if use_rich:
         cli_console = Console()
         setup_logging("sn", "sn-run", use_rich=True, verbose=verbose)
@@ -135,100 +279,7 @@ def _run_sn_loop_cmd(
             def _cost_fn() -> float:
                 return 0.0
 
-        # Per-pool pending counters from the graph.
-        from imas_codex.graph.client import GraphClient as _GC
         from imas_codex.standard_names.display import SN6PoolDisplay
-
-        def _count_pending() -> dict[str, int]:
-            try:
-                with _GC() as gc:
-                    rows = list(
-                        gc.query(
-                            """
-                            CALL {
-                              MATCH (s:StandardNameSource {status: 'extracted'})
-                              WHERE NOT (s)-[:PRODUCED_NAME]->(:StandardName)
-                                AND (
-                                  $domain IS NULL
-                                  OR EXISTS {
-                                    MATCH (s)-[:FROM_DD_PATH]->(n:IMASNode)
-                                    WHERE n.physics_domain = $domain
-                                  }
-                                  OR s.physics_domain = $domain
-                                )
-                              RETURN count(s) AS draft
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.name_stage = 'reviewed'
-                                AND sn.reviewer_score_name IS NOT NULL
-                                AND sn.reviewer_score_name < coalesce($min_score, 1.0)
-                                AND coalesce(sn.chain_length, 0) < 3
-                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
-                              RETURN count(sn) AS revise
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.validation_status = 'valid'
-                                AND sn.enriched_at IS NULL
-                                AND (sn.claimed_at IS NULL
-                                     OR sn.claimed_at < datetime() - duration({minutes: 30}))
-                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
-                              RETURN count(sn) AS enrich
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.validation_status = 'valid'
-                                AND sn.reviewed_name_at IS NULL
-                                AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
-                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
-                              RETURN count(sn) AS review_names
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.reviewed_docs_at IS NULL
-                                AND sn.enriched_at IS NOT NULL
-                                AND sn.reviewed_name_at IS NOT NULL
-                                AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
-                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
-                              RETURN count(sn) AS review_docs
-                            }
-                            // ── Completed counts (graph baseline for restart) ──
-                            CALL {
-                              MATCH (s:StandardNameSource)
-                              WHERE s.status IN ['composed','attached','vocab_gap','skipped','failed']
-                              RETURN count(s) AS draft_done
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.enriched_at IS NOT NULL
-                              RETURN count(sn) AS enrich_done
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.reviewed_name_at IS NOT NULL
-                              RETURN count(sn) AS review_names_done
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.reviewed_docs_at IS NOT NULL
-                              RETURN count(sn) AS review_docs_done
-                            }
-                            RETURN draft, revise, enrich,
-                                   review_names, review_docs,
-                                   draft_done, enrich_done,
-                                   review_names_done, review_docs_done
-                            """,
-                            min_score=min_score,
-                            domain=only_domain,
-                        )
-                    )
-                if not rows:
-                    return {}
-                r = rows[0]
-                return {k: int(r.get(k, 0)) for k in r}
-            except Exception:
-                return {}
 
         _pending_cache: dict[str, tuple[float, dict[str, int]]] = {"v": (0.0, {})}
 
@@ -239,29 +290,9 @@ def _run_sn_loop_cmd(
             now = _t.monotonic()
             ts, val = _pending_cache["v"]
             if not val or (now - ts) > 1.0:
-                val = _count_pending()
+                val = _pool_pending_fn()
                 _pending_cache["v"] = (now, val)
             return val
-
-        def _pool_pending_counts() -> dict[str, int]:
-            """Return per-pool pending counts for orchestrator fairness.
-
-            Keys must match ``PoolSpec.name`` values used by
-            ``run_pools`` / ``_pending_count_watchdog``:
-            ``generate_name``, ``review_name``, ``refine_name``,
-            ``generate_docs``, ``review_docs``, ``refine_docs``.
-            """
-            _, val = _pending_cache["v"]
-            if not val:
-                val = _count_pending()
-            return {
-                "generate_name": int(val.get("draft", 0)),
-                "review_name": int(val.get("review_names", 0)),
-                "refine_name": int(val.get("revise", 0)),
-                "generate_docs": int(val.get("enrich", 0)),
-                "review_docs": int(val.get("review_docs", 0)),
-                "refine_docs": 0,
-            }
 
         display = SN6PoolDisplay(
             cost_limit=cost_limit,
@@ -276,112 +307,10 @@ def _run_sn_loop_cmd(
         if not quiet:
             cli_console.print(
                 f"[bold]DD completion loop[/bold] "
-                f"(budget=${cost_limit:.2f}, turn={turn_number}"
+                f"(budget=${cost_limit:.2f}"
                 f"{f', min_score={min_score}' if min_score is not None else ''}"
                 f"{', dry-run' if dry_run else ''})"
             )
-
-        # In headless mode the Rich display ticker is absent, so build a
-        # lightweight pending-count callable for the orchestrator's fairness
-        # watchdog.  This keeps ``active_pools_fn`` accurate even without a
-        # TTY, preventing cheap pools from starving enrich / review.
-        from imas_codex.graph.client import GraphClient as _GC_headless
-
-        def _count_pending() -> dict[str, int]:  # type: ignore[redefined-outer-name]
-            try:
-                with _GC_headless() as gc:
-                    rows = list(
-                        gc.query(
-                            """
-                            CALL {
-                              MATCH (s:StandardNameSource {status: 'extracted'})
-                              WHERE NOT (s)-[:PRODUCED_NAME]->(:StandardName)
-                                AND (
-                                  $domain IS NULL
-                                  OR EXISTS {
-                                    MATCH (s)-[:FROM_DD_PATH]->(n:IMASNode)
-                                    WHERE n.physics_domain = $domain
-                                  }
-                                  OR s.physics_domain = $domain
-                                )
-                              RETURN count(s) AS draft
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.name_stage = 'reviewed'
-                                AND sn.reviewer_score_name IS NOT NULL
-                                AND sn.reviewer_score_name < coalesce($min_score, 1.0)
-                                AND coalesce(sn.chain_length, 0) < 3
-                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
-                              RETURN count(sn) AS revise
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.validation_status = 'valid'
-                                AND sn.enriched_at IS NULL
-                                AND (sn.claimed_at IS NULL
-                                     OR sn.claimed_at < datetime() - duration({minutes: 30}))
-                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
-                              RETURN count(sn) AS enrich
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.validation_status = 'valid'
-                                AND sn.reviewed_name_at IS NULL
-                                AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
-                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
-                              RETURN count(sn) AS review_names
-                            }
-                            CALL {
-                              MATCH (sn:StandardName)
-                              WHERE sn.reviewed_docs_at IS NULL
-                                AND sn.enriched_at IS NOT NULL
-                                AND sn.reviewed_name_at IS NOT NULL
-                                AND coalesce(sn.reviewer_score_name, 1.0) >= coalesce($min_score, 0.0)
-                                AND ($domain IS NULL OR $domain IN sn.physics_domain)
-                              RETURN count(sn) AS review_docs
-                            }
-                            RETURN draft, revise, enrich, review_names, review_docs
-                            """,
-                            min_score=min_score,
-                            domain=only_domain,
-                        )
-                    )
-                if not rows:
-                    return {
-                        "draft": 0,
-                        "revise": 0,
-                        "enrich": 0,
-                        "review_names": 0,
-                        "review_docs": 0,
-                    }
-                r = rows[0]
-                return {
-                    "draft": int(r.get("draft", 0)),
-                    "revise": int(r.get("revise", 0)),
-                    "enrich": int(r.get("enrich", 0)),
-                    "review_names": int(r.get("review_names", 0)),
-                    "review_docs": int(r.get("review_docs", 0)),
-                }
-            except Exception:
-                return {
-                    "draft": 0,
-                    "revise": 0,
-                    "enrich": 0,
-                    "review_names": 0,
-                    "review_docs": 0,
-                }
-
-        def _pool_pending_counts() -> dict[str, int]:  # type: ignore[redefined-outer-name]
-            val = _count_pending()
-            return {
-                "generate_name": val["draft"],
-                "review_name": val["review_names"],
-                "refine_name": val["revise"],
-                "generate_docs": val["enrich"],
-                "review_docs": val["review_docs"],
-                "refine_docs": 0,
-            }
 
     # Build harness config — SN loop wants graph + model status at top
     disc_config = DiscoveryConfig(
@@ -417,16 +346,16 @@ def _run_sn_loop_cmd(
     async def async_main(stop_event, service_monitor):
         summary = await run_sn_pools(
             cost_limit=cost_limit,
-            turn_number=turn_number,
             min_score=min_score,
             rotation_cap=rotation_cap,
             escalation_model=escalation_model,
             review_name_backlog_cap=review_name_backlog_cap,
             review_docs_backlog_cap=review_docs_backlog_cap,
             source=source,
-            only_domain=only_domain,
+            domains=domains,
+            max_sources=max_sources,
             stop_event=stop_event,
-            pending_fn=_pool_pending_counts,
+            pending_fn=_pool_pending_fn,
             on_event=_on_event,
         )
         return {"summary": summary}
@@ -443,11 +372,10 @@ def _run_sn_loop_cmd(
 
     # Print summary table (in both rich and plain mode, after display exits)
     out_console = cli_console or Console()
-    table = Table(title=f"Run {row['run_id'][:8]}… (turn {row.get('turn_number', 1)})")
+    table = Table(title=f"Run {row['run_id'][:8]}…")
     table.add_column("field", style="cyan")
     table.add_column("value", style="white")
     for key in (
-        "turn_number",
         "stop_reason",
         "cost_spent",
         "cost_limit",
@@ -558,14 +486,14 @@ def _check_pipeline_clear_gate() -> None:
     help="Source to extract candidates from",
 )
 @click.option(
-    "--physics-domain",
-    "domain_filter",
-    type=_PHYSICS_DOMAIN_CHOICE,
-    default=None,
+    "--domain",
+    "-d",
+    "domains",
+    multiple=True,
+    callback=_split_whitespace,
     help=(
-        "Filter to a specific physics domain (e.g. magnetics, equilibrium, "
-        "transport). Applies to both DD and signals sources. Primary scope "
-        "narrower for generation."
+        "Physics domain(s) to seed. Repeatable; whitespace-separated values "
+        "also accepted. Default: seed all eligible domains from DD."
     ),
 )
 @click.option(
@@ -602,6 +530,16 @@ def _check_pipeline_clear_gate() -> None:
     help="Maximum number of DD paths to process",
 )
 @click.option(
+    "--max-sources",
+    "max_sources",
+    type=int,
+    default=None,
+    help=(
+        "Cap on total StandardNameSource nodes to seed across all domains. "
+        "Prevents runaway queue growth when auto-seeding without --domain."
+    ),
+)
+@click.option(
     "--compose-model",
     type=str,
     default=None,
@@ -619,7 +557,7 @@ def _check_pipeline_clear_gate() -> None:
         "space-separated paths within each flag (e.g., "
         "'--paths eq/.../psi eq/.../q' or '--paths eq/.../psi --paths eq/.../q'). "
         "Bypasses graph query, classifier, and already-named check. "
-        "Overrides --physics-domain, --limit, and implies --force."
+        "Overrides --domain, --limit, and implies --force."
     ),
 )
 @click.option(
@@ -712,19 +650,6 @@ def _check_pipeline_clear_gate() -> None:
         "Select names with validation_status=quarantined AND a vocab_gap cause "
         "(or StandardNameSource.status=vocab_gap) for regen after ISN vocab "
         "updates."
-    ),
-)
-@click.option(
-    "--turn-number",
-    "turn_number",
-    type=int,
-    default=1,
-    show_default=True,
-    help=(
-        "User-supplied turn number for this run. Stamped on every "
-        "StandardName touched via ``last_turn_number`` and on the "
-        "created SNRun audit node. Does NOT auto-increment — call "
-        "``sn run --turn-number 2`` manually to drive the next pass."
     ),
 )
 @click.option(
@@ -863,12 +788,13 @@ def _check_pipeline_clear_gate() -> None:
 )
 def sn_run(
     source: str,
-    domain_filter: str | None,
+    domains: tuple[str, ...],
     facility: str | None,
     cost_limit: float,
     dry_run: bool,
     force: bool,
     limit: int | None,
+    max_sources: int | None,
     compose_model: str | None,
     verbose: bool,
     quiet: bool,
@@ -884,7 +810,6 @@ def sn_run(
     retry_quarantined: bool,
     retry_skipped: bool,
     retry_vocab_gap: bool,
-    turn_number: int,
     min_score: float,
     rotation_cap: int,
     escalation_model: str,
@@ -908,9 +833,10 @@ def sn_run(
     \b
     Examples:
       imas-codex sn run -c 50                                 # all 6 pools, full run
-      imas-codex sn run --physics-domain equilibrium -c 5     # loop, one domain
-      imas-codex sn run --physics-domain magnetics --dry-run
-      imas-codex sn run --source signals --facility tcv --physics-domain magnetics
+      imas-codex sn run --domain equilibrium -c 5             # loop, one domain
+      imas-codex sn run --domain equilibrium --domain transport  # two domains
+      imas-codex sn run --domain "equilibrium transport" --dry-run  # same, space-sep
+      imas-codex sn run --source signals --facility tcv --domain magnetics
       imas-codex sn run --paths equilibrium/time_slice/profiles_1d/psi --paths equilibrium/time_slice/profiles_1d/q
       imas-codex sn run --single-pass --paths equilibrium/time_slice/profiles_1d/psi -c 1  # single compose pass on explicit paths
       imas-codex sn run --reset-to drafted --reset-only
@@ -954,7 +880,7 @@ def sn_run(
     # Scope-routing: --paths → single-pass; else → all-pool loop (unless --single-pass).
     # The loop runs all 6 pools concurrently, sampling globally from the available
     # pool of StandardNameSource / StandardName nodes (no per-domain looping).
-    # --physics-domain is forwarded to scope the extract_phase seeding only;
+    # --domain is forwarded to scope the extract_phase seeding only;
     # the pools themselves are domain-agnostic.
     use_loop = not single_pass and not paths_list and source == "dd"
 
@@ -967,9 +893,8 @@ def sn_run(
             per_domain_limit=limit,
             dry_run=dry_run,
             quiet=quiet,
-            only_domain=domain_filter,
+            domains=domains,
             verbose=verbose,
-            turn_number=turn_number,
             min_score=min_score,
             rotation_cap=rotation_cap,
             escalation_model=escalation_model,
@@ -980,12 +905,16 @@ def sn_run(
             source=source,
             override_edits=_override_edits,
             only=only_phase,
+            max_sources=max_sources,
         )
         return
 
     # --ids has been removed from this command; scope narrowing is domain-based
     # so it works uniformly across DD and facility-signals sources.
     ids_filter: str | None = None
+
+    # Single-pass path uses a scalar domain_filter; derive from --domain tuple.
+    domain_filter: str | None = domains[0] if len(domains) == 1 else None
 
     # Validate: signals source requires facility
     if source == "signals" and not facility:
@@ -1254,7 +1183,7 @@ def sn_run(
         force=force,
         regen=min_score is not None,
         min_score=min_score,
-        turn_number=turn_number,
+        turn_number=1,
         limit=limit,
         compose_model=compose_model,
         from_model=from_model,

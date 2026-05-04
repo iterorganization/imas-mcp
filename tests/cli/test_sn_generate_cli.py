@@ -48,10 +48,14 @@ class TestGenerateHelpShowsNewFlags:
             "--retry-quarantined",
             "--retry-skipped",
             "--retry-vocab-gap",
-            "--turn-number",
+            "--domain",
+            "--max-sources",
             "--min-score",
         ]:
             assert flag in result.output, f"Missing flag {flag} in help output"
+        # Removed flags should NOT appear
+        for removed in ["--turn-number", "--physics-domain"]:
+            assert removed not in result.output, f"Removed flag {removed} still in help"
 
 
 class TestResetOnly:
