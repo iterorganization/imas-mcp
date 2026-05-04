@@ -6661,6 +6661,8 @@ def persist_refined_name(
                         ON CREATE SET
                           new.name_stage        = 'drafted',
                           new.docs_stage        = 'pending',
+                          new.validation_status = 'valid',
+                          new.origin            = 'pipeline',
                           new.chain_length      = $new_chain_length,
                           new.docs_chain_length = 0,
                           new.description       = $description,
@@ -6670,6 +6672,7 @@ def persist_refined_name(
                           new.source_domains    = $source_domains,
                           new.tags              = $tags,
                           new.model             = $model,
+                          new.created_at        = datetime(),
                           new.generated_at      = datetime(),
                           new.grammar_fields    = $grammar_json,
                           new.regen_reason      = $reason
