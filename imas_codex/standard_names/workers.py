@@ -4330,6 +4330,22 @@ async def _run_rd_quorum_cycles(
             )
             return None
 
+        # Unwrap batch response: prompts ask for {"reviews": [...]}; we pass
+        # one item at a time so reviews[0] is the per-item ReviewItem object.
+        reviews_list = getattr(result_obj, "reviews", None)
+        if reviews_list:
+            try:
+                result_obj = reviews_list[0]
+            except (IndexError, TypeError):
+                logger.warning(
+                    "rd_quorum %s cycle %d returned empty reviews list for %s (model=%s)",
+                    review_axis,
+                    cycle_idx,
+                    sn_id,
+                    model,
+                )
+                return None
+
         tokens_in = int(getattr(llm_out, "input_tokens", 0) or 0)
         tokens_out = int(getattr(llm_out, "output_tokens", 0) or 0)
         cached_read = int(getattr(llm_out, "cache_read_tokens", 0) or 0)
@@ -4602,7 +4618,9 @@ async def process_review_name_batch(
         release_review_names_failed_claims,
         update_review_aggregates,
     )
-    from imas_codex.standard_names.models import StandardNameQualityReviewNameOnly
+    from imas_codex.standard_names.models import (
+        StandardNameQualityReviewNameOnlyBatch,
+    )
 
     # ── Resolve review model chain ─────────────────────────────────────
     try:
@@ -4718,7 +4736,7 @@ async def process_review_name_batch(
             quorum = await _run_rd_quorum_cycles(
                 sn_id=sn_id,
                 review_axis="names",
-                response_model=StandardNameQualityReviewNameOnly,
+                response_model=StandardNameQualityReviewNameOnlyBatch,
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 models=review_models,
@@ -5224,7 +5242,7 @@ async def process_review_docs_batch(
         release_review_docs_failed_claims,
         update_review_aggregates,
     )
-    from imas_codex.standard_names.models import StandardNameQualityReviewDocs
+    from imas_codex.standard_names.models import StandardNameQualityReviewDocsBatch
 
     # ── Resolve docs review chain ──────────────────────────────────────
     try:
@@ -5297,7 +5315,7 @@ async def process_review_docs_batch(
             quorum = await _run_rd_quorum_cycles(
                 sn_id=sn_id,
                 review_axis="docs",
-                response_model=StandardNameQualityReviewDocs,
+                response_model=StandardNameQualityReviewDocsBatch,
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 models=review_models,

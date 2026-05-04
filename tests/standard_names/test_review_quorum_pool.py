@@ -304,6 +304,51 @@ async def test_names_three_models_agreement_skips_cycle_two() -> None:
 
 
 @pytest.mark.asyncio
+async def test_names_batch_response_is_unwrapped() -> None:
+    """LLM returning ``{"reviews": [item]}`` (Batch shape) must be unwrapped.
+
+    Regression test for the bug where ``response_model`` was the singular
+    ``StandardNameQualityReviewNameOnly`` but the prompt yields a batch —
+    Pydantic validation failed with ``source_id Field required`` on every
+    cycle-1 (gpt-5.4) call, leaving ZERO secondary reviews in the graph.
+    """
+    from imas_codex.standard_names.workers import process_review_name_batch
+
+    captured: dict[str, Any] = {}
+    mgr, _ = _mock_budget_manager()
+    scores = {"grammar": 18, "semantic": 18, "convention": 18, "completeness": 18}
+    inner = _names_result(scores)
+    # Wrap as a batch: top-level object with a ``reviews`` list. The helper
+    # must unwrap to ``reviews[0]`` before extracting ``.scores`` etc.
+    batch = SimpleNamespace(reviews=[inner])
+    llm = _llm_returns([batch])
+
+    patches = _patch_common(
+        captured=captured,
+        llm_mock=llm,
+        models=["only-model"],
+        review_axis="names",
+    )
+    for p in patches:
+        p.start()
+    try:
+        await process_review_name_batch(
+            [_names_item()], mgr, asyncio.Event(), on_event=None
+        )
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert llm.await_count == 1
+    records = captured["write_reviews_calls"][0]
+    assert len(records) == 1
+    # If the unwrap failed, .scores would raise AttributeError and the cycle
+    # would log+skip, leaving zero records.
+    assert records[0]["score"] > 0.0
+    assert records[0]["cycle_index"] == 0
+
+
+@pytest.mark.asyncio
 async def test_names_single_model_chain_uses_single_review() -> None:
     """1-model chain → 1 cycle, ``single_review`` resolution method."""
     from imas_codex.standard_names.workers import process_review_name_batch
