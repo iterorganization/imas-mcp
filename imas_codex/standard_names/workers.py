@@ -4307,6 +4307,12 @@ async def process_review_name_batch(
                     comments="quarantined: skipped reviewer LLM call",
                     comments_per_dim=None,
                     model="(skipped: quarantined)",
+                    llm_cost=0.0,
+                    llm_tokens_in=0,
+                    llm_tokens_out=0,
+                    llm_tokens_cached_read=0,
+                    llm_tokens_cached_write=0,
+                    llm_service="standard-names",
                 )
                 processed += 1
                 if on_event:

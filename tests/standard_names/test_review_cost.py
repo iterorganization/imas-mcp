@@ -66,7 +66,9 @@ def test_write_reviews_forwards_cost_and_tokens() -> None:
         n = write_reviews(records)
 
     assert n == 1
-    call = MockGC.return_value.__enter__.return_value.query.call_args
+    # First query call is the MERGE; subsequent calls are cost accumulation.
+    calls = MockGC.return_value.__enter__.return_value.query.call_args_list
+    call = calls[0]
     cypher = call.args[0] if call.args else call.kwargs["query"]
     # Cypher must still SET the three fields
     assert "r.llm_cost" in cypher

@@ -1648,11 +1648,23 @@ def write_reviews(records: list[dict[str, Any]], *, skip_cost: bool = False) -> 
                     "resolution_role": r.get("resolution_role"),
                     "resolution_method": r.get("resolution_method"),
                     "llm_model": r.get("llm_model"),
-                    "llm_cost": r.get("llm_cost"),
-                    "llm_tokens_in": r.get("llm_tokens_in"),
-                    "llm_tokens_out": r.get("llm_tokens_out"),
-                    "llm_tokens_cached_read": r.get("llm_tokens_cached_read"),
-                    "llm_tokens_cached_write": r.get("llm_tokens_cached_write"),
+                    # Defensive: coalesce None → 0 so every Review has
+                    # non-NULL cost/token fields (quarantine & cache-hit).
+                    "llm_cost": r.get("llm_cost")
+                    if r.get("llm_cost") is not None
+                    else 0.0,
+                    "llm_tokens_in": r.get("llm_tokens_in")
+                    if r.get("llm_tokens_in") is not None
+                    else 0,
+                    "llm_tokens_out": r.get("llm_tokens_out")
+                    if r.get("llm_tokens_out") is not None
+                    else 0,
+                    "llm_tokens_cached_read": r.get("llm_tokens_cached_read")
+                    if r.get("llm_tokens_cached_read") is not None
+                    else 0,
+                    "llm_tokens_cached_write": r.get("llm_tokens_cached_write")
+                    if r.get("llm_tokens_cached_write") is not None
+                    else 0,
                     "llm_at": r.get("llm_at"),
                     "llm_service": r.get("llm_service"),
                 }
