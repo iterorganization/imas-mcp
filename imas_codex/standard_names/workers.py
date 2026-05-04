@@ -5188,7 +5188,7 @@ async def process_refine_docs_batch(
         try:
             user_prompt = render_prompt("sn/refine_docs_user", prompt_context)
         except Exception:
-            logger.debug("refine_docs: prompt render failed for %s", sn_id)
+            logger.exception("refine_docs: prompt render failed for %s", sn_id)
             user_prompt = (
                 f"Refine the documentation for standard name: {sn_id}\n"
                 f"Current description: {item.get('description', '')}\n"

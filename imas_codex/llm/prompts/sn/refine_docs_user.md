@@ -59,8 +59,8 @@ _(no linked DD paths)_
 {% else %}
 _(no prior revision history — this is the first docs refine attempt)_
 {% endif %}
-{% set _cur_score_docs = item.reviewer_score_docs | default(none, true) %}
-{% set _cur_comments_docs = item.reviewer_comments_per_dim_docs | default(none, true) %}
+{% set _cur_score_docs = reviewer_score_docs | default(none, true) %}
+{% set _cur_comments_docs = reviewer_comments_per_dim_docs | default(none, true) %}
 {% if _cur_score_docs is not none or _cur_comments_docs %}
 ### Current node docs review
 
