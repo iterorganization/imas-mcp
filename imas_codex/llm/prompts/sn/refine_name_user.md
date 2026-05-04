@@ -59,12 +59,14 @@ _(none available)_
 {% else %}
 _(no prior refinement history — this is the first refine attempt)_
 {% endif %}
-{% if item.reviewer_score_name is not none or item.reviewer_comments_per_dim_name %}
+{% set _cur_score = item.reviewer_score_name | default(none, true) %}
+{% set _cur_comments = item.reviewer_comments_per_dim_name | default(none, true) %}
+{% if _cur_score is not none or _cur_comments %}
 ### Current node review (name: `{{ item.id }}`)
 
-- **Reviewer score:** {{ "%.2f"|format(item.reviewer_score_name) if item.reviewer_score_name is not none else "—" }}
+- **Reviewer score:** {{ "%.2f"|format(_cur_score) if _cur_score is not none else "—" }}
 - **Per-dimension comments:**
-{% set _per_dim = (item.reviewer_comments_per_dim_name | fromjson) if item.reviewer_comments_per_dim_name else {} %}
+{% set _per_dim = (_cur_comments | fromjson) if _cur_comments else {} %}
 {% if _per_dim %}
 {% for dim, comment in _per_dim.items() %}
   - **{{ dim }}**: {{ comment }}

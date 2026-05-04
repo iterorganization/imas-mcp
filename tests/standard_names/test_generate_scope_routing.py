@@ -64,14 +64,14 @@ class TestScopeRouting:
             assert mock_sp.called, "Pool adapter should be called with --paths"
 
     def test_physics_domain_routes_to_rotator(self, runner):
-        """--physics-domain without --paths → rotator (scoped single-domain)."""
+        """--domain without --paths → rotator (scoped single-domain)."""
         with patch(_ROTATOR) as mock_rot:
             result = runner.invoke(
                 sn,
-                ["run", "--physics-domain", "equilibrium", "-c", "0.01", "-q"],
+                ["run", "--domain", "equilibrium", "-c", "0.01", "-q"],
             )
             assert mock_rot.called, (
-                f"Rotator not called with --physics-domain. Output: {result.output}"
+                f"Rotator not called with --domain. Output: {result.output}"
             )
 
     def test_single_pass_flag_overrides_rotator(self, runner):
@@ -82,7 +82,7 @@ class TestScopeRouting:
                 [
                     "run",
                     "--single-pass",
-                    "--physics-domain",
+                    "--domain",
                     "equilibrium",
                     "-c",
                     "0.01",

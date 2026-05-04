@@ -59,12 +59,14 @@ _(no linked DD paths)_
 {% else %}
 _(no prior revision history — this is the first docs refine attempt)_
 {% endif %}
-{% if item.reviewer_score_docs is not none or item.reviewer_comments_per_dim_docs %}
+{% set _cur_score_docs = item.reviewer_score_docs | default(none, true) %}
+{% set _cur_comments_docs = item.reviewer_comments_per_dim_docs | default(none, true) %}
+{% if _cur_score_docs is not none or _cur_comments_docs %}
 ### Current node docs review
 
-- **Reviewer score:** {{ "%.2f"|format(item.reviewer_score_docs) if item.reviewer_score_docs is not none else "—" }}
+- **Reviewer score:** {{ "%.2f"|format(_cur_score_docs) if _cur_score_docs is not none else "—" }}
 - **Per-dimension comments:**
-{% set _per_dim_docs = (item.reviewer_comments_per_dim_docs | fromjson) if item.reviewer_comments_per_dim_docs else {} %}
+{% set _per_dim_docs = (_cur_comments_docs | fromjson) if _cur_comments_docs else {} %}
 {% if _per_dim_docs %}
 {% for dim, comment in _per_dim_docs.items() %}
   - **{{ dim }}**: {{ comment }}
