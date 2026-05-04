@@ -24,9 +24,7 @@ SAMPLE_CATALOG_ENTRY = {
     "documentation": "The electron temperature Te is measured by Thomson scattering.",
     "kind": "scalar",
     "unit": "eV",
-    "tags": [],
     "links": [],
-    "dd_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "validity_domain": "core plasma",
     "constraints": ["T_e > 0"],
     "physics_domain": "core_plasma_physics",
@@ -39,9 +37,7 @@ SAMPLE_CATALOG_ENTRY_MINIMAL = {
     "documentation": "Total toroidal plasma current.",
     "kind": "scalar",
     "unit": "A",
-    "tags": [],
     "links": [],
-    "dd_paths": [],
     "validity_domain": "",
     "constraints": [],
     "physics_domain": "equilibrium",
@@ -51,11 +47,22 @@ SAMPLE_CATALOG_ENTRY_MINIMAL = {
 
 @pytest.fixture()
 def catalog_dir(tmp_path: Path) -> Path:
-    """Create a temporary catalog directory with sample YAML files."""
+    """Create a temporary catalog directory using the per-domain list layout.
+
+    Layout: ``<root>/standard_names/<domain>.yaml`` containing a list of entries.
+    Per-file layout (one dict per .yaml) is no longer supported by check_catalog
+    (silently skipped — see catalog_import.py line 803).
+    """
     d = tmp_path / "catalog"
-    d.mkdir()
-    (d / "electron_temperature.yaml").write_text(yaml.safe_dump(SAMPLE_CATALOG_ENTRY))
-    (d / "plasma_current.yaml").write_text(yaml.safe_dump(SAMPLE_CATALOG_ENTRY_MINIMAL))
+    sn_dir = d / "standard_names"
+    sn_dir.mkdir(parents=True)
+    # Group by physics_domain so _derive_domain_from_path resolves correctly.
+    (sn_dir / "core_plasma_physics.yaml").write_text(
+        yaml.safe_dump([SAMPLE_CATALOG_ENTRY])
+    )
+    (sn_dir / "equilibrium.yaml").write_text(
+        yaml.safe_dump([SAMPLE_CATALOG_ENTRY_MINIMAL])
+    )
     return d
 
 
@@ -193,43 +200,6 @@ class TestCheckMode:
             cr = check_catalog(catalog_dir=catalog_dir)
 
         assert cr.only_in_catalog == ["electron_temperature", "plasma_current"]
-        assert cr.in_sync == 0
-
-    def test_check_with_tag_filter(self, tmp_path: Path) -> None:
-        """Tag filter should limit which catalog entries are checked."""
-        from imas_codex.standard_names.catalog_import import check_catalog
-
-        # Create catalog with tagged entry
-        d = tmp_path / "catalog"
-        d.mkdir()
-        entry_with_tag = dict(SAMPLE_CATALOG_ENTRY)
-        entry_with_tag["tags"] = ["spatial-profile"]
-        (d / "electron_temperature.yaml").write_text(yaml.safe_dump(entry_with_tag))
-        (d / "plasma_current.yaml").write_text(
-            yaml.safe_dump(SAMPLE_CATALOG_ENTRY_MINIMAL)
-        )
-
-        # Graph has no entries
-        mock_gc = MagicMock()
-        mock_gc.query = MagicMock(return_value=[])
-
-        with (
-            patch("imas_codex.graph.client.GraphClient") as MockGC,
-            patch(
-                "imas_codex.standard_names.catalog_import._resolve_catalog_sha",
-                return_value=None,
-            ),
-        ):
-            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
-            MockGC.return_value.__exit__ = MagicMock(return_value=False)
-
-            cr = check_catalog(
-                catalog_dir=d,
-                tag_filter=["spatial-profile"],
-            )
-
-        # Only electron_temperature has the tag — plasma_current should be filtered out
-        assert cr.only_in_catalog == ["electron_temperature"]
         assert cr.in_sync == 0
 
     def test_check_empty_catalog(self, tmp_path: Path) -> None:
