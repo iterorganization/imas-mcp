@@ -2208,8 +2208,8 @@ def sn_gaps(
 @click.option(
     "--staging",
     type=click.Path(),
-    required=True,
-    help="Output staging directory for YAML files",
+    default=None,
+    help="Output staging directory (default: ~/.cache/imas-codex/staging)",
 )
 @click.option(
     "--min-score",
@@ -2270,7 +2270,7 @@ def sn_gaps(
     help="Populate sources field in each entry with graph provenance (debug aid)",
 )
 def sn_export(
-    staging: str,
+    staging: str | None,
     min_score: float,
     include_unreviewed: bool,
     min_description_score: float | None,
@@ -2290,6 +2290,7 @@ def sn_export(
 
     \b
     Examples:
+      imas-codex sn export
       imas-codex sn export --staging ./staging
       imas-codex sn export --staging ./staging --gate-only
       imas-codex sn export --staging ./staging --domain equilibrium
@@ -2300,12 +2301,16 @@ def sn_export(
 
     from rich.table import Table
 
+    from imas_codex.settings import get_sn_staging_dir
     from imas_codex.standard_names.export import run_export
+
+    staging_path = Path(staging) if staging else get_sn_staging_dir()
+    staging_path.mkdir(parents=True, exist_ok=True)
 
     edits_list = list(override_edits) if override_edits else None
 
     console.print("\n[bold]Standard Name Export[/bold]")
-    console.print(f"  Staging: {staging}")
+    console.print(f"  Staging: {staging_path}")
     console.print(f"  Min score: {min_score}")
     if domain:
         console.print(f"  Domain: {domain}")
@@ -2321,7 +2326,7 @@ def sn_export(
 
     try:
         report = run_export(
-            staging_dir=Path(staging),
+            staging_dir=staging_path,
             min_score=min_score,
             include_unreviewed=include_unreviewed,
             min_description_score=min_description_score,
@@ -2386,9 +2391,15 @@ def sn_export(
 @sn.command("preview")
 @click.option(
     "--staging",
-    type=click.Path(exists=True),
-    required=True,
-    help="Staging directory to preview",
+    type=click.Path(),
+    default=None,
+    help="Staging directory to preview (default: ~/.cache/imas-codex/staging)",
+)
+@click.option(
+    "--export",
+    "do_export",
+    is_flag=True,
+    help="Run sn export before serving (uses same gate defaults as standalone export)",
 )
 @click.option(
     "--port",
@@ -2408,9 +2419,10 @@ def sn_export(
     ),
 )
 def sn_preview(
-    staging: str,
+    staging: str | None,
     port: int | None,
     host: str | None,
+    do_export: bool,
 ) -> None:
     """Preview a staging directory in the browser via ISN catalog-site.
 
@@ -2419,14 +2431,40 @@ def sn_preview(
 
     \b
     Examples:
+      imas-codex sn preview
+      imas-codex sn preview --export
       imas-codex sn preview --staging ./staging
       imas-codex sn preview --staging ./staging --port 9090
-      imas-codex sn preview --staging ./staging --host 0.0.0.0
     """
+    from pathlib import Path
+
+    from imas_codex.settings import get_sn_staging_dir
     from imas_codex.standard_names.preview import run_preview
 
+    staging_path = Path(staging) if staging else get_sn_staging_dir()
+
+    if do_export:
+        from imas_codex.standard_names.export import run_export
+
+        staging_path.mkdir(parents=True, exist_ok=True)
+        console.print(f"  Exporting to [cyan]{staging_path}[/cyan]...")
+        try:
+            report = run_export(staging_dir=staging_path, force=True)
+        except Exception as exc:
+            console.print(f"[red]Export error:[/red] {exc}")
+            raise SystemExit(3) from exc
+        console.print(f"  Exported [green]{report.exported_count}[/green] names\n")
+
+    catalog = staging_path / "catalog.yml"
+    if not catalog.is_file():
+        console.print(
+            f"[red]No catalog.yml found at {staging_path}[/red]\n"
+            "  Run [bold]sn export[/bold] first, or use [bold]--export[/bold] to auto-export."
+        )
+        raise SystemExit(2)
+
     console.print("\n[bold]Standard Name Preview[/bold]")
-    console.print(f"  Staging: {staging}")
+    console.print(f"  Staging: {staging_path}")
     if host:
         console.print(f"  Host: {host}")
     if port:
@@ -2434,7 +2472,7 @@ def sn_preview(
     console.print("")
 
     try:
-        handle = run_preview(staging, port=port, host=host)
+        handle = run_preview(str(staging_path), port=port, host=host)
     except FileNotFoundError as exc:
         console.print(f"[red]Precondition failure:[/red] {exc}")
         raise SystemExit(2) from exc
@@ -2464,15 +2502,15 @@ def sn_preview(
 @sn.command("publish")
 @click.option(
     "--staging",
-    type=click.Path(exists=True),
-    required=True,
-    help="Staging directory produced by 'sn export'",
+    type=click.Path(),
+    default=None,
+    help="Staging directory from 'sn export' (default: ~/.cache/imas-codex/staging)",
 )
 @click.option(
     "--isnc",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to local imas-standard-names-catalog git checkout",
+    type=click.Path(),
+    default=None,
+    help="Path to ISNC git checkout (default: auto-discover)",
 )
 @click.option(
     "--push/--no-push",
@@ -2484,8 +2522,8 @@ def sn_preview(
     "--dry-run", is_flag=True, help="Validate and report without modifying ISNC"
 )
 def sn_publish(
-    staging: str,
-    isnc: str,
+    staging: str | None,
+    isnc: str | None,
     push: bool,
     dry_run: bool,
 ) -> None:
@@ -2498,17 +2536,43 @@ def sn_publish(
 
     \b
     Examples:
-      imas-codex sn publish --staging ./staging --isnc ../isnc
+      imas-codex sn publish
+      imas-codex sn publish --isnc ../isnc
       imas-codex sn publish --staging ./staging --isnc ../isnc --push
-      imas-codex sn publish --staging ./staging --isnc ../isnc --dry-run
+      imas-codex sn publish --dry-run
     """
+    from pathlib import Path
+
     from rich.table import Table
 
+    from imas_codex.settings import get_sn_isnc_dir, get_sn_staging_dir
     from imas_codex.standard_names.publish import run_publish
 
+    staging_path = Path(staging) if staging else get_sn_staging_dir()
+
+    catalog = staging_path / "catalog.yml"
+    if not catalog.is_file():
+        console.print(
+            f"[red]No catalog.yml found at {staging_path}[/red]\n"
+            "  Run [bold]sn export[/bold] first."
+        )
+        raise SystemExit(2)
+
+    if isnc:
+        isnc_path = Path(isnc)
+    else:
+        resolved = get_sn_isnc_dir()
+        if resolved is None:
+            console.print(
+                "[red]ISNC not found.[/red] Set [bold]IMAS_CODEX_SN_ISNC[/bold] env var "
+                "or clone imas-standard-names-catalog as a sibling directory."
+            )
+            raise SystemExit(2)
+        isnc_path = resolved
+
     console.print("\n[bold]Standard Name Publish[/bold]")
-    console.print(f"  Staging: {staging}")
-    console.print(f"  ISNC: {isnc}")
+    console.print(f"  Staging: {staging_path}")
+    console.print(f"  ISNC: {isnc_path}")
     if push:
         console.print("  Push: [green]yes[/green]")
     if dry_run:
@@ -2517,8 +2581,8 @@ def sn_publish(
 
     try:
         report = run_publish(
-            staging_dir=staging,
-            isnc_path=isnc,
+            staging_dir=str(staging_path),
+            isnc_path=str(isnc_path),
             push=push,
             dry_run=dry_run,
         )
@@ -2550,9 +2614,9 @@ def sn_publish(
 @sn.command("import")
 @click.option(
     "--isnc",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to ISNC repository root (containing standard_names/ subtree)",
+    type=click.Path(),
+    default=None,
+    help="Path to ISNC repository root (default: auto-discover)",
 )
 @click.option(
     "--accept-unit-override",
@@ -2568,7 +2632,7 @@ def sn_publish(
     "--dry-run", is_flag=True, help="Parse and validate without writing to graph"
 )
 def sn_import(
-    isnc: str,
+    isnc: str | None,
     accept_unit_override: bool,
     accept_cocos_override: bool,
     dry_run: bool,
@@ -2582,18 +2646,31 @@ def sn_import(
 
     \b
     Examples:
+      imas-codex sn import
       imas-codex sn import --isnc ../imas-standard-names-catalog
-      imas-codex sn import --isnc ../isnc --dry-run
-      imas-codex sn import --isnc ../isnc --accept-unit-override
+      imas-codex sn import --dry-run
     """
     from pathlib import Path
 
     from rich.table import Table
 
+    from imas_codex.settings import get_sn_isnc_dir
     from imas_codex.standard_names.catalog_import import run_import
 
+    if isnc:
+        isnc_path = Path(isnc)
+    else:
+        resolved = get_sn_isnc_dir()
+        if resolved is None:
+            console.print(
+                "[red]ISNC not found.[/red] Set [bold]IMAS_CODEX_SN_ISNC[/bold] env var "
+                "or clone imas-standard-names-catalog as a sibling directory."
+            )
+            raise SystemExit(2)
+        isnc_path = resolved
+
     console.print("\n[bold]Standard Name Import[/bold]")
-    console.print(f"  ISNC: {isnc}")
+    console.print(f"  ISNC: {isnc_path}")
     if accept_unit_override:
         console.print("  Unit override: [yellow]accepted[/yellow]")
     if accept_cocos_override:
@@ -2604,7 +2681,7 @@ def sn_import(
 
     try:
         report = run_import(
-            catalog_dir=Path(isnc),
+            catalog_dir=isnc_path,
             dry_run=dry_run,
             accept_unit_override=accept_unit_override,
             accept_cocos_override=accept_cocos_override,
