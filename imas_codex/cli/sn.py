@@ -1757,6 +1757,7 @@ def sn_status() -> None:
                         WITH count(sn) AS total_sn,
                              count(CASE WHEN NOT (sn)<-[:PRODUCED_NAME]-()
                                          AND sn.model <> 'deterministic:dd_error_modifier'
+                                         AND sn.name_stage <> 'superseded'
                                    THEN 1 END) AS orphan_sn,
                              count(CASE WHEN sn.model = 'deterministic:dd_error_modifier'
                                    THEN 1 END) AS error_siblings
@@ -1782,7 +1783,7 @@ def sn_status() -> None:
         li_table.add_column("Metric")
         li_table.add_column("Count", justify="right")
         li_table.add_row(
-            "Orphan StandardName (no PRODUCED_NAME edge, excl. error siblings)",
+            "Orphan StandardName (no PRODUCED_NAME edge, excl. error siblings & superseded)",
             str(integrity.get("orphan_sn", 0)),
         )
         li_table.add_row(
