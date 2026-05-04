@@ -1805,10 +1805,10 @@ def sn_status() -> None:
                         """
                         MATCH (r:StandardNameReview)
                         RETURN count(r) AS total_reviews,
-                               count(r.cost_usd) AS reviews_with_cost,
-                               coalesce(sum(r.cost_usd), 0.0) AS total_cost,
-                               coalesce(sum(r.tokens_in), 0) AS total_tokens_in,
-                               coalesce(sum(r.tokens_out), 0) AS total_tokens_out
+                               count(r.llm_cost) AS reviews_with_cost,
+                               coalesce(sum(r.llm_cost), 0.0) AS total_cost,
+                               coalesce(sum(r.llm_tokens_in), 0) AS total_tokens_in,
+                               coalesce(sum(r.llm_tokens_out), 0) AS total_tokens_out
                         """
                     )
                 ),
@@ -1818,12 +1818,12 @@ def sn_status() -> None:
                 gc.query(
                     """
                     MATCH (r:StandardNameReview)
-                    WHERE r.cost_usd IS NOT NULL
-                    RETURN r.model AS model,
+                    WHERE r.llm_cost IS NOT NULL
+                    RETURN r.llm_model AS model,
                            count(r) AS n,
-                           sum(r.cost_usd) AS cost_usd,
-                           sum(r.tokens_in) AS tokens_in,
-                           sum(r.tokens_out) AS tokens_out
+                           sum(r.llm_cost) AS cost_usd,
+                           sum(r.llm_tokens_in) AS tokens_in,
+                           sum(r.llm_tokens_out) AS tokens_out
                     ORDER BY cost_usd DESC
                     """
                 )
