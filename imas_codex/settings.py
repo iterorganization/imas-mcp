@@ -729,6 +729,69 @@ def get_sn_retry_k_expansion() -> int:
     return int(section.get("retry-k-expansion", _SN_DEFAULTS["retry-k-expansion"]))
 
 
+def get_sn_staging_dir() -> Path:
+    """Default staging directory for sn export/preview/publish.
+
+    Resolution order: ``IMAS_CODEX_SN_STAGING`` env var →
+    ``[tool.imas-codex.sn].staging-dir`` config → ``~/.cache/imas-codex/staging``.
+    """
+    env = os.environ.get("IMAS_CODEX_SN_STAGING")
+    if env:
+        return Path(env).expanduser()
+    cfg = _get_section("sn").get("staging-dir", "~/.cache/imas-codex/staging")
+    return Path(cfg).expanduser()
+
+
+def get_sn_isnc_dir() -> Path | None:
+    """Path to ISNC (imas-standard-names-catalog) git checkout.
+
+    Resolution order: ``IMAS_CODEX_SN_ISNC`` env var →
+    ``[tool.imas-codex.sn].isnc-dir`` config → sibling auto-discovery → None.
+
+    Auto-discovery scans sibling directories of the project root for
+    directories matching ``*standard-names-catalog*``. An exact match on
+    ``imas-standard-names-catalog`` wins. Multiple ambiguous matches
+    return None (with a logged warning).
+    """
+    import logging
+
+    env = os.environ.get("IMAS_CODEX_SN_ISNC")
+    if env:
+        p = Path(env).expanduser()
+        return p if p.is_dir() else None
+
+    cfg = _get_section("sn").get("isnc-dir", "")
+    if cfg:
+        p = Path(cfg).expanduser()
+        return p if p.is_dir() else None
+
+    # Auto-discover from sibling directories of the project root
+    project_root = Path(__file__).resolve().parent.parent
+    parent = project_root.parent
+    if not parent.is_dir():
+        return None
+
+    exact = parent / "imas-standard-names-catalog"
+    if exact.is_dir():
+        return exact
+
+    candidates = [
+        d
+        for d in parent.iterdir()
+        if d.is_dir() and "standard-names-catalog" in d.name and d != project_root
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "Multiple ISNC candidates found: %s. Set IMAS_CODEX_SN_ISNC or "
+            "[tool.imas-codex.sn].isnc-dir to resolve.",
+            ", ".join(str(c) for c in candidates),
+        )
+    return None
+
+
 def get_compose_lean() -> bool:
     """Whether to use the lean compose system prompt (≤8K tokens).
 

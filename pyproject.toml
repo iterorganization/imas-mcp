@@ -364,6 +364,11 @@ retry-attempts = 1
 # Hybrid-search k expansion factor used on retry.
 retry-k-expansion = 12
 
+# Default staging directory for export/preview/publish (ephemeral).
+staging-dir = "~/.cache/imas-codex/staging"
+# Path to ISNC git checkout. Empty = auto-discover from sibling dirs.
+isnc-dir = ""
+
 [tool.imas-codex.sn.review]
 # Shared review settings (apply to both axes).
 # Disagreement detection: true iff N>=2 AND max(score) - min(score) >= threshold.
