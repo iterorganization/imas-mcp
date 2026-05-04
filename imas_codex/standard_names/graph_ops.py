@@ -5047,7 +5047,6 @@ def create_sn_run_open(
     *,
     started_at: Any,
     cost_limit: float,
-    turn_number: int = 1,
     min_score: float | None = None,
 ) -> None:
     """Pre-create an ``SNRun`` node with ``status='started'``.
@@ -5056,6 +5055,7 @@ def create_sn_run_open(
     (SNRun)`` edges have a target from the first LLM call onward.
 
     Uses MERGE so repeated calls (e.g. after a retry) are safe.
+    Sets ``created_at`` explicitly so the timestamp is never NULL.
     """
     from imas_codex.graph.models import SNRun
 
@@ -5064,7 +5064,8 @@ def create_sn_run_open(
         started_at=started_at,
         cost_limit=round(cost_limit, 6),
         cost_spent=0.0,
-        turn_number=turn_number,
+        cost_total=0.0,
+        events_total=0,
         min_score=min_score,
         status="started",
         cost_is_exact=True,
@@ -5073,25 +5074,51 @@ def create_sn_run_open(
     try:
         with GraphClient() as gc:
             gc.create_nodes("SNRun", [props])
+            # Set created_at via Cypher datetime() for Neo4j-native timestamp
+            gc.query(
+                "MATCH (rr:SNRun {id: $run_id}) SET rr.created_at = datetime()",
+                run_id=run_id,
+            )
     except Exception as exc:
         logger.error("Failed to pre-create SNRun %s: %s", run_id, exc)
         raise
 
 
-def update_sn_run_progress(run_id: str, *, cost_spent: float) -> None:
-    """Periodic in-progress sync of ``SNRun.cost_spent``.
+def update_sn_run_progress(
+    run_id: str,
+    *,
+    cost_spent: float,
+    cost_total: float | None = None,
+    events_total: int | None = None,
+) -> None:
+    """Periodic in-progress sync of ``SNRun`` telemetry fields.
 
     Mirrors the running spend total onto the graph node so ``imas-codex sn
     status`` reflects real progress even when a run is interrupted or
     crashes before :func:`finalize_sn_run` runs.  Best-effort: any graph
     error is logged at DEBUG and swallowed so we never poison the loop.
+
+    When *cost_total* and *events_total* are provided (from the BudgetManager
+    batch counter), they are written as absolute values alongside
+    ``last_heartbeat = datetime()``.
     """
+    set_parts = ["rr.cost_spent = $cost_spent", "rr.last_heartbeat = datetime()"]
+    params: dict[str, object] = {
+        "run_id": run_id,
+        "cost_spent": round(float(cost_spent), 6),
+    }
+    if cost_total is not None:
+        set_parts.append("rr.cost_total = $cost_total")
+        params["cost_total"] = round(float(cost_total), 6)
+    if events_total is not None:
+        set_parts.append("rr.events_total = $events_total")
+        params["events_total"] = int(events_total)
+
     try:
         with GraphClient() as gc:
             gc.query(
-                "MATCH (rr:SNRun {id: $run_id}) SET rr.cost_spent = $cost_spent",
-                run_id=run_id,
-                cost_spent=round(float(cost_spent), 6),
+                "MATCH (rr:SNRun {id: $run_id}) SET " + ", ".join(set_parts),
+                **params,
             )
     except Exception as exc:  # pragma: no cover — defensive
         logger.debug("update_sn_run_progress(%s) failed: %s", run_id, exc)
@@ -5111,15 +5138,42 @@ def finalize_sn_run(
     Uses ``MATCH + SET`` (not CREATE) — the node must already exist
     (created by :func:`create_sn_run_open`).
 
+    Aggregates ``cost_total`` and ``events_total`` from LLMCost children
+    so the SNRun is an authoritative mirror of the LLMCost ledger.
+    ``ended_at`` is set to the current graph timestamp.
+
     ``summary_fields`` may contain any other ``SNRun`` property such as
     ``domains_touched``, ``stop_reason``, ``pipeline_hash``,
     ``names_composed``, ``names_enriched``, etc.
     """
+    # First, aggregate cost_total and events_total from LLMCost children
+    agg_cost: float = 0.0
+    agg_events: int = 0
+    try:
+        with GraphClient() as gc:
+            agg_rows = list(
+                gc.query(
+                    "MATCH (c:LLMCost {run_id: $rid}) "
+                    "RETURN sum(c.llm_cost) AS cost, count(c) AS events",
+                    rid=run_id,
+                )
+            )
+            if agg_rows:
+                agg_cost = float(agg_rows[0].get("cost") or 0.0)
+                agg_events = int(agg_rows[0].get("events") or 0)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            "finalize_sn_run: LLMCost aggregation failed for %s: %s", run_id, exc
+        )
+
     set_clauses = [
         "rr.status = $status",
         "rr.cost_spent = $cost_spent",
         "rr.cost_is_exact = $cost_is_exact",
         "rr.stopped_at = datetime($stopped_at)",
+        "rr.ended_at = datetime()",
+        "rr.cost_total = $cost_total",
+        "rr.events_total = $events_total",
     ]
     params: dict[str, Any] = {
         "run_id": run_id,
@@ -5129,6 +5183,8 @@ def finalize_sn_run(
         "stopped_at": stopped_at
         if isinstance(stopped_at, str)
         else stopped_at.isoformat(),
+        "cost_total": round(agg_cost, 6),
+        "events_total": agg_events,
     }
 
     for key, value in summary_fields.items():
@@ -5147,6 +5203,26 @@ def finalize_sn_run(
                 logger.warning("finalize_sn_run: no SNRun found with id=%s", run_id)
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("Failed to finalize SNRun %s: %s", run_id, exc)
+
+
+def backfill_sn_run_telemetry() -> list[dict[str, Any]]:
+    """One-shot backfill of cost_total/events_total on existing SNRun nodes.
+
+    Idempotent: only touches nodes where cost_total IS NULL.
+    Aggregates from LLMCost children and writes the result.
+    Returns a list of dicts with id, cost, events for each patched node.
+    """
+    cypher = """
+    MATCH (r:SNRun)
+    WHERE r.cost_total IS NULL
+    OPTIONAL MATCH (c:LLMCost {run_id: r.id})
+    WITH r, sum(c.llm_cost) AS cost_sum, count(c) AS event_count
+    SET r.cost_total = coalesce(r.cost_total, cost_sum, 0.0),
+        r.events_total = coalesce(r.events_total, event_count, 0)
+    RETURN r.id AS id, r.cost_total AS cost, r.events_total AS events
+    """
+    with GraphClient() as gc:
+        return list(gc.query(cypher))
 
 
 # ---------------------------------------------------------------------------

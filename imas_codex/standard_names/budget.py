@@ -40,13 +40,6 @@ logger = logging.getLogger(__name__)
 
 EPSILON = 1e-9
 
-# DEPRECATED (Phase C): MIN_VIABLE_TURN is no longer used in runtime
-# shutdown logic.  Retained only for backward-compatible test fixtures
-# that exercise :meth:`BudgetManager.near_exhausted` as a unit method.
-# The pool orchestrator now uses a signal-driven ``budget_saturated``
-# watchdog instead of a magic dollar threshold.
-MIN_VIABLE_TURN: float = 0.75
-
 # Writer retry parameters (matches retry_on_deadlock defaults)
 _WRITER_MAX_RETRIES = 5
 _WRITER_BASE_DELAY = 0.1
@@ -783,6 +776,12 @@ class BudgetManager:
         with self._pending_lock:
             return self._pending_cost
 
+    @property
+    def batch_count(self) -> int:
+        """Number of leases issued (proxy for events_total)."""
+        with self._lock:
+            return self._batch_count
+
     def exhausted(self) -> bool:
         """Return ``True`` when the pool is non-positive."""
         with self._lock:
@@ -800,22 +799,6 @@ class BudgetManager:
         """
         with self._lock:
             return self._spent >= self._total - EPSILON
-
-    def near_exhausted(self, min_remaining: float = MIN_VIABLE_TURN) -> bool:
-        """Return ``True`` when the remaining budget is below *min_remaining*.
-
-        Implements the "remaining budget < MIN_VIABLE_TURN" stop check
-        described in ``AGENTS.md``.  A run at, say, $2.97 of $3.00 has
-        only $0.03 left — well below the cost of one LLM call — so it
-        should finalize rather than spin admitting cheap-but-fruitless
-        turns.
-
-        The check is based on committed spend (``_spent``), matching
-        :meth:`hard_exhausted`, so transient reservation spikes do not
-        cause premature shutdown.
-        """
-        with self._lock:
-            return (self._total - self._spent) < (min_remaining - EPSILON)
 
     def all_pools_budget_saturated(
         self,

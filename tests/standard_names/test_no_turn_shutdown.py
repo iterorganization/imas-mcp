@@ -139,28 +139,23 @@ _SHUTDOWN_FILES = ["pools.py", "loop.py", "budget.py"]
 
 
 class TestNoMinViableTurnInShutdown:
-    def test_no_min_viable_turn_in_shutdown_paths(self) -> None:
-        """Static analysis: MIN_VIABLE_TURN must not appear in runtime
-        shutdown logic (pools.py, loop.py, budget.py) except inside the
-        ``near_exhausted`` method definition and the deprecation comment
-        in budget.py."""
+    def test_min_viable_turn_fully_removed(self) -> None:
+        """MIN_VIABLE_TURN must not exist anywhere in runtime code."""
         for fname in _SHUTDOWN_FILES:
             fpath = _SN_DIR / fname
             if not fpath.exists():
                 continue
             tree = ast.parse(fpath.read_text())
             for node in ast.walk(tree):
-                # Check for Name nodes referencing MIN_VIABLE_TURN.
                 if isinstance(node, ast.Name) and node.id == "MIN_VIABLE_TURN":
-                    # Allow: the near_exhausted method definition and
-                    # its default-value usage in budget.py.
-                    if fname == "budget.py":
-                        continue
                     pytest.fail(
                         f"MIN_VIABLE_TURN referenced in {fname} "
-                        f"(line {node.lineno}) — should not be used "
-                        f"in runtime shutdown logic"
+                        f"(line {node.lineno}) — fully removed in Phase 2D"
                     )
+
+    def test_near_exhausted_removed(self) -> None:
+        """near_exhausted method must be removed from BudgetManager."""
+        assert not hasattr(BudgetManager, "near_exhausted")
 
 
 # ---------------------------------------------------------------------------

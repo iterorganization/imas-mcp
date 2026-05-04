@@ -3,15 +3,12 @@
 These tests guard the fixes for the long-running idle-loop hang described
 in ``plans/`` (SN pipeline workers don't exit when work is exhausted):
 
-1. ``BudgetManager.near_exhausted`` returns True when remaining budget
-   drops below :data:`MIN_VIABLE_TURN` (retained for dampening; no
-   longer used for shutdown).
-2. ``_budget_watchdog`` sets ``stop_event`` on hard exhaustion.
-3. ``_budget_saturation_watchdog`` sets ``stop_event`` when all pools
+1. ``_budget_watchdog`` sets ``stop_event`` on hard exhaustion.
+2. ``_budget_saturation_watchdog`` sets ``stop_event`` when all pools
    exceed consecutive reserve-failure threshold.
-4. ``_idle_exhaustion_watchdog`` sets ``stop_event`` after a sustained
+3. ``_idle_exhaustion_watchdog`` sets ``stop_event`` after a sustained
    window of zero pending counts and zero progress.
-5. ``run_pools`` exits with the supplied ``idle_exhausted_event`` set
+4. ``run_pools`` exits with the supplied ``idle_exhausted_event`` set
    when the idle watchdog fires.
 """
 
@@ -21,50 +18,24 @@ import asyncio
 
 import pytest
 
-from imas_codex.standard_names.budget import MIN_VIABLE_TURN, BudgetManager
+from imas_codex.standard_names.budget import BudgetManager
 from imas_codex.standard_names.pools import PoolSpec, run_pools
 
 # ---------------------------------------------------------------------------
-# Budget: near_exhausted
+# Budget: MIN_VIABLE_TURN and near_exhausted removed (Phase 2D)
 # ---------------------------------------------------------------------------
 
 
-class TestBudgetNearExhausted:
-    def test_min_viable_turn_constant(self) -> None:
-        # Sanity: keep the documented value in sync with implementation.
-        assert MIN_VIABLE_TURN == pytest.approx(0.75)
+class TestMinViableTurnRemoved:
+    def test_min_viable_turn_constant_removed(self) -> None:
+        """MIN_VIABLE_TURN must no longer exist in the budget module."""
+        import imas_codex.standard_names.budget as budget_mod
 
-    def test_near_exhausted_false_when_plenty_remains(self) -> None:
-        mgr = BudgetManager(total_budget=3.0)
-        mgr._spent = 0.5
-        assert not mgr.near_exhausted()
+        assert not hasattr(budget_mod, "MIN_VIABLE_TURN")
 
-    def test_near_exhausted_true_when_remaining_below_floor(self) -> None:
-        mgr = BudgetManager(total_budget=3.0)
-        # Mirrors the production scenario: $2.97/$3.00 → $0.03 left.
-        mgr._spent = 2.97
-        assert mgr.near_exhausted()
-
-    def test_near_exhausted_uses_default_min_viable_turn(self) -> None:
-        mgr = BudgetManager(total_budget=10.0)
-        # Remaining $1.00 — above the $0.75 floor → should NOT trip.
-        mgr._spent = 9.0
-        assert not mgr.near_exhausted()
-        # Remaining $0.50 — below the $0.75 floor → should trip.
-        mgr._spent = 9.5
-        assert mgr.near_exhausted()
-
-    def test_near_exhausted_respects_explicit_floor(self) -> None:
-        mgr = BudgetManager(total_budget=10.0)
-        mgr._spent = 9.0  # remaining $1.00
-        assert mgr.near_exhausted(min_remaining=2.0)
-        assert not mgr.near_exhausted(min_remaining=0.5)
-
-    def test_near_exhausted_implies_hard_exhausted_eventually(self) -> None:
-        mgr = BudgetManager(total_budget=3.0)
-        mgr._spent = 3.0
-        assert mgr.hard_exhausted()
-        assert mgr.near_exhausted()
+    def test_near_exhausted_method_removed(self) -> None:
+        """near_exhausted must no longer exist on BudgetManager."""
+        assert not hasattr(BudgetManager, "near_exhausted")
 
 
 # ---------------------------------------------------------------------------

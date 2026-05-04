@@ -299,7 +299,6 @@ async def run_sn_loop(
         summary.run_id,
         started_at=summary.started_at,
         cost_limit=cost_limit,
-        turn_number=turn_number,
         min_score=min_score,
     )
 
@@ -424,7 +423,12 @@ async def run_sn_loop(
                     update_sn_run_progress,
                 )
 
-                update_sn_run_progress(summary.run_id, cost_spent=summary.cost_spent)
+                update_sn_run_progress(
+                    summary.run_id,
+                    cost_spent=summary.cost_spent,
+                    cost_total=summary.cost_spent,
+                    events_total=shared_mgr.batch_count,
+                )
             except Exception:  # noqa: BLE001 — never poison the loop
                 pass
 
@@ -550,7 +554,6 @@ async def run_sn_loop(
             cost_spent=summary.cost_spent,
             cost_is_exact=cost_is_exact,
             stopped_at=summary.stopped_at,
-            turn_number=summary.turn_number,
             cost_limit=round(summary.cost_limit, 6),
             compose_cost=round(summary.compose_cost, 6),
             review_cost=round(summary.review_cost, 6),
@@ -1091,7 +1094,6 @@ async def run_sn_pools(
         run_id,
         started_at=started,
         cost_limit=cost_limit,
-        turn_number=turn_number,
         min_score=min_score,
     )
 
@@ -1226,7 +1228,11 @@ async def run_sn_pools(
                     )
                     summary.cost_spent = spent
                     await asyncio.to_thread(
-                        update_sn_run_progress, run_id, cost_spent=spent
+                        update_sn_run_progress,
+                        run_id,
+                        cost_spent=spent,
+                        cost_total=spent,
+                        events_total=shared_mgr.batch_count,
                     )
                 except Exception:  # noqa: BLE001 — never poison the loop
                     pass

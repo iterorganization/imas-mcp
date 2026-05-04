@@ -2,9 +2,10 @@
 
 Verifies that:
 1. LLMCost nodes are persisted and readable after record_llm_cost.
-2. SNRun.turn_number is set from the passed value (not hardcoded 1).
-3. SNRun.stopped_at is populated after finalize_sn_run.
-4. Sum of LLMCost.cost ≈ SNRun.cost_total (within rounding).
+2. SNRun creation sets created_at and initial telemetry fields.
+3. SNRun.stopped_at and ended_at are populated after finalize_sn_run.
+4. finalize_sn_run aggregates cost_total/events_total from LLMCost children.
+5. MIN_VIABLE_TURN is fully removed.
 
 All tests mock the GraphClient — no live Neo4j required.
 """
@@ -134,22 +135,21 @@ class TestCreateSNRunRaises:
                     _RUN_ID,
                     started_at=_TS,
                     cost_limit=5.0,
-                    turn_number=5,
                 )
         finally:
             patcher.stop()
 
 
 # ---------------------------------------------------------------------------
-# A2: turn_number plumbing
+# A2: create sets initial telemetry fields
 # ---------------------------------------------------------------------------
 
 
-class TestTurnNumberPlumbing:
-    """Verify turn_number propagates from create_sn_run_open to SNRun node."""
+class TestCreateTelemetryFields:
+    """Verify create_sn_run_open sets cost_total, events_total, created_at."""
 
-    def test_turn_number_passed_to_graph(self):
-        """create_sn_run_open should set turn_number on the SNRun node."""
+    def test_initial_telemetry_fields_set(self):
+        """create_sn_run_open should set cost_total=0, events_total=0."""
         patcher, mock_gc = _mock_gc_ctx()
         try:
             from imas_codex.standard_names.graph_ops import create_sn_run_open
@@ -158,31 +158,30 @@ class TestTurnNumberPlumbing:
                 _RUN_ID,
                 started_at=_TS,
                 cost_limit=10.0,
-                turn_number=5,
             )
 
-            # Verify create_nodes was called with turn_number=5
+            # Verify create_nodes was called with telemetry fields
             assert mock_gc.create_nodes.called
             label, data_list = mock_gc.create_nodes.call_args[0]
             assert label == "SNRun"
             assert len(data_list) == 1
             props = data_list[0]
-            assert props["turn_number"] == 5
+            assert props["cost_total"] == 0.0
+            assert props["events_total"] == 0
             assert props["id"] == _RUN_ID
+
+            # Verify created_at Cypher was issued
+            assert mock_gc.query.called
+            cypher_str = mock_gc.query.call_args[0][0]
+            assert "created_at = datetime()" in cypher_str
         finally:
             patcher.stop()
 
-    def test_run_summary_turn_number(self):
-        """RunSummary should accept arbitrary turn_number values."""
-        from imas_codex.standard_names.loop import RunSummary
+    def test_turn_number_not_in_snrun(self):
+        """SNRun schema should no longer have turn_number."""
+        from imas_codex.graph.models import SNRun
 
-        summary = RunSummary(
-            run_id="test-run",
-            turn_number=7,
-            started_at=_TS,
-            cost_limit=5.0,
-        )
-        assert summary.turn_number == 7
+        assert "turn_number" not in SNRun.model_fields
 
 
 # ---------------------------------------------------------------------------
@@ -191,13 +190,18 @@ class TestTurnNumberPlumbing:
 
 
 class TestStoppedAtPopulation:
-    """Verify finalize_sn_run writes stopped_at (not ended_at)."""
+    """Verify finalize_sn_run writes stopped_at AND ended_at."""
 
-    def test_finalize_writes_stopped_at(self):
-        """finalize_sn_run should SET rr.stopped_at in Cypher."""
+    def test_finalize_writes_stopped_at_and_ended_at(self):
+        """finalize_sn_run should SET both rr.stopped_at and rr.ended_at."""
         patcher, mock_gc = _mock_gc_ctx()
         try:
-            mock_gc.query.return_value = [{"id": _RUN_ID}]
+            # First call is the LLMCost aggregation query
+            # Second call is the SET query
+            mock_gc.query.side_effect = [
+                [{"cost": 1.234, "events": 5}],  # aggregation
+                [{"id": _RUN_ID}],  # SET
+            ]
 
             from imas_codex.standard_names.graph_ops import finalize_sn_run
 
@@ -209,23 +213,28 @@ class TestStoppedAtPopulation:
                 stopped_at=_TS_END,
             )
 
-            assert mock_gc.query.called
-            cypher_call = mock_gc.query.call_args
+            assert mock_gc.query.call_count == 2
+
+            # Second call should be the SET query
+            cypher_call = mock_gc.query.call_args_list[1]
             cypher_str = cypher_call[0][0]
 
-            # Should use stopped_at, NOT ended_at
             assert "rr.stopped_at = datetime($stopped_at)" in cypher_str
-            assert "ended_at" not in cypher_str
+            assert "rr.ended_at = datetime()" in cypher_str
+            assert "rr.cost_total = $cost_total" in cypher_str
+            assert "rr.events_total = $events_total" in cypher_str
 
             kwargs = cypher_call[1]
             assert kwargs["stopped_at"] == _TS_END.isoformat()
             assert kwargs["status"] == "completed"
             assert kwargs["cost_spent"] == 1.234
+            assert kwargs["cost_total"] == 1.234
+            assert kwargs["events_total"] == 5
         finally:
             patcher.stop()
 
     def test_run_summary_has_stopped_at(self):
-        """RunSummary dataclass should have stopped_at, not ended_at."""
+        """RunSummary dataclass should have stopped_at."""
         from imas_codex.standard_names.loop import RunSummary
 
         summary = RunSummary(
@@ -234,10 +243,7 @@ class TestStoppedAtPopulation:
             started_at=_TS,
             cost_limit=5.0,
         )
-        # stopped_at should be None by default
         assert summary.stopped_at is None
-        assert not hasattr(summary, "ended_at")
-
         summary.stopped_at = _TS_END
         assert summary.stopped_at == _TS_END
 
@@ -284,16 +290,48 @@ class TestSchemaFields:
 
         fields = SNRun.model_fields
         assert "stopped_at" in fields, "SNRun model missing stopped_at field"
-        assert "ended_at" not in fields, (
-            "SNRun model still has ended_at (should be stopped_at)"
-        )
 
-    def test_snrun_has_turn_number(self):
-        """SNRun Pydantic model should have turn_number field."""
+    def test_snrun_has_ended_at(self):
+        """SNRun Pydantic model should have ended_at field."""
         from imas_codex.graph.models import SNRun
 
         fields = SNRun.model_fields
-        assert "turn_number" in fields
+        assert "ended_at" in fields, "SNRun model missing ended_at field"
+
+    def test_snrun_has_cost_total(self):
+        """SNRun Pydantic model should have cost_total field."""
+        from imas_codex.graph.models import SNRun
+
+        fields = SNRun.model_fields
+        assert "cost_total" in fields
+
+    def test_snrun_has_events_total(self):
+        """SNRun Pydantic model should have events_total field."""
+        from imas_codex.graph.models import SNRun
+
+        fields = SNRun.model_fields
+        assert "events_total" in fields
+
+    def test_snrun_has_created_at(self):
+        """SNRun Pydantic model should have created_at field."""
+        from imas_codex.graph.models import SNRun
+
+        fields = SNRun.model_fields
+        assert "created_at" in fields
+
+    def test_snrun_has_last_heartbeat(self):
+        """SNRun Pydantic model should have last_heartbeat field."""
+        from imas_codex.graph.models import SNRun
+
+        fields = SNRun.model_fields
+        assert "last_heartbeat" in fields
+
+    def test_snrun_no_turn_number(self):
+        """SNRun Pydantic model should NOT have turn_number."""
+        from imas_codex.graph.models import SNRun
+
+        fields = SNRun.model_fields
+        assert "turn_number" not in fields
 
     def test_snrun_has_started_at(self):
         """SNRun Pydantic model should have started_at field."""
@@ -301,3 +339,15 @@ class TestSchemaFields:
 
         fields = SNRun.model_fields
         assert "started_at" in fields
+
+    def test_min_viable_turn_removed(self):
+        """MIN_VIABLE_TURN must no longer exist in the budget module."""
+        import imas_codex.standard_names.budget as budget_mod
+
+        assert not hasattr(budget_mod, "MIN_VIABLE_TURN")
+
+    def test_near_exhausted_removed(self):
+        """near_exhausted must no longer exist on BudgetManager."""
+        from imas_codex.standard_names.budget import BudgetManager
+
+        assert not hasattr(BudgetManager, "near_exhausted")

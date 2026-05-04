@@ -1320,19 +1320,19 @@ classes:
   SNRun:
     description: >-
       A single invocation of ``sn run``. Records budget, counts,
-      domains touched, turn number, and stop reason so operators can
-      audit run cycles over time.
+      domains touched, and stop reason so operators can audit run
+      cycles over time.
 
       Example Cypher:
         MATCH (rr:SNRun)
-        RETURN rr.id, rr.turn_number, rr.started_at, rr.cost_spent,
-               rr.names_composed, rr.names_reviewed, rr.stop_reason
+        RETURN rr.id, rr.started_at, rr.cost_spent,
+               rr.cost_total, rr.events_total, rr.stop_reason
         ORDER BY rr.started_at DESC LIMIT 10
 
         MATCH (sn:StandardName)
         WHERE sn.last_run_id IS NOT NULL
         MATCH (rr:SNRun {id: sn.last_run_id})
-        RETURN rr.id, rr.turn_number, count(sn) AS touched
+        RETURN rr.id, count(sn) AS touched
         ORDER BY rr.started_at DESC
     class_uri: sn:SNRun
     attributes:
@@ -1340,16 +1340,15 @@ classes:
         identifier: true
         description: UUID of the run
         required: true
-      turn_number:
-        description: >-
-          Turn number supplied via ``sn run --turn-number N``.
-          Default 1. Used to track multi-turn bootstrap cycles; stamped
-          onto StandardName.last_turn_number for every name touched.
-        range: integer
-        ifabsent: int(1)
+      created_at:
+        description: When the SNRun node was first created in the graph
+        range: datetime
       started_at:
         description: When the run started
         required: true
+        range: datetime
+      ended_at:
+        description: When finalization completed (set by finalize_sn_run)
         range: datetime
       stopped_at:
         description: When the run stopped (null if still running or interrupted before finalize)
@@ -1438,6 +1437,23 @@ classes:
           before run finalization. cost_spent is then a lower bound.
         range: boolean
         ifabsent: boolean(true)
+      cost_total:
+        description: >-
+          Aggregate of sum(LLMCost.llm_cost) for all LLMCost children
+          of this run. Set live by BudgetManager flush and finalised by
+          finalize_sn_run from the LLMCost ledger. Authoritative mirror
+          of the graph-sourced spend total.
+        range: float
+      events_total:
+        description: >-
+          Count of LLMCost nodes linked to this run. Set live by
+          BudgetManager flush and finalised by finalize_sn_run.
+        range: integer
+      last_heartbeat:
+        description: >-
+          Most recent heartbeat from a live run; orphan sweep uses
+          this to detect dead processes.
+        range: datetime
 
   LLMCost:
     description: >-
