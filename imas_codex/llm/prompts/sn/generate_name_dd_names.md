@@ -7,7 +7,15 @@ dynamic: true
 schema_needs: []
 ---
 
-Generate standard names for the following IMAS Data Dictionary paths.
+Name the **physical or geometric quantities** represented by the following
+IMAS Data Dictionary paths. Each standard name describes the underlying
+physics — NOT the DD path, IDS section, or measurement instrument.
+
+**Subject–base separation rule:** Species and entity qualifiers (electron,
+ion, neutral, fast_ion) go in the `subject` segment, NOT fused into
+`physical_base`. Example: subject=electron + physical_base=temperature →
+`electron_temperature` — but `temperature` is the base, not
+`electron_temperature` as a monolithic token.
 
 This batch was assembled in **name-only mode**: paths share the same
 `physics_domain` and authoritative unit but may span many different

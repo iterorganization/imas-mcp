@@ -75,7 +75,7 @@ def derive_edges(name: str) -> list[DerivedEdge]:
     try:
         result = parser.parse(name)
     except Exception:
-        return []  # unparseable → leaf (no edges)
+        return _regex_fallback(name)
 
     ir = result.ir
 
@@ -171,3 +171,81 @@ def derive_edges(name: str) -> list[DerivedEdge]:
 
     # Leaf: no operator, no projection
     return []
+
+
+def _regex_fallback(name: str) -> list[DerivedEdge]:
+    """Pattern-based structural decomposition when IR parser fails.
+
+    Handles two patterns:
+
+    1. ``{axis}_component_of_{inner}`` → HAS_ARGUMENT (projection)
+    2. ``{operator}_of_{inner}`` → HAS_ARGUMENT (unary operator)
+
+    Returns ``[]`` if no pattern matches (leaf treatment).
+    """
+    import re
+
+    # Pattern 1: Component projection
+    # e.g., "parallel_component_of_convection_velocity"
+    #        "toroidal_component_of_ion_velocity"
+    #        "radial_component_of_heat_flux"
+    m = re.match(
+        r"^(radial|toroidal|poloidal|parallel|perpendicular|normal|tangential|"
+        r"vertical|horizontal|binormal|diamagnetic|x|y|z|r|phi)"
+        r"_component_of_(.+)$",
+        name,
+    )
+    if m:
+        axis, inner = m.group(1), m.group(2)
+        return [
+            DerivedEdge(
+                "HAS_ARGUMENT",
+                name,
+                inner,
+                {
+                    "operator": "component",
+                    "operator_kind": "projection",
+                    "axis": axis,
+                    "shape": "component",
+                },
+            )
+        ]
+
+    # Pattern 2: Unary operators
+    # e.g., "time_derivative_of_poloidal_flux"
+    #        "gradient_of_pressure"
+    #        "maximum_of_temperature"
+    _UNARY_OPS = (
+        "time_derivative",
+        "second_time_derivative",
+        "gradient",
+        "divergence",
+        "curl",
+        "laplacian",
+        "maximum",
+        "minimum",
+        "mean",
+        "integral",
+        "amplitude",
+        "rate_of_change",
+        "second_radial_derivative",
+        "radial_derivative",
+    )
+    for op in _UNARY_OPS:
+        prefix = f"{op}_of_"
+        if name.startswith(prefix):
+            inner = name[len(prefix) :]
+            if inner:  # don't match empty inner
+                return [
+                    DerivedEdge(
+                        "HAS_ARGUMENT",
+                        name,
+                        inner,
+                        {
+                            "operator": op,
+                            "operator_kind": "unary_prefix",
+                        },
+                    )
+                ]
+
+    return []  # no pattern matched → leaf

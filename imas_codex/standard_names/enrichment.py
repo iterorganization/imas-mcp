@@ -3,7 +3,7 @@
 Navigates DD graph query results to build rich context for standard name
 generation.  Implements primary cluster selection (resolving many-to-many
 cluster memberships to exactly one per path) and groups paths **globally**
-by (cluster × unit) for unit-safe batching.
+by (cluster × unit × species_context) for unit-safe, species-aware batching.
 
 Data flow::
 
@@ -22,6 +22,53 @@ from imas_codex.standard_names.classifier import classify_path
 from imas_codex.standard_names.sources.base import ExtractionBatch
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Species / entity context extraction.
+#
+# Paths like edge_transport/model/ggd/electrons/... and
+# edge_transport/model/ggd/ion/... share a cluster and unit but describe
+# physically distinct quantities.  Extracting species context lets
+# group_by_concept_and_unit() split these into separate batches so the
+# LLM generates distinct standard names.
+# ---------------------------------------------------------------------------
+
+#: DD path segments that indicate a specific plasma species or entity.
+#: When these appear in a path, the standard name MUST distinguish them.
+_SPECIES_SEGMENTS: dict[str, str] = {
+    "electrons": "electron",
+    "electron": "electron",
+    "ion": "ion",
+    "ions": "ion",
+    "neutral": "neutral",
+    "neutrals": "neutral",
+    "fast_ion": "fast_ion",
+    "fast_ions": "fast_ion",
+    "total_ion_energy": "total_ion",
+    "momentum": "momentum",
+}
+
+
+def extract_species_context(path: str) -> str | None:
+    """Extract species/entity context from a DD path hierarchy.
+
+    Scans path segments for known species identifiers and returns the
+    canonical species label. Returns None if no species context is found.
+
+    Examples:
+        >>> extract_species_context("edge_transport/model/ggd/electrons/energy/v_parallel/values")
+        'electron'
+        >>> extract_species_context("edge_transport/model/ggd/ion/energy/v_parallel/values")
+        'ion'
+        >>> extract_species_context("equilibrium/time_slice/profiles_1d/psi")
+        None
+    """
+    segments = path.split("/")
+    for seg in segments:
+        if seg in _SPECIES_SEGMENTS:
+            return _SPECIES_SEGMENTS[seg]
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Domain reclassification for magnetics IDS paths.
@@ -350,22 +397,33 @@ def group_by_concept_and_unit(
     if not items:
         return []
 
-    # --- Build groups: (grouping_cluster_id / unit) -------------------------
+    # --- Build groups: (grouping_cluster_id / unit / species_context) -------
     # Uses grouping cluster (global/domain preferred) and cluster ID (not label)
     # to ensure cross-IDS paths sharing the same concept land in one batch.
+    # Species context is included so paths for different plasma species
+    # (electrons, ion, neutral, …) that share a cluster and unit are split
+    # into distinct batches and receive distinct standard names.
     groups: dict[str, list[dict]] = defaultdict(list)
 
     for item in items:
         cluster_id = item.get("grouping_cluster_id")
         unit = item.get("unit") or "dimensionless"
+        species_context = extract_species_context(item.get("path") or "")
+        item["species_context"] = species_context
 
         if cluster_id:
-            group_key = f"{cluster_id}/{unit}"
+            if species_context:
+                group_key = f"{cluster_id}/{unit}/{species_context}"
+            else:
+                group_key = f"{cluster_id}/{unit}"
         else:
             # Unclustered: sub-group by IDS + parent for coherent batches.
             ids_name = item.get("ids_name") or "unknown"
             parent = item.get("parent_path") or "root"
-            group_key = f"unclustered/{ids_name}/{parent}/{unit}"
+            if species_context:
+                group_key = f"unclustered/{ids_name}/{parent}/{unit}/{species_context}"
+            else:
+                group_key = f"unclustered/{ids_name}/{parent}/{unit}"
 
         groups[group_key].append(item)
 

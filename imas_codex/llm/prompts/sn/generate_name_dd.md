@@ -7,7 +7,17 @@ dynamic: true
 schema_needs: []
 ---
 
-Generate standard names for the following IMAS Data Dictionary paths.
+Name the **physical or geometric quantities** represented by the following
+IMAS Data Dictionary paths. Each standard name describes the underlying
+physics — NOT the DD path, IDS section, or measurement instrument.
+When multiple DD paths represent the same quantity (e.g. across IDSs), they
+share ONE standard name.
+
+**Subject–base separation rule:** Species and entity qualifiers (electron,
+ion, neutral, fast_ion) go in the `subject` segment, NOT fused into
+`physical_base`. Example: subject=electron + physical_base=temperature →
+`electron_temperature` — but `temperature` is the base, not
+`electron_temperature` as a monolithic token.
 
 {% if retry_reason %}
 ## ⚠️ Retry Context
@@ -149,7 +159,8 @@ These names already exist in the catalog. Reuse them if they match your source, 
 > marker must modify the base quantity X, not intrude between orientation
 > and `component_of`.
 {% endif %}
-- **Description:** {{ item.description }}
+{% if item.species_context %}- **⚠️ Species context:** `{{ item.species_context }}` — this quantity is specific to **{{ item.species_context }}** species. The standard name MUST include the species in the `subject` segment (e.g., `{{ item.species_context }}_temperature`, not just `temperature`).
+{% endif %}- **Description:** {{ item.description }}
 {% if item.documentation and item.documentation != item.description %}- **DD Documentation:** {{ item.documentation }}{% endif %}
 - **Unit:** {{ item.unit or 'dimensionless' }} *(authoritative from DD — use for naming context only, do NOT output)*
 - **Data type:** {{ item.data_type or 'unspecified' }}
