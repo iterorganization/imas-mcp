@@ -6177,6 +6177,7 @@ def persist_reviewed_name(
     llm_at: str | None = None,
     llm_service: str | None = None,
     run_id: str | None = None,
+    skip_review_node: bool = False,
 ) -> str:
     """Persist name-review results and transition ``name_stage``.
 
@@ -6308,61 +6309,66 @@ def persist_reviewed_name(
     # fields on the SN node only — no Review node was ever created.
     # Mirror the RD-quorum schema: cycle_index=0, role='primary',
     # canonical=True, fresh review_group_id per call.
-    try:
-        import uuid as _uuid
-        from datetime import datetime as _dt
+    #
+    # When ``skip_review_node`` is True the caller (pool RD-quorum
+    # worker) is responsible for writing per-cycle Review nodes itself
+    # and only needs the SN-side stage transition + axis-slot mirror.
+    if not skip_review_node:
+        try:
+            import uuid as _uuid
+            from datetime import datetime as _dt
 
-        _now_iso = llm_at or _dt.now(UTC).isoformat()
-        _group_id = str(_uuid.uuid4())
-        _review_id = f"{sn_id}:names:{_group_id}:0"
-        # Map normalised score (0-1) to tier name per the rubric.
-        if score >= 0.85:
-            _tier = "outstanding"
-        elif score >= 0.60:
-            _tier = "good"
-        elif score >= 0.40:
-            _tier = "inadequate"
-        else:
-            _tier = "poor"
-        write_reviews(
-            [
-                {
-                    "id": _review_id,
-                    "standard_name_id": sn_id,
-                    "model": model,
-                    "reviewer_model": model,
-                    "model_family": "other",
-                    "is_canonical": True,
-                    "score": float(score),
-                    "scores_json": scores_json or "{}",
-                    "tier": _tier,
-                    "comments": comments or "",
-                    "comments_per_dim_json": comments_per_dim_json,
-                    "suggested_name": "",
-                    "suggestion_justification": "",
-                    "reviewed_at": _now_iso,
-                    "review_axis": "names",
-                    "cycle_index": 0,
-                    "review_group_id": _group_id,
-                    "resolution_role": "primary",
-                    "resolution_method": None,
-                    "llm_model": model,
-                    "llm_cost": llm_cost,
-                    "llm_tokens_in": llm_tokens_in,
-                    "llm_tokens_out": llm_tokens_out,
-                    "llm_tokens_cached_read": llm_tokens_cached_read,
-                    "llm_tokens_cached_write": llm_tokens_cached_write,
-                    "llm_at": _now_iso,
-                    "llm_service": llm_service or "standard-names",
-                }
-            ],
-        )
-    except Exception:
-        # Don't let review-node bookkeeping fail the stage transition.
-        logger.exception(
-            "persist_reviewed_name: failed to write StandardNameReview for %s",
-            sn_id,
-        )
+            _now_iso = llm_at or _dt.now(UTC).isoformat()
+            _group_id = str(_uuid.uuid4())
+            _review_id = f"{sn_id}:names:{_group_id}:0"
+            # Map normalised score (0-1) to tier name per the rubric.
+            if score >= 0.85:
+                _tier = "outstanding"
+            elif score >= 0.60:
+                _tier = "good"
+            elif score >= 0.40:
+                _tier = "inadequate"
+            else:
+                _tier = "poor"
+            write_reviews(
+                [
+                    {
+                        "id": _review_id,
+                        "standard_name_id": sn_id,
+                        "model": model,
+                        "reviewer_model": model,
+                        "model_family": "other",
+                        "is_canonical": True,
+                        "score": float(score),
+                        "scores_json": scores_json or "{}",
+                        "tier": _tier,
+                        "comments": comments or "",
+                        "comments_per_dim_json": comments_per_dim_json,
+                        "suggested_name": "",
+                        "suggestion_justification": "",
+                        "reviewed_at": _now_iso,
+                        "review_axis": "names",
+                        "cycle_index": 0,
+                        "review_group_id": _group_id,
+                        "resolution_role": "primary",
+                        "resolution_method": None,
+                        "llm_model": model,
+                        "llm_cost": llm_cost,
+                        "llm_tokens_in": llm_tokens_in,
+                        "llm_tokens_out": llm_tokens_out,
+                        "llm_tokens_cached_read": llm_tokens_cached_read,
+                        "llm_tokens_cached_write": llm_tokens_cached_write,
+                        "llm_at": _now_iso,
+                        "llm_service": llm_service or "standard-names",
+                    }
+                ],
+            )
+        except Exception:
+            # Don't let review-node bookkeeping fail the stage transition.
+            logger.exception(
+                "persist_reviewed_name: failed to write StandardNameReview for %s",
+                sn_id,
+            )
 
     # Async counter bump — live progress visibility for ``sn status``
     bump_sn_run_counter(run_id, "names_reviewed")
@@ -6441,6 +6447,7 @@ def persist_reviewed_docs(
     llm_at: str | None = None,
     llm_service: str | None = None,
     run_id: str | None = None,
+    skip_review_node: bool = False,
 ) -> str:
     """Persist docs-review results and transition ``docs_stage``.
 
@@ -6565,59 +6572,62 @@ def persist_reviewed_docs(
     )
 
     # ── Write StandardNameReview node + HAS_REVIEW edge (Finding 1 fix) ──
-    try:
-        import uuid as _uuid
-        from datetime import datetime as _dt
+    # When ``skip_review_node`` is True the caller (pool RD-quorum
+    # worker) writes per-cycle Review nodes itself.
+    if not skip_review_node:
+        try:
+            import uuid as _uuid
+            from datetime import datetime as _dt
 
-        _now_iso = llm_at or _dt.now(UTC).isoformat()
-        _group_id = str(_uuid.uuid4())
-        _review_id = f"{sn_id}:docs:{_group_id}:0"
-        if score >= 0.85:
-            _tier = "outstanding"
-        elif score >= 0.60:
-            _tier = "good"
-        elif score >= 0.40:
-            _tier = "inadequate"
-        else:
-            _tier = "poor"
-        write_reviews(
-            [
-                {
-                    "id": _review_id,
-                    "standard_name_id": sn_id,
-                    "model": model,
-                    "reviewer_model": model,
-                    "model_family": "other",
-                    "is_canonical": True,
-                    "score": float(score),
-                    "scores_json": scores_json or "{}",
-                    "tier": _tier,
-                    "comments": comments or "",
-                    "comments_per_dim_json": comments_per_dim_json,
-                    "suggested_name": "",
-                    "suggestion_justification": "",
-                    "reviewed_at": _now_iso,
-                    "review_axis": "docs",
-                    "cycle_index": 0,
-                    "review_group_id": _group_id,
-                    "resolution_role": "primary",
-                    "resolution_method": None,
-                    "llm_model": model,
-                    "llm_cost": llm_cost,
-                    "llm_tokens_in": llm_tokens_in,
-                    "llm_tokens_out": llm_tokens_out,
-                    "llm_tokens_cached_read": llm_tokens_cached_read,
-                    "llm_tokens_cached_write": llm_tokens_cached_write,
-                    "llm_at": _now_iso,
-                    "llm_service": llm_service or "standard-names",
-                }
-            ],
-        )
-    except Exception:
-        logger.exception(
-            "persist_reviewed_docs: failed to write StandardNameReview for %s",
-            sn_id,
-        )
+            _now_iso = llm_at or _dt.now(UTC).isoformat()
+            _group_id = str(_uuid.uuid4())
+            _review_id = f"{sn_id}:docs:{_group_id}:0"
+            if score >= 0.85:
+                _tier = "outstanding"
+            elif score >= 0.60:
+                _tier = "good"
+            elif score >= 0.40:
+                _tier = "inadequate"
+            else:
+                _tier = "poor"
+            write_reviews(
+                [
+                    {
+                        "id": _review_id,
+                        "standard_name_id": sn_id,
+                        "model": model,
+                        "reviewer_model": model,
+                        "model_family": "other",
+                        "is_canonical": True,
+                        "score": float(score),
+                        "scores_json": scores_json or "{}",
+                        "tier": _tier,
+                        "comments": comments or "",
+                        "comments_per_dim_json": comments_per_dim_json,
+                        "suggested_name": "",
+                        "suggestion_justification": "",
+                        "reviewed_at": _now_iso,
+                        "review_axis": "docs",
+                        "cycle_index": 0,
+                        "review_group_id": _group_id,
+                        "resolution_role": "primary",
+                        "resolution_method": None,
+                        "llm_model": model,
+                        "llm_cost": llm_cost,
+                        "llm_tokens_in": llm_tokens_in,
+                        "llm_tokens_out": llm_tokens_out,
+                        "llm_tokens_cached_read": llm_tokens_cached_read,
+                        "llm_tokens_cached_write": llm_tokens_cached_write,
+                        "llm_at": _now_iso,
+                        "llm_service": llm_service or "standard-names",
+                    }
+                ],
+            )
+        except Exception:
+            logger.exception(
+                "persist_reviewed_docs: failed to write StandardNameReview for %s",
+                sn_id,
+            )
 
     # Async counter bump — live progress visibility for ``sn status``
     bump_sn_run_counter(run_id, "names_reviewed")

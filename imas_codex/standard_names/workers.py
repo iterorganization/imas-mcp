@@ -4238,6 +4238,315 @@ async def process_refine_name_batch(
     return processed
 
 
+# =============================================================================
+# RD-quorum helper (shared by review_name + review_docs pool workers)
+# =============================================================================
+
+
+async def _run_rd_quorum_cycles(
+    *,
+    sn_id: str,
+    review_axis: str,
+    response_model: Any,
+    user_prompt: str,
+    system_prompt: str,
+    models: list[str],
+    disagreement_threshold: float,
+    rubric_dims: tuple[str, ...],
+    lease: Any,
+    phase: str,
+    acall_llm_structured: Callable[..., Any],
+) -> dict[str, Any] | None:
+    """Run the configured RD-quorum reviewer chain for a single StandardName.
+
+    Calls each configured model in turn (cycle 0 = primary, cycle 1 =
+    secondary, cycle 2 = escalator). Cycle 1 always runs when ≥2 models
+    are configured. Cycle 2 runs only when (a) ≥3 models are configured
+    AND (b) any rubric dimension differs between cycles 0 and 1 by more
+    than *disagreement_threshold* (after normalising 0–20 scores to 0–1).
+
+    Persists no graph state directly — the caller is responsible for
+    writing the returned ``records`` list via
+    :func:`~imas_codex.standard_names.graph_ops.write_reviews` and for
+    the SN-side stage transition.
+
+    Each cycle's cost is charged to *lease* via a fresh
+    :class:`~imas_codex.standard_names.budget.LLMCostEvent` tagged with
+    the cycle id (``c0``/``c1``/``c2``).
+
+    Returns
+    -------
+    dict | None
+        ``None`` when no cycle produced a parseable result (caller
+        should release the claim). Otherwise a dict with keys:
+
+        - ``records`` — list of Review record dicts (one per cycle) ready
+          for :func:`write_reviews`. Share a single ``review_group_id``.
+        - ``winning_score`` — float 0-1, the consensus score that should
+          mirror onto the SN axis slot.
+        - ``winning_scores`` — dict[str, float] of per-dim consensus.
+        - ``winning_comments`` — str.
+        - ``winning_comments_per_dim`` — dict | None.
+        - ``canonical_model`` — str, the model attribution for the SN
+          axis slot (always cycle 0's model — the chain anchor).
+        - ``resolution_method`` — one of
+          ``single_review`` / ``quorum_consensus`` /
+          ``authoritative_escalation`` / ``max_cycles_reached``.
+        - ``total_cost`` — float, sum of all cycles.
+        - ``total_tokens_in`` / ``total_tokens_out`` — int.
+    """
+    import uuid as _uuid
+    from datetime import datetime as _dt
+
+    from imas_codex.standard_names.budget import LLMCostEvent
+
+    review_group_id = str(_uuid.uuid4())
+    cycles: list[dict[str, Any]] = []  # parsed cycle results (cycle_index 0..N)
+    total_cost = 0.0
+    total_tokens_in = 0
+    total_tokens_out = 0
+
+    async def _run_cycle(cycle_idx: int, model: str) -> dict[str, Any] | None:
+        """Single LLM call. Returns parsed cycle dict or None on failure."""
+        nonlocal total_cost, total_tokens_in, total_tokens_out
+        try:
+            llm_out = await acall_llm_structured(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_model=response_model,
+                service="standard-names",
+            )
+            result_obj, cost, _tokens = llm_out
+        except Exception:
+            logger.exception(
+                "rd_quorum %s cycle %d failed for %s (model=%s)",
+                review_axis,
+                cycle_idx,
+                sn_id,
+                model,
+            )
+            return None
+
+        tokens_in = int(getattr(llm_out, "input_tokens", 0) or 0)
+        tokens_out = int(getattr(llm_out, "output_tokens", 0) or 0)
+        cached_read = int(getattr(llm_out, "cache_read_tokens", 0) or 0)
+        cached_write = int(getattr(llm_out, "cache_creation_tokens", 0) or 0)
+
+        total_cost += cost
+        total_tokens_in += tokens_in
+        total_tokens_out += tokens_out
+
+        if lease is not None:
+            try:
+                lease.charge_event(
+                    cost,
+                    LLMCostEvent(
+                        model=model,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        tokens_cached_read=cached_read,
+                        tokens_cached_write=cached_write,
+                        sn_ids=(sn_id,),
+                        cycle=f"c{cycle_idx}",
+                        phase=phase,
+                        service="standard-names",
+                    ),
+                )
+            except Exception:
+                logger.debug(
+                    "rd_quorum charge_event failed for %s c%d",
+                    sn_id,
+                    cycle_idx,
+                    exc_info=True,
+                )
+
+        # Extract score and per-dim scores.
+        try:
+            score = float(result_obj.scores.score)
+        except Exception:
+            score = 0.0
+        try:
+            scores_dict = result_obj.scores.model_dump()
+        except Exception:
+            scores_dict = {}
+
+        comments = getattr(result_obj, "reasoning", None) or ""
+        comments_per_dim = None
+        try:
+            if getattr(result_obj, "comments", None) is not None:
+                comments_per_dim = result_obj.comments.model_dump()
+        except Exception:
+            comments_per_dim = None
+
+        return {
+            "cycle_index": cycle_idx,
+            "model": model,
+            "score": score,
+            "scores": scores_dict,
+            "comments": comments,
+            "comments_per_dim": comments_per_dim,
+            "cost": cost,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "cached_read": cached_read,
+            "cached_write": cached_write,
+        }
+
+    # ── Cycle 0 (primary, blind) ───────────────────────────────────────
+    c0 = await _run_cycle(0, models[0])
+    if c0 is not None:
+        cycles.append(c0)
+
+    # ── Cycle 1 (secondary, blind) — runs whenever ≥ 2 models ──────────
+    c1 = None
+    if len(models) >= 2:
+        c1 = await _run_cycle(1, models[1])
+        if c1 is not None:
+            cycles.append(c1)
+
+    if not cycles:
+        return None
+
+    # ── Per-dimension disagreement (cycle 2 gate) ──────────────────────
+    disagreement = False
+    if c0 is not None and c1 is not None:
+        for dim in rubric_dims:
+            s0 = float(c0["scores"].get(dim, 0)) / 20.0
+            s1 = float(c1["scores"].get(dim, 0)) / 20.0
+            if abs(s0 - s1) > disagreement_threshold:
+                disagreement = True
+                break
+
+    # ── Cycle 2 (escalator) ────────────────────────────────────────────
+    c2 = None
+    if disagreement and len(models) >= 3:
+        c2 = await _run_cycle(2, models[2])
+        if c2 is not None:
+            cycles.append(c2)
+
+    # ── Determine winning score + resolution method ────────────────────
+    canonical_model = models[0]  # SN axis attribution always cycle-0 model
+    if len(cycles) == 1:
+        # Only cycle 0 succeeded (or chain is single-model)
+        winning = cycles[0]
+        if len(models) == 1:
+            resolution_method = "single_review"
+        else:
+            # Cycle 1 failed — degrade to single_review semantics
+            resolution_method = "single_review"
+        winning_score = float(winning["score"])
+        winning_scores = dict(winning["scores"])
+        winning_comments = winning["comments"]
+        winning_comments_per_dim = winning["comments_per_dim"]
+    elif c2 is not None:
+        # Escalator authoritative
+        resolution_method = "authoritative_escalation"
+        winning_score = float(c2["score"])
+        winning_scores = dict(c2["scores"])
+        winning_comments = c2["comments"]
+        winning_comments_per_dim = c2["comments_per_dim"]
+    else:
+        # 2 cycles only (or escalator skipped/failed) — mean of c0 + c1
+        winning_score = (float(c0["score"]) + float(c1["score"])) / 2.0
+        winning_scores = {}
+        for dim in rubric_dims:
+            v0 = float(c0["scores"].get(dim, 0))
+            v1 = float(c1["scores"].get(dim, 0))
+            winning_scores[dim] = (v0 + v1) / 2.0
+        # Merge comments preserving both reviewers' reasoning
+        c0_comments = c0["comments"] or ""
+        c1_comments = c1["comments"] or ""
+        if c0_comments and c1_comments and c0_comments != c1_comments:
+            winning_comments = f"[Primary] {c0_comments}\n[Secondary] {c1_comments}"
+        else:
+            winning_comments = c1_comments or c0_comments
+        winning_comments_per_dim = c1["comments_per_dim"] or c0["comments_per_dim"]
+        if disagreement:
+            # Disputed but no escalator available
+            resolution_method = "max_cycles_reached"
+        else:
+            resolution_method = "quorum_consensus"
+
+    # ── Build Review records ───────────────────────────────────────────
+    role_by_idx = {0: "primary", 1: "secondary", 2: "escalator"}
+    method_by_idx = {0: None, 1: None, 2: None}
+    if resolution_method == "single_review":
+        method_by_idx[0] = "single_review"
+    elif resolution_method == "authoritative_escalation":
+        method_by_idx[2] = "authoritative_escalation"
+    elif resolution_method == "max_cycles_reached":
+        method_by_idx[1] = "max_cycles_reached"
+    elif resolution_method == "quorum_consensus":
+        method_by_idx[1] = "quorum_consensus"
+
+    now_iso = _dt.utcnow().isoformat()
+    records: list[dict[str, Any]] = []
+    for c in cycles:
+        idx = c["cycle_index"]
+        score = float(c["score"])
+        if score >= 0.85:
+            tier = "outstanding"
+        elif score >= 0.60:
+            tier = "good"
+        elif score >= 0.40:
+            tier = "inadequate"
+        else:
+            tier = "poor"
+        scores_json = json.dumps(c["scores"]) if c["scores"] else "{}"
+        comments_per_dim_json = (
+            json.dumps(c["comments_per_dim"]) if c["comments_per_dim"] else None
+        )
+        records.append(
+            {
+                "id": f"{sn_id}:{review_axis}:{review_group_id}:{idx}",
+                "standard_name_id": sn_id,
+                "model": c["model"],
+                "reviewer_model": c["model"],
+                "model_family": "other",
+                "is_canonical": idx == 0,
+                "score": score,
+                "scores_json": scores_json,
+                "tier": tier,
+                "comments": c["comments"] or "",
+                "comments_per_dim_json": comments_per_dim_json,
+                "suggested_name": "",
+                "suggestion_justification": "",
+                "reviewed_at": now_iso,
+                "review_axis": review_axis,
+                "cycle_index": idx,
+                "review_group_id": review_group_id,
+                "resolution_role": role_by_idx.get(idx, "primary"),
+                "resolution_method": method_by_idx.get(idx),
+                "llm_model": c["model"],
+                "llm_cost": c["cost"],
+                "llm_tokens_in": c["tokens_in"],
+                "llm_tokens_out": c["tokens_out"],
+                "llm_tokens_cached_read": c["cached_read"],
+                "llm_tokens_cached_write": c["cached_write"],
+                "llm_at": now_iso,
+                "llm_service": "standard-names",
+            }
+        )
+
+    return {
+        "records": records,
+        "winning_score": float(winning_score),
+        "winning_scores": winning_scores,
+        "winning_comments": winning_comments,
+        "winning_comments_per_dim": winning_comments_per_dim,
+        "canonical_model": canonical_model,
+        "resolution_method": resolution_method,
+        "total_cost": total_cost,
+        "total_tokens_in": total_tokens_in,
+        "total_tokens_out": total_tokens_out,
+        "review_group_id": review_group_id,
+        "disagreement": disagreement,
+    }
+
+
 async def process_review_name_batch(
     batch: list[dict[str, Any]],
     mgr: BudgetManager,
@@ -4245,16 +4554,33 @@ async def process_review_name_batch(
     *,
     on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> int:
-    """Process a batch of drafted StandardNames for name review (Phase 8.1).
+    """Process a batch of drafted StandardNames for name review (RD-quorum).
 
     For each item in the batch:
 
     1. Build a name-axis review prompt via ``render_prompt("sn/review_names_user", ...)``.
-    2. Call LLM using the primary model from ``[sn.review.names].models[0]``.
-    3. Persist via :func:`~imas_codex.standard_names.graph_ops.persist_reviewed_name`,
-       which transitions ``name_stage`` to ``'accepted'``, ``'reviewed'``, or
-       ``'exhausted'`` in a single transaction.
-    4. On LLM error: release the claim via
+    2. Run the configured RD-quorum chain
+       (``[sn.review.names].models``):
+
+       - **Cycle 0** (primary, blind) — always runs.
+       - **Cycle 1** (secondary, blind) — runs when ≥ 2 models configured.
+       - **Cycle 2** (escalator) — runs only when per-dimension disagreement
+         between cycles 0 and 1 exceeds the configured threshold AND ≥ 3
+         models are configured.
+    3. Persist each cycle as a separate ``StandardNameReview`` node with
+       proper ``cycle_index`` (0/1/2), ``review_group_id`` (UUID shared
+       across cycles for the same SN), ``resolution_role``
+       (primary/secondary/escalator) and ``resolution_method``
+       (single_review / quorum_consensus / authoritative_escalation /
+       max_cycles_reached).
+    4. Persist via :func:`~imas_codex.standard_names.graph_ops.persist_reviewed_name`
+       with ``skip_review_node=True`` (review nodes already written) and the
+       *winning* score so the SN axis slots mirror the consensus and the
+       state machine transitions ``name_stage`` to ``'accepted'``,
+       ``'reviewed'`` or ``'exhausted'``.
+    5. Update review aggregates so ``review_count`` /
+       ``review_disagreement`` reflect the multi-cycle group.
+    6. On LLM error: release the claim via
        :func:`~imas_codex.standard_names.graph_ops.release_review_names_failed_claims`.
 
     Returns count of items successfully reviewed.
@@ -4263,8 +4589,10 @@ async def process_review_name_batch(
 
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
-    from imas_codex.settings import get_sn_review_names_models
-    from imas_codex.standard_names.budget import LLMCostEvent
+    from imas_codex.settings import (
+        get_sn_review_disagreement_threshold,
+        get_sn_review_names_models,
+    )
     from imas_codex.standard_names.defaults import (
         DEFAULT_MIN_SCORE,
         DEFAULT_REFINE_ROTATIONS,
@@ -4272,15 +4600,22 @@ async def process_review_name_batch(
     from imas_codex.standard_names.graph_ops import (
         persist_reviewed_name,
         release_review_names_failed_claims,
+        update_review_aggregates,
     )
     from imas_codex.standard_names.models import StandardNameQualityReviewNameOnly
 
-    # ── Resolve primary review model ───────────────────────────────────
+    # ── Resolve review model chain ─────────────────────────────────────
     try:
         review_models = get_sn_review_names_models()
-        model = review_models[0] if review_models else DEFAULT_ESCALATION_MODEL
     except (ValueError, IndexError):
-        model = DEFAULT_ESCALATION_MODEL
+        review_models = []
+    if not review_models:
+        review_models = [DEFAULT_ESCALATION_MODEL]
+
+    try:
+        disagreement_threshold = get_sn_review_disagreement_threshold()
+    except Exception:
+        disagreement_threshold = 0.20
 
     processed = 0
 
@@ -4292,11 +4627,9 @@ async def process_review_name_batch(
         claim_token = item.get("claim_token") or ""
 
         # ── Skip review for quarantined names ──────────────────────────
-        # Names that failed ISN 3-layer validation (validation_status =
-        # 'quarantined') already have a low-tier verdict from grammar/
-        # audit signals — running an Opus reviewer on them is pure waste.
-        # Persist a zero-score review directly so the state machine
-        # transitions to 'reviewed' or 'exhausted' without an LLM call.
+        # Names that failed ISN 3-layer validation already have a low-tier
+        # verdict — running RD-quorum on them is pure waste. Persist a
+        # zero-score review (cycle 0 only, single_review) directly.
         if item.get("validation_status") == "quarantined":
             try:
                 persist_reviewed_name(
@@ -4373,107 +4706,106 @@ async def process_review_name_batch(
                 "fusion plasma physics."
             )
 
-        _system_prompt = system_prompt
+        # ── Budget reservation (cover all cycles) ──────────────────────
+        # Per-item cost ~$0.05; reserve worst-case across the chain
+        # (every model called) with a 1.3× safety margin.
+        per_item_estimate = 0.05
+        worst_case = per_item_estimate * len(review_models) * 1.3
+        lease = mgr.reserve(worst_case, phase="review_name")
 
-        # ── Budget reservation ─────────────────────────────────────────
-        estimated = 0.05
-        lease = mgr.reserve(estimated, phase="review_name")
-
-        # ── LLM call ──────────────────────────────────────────────────
+        # ── RD-quorum cycles ──────────────────────────────────────────
         try:
-            llm_out = await acall_llm_structured(
-                model=model,
-                messages=[
-                    {"role": "system", "content": _system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+            quorum = await _run_rd_quorum_cycles(
+                sn_id=sn_id,
+                review_axis="names",
                 response_model=StandardNameQualityReviewNameOnly,
-                service="standard-names",
+                user_prompt=user_prompt,
+                system_prompt=system_prompt,
+                models=review_models,
+                disagreement_threshold=disagreement_threshold,
+                rubric_dims=("grammar", "semantic", "convention", "completeness"),
+                lease=lease,
+                phase="review_name",
+                acall_llm_structured=acall_llm_structured,
             )
 
-            result_obj, cost, _tokens = llm_out
+            if quorum is None:
+                # No cycles produced a valid result — release claim.
+                if claim_token:
+                    try:
+                        await _asyncio.to_thread(
+                            release_review_names_failed_claims,
+                            sn_ids=[sn_id],
+                            claim_token=claim_token,
+                            from_stage="drafted",
+                            to_stage="drafted",
+                        )
+                    except Exception:
+                        logger.debug(
+                            "release_review_names_failed_claims also failed for %s",
+                            sn_id,
+                        )
+                continue
 
-            # Charge cost to lease
-            if lease:
-                _event = LLMCostEvent(
-                    model=model,
-                    tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
-                    tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
-                    tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
-                    tokens_cached_write=getattr(llm_out, "cache_creation_tokens", 0)
-                    or 0,
-                    sn_ids=(sn_id,),
-                    phase="review_name",
-                    service="standard-names",
-                )
-                lease.charge_event(cost, _event)
+            # ── Persist all cycle Review records ──────────────────────
+            from imas_codex.standard_names.graph_ops import write_reviews
 
-            # ── Extract scores ─────────────────────────────────────────
-            score: float = float(result_obj.scores.score)
-            scores_dict: dict[str, Any] | None = None
-            try:
-                scores_dict = result_obj.scores.model_dump()
-            except Exception:
-                pass
+            await _asyncio.to_thread(write_reviews, quorum["records"])
 
-            comments: str | None = result_obj.reasoning
-            comments_per_dim: dict[str, Any] | None = None
-            if result_obj.comments is not None:
-                try:
-                    comments_per_dim = result_obj.comments.model_dump()
-                except Exception:
-                    pass
-
-            # ── Persist ───────────────────────────────────────────────
+            # ── Stage transition with winning score ────────────────────
             new_stage = await _asyncio.to_thread(
                 persist_reviewed_name,
                 sn_id=sn_id,
                 claim_token=claim_token,
-                score=score,
-                scores=scores_dict,
-                comments=comments,
-                comments_per_dim=comments_per_dim,
-                model=model,
+                score=quorum["winning_score"],
+                scores=quorum["winning_scores"],
+                comments=quorum["winning_comments"],
+                comments_per_dim=quorum["winning_comments_per_dim"],
+                model=quorum["canonical_model"],
                 min_score=DEFAULT_MIN_SCORE,
                 rotation_cap=DEFAULT_REFINE_ROTATIONS,
-                llm_cost=cost,
-                llm_tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
-                llm_tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
-                llm_tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
-                llm_tokens_cached_write=getattr(llm_out, "cache_creation_tokens", 0)
-                or 0,
+                llm_cost=quorum["total_cost"],
+                llm_tokens_in=quorum["total_tokens_in"],
+                llm_tokens_out=quorum["total_tokens_out"],
+                llm_tokens_cached_read=0,
+                llm_tokens_cached_write=0,
                 llm_service="standard-names",
                 run_id=mgr.run_id,
+                skip_review_node=True,
             )
+
+            # ── Update aggregates so review_count / disagreement reflect group ─
+            try:
+                await _asyncio.to_thread(update_review_aggregates, [sn_id])
+            except Exception:
+                logger.debug(
+                    "update_review_aggregates failed for %s", sn_id, exc_info=True
+                )
 
             if new_stage:
                 processed += 1
-                # Stream per-item progress — keep log preview short, pass full
-                # comment to on_event so terminal-aware clipping can use full width.
-                _comment_log = (comments or "")[:80]
-                _stage_color = {
-                    "accepted": "green",
-                    "exhausted": "red",
-                    "reviewed": "yellow",
-                }.get(new_stage, "white")
+                _comment_log = (quorum["winning_comments"] or "")[:80]
                 logger.info(
-                    "review_name: %s → %s (score=%.3f) %s",
+                    "review_name: %s → %s (score=%.3f, cycles=%d, method=%s) %s",
                     sn_id,
                     new_stage,
-                    score,
+                    quorum["winning_score"],
+                    len(quorum["records"]),
+                    quorum["resolution_method"],
                     _comment_log,
                 )
-
                 if on_event is not None:
                     on_event(
                         {
                             "pool": "review_name",
                             "name": sn_id,
-                            "score": score,
-                            "comment": comments or "",
+                            "score": quorum["winning_score"],
+                            "comment": quorum["winning_comments"] or "",
                             "stage": new_stage,
-                            "model": model,
-                            "cost": cost,
+                            "model": quorum["canonical_model"],
+                            "cost": quorum["total_cost"],
+                            "cycles": len(quorum["records"]),
+                            "resolution_method": quorum["resolution_method"],
                         }
                     )
             else:
@@ -4498,8 +4830,6 @@ async def process_review_name_batch(
                     )
         finally:
             # Always return the unused portion of the lease to the pool.
-            # Without this the unspent remainder leaks every iteration and
-            # the pool exhausts at ~25 % of cost_limit.
             if lease is not None:
                 try:
                     lease.release_unused()
@@ -4865,18 +5195,13 @@ async def process_review_docs_batch(
     *,
     on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> int:
-    """Process a batch of drafted StandardNames for docs review (Phase 8.1).
+    """Process a batch of drafted StandardNames for docs review (RD-quorum).
 
-    For each item in the batch:
-
-    1. Build a docs review prompt via ``render_prompt("sn/review_docs_user", ...)``.
-    2. Call LLM using the primary model from ``[sn.review.docs].models[0]``,
-       falling back to ``[sn.review.names].models[0]`` then ``get_model("language")``.
-    3. Persist via :func:`~imas_codex.standard_names.graph_ops.persist_reviewed_docs`,
-       which transitions ``docs_stage`` to ``'accepted'``, ``'reviewed'``, or
-       ``'exhausted'`` in a single transaction.
-    4. On LLM error: release the claim via
-       :func:`~imas_codex.standard_names.graph_ops.release_review_docs_failed_claims`.
+    Mirrors :func:`process_review_name_batch` for the docs axis: runs the
+    full ``[sn.review.docs].models`` chain (cycle 0 + cycle 1 unconditionally,
+    cycle 2 only when per-dim disagreement exceeds threshold). Persists each
+    cycle as a ``StandardNameReview`` node and transitions ``docs_stage`` via
+    :func:`~imas_codex.standard_names.graph_ops.persist_reviewed_docs`.
 
     Returns count of items successfully reviewed.
     """
@@ -4886,10 +5211,10 @@ async def process_review_docs_batch(
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.settings import (
         get_model,
+        get_sn_review_disagreement_threshold,
         get_sn_review_docs_models,
         get_sn_review_names_models,
     )
-    from imas_codex.standard_names.budget import LLMCostEvent
     from imas_codex.standard_names.defaults import (
         DEFAULT_MIN_SCORE,
         DEFAULT_REFINE_ROTATIONS,
@@ -4897,28 +5222,28 @@ async def process_review_docs_batch(
     from imas_codex.standard_names.graph_ops import (
         persist_reviewed_docs,
         release_review_docs_failed_claims,
+        update_review_aggregates,
     )
     from imas_codex.standard_names.models import StandardNameQualityReviewDocs
 
-    # ── Resolve primary review model ───────────────────────────────────
+    # ── Resolve docs review chain ──────────────────────────────────────
     try:
         review_models = get_sn_review_docs_models()
-        model = review_models[0] if review_models else None
     except (ValueError, IndexError):
-        model = None
-
-    if model is None:
+        review_models = []
+    if not review_models:
         try:
-            fallback_models = get_sn_review_names_models()
-            model = fallback_models[0] if fallback_models else None
+            review_models = get_sn_review_names_models()
         except (ValueError, IndexError):
-            model = None
+            review_models = []
+    if not review_models:
+        # Refine tier (Sonnet 4.6) — defensive fallback only.
+        review_models = [get_model("refine")]
 
-    if model is None:
-        # Refine tier (Sonnet 4.6) — defensive fallback only when neither
-        # the explicit reviewer chain nor [sn.review.names].models is set.
-        # Must NOT be flash-lite per the 2026-05-03 quality mandate.
-        model = get_model("refine")
+    try:
+        disagreement_threshold = get_sn_review_disagreement_threshold()
+    except Exception:
+        disagreement_threshold = 0.20
 
     processed = 0
 
@@ -4963,107 +5288,104 @@ async def process_review_docs_batch(
                 "documentation in fusion plasma physics."
             )
 
-        _system_prompt = system_prompt
+        # ── Budget reservation (cover all cycles) ──────────────────────
+        per_item_estimate = 0.05
+        worst_case = per_item_estimate * len(review_models) * 1.3
+        lease = mgr.reserve(worst_case, phase="review_docs")
 
-        # ── Budget reservation ─────────────────────────────────────────
-        estimated = 0.05
-        lease = mgr.reserve(estimated, phase="review_docs")
-
-        # ── LLM call ──────────────────────────────────────────────────
         try:
-            llm_out = await acall_llm_structured(
-                model=model,
-                messages=[
-                    {"role": "system", "content": _system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+            quorum = await _run_rd_quorum_cycles(
+                sn_id=sn_id,
+                review_axis="docs",
                 response_model=StandardNameQualityReviewDocs,
-                service="standard-names",
+                user_prompt=user_prompt,
+                system_prompt=system_prompt,
+                models=review_models,
+                disagreement_threshold=disagreement_threshold,
+                rubric_dims=(
+                    "description_quality",
+                    "documentation_quality",
+                    "completeness",
+                    "physics_accuracy",
+                ),
+                lease=lease,
+                phase="review_docs",
+                acall_llm_structured=acall_llm_structured,
             )
 
-            result_obj, cost, _tokens = llm_out
+            if quorum is None:
+                if claim_token:
+                    try:
+                        await _asyncio.to_thread(
+                            release_review_docs_failed_claims,
+                            sn_ids=[sn_id],
+                            claim_token=claim_token,
+                            from_stage="drafted",
+                            to_stage="drafted",
+                        )
+                    except Exception:
+                        logger.debug(
+                            "release_review_docs_failed_claims also failed for %s",
+                            sn_id,
+                        )
+                continue
 
-            # Charge cost to lease
-            if lease:
-                _event = LLMCostEvent(
-                    model=model,
-                    tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
-                    tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
-                    tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
-                    tokens_cached_write=getattr(llm_out, "cache_creation_tokens", 0)
-                    or 0,
-                    sn_ids=(sn_id,),
-                    phase="review_docs",
-                    service="standard-names",
-                )
-                lease.charge_event(cost, _event)
+            from imas_codex.standard_names.graph_ops import write_reviews
 
-            # ── Extract scores ─────────────────────────────────────────
-            score: float = float(result_obj.scores.score)
-            scores_dict: dict[str, Any] | None = None
-            try:
-                scores_dict = result_obj.scores.model_dump()
-            except Exception:
-                pass
+            await _asyncio.to_thread(write_reviews, quorum["records"])
 
-            comments: str | None = result_obj.reasoning
-            comments_per_dim: dict[str, Any] | None = None
-            if result_obj.comments is not None:
-                try:
-                    comments_per_dim = result_obj.comments.model_dump()
-                except Exception:
-                    pass
-
-            # ── Persist ───────────────────────────────────────────────
             new_stage = await _asyncio.to_thread(
                 persist_reviewed_docs,
                 sn_id=sn_id,
                 claim_token=claim_token,
-                score=score,
-                scores=scores_dict,
-                comments=comments,
-                comments_per_dim=comments_per_dim,
-                model=model,
+                score=quorum["winning_score"],
+                scores=quorum["winning_scores"],
+                comments=quorum["winning_comments"],
+                comments_per_dim=quorum["winning_comments_per_dim"],
+                model=quorum["canonical_model"],
                 min_score=DEFAULT_MIN_SCORE,
                 rotation_cap=DEFAULT_REFINE_ROTATIONS,
-                llm_cost=cost,
-                llm_tokens_in=getattr(llm_out, "input_tokens", 0) or 0,
-                llm_tokens_out=getattr(llm_out, "output_tokens", 0) or 0,
-                llm_tokens_cached_read=getattr(llm_out, "cache_read_tokens", 0) or 0,
-                llm_tokens_cached_write=getattr(llm_out, "cache_creation_tokens", 0)
-                or 0,
+                llm_cost=quorum["total_cost"],
+                llm_tokens_in=quorum["total_tokens_in"],
+                llm_tokens_out=quorum["total_tokens_out"],
+                llm_tokens_cached_read=0,
+                llm_tokens_cached_write=0,
                 llm_service="standard-names",
                 run_id=mgr.run_id,
+                skip_review_node=True,
             )
+
+            try:
+                await _asyncio.to_thread(update_review_aggregates, [sn_id])
+            except Exception:
+                logger.debug(
+                    "update_review_aggregates failed for %s", sn_id, exc_info=True
+                )
 
             if new_stage:
                 processed += 1
-                # Stream per-item progress — keep log preview short, pass full
-                # comment to on_event so terminal-aware clipping can use full width.
-                _comment_log = (comments or "")[:80]
-                _stage_color = {
-                    "accepted": "green",
-                    "exhausted": "red",
-                    "reviewed": "yellow",
-                }.get(new_stage, "white")
+                _comment_log = (quorum["winning_comments"] or "")[:80]
                 logger.info(
-                    "review_docs: %s → %s (score=%.3f) %s",
+                    "review_docs: %s → %s (score=%.3f, cycles=%d, method=%s) %s",
                     sn_id,
                     new_stage,
-                    score,
+                    quorum["winning_score"],
+                    len(quorum["records"]),
+                    quorum["resolution_method"],
                     _comment_log,
                 )
-
                 if on_event is not None:
                     on_event(
                         {
                             "pool": "review_docs",
                             "name": sn_id,
-                            "score": score,
-                            "comment": comments or "",
+                            "score": quorum["winning_score"],
+                            "comment": quorum["winning_comments"] or "",
                             "stage": new_stage,
-                            "model": model,
-                            "cost": cost,
+                            "model": quorum["canonical_model"],
+                            "cost": quorum["total_cost"],
+                            "cycles": len(quorum["records"]),
+                            "resolution_method": quorum["resolution_method"],
                         }
                     )
             else:
@@ -5087,9 +5409,6 @@ async def process_review_docs_batch(
                         sn_id,
                     )
         finally:
-            # Always return the unused portion of the lease to the pool.
-            # Without this the unspent remainder leaks every iteration and
-            # the pool exhausts at ~25 % of cost_limit.
             if lease is not None:
                 try:
                     lease.release_unused()
