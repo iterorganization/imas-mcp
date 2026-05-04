@@ -4871,17 +4871,15 @@ def get_standard_name_source_stats(
 def write_run_provenance(
     name_ids: list[str],
     run_id: str,
-    turn_number: int = 1,
 ) -> int:
     """Stamp run provenance fields on StandardName nodes.
 
-    Sets ``last_run_id``, ``last_run_at``, and ``last_turn_number`` on every
-    name touched by the current ``sn run`` invocation.
+    Sets ``last_run_id`` and ``last_run_at`` on every name touched by
+    the current ``sn run`` invocation.
 
     Args:
         name_ids: StandardName ids to stamp.
         run_id: UUID string identifying this ``sn run`` invocation.
-        turn_number: Turn number supplied via ``--turn-number``.
 
     Returns:
         Number of nodes updated.
@@ -4899,14 +4897,12 @@ def write_run_provenance(
             UNWIND $ids AS nid
             MATCH (sn:StandardName {id: nid})
             SET sn.last_run_id = $rid,
-                sn.last_run_at = datetime($ts),
-                sn.last_turn_number = $tn
+                sn.last_run_at = datetime($ts)
             RETURN count(sn) AS n
             """,
             ids=name_ids,
             rid=run_id,
             ts=now,
-            tn=turn_number,
         )
         return result[0]["n"] if result else 0
 
@@ -6690,7 +6686,7 @@ def persist_refined_name(
                           new.created_at        = datetime(),
                           new.generated_at      = datetime(),
                           new.grammar_fields    = $grammar_json,
-                          new.regen_reason      = $reason
+                          new.refine_reason     = $reason
                           {escalation_set}
 
                         // 2. Link to predecessor

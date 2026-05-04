@@ -51,7 +51,6 @@ class StandardNameBuildState(DiscoveryStateBase):
     # via write_run_provenance. Set by the CLI / loop; default placeholders
     # allow standalone pipeline invocations to still produce a node.
     run_id: str | None = None
-    turn_number: int = 1
     limit: int | None = None  # Cap on paths to process
     from_model: str | None = None  # Regenerate names produced by this model (substring)
 

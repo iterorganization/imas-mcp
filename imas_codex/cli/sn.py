@@ -1183,7 +1183,6 @@ def sn_run(
         force=force,
         regen=min_score is not None,
         min_score=min_score,
-        turn_number=1,
         limit=limit,
         compose_model=compose_model,
         from_model=from_model,

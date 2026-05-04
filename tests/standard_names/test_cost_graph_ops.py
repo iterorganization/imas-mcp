@@ -46,7 +46,6 @@ class TestCreateSNRunOpen:
                 _RUN_ID,
                 started_at=_TS,
                 cost_limit=5.0,
-                turn_number=2,
                 min_score=0.6,
             )
 
@@ -60,7 +59,6 @@ class TestCreateSNRunOpen:
             assert props["cost_is_exact"] is True
             assert props["cost_spent"] == 0.0
             assert props["cost_limit"] == 5.0
-            assert props["turn_number"] == 2
             assert props["min_score"] == 0.6
         finally:
             patcher.stop()

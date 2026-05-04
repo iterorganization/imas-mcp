@@ -325,9 +325,7 @@ async def _run_generate_phase(
     if persisted_ids:
         from imas_codex.standard_names.graph_ops import write_run_provenance
 
-        await asyncio.to_thread(
-            write_run_provenance, persisted_ids, cfg.run_id, cfg.turn_number
-        )
+        await asyncio.to_thread(write_run_provenance, persisted_ids, cfg.run_id)
 
     return PhaseResult(
         name=phase_name,

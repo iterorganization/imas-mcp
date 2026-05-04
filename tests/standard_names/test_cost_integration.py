@@ -93,7 +93,7 @@ class TestIdempotentDoubleCharge:
         run_id = _unique_run_id()
         ts = datetime(2025, 4, 27, 12, 0, 0, tzinfo=UTC)
         try:
-            create_sn_run_open(run_id, started_at=ts, cost_limit=5.0, turn_number=1)
+            create_sn_run_open(run_id, started_at=ts, cost_limit=5.0)
 
             kwargs = {
                 "run_id": run_id,
@@ -132,7 +132,7 @@ class TestPerNameApportionment:
         run_id = _unique_run_id()
         ts = datetime(2025, 4, 27, 12, 0, 0, tzinfo=UTC)
         try:
-            create_sn_run_open(run_id, started_at=ts, cost_limit=5.0, turn_number=1)
+            create_sn_run_open(run_id, started_at=ts, cost_limit=5.0)
             record_llm_cost(
                 run_id=run_id,
                 phase="generate",
@@ -169,7 +169,7 @@ class TestPerPhaseAggregation:
         run_id = _unique_run_id()
         ts = datetime(2025, 4, 27, 12, 0, 0, tzinfo=UTC)
         try:
-            create_sn_run_open(run_id, started_at=ts, cost_limit=10.0, turn_number=1)
+            create_sn_run_open(run_id, started_at=ts, cost_limit=10.0)
             for i, (phase, cost) in enumerate(
                 [
                     ("generate", 0.30),
@@ -214,7 +214,7 @@ class TestAggregateMatchesBudgetManager:
         run_id = _unique_run_id()
         ts = datetime(2025, 4, 27, 12, 0, 0, tzinfo=UTC)
         try:
-            create_sn_run_open(run_id, started_at=ts, cost_limit=10.0, turn_number=1)
+            create_sn_run_open(run_id, started_at=ts, cost_limit=10.0)
 
             mgr = BudgetManager(total_budget=10.0, run_id=run_id)
             await mgr.start()
@@ -257,7 +257,7 @@ class TestDrainBarrier:
         run_id = _unique_run_id()
         ts = datetime(2025, 4, 27, 12, 0, 0, tzinfo=UTC)
         try:
-            create_sn_run_open(run_id, started_at=ts, cost_limit=10.0, turn_number=1)
+            create_sn_run_open(run_id, started_at=ts, cost_limit=10.0)
 
             mgr = BudgetManager(total_budget=10.0, run_id=run_id)
             await mgr.start()
@@ -295,7 +295,7 @@ class TestSNRunPreCreated:
         run_id = _unique_run_id()
         ts = datetime(2025, 4, 27, 12, 0, 0, tzinfo=UTC)
         try:
-            create_sn_run_open(run_id, started_at=ts, cost_limit=5.0, turn_number=1)
+            create_sn_run_open(run_id, started_at=ts, cost_limit=5.0)
 
             with GraphClient() as gc:
                 rows = gc.query(
@@ -328,7 +328,7 @@ class TestFinalizeDrainFailure:
         run_id = _unique_run_id()
         ts = datetime(2025, 4, 27, 12, 0, 0, tzinfo=UTC)
         try:
-            create_sn_run_open(run_id, started_at=ts, cost_limit=5.0, turn_number=1)
+            create_sn_run_open(run_id, started_at=ts, cost_limit=5.0)
 
             mgr = BudgetManager(total_budget=5.0, run_id=run_id)
             await mgr.start()
@@ -387,7 +387,7 @@ class TestForRunEdge:
         run_id = _unique_run_id()
         ts = datetime(2025, 4, 27, 12, 0, 0, tzinfo=UTC)
         try:
-            create_sn_run_open(run_id, started_at=ts, cost_limit=5.0, turn_number=1)
+            create_sn_run_open(run_id, started_at=ts, cost_limit=5.0)
             record_llm_cost(
                 run_id=run_id,
                 phase="generate",

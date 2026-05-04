@@ -978,14 +978,6 @@ classes:
           produced or regenerated this name. Paired with
           ``last_run_id`` for temporal queries.
         range: datetime
-      last_turn_number:
-        description: >-
-          Turn number (1-based) recorded by ``sn run --turn-number N``
-          for the invocation that last produced or regenerated this
-          name. Default 1. Increment externally between successive
-          runs to track multi-turn bootstrapping cycles.
-        range: integer
-        ifabsent: int(1)
       # --- Regeneration tracking ---
       regen_count:
         description: >-
@@ -995,10 +987,10 @@ classes:
           infinite regeneration loops on persistently poor scorers.
         range: integer
         ifabsent: int(0)
-      regen_reason:
+      refine_reason:
         description: >-
-          Reviewer comments that triggered the last regeneration cycle.
-          Captured from ``reviewer_comments_name`` at regen time so the
+          Reviewer comments that triggered the last refinement cycle.
+          Captured from ``reviewer_comments_name`` at refine time so the
           reason survives subsequent review overwrites.
       # --- Grammar parse provenance (vNext — imas-standard-names >= 0.7.0rc21) ---
       grammar_parse_version:
