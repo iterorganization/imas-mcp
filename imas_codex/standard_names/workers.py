@@ -2326,6 +2326,9 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 compose_model=model,
                 dd_version=batch.dd_version,
                 cocos_version=batch.cocos_version,
+                run_id=getattr(state.budget_manager, "run_id", None)
+                if state.budget_manager
+                else None,
             )
             wlog.debug("Persisted %d names from batch %s", written, batch.group_key)
 
@@ -3836,6 +3839,7 @@ async def compose_batch(
                 compose_model=model,
                 dd_version=batch[0].get("dd_version"),
                 cocos_version=batch[0].get("cocos_version"),
+                run_id=mgr.run_id,
             )
             logger.debug("Pool %s: persisted %d candidates", phase_tag, written)
 
@@ -4178,6 +4182,7 @@ async def process_refine_name_batch(
                     grammar_fields=result_obj.grammar_fields,
                     reason=result_obj.reason,
                     escalated=escalate,
+                    run_id=mgr.run_id,
                 )
                 processed += 1
                 logger.info(
@@ -4313,6 +4318,7 @@ async def process_review_name_batch(
                     llm_tokens_cached_read=0,
                     llm_tokens_cached_write=0,
                     llm_service="standard-names",
+                    run_id=mgr.run_id,
                 )
                 processed += 1
                 if on_event:
@@ -4437,6 +4443,7 @@ async def process_review_name_batch(
                 llm_tokens_cached_write=getattr(llm_out, "cache_creation_tokens", 0)
                 or 0,
                 llm_service="standard-names",
+                run_id=mgr.run_id,
             )
 
             if new_stage:
@@ -4800,6 +4807,7 @@ async def process_generate_docs_batch(
                 description=result_obj.description,
                 documentation=result_obj.documentation,
                 model=model,
+                run_id=mgr.run_id,
             )
             processed += 1
 
@@ -5025,6 +5033,7 @@ async def process_review_docs_batch(
                 llm_tokens_cached_write=getattr(llm_out, "cache_creation_tokens", 0)
                 or 0,
                 llm_service="standard-names",
+                run_id=mgr.run_id,
             )
 
             if new_stage:
@@ -5254,6 +5263,7 @@ async def process_refine_docs_batch(
                 reviewer_comments_per_dim_to_snapshot=item.get(
                     "reviewer_comments_per_dim_docs"
                 ),
+                run_id=mgr.run_id,
             )
             processed += 1
 
