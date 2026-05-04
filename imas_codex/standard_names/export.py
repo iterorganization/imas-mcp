@@ -134,14 +134,32 @@ def _fetch_candidates(
     """Fetch StandardName nodes eligible for export from the graph.
 
     Returns dicts with all catalog-relevant properties plus ``origin``,
-    ``cocos``, ``reviewer_score_name``, ``pipeline_status``.
+    ``cocos``, ``reviewer_score_name``.
+
+    Only nodes that have completed **both** the name and docs pipelines
+    and passed validation are returned.  Specifically the query requires:
+
+    - ``name_stage = 'accepted'`` — excludes superseded, exhausted, drafted,
+      reviewed, and refining nodes.
+    - ``docs_stage = 'accepted'`` — excludes nodes whose documentation has
+      not yet passed the docs review loop.
+    - ``validation_status = 'valid'`` — excludes quarantined nodes.
+
+    The legacy ``pipeline_status`` field is **not** used as a gate because
+    it is not updated when a predecessor node is marked superseded; only
+    ``name_stage`` is authoritative for that lifecycle transition.
     """
     from imas_codex.graph.client import GraphClient
 
-    # Only export names with pipeline_status in publishable states
+    # Export only fully-accepted, validated nodes.
+    # name_stage='accepted' already excludes superseded/exhausted by construction
+    # (persist_refined_name_batch sets old.name_stage='superseded' on refine),
+    # but is spelled out explicitly for clarity.
     cypher = """
     MATCH (sn:StandardName)
-    WHERE sn.pipeline_status IN ['published', 'accepted', 'reviewed', 'enriched']
+    WHERE sn.name_stage = 'accepted'
+      AND sn.docs_stage = 'accepted'
+      AND sn.validation_status = 'valid'
     """
     params: dict[str, Any] = {}
 
