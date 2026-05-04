@@ -812,10 +812,10 @@ The LLM never provides the unit field.
 |---------|---------|-------------|
 | `sn run` | Run the 6-pool standard name pipeline (GENERATE_NAME → REVIEW_NAME → REFINE_NAME → GENERATE_DOCS → REVIEW_DOCS → REFINE_DOCS). Auto-seeds all eligible domains by default; `--domain` restricts to specific domain(s); `--paths` forces single-pass. `--only <phase>` runs a single phase; `--override-edits <name>` lets the pipeline overwrite catalog-edited fields. Key flags: `--min-score` (default 0.75), `--rotation-cap` (default 3), `--escalation-model` (default `openrouter/anthropic/claude-opus-4.6`), `--review-name-backlog-cap`, `--review-docs-backlog-cap`, `--max-sources`. Removed legacy flags: `--target`, `--skip-enrich`, `--skip-regen`, `--docs-status`, `--docs-batch-size`, `--name-only-batch-size`, `--turn-number`, `--physics-domain`. | `--source {dd,signals}`, `--domain` (multi), `--facility`, `--paths`, `--limit`, `--max-sources`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--reset-only`, `--from-model`, `--since`, `--before`, `--below-score`, `--tier`, `--retry-quarantined`, `--retry-skipped`, `--retry-vocab-gap`, `--single-pass`, `--min-score`, `--rotation-cap`, `--escalation-model`, `--review-name-backlog-cap`, `--review-docs-backlog-cap`, `--skip-review`, `--only`, `--override-edits` |
 | `sn review` | Score and tier existing valid standard names via RD-quorum reviewer pipeline (1:1 scoring invariant, retry-unmatched) | `--physics-domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force` |
-| `sn export` | Export validated StandardName nodes to YAML staging dir (`standard_names/<domain>/<name>.yml`). Applies quality gates (reviewer_score_name ≥ 0.65 + description sub-score). | `--staging` (required), `--min-score`, `--include-unreviewed`, `--min-description-score`, `--gate-only`, `--gate-scope {all,a,b,c,d}`, `--domain`, `--force`, `--skip-gate`, `--override-edits` |
-| `sn preview` | Launch ISN `catalog-site serve` against a staging dir for local preview | `--staging` (required), `--port` |
-| `sn publish` | Transport staging dir to ISNC repo (copy files + commit + optional push). No quality gates re-run — they ran at export time. | `--staging` (required), `--isnc` (required), `--push/--no-push`, `--dry-run` |
-| `sn import` | Import reviewed YAML from ISNC back into graph. Diff-based origin tracking flips edited names to `origin=catalog_edit`, preserving catalog edits on subsequent pipeline runs. | `--isnc` (required), `--accept-unit-override`, `--accept-cocos-override`, `--dry-run` |
+| `sn export` | Export validated StandardName nodes to YAML staging dir (`standard_names/<domain>/<name>.yml`). Applies quality gates (reviewer_score_name ≥ 0.65 + description sub-score). Staging dir defaults to `~/.cache/imas-codex/staging` (configurable via `staging-dir` in `[tool.imas-codex.sn]`). | `--staging` (default: `~/.cache/imas-codex/staging`), `--min-score`, `--include-unreviewed`, `--min-description-score`, `--gate-only`, `--gate-scope {all,a,b,c,d}`, `--domain`, `--force`, `--skip-gate`, `--override-edits` |
+| `sn preview` | Launch ISN `catalog-site serve` against a staging dir for local preview. Pass `--export` to run export first then immediately serve the result. Staging dir defaults to `~/.cache/imas-codex/staging`. | `--export` (run export then serve), `--staging` (default: `~/.cache/imas-codex/staging`), `--port` |
+| `sn publish` | Transport staging dir to ISNC repo (copy files + commit + optional push). No quality gates re-run — they ran at export time. Both `--staging` and `--isnc` are optional — defaults auto-discovered from `[tool.imas-codex.sn]` config. | `--staging` (default: `~/.cache/imas-codex/staging`), `--isnc` (default: auto-discover from `isnc-dir` config), `--push/--no-push`, `--dry-run` |
+| `sn import` | Import reviewed YAML from ISNC back into graph. Diff-based origin tracking flips edited names to `origin=catalog_edit`, preserving catalog edits on subsequent pipeline runs. `--isnc` is optional — auto-discovered from `[tool.imas-codex.sn]` config. | `--isnc` (default: auto-discover from `isnc-dir` config), `--accept-unit-override`, `--accept-cocos-override`, `--dry-run` |
 | `sn status` | Show standard name and StandardNameSource pipeline statistics | — |
 | `sn gaps` | List grammar vocabulary gaps from composition | `--segment`, `--export {table,yaml}` |
 | `sn clear` | Unconditional full-subsystem wipe (all SN nodes + grammar tree) with auto grammar re-seed from installed ISN package | `--dry-run`, `--force`, `--no-reseed` |
@@ -1129,12 +1129,12 @@ The graph is authoritative for pipeline state; the catalog is authoritative for 
 sn export → sn preview → sn publish → GitHub PR review → PR merged → sn import
 ```
 
-1. **`sn export --staging ./staging`** — Reads validated StandardName nodes from graph, applies quality gates (reviewer_score_name ≥ 0.65 + description sub-score), writes YAML to `<staging>/standard_names/<domain>/<name>.yml`.
-2. **`sn preview --staging ./staging`** — Launches ISN `catalog-site serve` for local preview before publishing.
-3. **`sn publish --staging ./staging --isnc ../isnc`** — Copies staging YAML into ISNC git checkout, creates a commit, optionally pushes (`--push`).
+1. **`sn export`** — Reads validated StandardName nodes from graph, applies quality gates (reviewer_score_name ≥ 0.65 + description sub-score), writes YAML to `<staging>/standard_names/<domain>/<name>.yml`. Uses default staging dir (`~/.cache/imas-codex/staging`) unless `--staging` is specified.
+2. **`sn preview`** — Launches ISN `catalog-site serve` against the default staging dir for local preview before publishing. Use `sn preview --export` to run export first then immediately serve the result.
+3. **`sn publish`** — Copies staging YAML into ISNC git checkout, creates a commit, optionally pushes (`--push`). Auto-discovers both staging dir and ISNC path from `[tool.imas-codex.sn]` config (`staging-dir`, `isnc-dir`).
 4. **User reviews the PR on GitHub** — edits description, documentation, tags, kind, links, status, etc.
 5. **PR merged to ISNC main.**
-6. **`sn import --isnc ../isnc`** — Reads YAML, diffs against graph. If any `PROTECTED_FIELDS` were edited, flips `origin=catalog_edit` on that name. Subsequent pipeline runs preserve these edits.
+6. **`sn import`** — Reads YAML from ISNC (auto-discovered from `isnc-dir` config, or pass `--isnc` explicitly). Diffs against graph. If any `PROTECTED_FIELDS` were edited, flips `origin=catalog_edit` on that name. Subsequent pipeline runs preserve these edits.
 
 **Protection model:** `PROTECTED_FIELDS` = {description, documentation, kind, tags, links, status, deprecates, superseded_by, validity_domain, constraints}. Pipeline writers call `filter_protected()` before graph writes — names with `origin=catalog_edit` have these fields stripped from pipeline updates unless `override=True` or the name is in `override_names`.
 
@@ -1361,6 +1361,10 @@ Four context channels are injected per-item into compose, review, and enrich pro
 4. **Identifier enum values** — when a DD path references an identifier schema, the allowed enumeration values (name, index, description) are injected as `identifier_values` per item.
 
 **Compose retry with expanded context:** On grammar/validation failure, the compose worker retries up to `retry_attempts` times (default 1), re-enriching items with expanded hybrid search (`search_k=retry_k_expansion`, default 12) before resubmission. Configurable via `[tool.imas-codex.sn]` or `IMAS_CODEX_SN_RETRY_*` env vars.
+
+**Path defaults** (`[tool.imas-codex.sn]` in pyproject.toml):
+- `staging-dir` — local staging directory used by `sn export`, `sn preview`, and `sn publish` (default: `~/.cache/imas-codex/staging`).
+- `isnc-dir` — path to a local ISNC git checkout used by `sn publish` and `sn import` (default: `""`, i.e. must be provided via flag if not set).
 
 **Scored-example injection:** Compose and review prompts include dynamically selected exemplar StandardName nodes at target score thresholds `(1.0, 0.8, 0.65, 0.4)`. Examples are graph-backed and selected by the example loader (W3-K3K4); `benchmark_calibration.yaml` and the static calibration code path have been removed. Context keys: `compose_scored_examples`, `review_scored_examples`.
 
