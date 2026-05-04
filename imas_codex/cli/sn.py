@@ -2396,10 +2396,10 @@ def sn_export(
     help="Staging directory to preview (default: ~/.cache/imas-codex/staging)",
 )
 @click.option(
-    "--export",
+    "--export/--no-export",
     "do_export",
-    is_flag=True,
-    help="Run sn export before serving (uses same gate defaults as standalone export)",
+    default=True,
+    help="Run sn export before serving (default: on). Use --no-export to serve an existing staging dir.",
 )
 @click.option(
     "--port",
@@ -2424,17 +2424,23 @@ def sn_preview(
     host: str | None,
     do_export: bool,
 ) -> None:
-    """Preview a staging directory in the browser via ISN catalog-site.
+    """Preview standard names via ISN catalog-site.
 
     \b
-    Launches a local MkDocs dev server. Press Ctrl-C to stop.
+    Exports from graph and launches a local MkDocs dev server.
+    Press Ctrl-C to stop. Use --no-export to serve an existing
+    staging directory without re-exporting.
+
+    \b
+    SSH tunnel (required for remote access):
+      ssh -L 8000:localhost:8000 <host>
 
     \b
     Examples:
       imas-codex sn preview
-      imas-codex sn preview --export
-      imas-codex sn preview --staging ./staging
-      imas-codex sn preview --staging ./staging --port 9090
+      imas-codex sn preview --no-export
+      imas-codex sn preview --staging ./staging --no-export
+      imas-codex sn preview --port 9090
     """
     from pathlib import Path
 
@@ -2459,7 +2465,7 @@ def sn_preview(
     if not catalog.is_file():
         console.print(
             f"[red]No catalog.yml found at {staging_path}[/red]\n"
-            "  Run [bold]sn export[/bold] first, or use [bold]--export[/bold] to auto-export."
+            "  Run [bold]sn export[/bold] first, or remove [bold]--no-export[/bold] flag."
         )
         raise SystemExit(2)
 
