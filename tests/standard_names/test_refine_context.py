@@ -231,17 +231,6 @@ class TestClaimRefineChainHistory:
     # node's own review is never merged into a unified prior_reviews list.
     # -------------------------------------------------------------------------
 
-    @pytest.mark.xfail(
-        reason=(
-            "Bug §3B: claim_refine_name_batch does not expose a 'prior_reviews' "
-            "key combining all reviews in the chain.  chain_history contains only "
-            "REFINED_FROM ancestors; current node B's own review (stored in "
-            "reviewer_comments_per_dim_name on the item) is not included in a "
-            "unified list.  Low-scoring names cycled >1 time therefore lose their "
-            "intermediate review context when the next refine prompt is rendered."
-        ),
-        strict=True,
-    )
     def test_prior_reviews_key_present_with_full_chain(self):
         """Returned item should carry prior_reviews with EVERY review in the chain.
 
@@ -336,17 +325,6 @@ class TestRefinePromptRendering:
     # reviewer_comments_per_dim_name is never injected into the history section.
     # -------------------------------------------------------------------------
 
-    @pytest.mark.xfail(
-        reason=(
-            "Bug §3B: refine_name_user.md iterates only over chain_history "
-            "(REFINED_FROM ancestors) in the 'Refinement history' section.  "
-            "The current node B's own review comment (stored in "
-            "item.reviewer_comments_per_dim_name) is not rendered.  "
-            "When a name is cycled more than once, the LLM therefore never sees "
-            "B's reviewer feedback — only A's."
-        ),
-        strict=True,
-    )
     def test_prompt_contains_current_node_review_comment(self):
         """Rendered prompt must include B's reviewer comment 'still ambiguous'.
 

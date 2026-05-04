@@ -59,6 +59,21 @@ _(none available)_
 {% else %}
 _(no prior refinement history — this is the first refine attempt)_
 {% endif %}
+{% if item.reviewer_score_name is not none or item.reviewer_comments_per_dim_name %}
+### Current node review (name: `{{ item.id }}`)
+
+- **Reviewer score:** {{ "%.2f"|format(item.reviewer_score_name) if item.reviewer_score_name is not none else "—" }}
+- **Per-dimension comments:**
+{% set _per_dim = (item.reviewer_comments_per_dim_name | fromjson) if item.reviewer_comments_per_dim_name else {} %}
+{% if _per_dim %}
+{% for dim, comment in _per_dim.items() %}
+  - **{{ dim }}**: {{ comment }}
+{% endfor %}
+{% else %}
+  _(no per-dimension comments recorded)_
+{% endif %}
+
+{% endif %}
 {% if fanout_evidence %}
 
 ---

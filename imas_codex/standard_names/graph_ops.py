@@ -6595,9 +6595,24 @@ def claim_refine_name_batch(
         domain=domain,
     )
 
-    # Enrich each claimed item with its REFINED_FROM chain history.
+    # Enrich each claimed item with its REFINED_FROM chain history and build
+    # a unified prior_reviews list that also includes the current node's own
+    # reviewer feedback.  Without this, a name cycled >1 time loses the
+    # intermediate reviewer verdict when the next refine prompt is rendered.
     for item in items:
         item["chain_history"] = name_chain_history(item["id"])
+        raw = item.get("reviewer_comments_per_dim_name") or "{}"
+        try:
+            per_dim: dict = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (ValueError, TypeError):
+            per_dim = {}
+        current_review: dict[str, Any] = {
+            "name": item["id"],
+            "model": item.get("model", "unknown"),
+            "reviewer_score": item.get("reviewer_score_name"),
+            "reviewer_comments_per_dim": per_dim,
+        }
+        item["prior_reviews"] = item["chain_history"] + [current_review]
 
     return items
 
@@ -7513,9 +7528,24 @@ def claim_refine_docs_batch(
         domain=domain,
     )
 
-    # Enrich each claimed item with its DOCS_REVISION_OF chain history.
+    # Enrich each claimed item with its DOCS_REVISION_OF chain history and build
+    # a unified prior_docs_reviews list that also includes the current node's own
+    # reviewer feedback.  Without this, docs cycled >1 time lose intermediate
+    # reviewer verdict when the next refine-docs prompt is rendered.
     for item in items:
         item["docs_chain_history"] = docs_chain_history(item["id"], limit=5)
+        raw = item.get("reviewer_comments_per_dim_docs") or "{}"
+        try:
+            per_dim: dict = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (ValueError, TypeError):
+            per_dim = {}
+        current_review: dict[str, Any] = {
+            "model": item.get("docs_model", "unknown"),
+            "reviewer_score": item.get("reviewer_score_docs"),
+            "reviewer_comments_per_dim": per_dim,
+            "documentation": item.get("documentation", ""),
+        }
+        item["prior_docs_reviews"] = item["docs_chain_history"] + [current_review]
 
     logger.debug(
         "claim_refine_docs_batch: claimed %d",

@@ -1115,7 +1115,13 @@ def _get_jinja_env(prompts_dir: Path) -> Environment:
                     return source, str(path), lambda: True
             raise TemplateNotFound(template)
 
-    return Environment(loader=PromptsLoader())
+    import json as _json
+
+    env = Environment(loader=PromptsLoader())
+    # Add fromjson filter so templates can parse JSON-string fields
+    # (e.g. reviewer_comments_per_dim_name stored as a JSON string on graph nodes).
+    env.filters["fromjson"] = _json.loads
+    return env
 
 
 def render_prompt(
