@@ -1638,6 +1638,60 @@ def sn_status() -> None:
                 for vrow in vstatus_result:
                     vtable.add_row(vrow["status"], str(vrow["cnt"]))
                 console.print(vtable)
+
+            # Name stage breakdown
+            name_stage_rows = list(
+                gc.query("""
+                MATCH (sn:StandardName)
+                RETURN sn.name_stage AS stage, count(*) AS n
+                ORDER BY n DESC
+            """)
+            )
+            if name_stage_rows:
+                console.print()
+                console.print("[bold]Name Stage[/bold]")
+                ns_table = RichTable(show_header=True)
+                ns_table.add_column("Stage")
+                ns_table.add_column("Count", justify="right")
+                for ns_row in name_stage_rows:
+                    ns_table.add_row(ns_row["stage"] or "—", str(ns_row["n"]))
+                console.print(ns_table)
+
+                # Acceptance rate
+                ns = {r["stage"] or "—": r["n"] for r in name_stage_rows}
+                accepted = ns.get("accepted", 0)
+                superseded = ns.get("superseded", 0)
+                total_incl = sum(ns.values())
+                total_excl = total_incl - superseded
+                rate_excl = 100 * accepted / max(total_excl, 1)
+                rate_incl = 100 * accepted / max(total_incl, 1)
+                console.print(
+                    f"Acceptance rate (excl. superseded): "
+                    f"[bold]{rate_excl:.1f}%[/bold] ({accepted} / {total_excl})"
+                )
+                console.print(
+                    f"Acceptance rate (incl. superseded): "
+                    f"[bold]{rate_incl:.1f}%[/bold] ({accepted} / {total_incl})"
+                )
+
+            # Docs stage breakdown
+            docs_stage_rows = list(
+                gc.query("""
+                MATCH (sn:StandardName)
+                RETURN sn.docs_stage AS stage, count(*) AS n
+                ORDER BY n DESC
+            """)
+            )
+            if docs_stage_rows:
+                console.print()
+                console.print("[bold]Docs Stage[/bold]")
+                ds_table = RichTable(show_header=True)
+                ds_table.add_column("Stage")
+                ds_table.add_column("Count", justify="right")
+                for ds_row in docs_stage_rows:
+                    ds_table.add_row(ds_row["stage"] or "—", str(ds_row["n"]))
+                console.print(ds_table)
+
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
 
@@ -1705,7 +1759,7 @@ def sn_status() -> None:
                        rr.started_at AS started_at,
                        rr.stopped_at AS stopped_at,
                        rr.stop_reason AS stop_reason,
-                       rr.passes AS passes,
+                       rr.elapsed_s AS elapsed_s,
                        rr.cost_spent AS cost_spent,
                        rr.cost_limit AS cost_limit,
                        rr.names_composed AS names_composed,
@@ -1733,7 +1787,16 @@ def sn_status() -> None:
         rr_table.add_row("started_at", str(rr["started_at"]))
         rr_table.add_row("stopped_at", str(rr["stopped_at"] or "—"))
         rr_table.add_row("stop_reason", str(rr["stop_reason"] or "—"))
-        rr_table.add_row("passes", str(rr["passes"] or 0))
+        _elapsed = rr.get("elapsed_s")
+        if _elapsed is not None:
+            _es = float(_elapsed)
+            if _es >= 3600:
+                _elapsed_str = f"{int(_es // 3600)}h {int((_es % 3600) // 60)}m"
+            elif _es >= 60:
+                _elapsed_str = f"{int(_es // 60)}m {int(_es % 60)}s"
+            else:
+                _elapsed_str = f"{_es:.1f}s"
+            rr_table.add_row("elapsed", _elapsed_str)
         rr_table.add_row(
             "cost",
             f"${float(rr['cost_spent'] or 0):.4f} / ${float(rr['cost_limit'] or 0):.2f}",
