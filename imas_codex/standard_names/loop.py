@@ -554,6 +554,7 @@ async def run_sn_loop(
             cost_spent=summary.cost_spent,
             cost_is_exact=cost_is_exact,
             stopped_at=summary.stopped_at,
+            elapsed_s=(summary.stopped_at - summary.started_at).total_seconds(),
             cost_limit=round(summary.cost_limit, 6),
             compose_cost=round(summary.compose_cost, 6),
             review_cost=round(summary.review_cost, 6),
@@ -1289,6 +1290,56 @@ async def run_sn_pools(
         summary.names_reviewed = _total("review_name") + _total("review_docs")
         summary.names_regenerated = _total("refine_name") + _total("refine_docs")
 
+        # ── Async counter discrepancy check ───────────────────────
+        # The SNRun node was bumped per-persist via bump_sn_run_counter.
+        # Compare with pool-derived authoritative counts and log drift.
+        try:
+            from imas_codex.graph.client import GraphClient
+
+            with GraphClient() as gc:
+                _async_rows = gc.query(
+                    "MATCH (rr:SNRun {id: $run_id}) "
+                    "RETURN rr.names_composed AS nc, rr.names_enriched AS ne, "
+                    "rr.names_reviewed AS nr, rr.names_regenerated AS ng",
+                    run_id=run_id,
+                )
+            if _async_rows:
+                _ar = _async_rows[0]
+                _async_counters = {
+                    "names_composed": int(_ar.get("nc") or 0),
+                    "names_enriched": int(_ar.get("ne") or 0),
+                    "names_reviewed": int(_ar.get("nr") or 0),
+                    "names_regenerated": int(_ar.get("ng") or 0),
+                }
+                _auth_counters = {
+                    "names_composed": summary.names_composed,
+                    "names_enriched": summary.names_enriched,
+                    "names_reviewed": summary.names_reviewed,
+                    "names_regenerated": summary.names_regenerated,
+                }
+                _drifts = {
+                    k: (_async_counters[k], _auth_counters[k])
+                    for k in _auth_counters
+                    if _async_counters[k] != _auth_counters[k]
+                }
+                if _drifts:
+                    logger.warning(
+                        "run_sn_pools: async counter drift detected — "
+                        "overwriting with authoritative pool counts: %s",
+                        ", ".join(
+                            f"{k}(async={a}, auth={b})" for k, (a, b) in _drifts.items()
+                        ),
+                    )
+                else:
+                    logger.info(
+                        "run_sn_pools: async counters match authoritative counts"
+                    )
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "run_sn_pools: async counter discrepancy check failed",
+                exc_info=True,
+            )
+
         # ── Determine stop reason ─────────────────────────────────
         # Check exhaustion before stop_event: the budget watchdog sets
         # stop_event when exhausted, so checking stop_event first would
@@ -1441,6 +1492,7 @@ async def run_sn_pools(
                     cost_spent=summary.cost_spent,
                     cost_is_exact=cost_is_exact,
                     stopped_at=summary.stopped_at,
+                    elapsed_s=(summary.stopped_at - summary.started_at).total_seconds(),
                     cost_limit=round(summary.cost_limit, 6),
                     compose_cost=round(summary.compose_cost, 6),
                     review_cost=round(summary.review_cost, 6),

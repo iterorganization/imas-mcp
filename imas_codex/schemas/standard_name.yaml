@@ -1441,6 +1441,12 @@ classes:
           Count of LLMCost nodes linked to this run. Set live by
           BudgetManager flush and finalised by finalize_sn_run.
         range: integer
+      elapsed_s:
+        description: >-
+          Wall-clock seconds from started_at to stopped_at. Computed and
+          written by finalize_sn_run so the value is always (stopped_at -
+          started_at).total_seconds(). Null when the run never stopped.
+        range: float
       last_heartbeat:
         description: >-
           Most recent heartbeat from a live run; orphan sweep uses

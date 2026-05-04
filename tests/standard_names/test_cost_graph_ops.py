@@ -86,9 +86,12 @@ class TestFinalizeSNRun:
                 names_composed=42,
             )
 
-            mock_gc.query.assert_called_once()
-            cypher = mock_gc.query.call_args[0][0]
-            kwargs = mock_gc.query.call_args[1]
+            # finalize_sn_run makes 2 query calls:
+            # 1. LLMCost aggregation  2. the main SNRun SET
+            assert mock_gc.query.call_count >= 2
+            # The SET call is the last one
+            cypher = mock_gc.query.call_args_list[-1][0][0]
+            kwargs = mock_gc.query.call_args_list[-1][1]
 
             assert "MATCH (rr:SNRun {id: $run_id})" in cypher
             assert "rr.status = $status" in cypher

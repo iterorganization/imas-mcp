@@ -2305,6 +2305,7 @@ def persist_generated_name_batch(
     compose_model: str,
     dd_version: str | None = None,
     cocos_version: int | None = None,
+    run_id: str | None = None,
 ) -> int:
     """Persist a single generate-name batch immediately to graph.
 
@@ -2429,6 +2430,10 @@ def persist_generated_name_batch(
         )
     if finalize_batch:
         _finalize_generated_name_stage(finalize_batch)
+
+    # Async counter bump — live progress visibility for ``sn status``
+    if written > 0:
+        bump_sn_run_counter(run_id, "names_composed", delta=written)
 
     return written
 
@@ -5092,6 +5097,59 @@ def create_sn_run_open(
         raise
 
 
+def bump_sn_run_counter(
+    run_id: str | None,
+    counter: str,
+    delta: int = 1,
+) -> None:
+    """Atomically increment an SNRun counter (best-effort, non-blocking).
+
+    Uses ``coalesce(run.X, 0) + $delta`` so concurrent bumps accumulate
+    correctly — Neo4j's single-node write lock serialises the read-modify-
+    write within the same transaction, preventing lost updates.
+
+    Parameters
+    ----------
+    run_id:
+        SNRun node id.  If ``None``, the bump is silently skipped (allows
+        callers outside a run context to work unchanged).
+    counter:
+        Property name on the SNRun node to increment (e.g.
+        ``"names_composed"``, ``"names_reviewed"``).
+    delta:
+        Amount to add (default 1).
+    """
+    if not run_id or delta <= 0:
+        return
+
+    _ALLOWED = {
+        "names_composed",
+        "names_reviewed",
+        "names_regenerated",
+        "names_enriched",
+    }
+    if counter not in _ALLOWED:
+        logger.warning("bump_sn_run_counter: unknown counter %r — skipping", counter)
+        return
+
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                f"MATCH (rr:SNRun {{id: $run_id}}) "
+                f"SET rr.{counter} = coalesce(rr.{counter}, 0) + $delta",
+                run_id=run_id,
+                delta=delta,
+            )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug(
+            "bump_sn_run_counter(%s, %s, %d) failed: %s",
+            run_id,
+            counter,
+            delta,
+            exc,
+        )
+
+
 def update_sn_run_progress(
     run_id: str,
     *,
@@ -5139,6 +5197,7 @@ def finalize_sn_run(
     cost_spent: float,
     cost_is_exact: bool = True,
     stopped_at: Any,
+    elapsed_s: float | None = None,
     **summary_fields: Any,
 ) -> None:
     """Update an existing ``SNRun`` node at run end.
@@ -5149,6 +5208,9 @@ def finalize_sn_run(
     Aggregates ``cost_total`` and ``events_total`` from LLMCost children
     so the SNRun is an authoritative mirror of the LLMCost ledger.
     ``ended_at`` is set to the current graph timestamp.
+    ``elapsed_s`` records wall-clock seconds between *started_at* and
+    *stopped_at*; callers should pass the pre-computed value so finalization
+    never needs to re-read the start timestamp from the graph.
 
     ``summary_fields`` may contain any other ``SNRun`` property such as
     ``domains_touched``, ``stop_reason``, ``pipeline_hash``,
@@ -5194,6 +5256,10 @@ def finalize_sn_run(
         "cost_total": round(agg_cost, 6),
         "events_total": agg_events,
     }
+
+    if elapsed_s is not None:
+        set_clauses.append("rr.elapsed_s = $elapsed_s")
+        params["elapsed_s"] = round(elapsed_s, 3)
 
     for key, value in summary_fields.items():
         set_clauses.append(f"rr.{key} = ${key}")
@@ -6110,6 +6176,7 @@ def persist_reviewed_name(
     llm_tokens_cached_write: int | None = None,
     llm_at: str | None = None,
     llm_service: str | None = None,
+    run_id: str | None = None,
 ) -> str:
     """Persist name-review results and transition ``name_stage``.
 
@@ -6297,6 +6364,9 @@ def persist_reviewed_name(
             sn_id,
         )
 
+    # Async counter bump — live progress visibility for ``sn status``
+    bump_sn_run_counter(run_id, "names_reviewed")
+
     return target_stage
 
 
@@ -6370,6 +6440,7 @@ def persist_reviewed_docs(
     llm_tokens_cached_write: int | None = None,
     llm_at: str | None = None,
     llm_service: str | None = None,
+    run_id: str | None = None,
 ) -> str:
     """Persist docs-review results and transition ``docs_stage``.
 
@@ -6548,6 +6619,9 @@ def persist_reviewed_docs(
             sn_id,
         )
 
+    # Async counter bump — live progress visibility for ``sn status``
+    bump_sn_run_counter(run_id, "names_reviewed")
+
     return target_stage
 
 
@@ -6646,6 +6720,7 @@ def persist_refined_name(
     grammar_fields: dict[str, str] | None = None,
     reason: str = "",
     escalated: bool = False,
+    run_id: str | None = None,
 ) -> dict[str, str]:
     """Persist a refined StandardName as a NEW node with source-edge migration.
 
@@ -6778,6 +6853,8 @@ def persist_refined_name(
             new_name,
             new_chain_length,
         )
+        # Async counter bump — live progress visibility for ``sn status``
+        bump_sn_run_counter(run_id, "names_regenerated")
         return row
     return {"new_name": new_name, "old_name": old_name}
 
@@ -7331,6 +7408,7 @@ def persist_generated_docs(
     description: str,
     documentation: str,
     model: str,
+    run_id: str | None = None,
 ) -> str:
     """Persist generate_docs results and transition ``docs_stage`` to ``'drafted'``.
 
@@ -7386,6 +7464,10 @@ def persist_generated_docs(
         )
     new_stage: str = result[0]["docs_stage"]
     logger.debug("persist_generated_docs: %s → docs_stage=%s", sn_id, new_stage)
+
+    # Async counter bump — live progress visibility for ``sn status``
+    bump_sn_run_counter(run_id, "names_enriched")
+
     return new_stage
 
 
@@ -7582,6 +7664,7 @@ def persist_refined_docs(
     reviewer_score_to_snapshot: float | None = None,
     reviewer_comments_to_snapshot: str | None = None,
     reviewer_comments_per_dim_to_snapshot: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Persist a refined docs revision with DocsRevision snapshot.
 
@@ -7682,6 +7765,8 @@ def persist_refined_docs(
             row["docs_chain_length"],
             row["revision_id"],
         )
+        # Async counter bump — live progress visibility for ``sn status``
+        bump_sn_run_counter(run_id, "names_regenerated")
         return row
     logger.debug(
         "persist_refined_docs: no-op for %s (token/stage mismatch)",
