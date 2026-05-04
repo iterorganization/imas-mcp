@@ -889,12 +889,13 @@ def _list_physics_domains_with_extractable_paths(source: str) -> list[str]:
     from imas_codex.graph.client import GraphClient
 
     query = """
-    MATCH (ids:IDS)-[:HAS_PATH*]->(n:IMASNode)
+    MATCH (n:IMASNode)-[:IN_IDS]->(ids:IDS)
     WHERE n.description IS NOT NULL
       AND n.description <> ''
       AND NOT (n.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
       AND ids.id <> 'core_instant_changes'
       AND n.physics_domain IS NOT NULL
+      AND n.physics_domain <> ''
     RETURN DISTINCT n.physics_domain AS domain
     ORDER BY domain
     """
