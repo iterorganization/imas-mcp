@@ -54,8 +54,8 @@ async def test_write_single_timeout_then_succeed():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            # Simulate a wedged Neo4j call (longer than timeout)
-            time.sleep(30)
+            # Simulate a wedged Neo4j call (longer than the 1s test timeout)
+            time.sleep(3)
         # Subsequent calls succeed
 
     await mgr.start()
