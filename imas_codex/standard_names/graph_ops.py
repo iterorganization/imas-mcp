@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import UTC
 from pathlib import Path
@@ -119,6 +120,55 @@ def _compute_link_status(links: list[str] | None) -> str | None:
         return None
     has_unresolved = any(link.startswith("dd:") for link in links)
     return "unresolved" if has_unresolved else "resolved"
+
+
+_LINK_RE = re.compile(
+    r"""
+    \[([^\]]*?)\]\(name:([a-z0-9_]+)\)  |  # markdown link [text](name:xxx)
+    \bname:([a-z0-9_]+)\b                   # bare name:xxx reference
+    """,
+    re.VERBOSE,
+)
+
+_DD_LINK_RE = re.compile(
+    r"""
+    \[([^\]]*?)\]\(dd:([^\)]+)\)  |  # markdown link [text](dd:path)
+    \bdd:([a-z0-9_/]+)\b             # bare dd:path reference
+    """,
+    re.VERBOSE,
+)
+
+
+def _extract_links_from_docs(documentation: str | None) -> list[str] | None:
+    """Extract structured links from documentation markdown text.
+
+    Looks for ``name:xxx`` and ``dd:path`` references in the documentation
+    and returns a deduplicated list of link strings suitable for the
+    ``links`` field on StandardName nodes.
+    """
+    if not documentation:
+        return None
+
+    links: list[str] = []
+    seen: set[str] = set()
+
+    for m in _LINK_RE.finditer(documentation):
+        name_id = m.group(2) or m.group(3)
+        if name_id:
+            ref = f"name:{name_id}"
+            if ref not in seen:
+                links.append(ref)
+                seen.add(ref)
+
+    for m in _DD_LINK_RE.finditer(documentation):
+        dd_path = m.group(2) or m.group(3)
+        if dd_path:
+            ref = f"dd:{dd_path}"
+            if ref not in seen:
+                links.append(ref)
+                seen.add(ref)
+
+    return links if links else None
 
 
 # =============================================================================
@@ -1110,6 +1160,24 @@ def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
             """,
             batch=domain_batch,
         )
+
+
+def rederive_structural_edges() -> dict[str, int]:
+    """Backfill COMPONENT_OF and HAS_ERROR edges for all existing StandardName nodes.
+
+    Reads all SN ids, runs ``derive_edges()`` on each, and writes any missing
+    edges. Idempotent — uses MERGE so existing edges are not duplicated.
+
+    Returns counts of edges created per type.
+    """
+    with GraphClient() as gc:
+        all_sns = gc.query("MATCH (sn:StandardName) RETURN sn.id AS id")
+        names = [{"id": r["id"]} for r in all_sns if r.get("id")]
+        if not names:
+            return {"COMPONENT_OF": 0, "HAS_ERROR": 0}
+        _write_standard_name_edges(gc, names)
+    logger.info("rederive_structural_edges: processed %d names", len(names))
+    return {"processed": len(names)}
 
 
 def write_standard_names(
@@ -2403,6 +2471,12 @@ def persist_generated_name_batch(
 
     written = write_standard_names(candidates)
 
+    # --- Backfill primary_cluster_id from DD source path ---
+    # The compose worker doesn't carry cluster info, so we derive it from
+    # the graph: SN ← PRODUCED_NAME ← SNS → FROM_DD_PATH → IMAS → IN_CLUSTER → cluster.
+    # Uses the same IDS > domain > global scope priority as enrichment.
+    _backfill_cluster_from_sources(candidates)
+
     # --- Atomically transition stage + clear source claim ---
     # Build the batch excluding error-sibling candidates (no source node).
     # StandardNameSource.id has a source-type prefix (e.g. "dd:path" or
@@ -2436,6 +2510,51 @@ def persist_generated_name_batch(
         bump_sn_run_counter(run_id, "names_composed", delta=written)
 
     return written
+
+
+def _backfill_cluster_from_sources(candidates: list[dict[str, Any]]) -> None:
+    """Backfill ``primary_cluster_id`` and ``IN_CLUSTER`` edge from DD sources.
+
+    For each candidate, query the graph for the best cluster via the
+    HAS_STANDARD_NAME → IMASNode → IN_CLUSTER path, preferring
+    IDS-scope > domain-scope > global-scope clusters.
+    """
+    sn_ids = [c["id"] for c in candidates if c.get("id")]
+    if not sn_ids:
+        return
+
+    try:
+        with GraphClient() as gc:
+            results = gc.query(
+                """
+                UNWIND $sn_ids AS sid
+                MATCH (sn:StandardName {id: sid})
+                WHERE sn.primary_cluster_id IS NULL
+                OPTIONAL MATCH (sn)<-[:HAS_STANDARD_NAME]-(imas:IMASNode)
+                    -[:IN_CLUSTER]->(c:IMASSemanticCluster)
+                WITH sn, c
+                ORDER BY sn.id,
+                         CASE c.scope
+                             WHEN 'ids' THEN 0
+                             WHEN 'domain' THEN 1
+                             WHEN 'global' THEN 2
+                             ELSE 3
+                         END
+                WITH sn, collect(c)[0] AS best_cluster
+                WHERE best_cluster IS NOT NULL
+                SET sn.primary_cluster_id = best_cluster.id
+                MERGE (sn)-[:IN_CLUSTER]->(best_cluster)
+                RETURN sn.id AS sn_id, best_cluster.id AS cluster_id
+                """,
+                sn_ids=sn_ids,
+            )
+            if results:
+                logger.debug(
+                    "_backfill_cluster_from_sources: linked %d SNs to clusters",
+                    len(results),
+                )
+    except Exception:
+        logger.debug("_backfill_cluster_from_sources: failed", exc_info=True)
 
 
 @retry_on_deadlock()
@@ -7446,6 +7565,9 @@ def persist_generated_docs(
     Raises :exc:`ValueError` if token verification fails (no matching node).
     """
     with GraphClient() as gc:
+        # Extract cross-references from documentation text
+        links = _extract_links_from_docs(documentation)
+        link_status = _compute_link_status(links) if links else None
         result = gc.query(
             """
             MATCH (sn:StandardName {id: $sn_id})
@@ -7459,7 +7581,9 @@ def persist_generated_docs(
                 sn.docs_generated_at = datetime(),
                 sn.generate_docs_count = coalesce(sn.generate_docs_count, 0) + 1,
                 sn.claim_token      = null,
-                sn.claimed_at       = null
+                sn.claimed_at       = null,
+                sn.links            = $links,
+                sn.link_status      = $link_status
             RETURN sn.docs_stage AS docs_stage
             """,
             sn_id=sn_id,
@@ -7467,6 +7591,8 @@ def persist_generated_docs(
             description=description,
             documentation=documentation,
             model=model,
+            links=links,
+            link_status=link_status,
         )
     if not result:
         raise ValueError(

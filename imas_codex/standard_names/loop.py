@@ -910,6 +910,10 @@ async def _seed_all_domains(source: str, max_sources: int | None = None) -> int:
     domains = await asyncio.to_thread(
         _list_physics_domains_with_extractable_paths, source
     )
+    import random
+
+    random.shuffle(domains)
+    logger.info("Seeding %d domains (shuffled): %s", len(domains), domains)
     total = 0
     for d in domains:
         if d == "mixed":
