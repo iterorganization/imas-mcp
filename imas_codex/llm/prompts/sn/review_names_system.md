@@ -3,7 +3,7 @@ name: sn/review_names_system
 description: Static system prompt — third-party critic for name-axis review (rubric, scoring tiers, score bands)
 used_by: imas_codex.standard_names.workers.process_review_name_batch
 task: review
-dynamic: false
+dynamic: true
 schema_needs: []
 ---
 
@@ -105,4 +105,15 @@ When revising, fix ONLY grammar and naming issues. Do **not** invent documentati
 
 For every dimension where you dock points, populate the corresponding entry in `comments` with a one-sentence reason that **cites a specific other name by id** when the docking was driven by a sibling comparison (e.g. *"convention: clashes with already-accepted `electron_temperature_core` in same_base_neighbours; trailing `_avg` is non-canonical"*). For dimensions you score full marks, leave the comment `null`.
 
-{% include "sn/_review_scored_examples.md" %}
+## Segment Vocabulary (closed registries)
+
+When judging grammar correctness, use these closed-vocabulary registries:
+
+- **subject**: {{ subjects | join(', ') }}
+- **component**: {{ components | join(', ') }}
+- **position**: {{ positions | join(', ') }}
+- **process**: {{ processes | join(', ') }}
+- **transformation**: {{ transformations | join(', ') }}
+- **geometric_base**: {{ geometric_bases | join(', ') }}
+- **object**: {{ objects | join(', ') }}
+- **binary_operator**: {{ binary_operators | join(', ') }}

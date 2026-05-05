@@ -9,27 +9,6 @@ schema_needs: []
 
 Apply the rubric (provided in the system prompt) to the candidate(s) below.
 
-## Standard Name Grammar
-
-A valid standard name is composed from optional segments in a specific order:
-
-**Canonical pattern:** `[process] [transformation] [subject] [component] physical_base [position] [object]`
-
-Or with geometric_base: `[process] [transformation] [subject] [component] geometric_base [position] [object]`
-
-Every name MUST have either a `physical_base` (open vocabulary) or a `geometric_base` (restricted vocabulary), but never both.
-
-### Segment Vocabulary
-
-- **subject**: species or population ({{ subjects | join(', ') }})
-- **component**: vector/tensor component ({{ components | join(', ') }})
-- **position**: spatial location ({{ positions | join(', ') }})
-- **process**: physical mechanism ({{ processes | join(', ') }})
-- **transformation**: mathematical operation ({{ transformations | join(', ') }})
-- **geometric_base**: geometric quantity ({{ geometric_bases | join(', ') }})
-- **object**: device component ({{ objects | join(', ') }})
-- **binary_operator**: for compound names ({{ binary_operators | join(', ') }})
-
 {% if batch_context %}
 ## Source Context (same as composer received)
 
