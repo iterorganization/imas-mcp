@@ -32,14 +32,23 @@ def sn() -> None:
     """Standard name generation and management.
 
     \b
-    Run (reconcile / generate / enrich / link / review / regen):
+    Pipeline:
       sn run --source dd [--domain NAME ...]
       sn run --source signals --facility NAME
-      sn run --only link
+      sn status
 
     \b
-    Status:
-      sn status
+    Catalog workflow:
+      sn export                           # graph → staging YAML
+      sn preview                          # auto-export + local MkDocs
+      sn release -m "msg"                 # auto-export + tag RC + push
+      sn release --final -m "msg"         # finalize RC → stable
+      sn release status                   # show ISNC state and tags
+      sn import                           # ISNC YAML → graph
+
+    \b
+    Housekeeping:
+      sn clear | sn prune | sn gaps | sn sync-grammar | sn benchmark
     """
     pass
 
@@ -2200,7 +2209,7 @@ def sn_gaps(
 
 
 # =============================================================================
-# Export / Preview / Publish / Import — Phase 3+4 CLI integration
+# Export / Preview / Release / Import — catalog workflow
 # =============================================================================
 
 
@@ -2505,12 +2514,32 @@ def sn_preview(
         handle.stop()
 
 
-@sn.command("publish")
+@sn.command("release")
+@click.argument("action", required=False, default=None)
 @click.option(
-    "--staging",
-    type=click.Path(),
+    "-m",
+    "--message",
+    type=str,
     default=None,
-    help="Staging directory from 'sn export' (default: ~/.cache/imas-codex/staging)",
+    help="Release message (used for git tag annotation and commit)",
+)
+@click.option(
+    "--bump",
+    type=click.Choice(["major", "minor", "patch"], case_sensitive=False),
+    default=None,
+    help="Version bump type. Required when on a stable tag to start a new series.",
+)
+@click.option(
+    "--final",
+    "is_final",
+    is_flag=True,
+    help="Finalize current RC to stable release. Pushes to upstream by default.",
+)
+@click.option(
+    "--remote",
+    type=str,
+    default=None,
+    help="Git remote to push to (default: origin for RC, upstream for final)",
 )
 @click.option(
     "--isnc",
@@ -2519,51 +2548,68 @@ def sn_preview(
     help="Path to ISNC git checkout (default: auto-discover)",
 )
 @click.option(
-    "--push/--no-push",
-    default=False,
-    show_default=True,
-    help="Push the commit to origin after creating it",
+    "--staging",
+    type=click.Path(),
+    default=None,
+    help="Staging directory (default: ~/.cache/imas-codex/staging)",
 )
 @click.option(
-    "--dry-run", is_flag=True, help="Validate and report without modifying ISNC"
+    "--skip-export",
+    is_flag=True,
+    help="Skip auto-export (use existing staging content). For custom filtering, run 'sn export' first.",
 )
-def sn_publish(
-    staging: str | None,
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Validate and report without making changes",
+)
+def sn_release(
+    action: str | None,
+    message: str | None,
+    bump: str | None,
+    is_final: bool,
+    remote: str | None,
     isnc: str | None,
-    push: bool,
+    staging: str | None,
+    skip_export: bool,
     dry_run: bool,
 ) -> None:
-    """Transport a staging directory to an ISNC checkout.
+    """Release standard names to the ISNC catalog.
 
     \b
-    Mirrors the staging directory (from 'sn export') into an ISNC git
-    checkout, creates a commit, and optionally pushes to origin.
-    No quality gates are re-run — they already ran at export time.
+    Auto-exports from graph, publishes to ISNC, tags, and pushes.
+    RC releases go to origin (fork) by default; final releases
+    go to upstream. The state machine follows the same pattern
+    as codex and ISN releases.
+
+    \b
+    Use ACTION 'status' to show current ISNC release state:
+      imas-codex sn release status
+
+    \b
+    SSH tunnel (for verifying GitHub Pages after release):
+      ssh -L 8000:localhost:8000 <host>
+
+    \b
+    For custom export filtering, run 'sn export' first, then
+    use --skip-export to release the existing staging content.
 
     \b
     Examples:
-      imas-codex sn publish
-      imas-codex sn publish --isnc ../isnc
-      imas-codex sn publish --staging ./staging --isnc ../isnc --push
-      imas-codex sn publish --dry-run
+      imas-codex sn release status
+      imas-codex sn release --bump minor -m "Initial catalog release"
+      imas-codex sn release -m "Fix electron_temperature docs"
+      imas-codex sn release --final -m "Production release v1.0.0"
+      imas-codex sn release --dry-run --bump minor -m "Test release"
+      imas-codex sn release --skip-export -m "Re-release with fixes"
     """
     from pathlib import Path
 
     from rich.table import Table
 
     from imas_codex.settings import get_sn_isnc_dir, get_sn_staging_dir
-    from imas_codex.standard_names.publish import run_publish
 
-    staging_path = Path(staging) if staging else get_sn_staging_dir()
-
-    catalog = staging_path / "catalog.yml"
-    if not catalog.is_file():
-        console.print(
-            f"[red]No catalog.yml found at {staging_path}[/red]\n"
-            "  Run [bold]sn export[/bold] first."
-        )
-        raise SystemExit(2)
-
+    # ── Resolve ISNC path ─────────────────────────────────
     if isnc:
         isnc_path = Path(isnc)
     else:
@@ -2576,26 +2622,87 @@ def sn_publish(
             raise SystemExit(2)
         isnc_path = resolved
 
-    console.print("\n[bold]Standard Name Publish[/bold]")
-    console.print(f"  Staging: {staging_path}")
+    # ── Status subcommand ─────────────────────────────────
+    if action == "status":
+        from imas_codex.standard_names.catalog_release import get_release_status
+
+        info = get_release_status(isnc_path)
+        console.print("\n[bold]ISNC Release Status[/bold]")
+        console.print(f"  Path: {info['isnc_path']}")
+        console.print(f"  State: {info['state'] or '[dim]no releases yet[/dim]'}")
+        if info["tag"]:
+            console.print(f"  Latest tag: {info['tag']}")
+            if info["commits_since"]:
+                console.print(f"  Commits since: {info['commits_since']}")
+        if info.get("isn_version"):
+            console.print(f"  ISN dep: {info['isn_version']}")
+        if info.get("remotes"):
+            for name, url in info["remotes"].items():
+                console.print(f"  Remote ({name}): {url}")
+        pages = info.get("pages_enabled")
+        if pages is not None:
+            status = "[green]yes[/green]" if pages else "[red]no[/red]"
+            console.print(f"  GitHub Pages: {status}")
+
+        # Show available commands based on state
+        console.print("\n[bold]Available commands:[/bold]")
+        state = info["state"]
+        if state is None:
+            console.print("  sn release --bump minor -m 'Initial release'")
+        elif state == "stable":
+            console.print("  sn release --bump minor -m 'New feature release'")
+            console.print("  sn release --bump patch -m 'Bug fix release'")
+        else:
+            console.print(f"  sn release -m 'Next RC'  (→ next RC of {info['tag']})")
+            console.print("  sn release --final -m 'Finalize'  (→ stable)")
+        console.print()
+        return
+
+    if action is not None:
+        raise click.ClickException(
+            f"Unknown action '{action}'. Only 'status' is supported."
+        )
+
+    # ── Validate message ──────────────────────────────────
+    if not message:
+        raise click.ClickException("Release message required: -m / --message")
+
+    # ── Resolve staging ───────────────────────────────────
+    staging_path = Path(staging) if staging else get_sn_staging_dir()
+
+    # ── Display ───────────────────────────────────────────
+    console.print("\n[bold]Standard Name Release[/bold]")
     console.print(f"  ISNC: {isnc_path}")
-    if push:
-        console.print("  Push: [green]yes[/green]")
+    console.print(f"  Staging: {staging_path}")
+    if bump:
+        console.print(f"  Bump: {bump}")
+    if is_final:
+        console.print("  Mode: [green]final release[/green]")
+    if skip_export:
+        console.print("  Export: [yellow]skipped[/yellow]")
     if dry_run:
         console.print("  Mode: [yellow]dry run[/yellow]")
     console.print("")
 
+    # ── Run release ───────────────────────────────────────
+    from imas_codex.standard_names.catalog_release import run_release
+
     try:
-        report = run_publish(
-            staging_dir=str(staging_path),
-            isnc_path=str(isnc_path),
-            push=push,
+        report = run_release(
+            isnc_path=isnc_path,
+            message=message,
+            staging_dir=staging_path,
+            bump=bump,
+            final=is_final,
+            remote=remote,
             dry_run=dry_run,
+            skip_export=skip_export,
         )
     except Exception as exc:
-        console.print(f"[red]Publish error:[/red] {exc}")
+        console.print(f"[red]Release error:[/red] {exc}")
         raise SystemExit(3) from exc
 
+    # ── Errors ────────────────────────────────────────────
     if report.errors:
         console.print(f"[red]Errors: {len(report.errors)}[/red]")
         for err in report.errors[:10]:
@@ -2604,17 +2711,28 @@ def sn_publish(
             console.print(f"  ... and {len(report.errors) - 10} more")
         raise SystemExit(2)
 
-    # ── Summary ────────────────────────────────────────────
-    table = Table(title="Publish Summary")
+    # ── Summary ───────────────────────────────────────────
+    table = Table(title="Release Summary")
     table.add_column("metric", style="cyan")
     table.add_column("value", style="white")
+    table.add_row("version", report.version)
+    table.add_row("git tag", report.git_tag)
+    table.add_row("remote", report.remote)
+    table.add_row("exported", str(report.export_count))
     table.add_row("files copied", str(report.files_copied))
     table.add_row("commit SHA", report.commit_sha or "(no changes)")
     table.add_row("pushed", "yes" if report.pushed else "no")
     table.add_row("dry run", "yes" if report.dry_run else "no")
     console.print(table)
 
-    console.print("\n[green]✓ Publish complete[/green]")
+    if report.pushed:
+        console.print(f"\n[green]✓ Released {report.git_tag} → {report.remote}[/green]")
+    elif report.dry_run:
+        console.print(
+            f"\n[yellow]✓ Dry run complete — would release {report.git_tag}[/yellow]"
+        )
+    else:
+        console.print(f"\n[green]✓ Tagged {report.git_tag} (not pushed)[/green]")
 
 
 @sn.command("import")

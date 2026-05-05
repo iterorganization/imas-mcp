@@ -1,6 +1,6 @@
-"""Test ``sn --help`` lists the Phase 3/4 CLI verbs.
+"""Test ``sn --help`` lists the catalog workflow CLI verbs.
 
-Verifies that ``export``, ``preview``, ``publish``, and ``import``
+Verifies that ``export``, ``preview``, ``release``, and ``import``
 appear as subcommands in the ``sn`` group help.
 """
 
@@ -12,7 +12,7 @@ from imas_codex.cli.sn import sn
 
 
 class TestSnHelpNewVerbs:
-    """sn --help must list the four new pipeline verbs."""
+    """sn --help must list the catalog workflow verbs."""
 
     def _get_help(self) -> str:
         runner = CliRunner()
@@ -26,11 +26,14 @@ class TestSnHelpNewVerbs:
     def test_preview_in_help(self):
         assert "preview" in self._get_help()
 
-    def test_publish_in_help(self):
-        assert "publish" in self._get_help()
+    def test_release_in_help(self):
+        assert "release" in self._get_help()
 
     def test_import_in_help(self):
         assert "import" in self._get_help()
+
+    def test_publish_not_in_help(self):
+        assert "publish" not in self._get_help()
 
     def test_export_help_shows_staging(self):
         runner = CliRunner()
@@ -44,11 +47,13 @@ class TestSnHelpNewVerbs:
         assert result.exit_code == 0
         assert "--port" in result.output
 
-    def test_publish_help_shows_push(self):
+    def test_release_help_shows_message(self):
         runner = CliRunner()
-        result = runner.invoke(sn, ["publish", "--help"])
+        result = runner.invoke(sn, ["release", "--help"])
         assert result.exit_code == 0
-        assert "--push" in result.output
+        assert "--message" in result.output
+        assert "--bump" in result.output
+        assert "--final" in result.output
 
     def test_import_help_shows_override_flags(self):
         runner = CliRunner()
