@@ -63,11 +63,14 @@ MOCK_TARGET = "imas_codex.standard_names.export.run_export"
 class TestExportMissingArgs:
     """Verify required flags."""
 
-    def test_staging_required(self):
+    @patch(MOCK_TARGET)
+    def test_defaults_to_cache_dir(self, mock_export):
+        """Export uses default staging dir from settings when --staging omitted."""
+        mock_export.return_value = _success_report()
         runner = CliRunner()
         result = runner.invoke(sn, ["export"])
-        assert result.exit_code != 0
-        assert "staging" in result.output.lower() or "Missing" in result.output
+        assert result.exit_code == 0, result.output
+        mock_export.assert_called_once()
 
 
 class TestExportSuccess:

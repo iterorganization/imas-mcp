@@ -3323,7 +3323,11 @@ async def compose_batch(
     estimated = len(batch) * 0.20 * (_max_retries + 1)
     phase_tag = "regen" if regen else "generate_name"
     lease = mgr.reserve(estimated, phase=phase_tag)
-    # Soft-stop: proceed even without lease (untracked)
+    if lease is None:
+        # Fallback: tracking-only lease so charge_event still records
+        # spend.  Without this, _spent stays at 0 and hard_exhausted()
+        # never fires — causing the pool to run indefinitely.
+        lease = mgr.reserve(0.0, phase=phase_tag)
 
     try:
         # ── B12: bounded retry loop for failed compositions ────────────
@@ -4010,6 +4014,8 @@ async def process_refine_name_batch(
                 fanout_pad = fanout_settings.cost_estimate_for(escalate=escalate)
             estimated = base_estimate + fanout_pad
             lease = mgr.reserve(estimated, phase="refine_name")
+            if lease is None:
+                lease = mgr.reserve(0.0, phase="refine_name")
             original_reservation = lease.reserved if lease else 0.0
 
             # ── Optional fan-out (plan 39 Phase 1) ───────────────────
@@ -4727,6 +4733,8 @@ async def process_review_name_batch(
         per_item_estimate = 0.05
         worst_case = per_item_estimate * len(review_models) * 1.3
         lease = mgr.reserve(worst_case, phase="review_name")
+        if lease is None:
+            lease = mgr.reserve(0.0, phase="review_name")
 
         # ── RD-quorum cycles ──────────────────────────────────────────
         try:
@@ -5116,6 +5124,8 @@ async def process_generate_docs_batch(
         # ── Budget reservation ─────────────────────────────────────────
         estimated = 0.20
         lease = mgr.reserve(estimated, phase="generate_docs")
+        if lease is None:
+            lease = mgr.reserve(0.0, phase="generate_docs")
 
         # ── LLM call ──────────────────────────────────────────────────
         try:
@@ -5307,6 +5317,8 @@ async def process_review_docs_batch(
         per_item_estimate = 0.05
         worst_case = per_item_estimate * len(review_models) * 1.3
         lease = mgr.reserve(worst_case, phase="review_docs")
+        if lease is None:
+            lease = mgr.reserve(0.0, phase="review_docs")
 
         try:
             quorum = await _run_rd_quorum_cycles(
@@ -5547,6 +5559,8 @@ async def process_refine_docs_batch(
         # ── Budget reservation ─────────────────────────────────────
         estimated = 0.20
         lease = mgr.reserve(estimated, phase="refine_docs")
+        if lease is None:
+            lease = mgr.reserve(0.0, phase="refine_docs")
 
         # ── LLM call ──────────────────────────────────────────────
         try:

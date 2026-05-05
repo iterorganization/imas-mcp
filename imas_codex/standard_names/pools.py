@@ -648,8 +648,26 @@ async def run_pools(
     else:
         stop_waiter.cancel()
         await asyncio.gather(stop_waiter, return_exceptions=True)
+        # A pool task finished before stop_event was set (e.g., crash or
+        # CancelledError).  Set stop_event so remaining pools exit their
+        # while-loop instead of blocking the gather indefinitely.
+        stop_event.set()
         # If a pool exited with an exception, surface it after others finish.
-        await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=grace_period,
+            )
+        except TimeoutError:
+            logger.warning(
+                "run_pools: else-branch gather timed out after %.0fs — "
+                "cancelling remaining pool tasks",
+                grace_period,
+            )
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     # Cancel watchdog (it may already be done if it triggered the shutdown).
     if not watchdog_task.done():
@@ -669,8 +687,11 @@ async def run_pools(
             pending_watchdog_task.cancel()
         await asyncio.gather(pending_watchdog_task, return_exceptions=True)
 
-    # Drain LLMCost queue before final accounting.
-    await mgr.drain_pending()
+    # Drain LLMCost queue before final accounting (bounded to avoid hang).
+    try:
+        await asyncio.wait_for(mgr.drain_pending(), timeout=30.0)
+    except TimeoutError:
+        logger.warning("run_pools: drain_pending timed out after 30s — continuing")
 
     return {p.name: p.health for p in pools}
 

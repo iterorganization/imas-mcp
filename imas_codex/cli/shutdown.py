@@ -138,14 +138,14 @@ def _start_exit_watchdog(grace_seconds: float) -> None:
 
     def _watchdog() -> None:
         threading.Event().wait(timeout=grace_seconds)
-        # If we're still alive, flush and hard-exit
-        _force_kill_ssh_pools()
+        # If we're still alive, flush and hard-exit.  Call os._exit FIRST
+        # before _force_kill_ssh_pools which could deadlock on import lock.
         try:
             sys.stdout.flush()
             sys.stderr.flush()
         except Exception:
             pass
-        os._exit(0)
+        os._exit(130)
 
     t = threading.Thread(target=_watchdog, daemon=True)
     t.start()
