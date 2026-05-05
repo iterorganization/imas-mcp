@@ -265,8 +265,8 @@ class TestPersistWorker:
         assert state.stats["persist_skipped"] == 1
 
     @pytest.mark.asyncio
-    async def test_embedding_failure_quarantines(self):
-        """Embedding failure → item quarantined, not persisted."""
+    async def test_embedding_failure_marks_retry(self):
+        """Embedding failure → item gets embed_failed_at set, not quarantined; still persisted."""
         from imas_codex.standard_names.enrich_workers import enrich_persist_worker
 
         item = _make_item("electron_temperature", embedding=None)
@@ -282,14 +282,14 @@ class TestPersistWorker:
             ),
             patch(
                 "imas_codex.standard_names.graph_ops.persist_enriched_batch",
-                return_value=0,
+                return_value=1,
             ),
             patch("imas_codex.standard_names.enrich_workers.release_enrichment_claims"),
         ):
             await enrich_persist_worker(state)
 
-        assert item["validation_status"] == "quarantined"
-        assert "embedding_failed" in item["validation_issues"]
+        assert item.get("validation_status") != "quarantined"
+        assert item.get("embed_failed_at") is not None
         assert state.stats["persist_errors"] >= 1
 
     @pytest.mark.asyncio

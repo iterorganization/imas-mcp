@@ -2438,8 +2438,8 @@ def persist_generated_name_batch(
         # legacy linear path.  When neither has run (e.g. dry-run paths
         # that bypass audits, or callers that build candidates manually),
         # default to 'valid' here so the column is never NULL and
-        # downstream filters keep working.  Embedding-failure flips to
-        # 'quarantined' below.
+        # downstream filters keep working.  Embedding failures set
+        # embed_failed_at for retry but do not change validation_status.
         entry.setdefault("validation_status", "valid")
         entry.setdefault("generated_at", now)
         # Strip private markers used only during in-batch attribution.
@@ -2478,11 +2478,11 @@ def persist_generated_name_batch(
         embed_descriptions_batch(candidates, text_field="_embed_text")
     except Exception:
         logger.warning(
-            "Embedding server unavailable — all %d candidates quarantined",
+            "Embedding server unavailable — all %d candidates will be marked for retry",
             len(candidates),
             exc_info=True,
         )
-        # Total failure — mark all as quarantined
+        # Total failure — mark embedding as missing for retry tracking
         for entry in candidates:
             entry["embedding"] = None
 

@@ -451,6 +451,9 @@ classes:
       embedded_at:
         description: When the embedding was last computed
         range: datetime
+      embed_failed_at:
+        description: When the most recent embedding attempt failed; cleared on success
+        range: datetime
       documentation:
         description: >-
           Rich documentation with LaTeX equations, governing physics,

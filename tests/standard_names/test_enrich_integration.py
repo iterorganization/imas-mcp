@@ -566,11 +566,11 @@ class TestFailureIsolation:
         ):
             await enrich_persist_worker(state)
 
-        # First item persisted, second quarantined
+        # First item persisted with embedding, second marked for retry but also persisted
         assert item_ok["embedding"] == [0.2] * 384
-        assert item_bad["validation_status"] == "quarantined"
-        assert "embedding_failed" in item_bad["validation_issues"]
-        assert state.stats["persist_written"] == 1
+        assert item_bad.get("validation_status") != "quarantined"
+        assert item_bad.get("embed_failed_at") is not None
+        assert state.stats["persist_written"] == 2  # all candidates persisted
         assert state.stats["persist_errors"] >= 1
 
 

@@ -26,6 +26,7 @@ import asyncio
 import logging
 import re
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.claims import retry_on_deadlock
@@ -1777,32 +1778,27 @@ async def enrich_persist_worker(state: StandardNameEnrichState, **_kwargs) -> No
             )
         except Exception:
             wlog.warning(
-                "Embedding server unavailable — all %d candidates quarantined",
+                "Embedding server unavailable — all %d candidates will be marked for retry",
                 len(candidates),
                 exc_info=True,
             )
             for item in candidates:
                 item["embedding"] = None
 
-        # Check per-item embedding success; quarantine failures.
-        embeddable: list[dict[str, Any]] = []
+        # Mark embed failures for retry; persist all candidates regardless
         for item in candidates:
             if item.get("embedding"):
-                embeddable.append(item)
+                pass  # embedding succeeded, nothing extra to set
             else:
-                item["validation_status"] = "quarantined"
-                existing_issues = list(item.get("validation_issues") or [])
-                if "embedding_failed" not in existing_issues:
-                    existing_issues.append("embedding_failed")
-                item["validation_issues"] = existing_issues
+                item["embed_failed_at"] = datetime.now(tz=UTC).isoformat()
                 errors += 1
 
         # 2. Persist to graph.
-        if embeddable:
+        if candidates:
             try:
                 from imas_codex.standard_names.graph_ops import persist_enriched_batch
 
-                written = await asyncio.to_thread(persist_enriched_batch, embeddable)
+                written = await asyncio.to_thread(persist_enriched_batch, candidates)
                 persisted += written
             except Exception:
                 wlog.warning(
@@ -1810,7 +1806,7 @@ async def enrich_persist_worker(state: StandardNameEnrichState, **_kwargs) -> No
                     batch.get("batch_index", 0),
                     exc_info=True,
                 )
-                errors += len(embeddable)
+                errors += len(candidates)
 
         # 3. Release enrichment claims.
         if token:
