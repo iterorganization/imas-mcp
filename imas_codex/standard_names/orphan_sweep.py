@@ -153,6 +153,16 @@ async def run_orphan_sweep_loop(
         except Exception:  # noqa: BLE001
             logger.exception("Orphan sweep tick failed; continuing")
 
+        # Seed parent component sources for newly tagged parents
+        try:
+            from imas_codex.standard_names.graph_ops import seed_parent_sources
+
+            parent_count = await asyncio.to_thread(seed_parent_sources)
+            if parent_count:
+                logger.info("Seeded %d parent component sources", parent_count)
+        except Exception:  # noqa: BLE001
+            logger.exception("Parent source seeding failed; continuing")
+
         # Sleep for interval_s, but wake early if stop_event fires.
         try:
             await asyncio.wait_for(
