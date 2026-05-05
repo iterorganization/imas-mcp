@@ -73,6 +73,34 @@ def _scalar_domain(value: Any) -> str | None:
     return None
 
 
+#: Physics abbreviation expansions applied before name persistence.
+#: Keys are case-sensitive abbreviations as they appear in LLM output;
+#: values are their lowercase ISN-compliant expansions.
+_PHYSICS_ABBREVIATIONS: dict[str, str] = {
+    "ExB": "e_cross_b",
+    "BxGradB": "b_cross_grad_b",
+}
+
+
+def normalize_name_id(name: str) -> str:
+    """Normalize a standard name ID: expand physics abbreviations, force lowercase.
+
+    Applies known physics abbreviation expansions (case-sensitive match on the
+    abbreviation, e.g. ``ExB`` → ``e_cross_b``) and then forces the entire
+    string to lowercase.  This must be called before grammar round-trip
+    validation so that ISN's parser sees only valid lowercase tokens.
+
+    Args:
+        name: Raw standard name ID as produced by the LLM.
+
+    Returns:
+        Normalized lowercase name ID with physics abbreviations expanded.
+    """
+    for abbrev, expansion in _PHYSICS_ABBREVIATIONS.items():
+        name = name.replace(abbrev, expansion)
+    return name.lower()
+
+
 def _parse_grammar_vnext(name: str) -> dict[str, str | None]:
     """Parse ``name`` with the vNext ISN grammar API.
 
@@ -2383,9 +2411,8 @@ def persist_generated_name_batch(
 
     Embedding uses the standard-name string (``id``) — not the description,
     which is added later by the enrich pipeline.  If embedding fails for a
-    candidate, it is quarantined (``validation_status='quarantined'``,
-    ``validation_issues=['embedding_failed']``) so downstream consumers
-    know the vector is missing.
+    candidate, ``embed_failed_at`` is set so the name can be retried later;
+    the name is still written to the graph so it can advance through review.
 
     After writing the StandardName nodes via :func:`write_standard_names`,
     atomically transitions each new SN to ``name_stage='drafted'`` and
@@ -2417,6 +2444,11 @@ def persist_generated_name_batch(
         entry.setdefault("generated_at", now)
         # Strip private markers used only during in-batch attribution.
         entry.pop("_from_error_sibling", None)
+        # Normalize name ID: expand physics abbreviations (e.g. ExB → e_cross_b)
+        # and enforce lowercase before grammar validation.
+        raw_name = entry.get("id") or ""
+        if raw_name:
+            entry["id"] = normalize_name_id(raw_name)
         # D5/P0.3: derive kind from name structure (overrides LLM default).
         name = entry.get("id") or ""
         if name:
@@ -2458,16 +2490,12 @@ def persist_generated_name_batch(
     for entry in candidates:
         entry.pop("_embed_text", None)
 
-    # Set embedded_at for successful embeddings; quarantine failures
+    # Set embedded_at for successful embeddings; mark failures for retry
     for entry in candidates:
         if entry.get("embedding"):
             entry["embedded_at"] = now
         else:
-            entry["validation_status"] = "quarantined"
-            existing = entry.get("validation_issues") or []
-            if "embedding_failed" not in existing:
-                existing = list(existing) + ["embedding_failed"]
-            entry["validation_issues"] = existing
+            entry["embed_failed_at"] = now
 
     written = write_standard_names(candidates)
 
