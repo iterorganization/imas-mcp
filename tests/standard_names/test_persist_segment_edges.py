@@ -103,11 +103,8 @@ class TestSegmentEdgeWriting:
 
     def test_segment_edges_written_for_valid_name(self, mock_gc: MagicMock) -> None:
         """electron_temperature should produce HAS_SEGMENT edges to grammar tokens."""
-        # Return matched=True for all tokens
-        mock_gc.query.return_value = [
-            {"token": "electron", "segment": "subject", "matched": True},
-            {"token": "temperature", "segment": "physical_base", "matched": True},
-        ]
+        # Return [] for all queries — assertions only check Cypher text, not return values.
+        mock_gc.query.return_value = []
 
         names = [
             {
@@ -289,9 +286,9 @@ class TestSegmentEdgeParseFailure:
             }
         ]
 
-        # Patch _write_segment_edges to verify it handles errors internally
+        # write_standard_names calls _write_grammar_decomposition directly
         with patch(
-            "imas_codex.standard_names.graph_ops._write_segment_edges"
+            "imas_codex.standard_names.graph_ops._write_grammar_decomposition"
         ) as mock_write:
             mock_write.side_effect = None  # No-op
             _call_write(names, mock_gc)
@@ -318,9 +315,9 @@ class TestSegmentEdgeParseFailure:
 
         assert any("Grammar parse failed" in r.message for r in caplog.records)
 
-        # No HAS_SEGMENT queries should have been made
-        segment_calls = _find_segment_calls(mock_gc)
-        assert len(segment_calls) == 0
+        # No HAS_SEGMENT MERGE calls should have been made (cleanup DELETE is expected)
+        merge_segment_calls = _find_merge_segment_calls(mock_gc)
+        assert len(merge_segment_calls) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +335,8 @@ class TestSegmentEdgeTokenMiss:
         """When a token has no matching GrammarToken node, a warning is logged."""
         # Simulate token-miss: OPTIONAL MATCH returns matched=False
         mock_gc.query.side_effect = [
+            # column SET call
+            [],
             # DELETE call
             [],
             # MERGE call returns with one unmatched token
@@ -364,6 +363,8 @@ class TestSegmentEdgeTokenMiss:
     ) -> None:
         """No warning when all tokens have matching GrammarToken nodes."""
         mock_gc.query.side_effect = [
+            # column SET call
+            [],
             # DELETE call
             [],
             # MERGE call returns all matched
@@ -398,8 +399,10 @@ class TestSegmentEdgeRoundTrip:
         """Given a known parsed-segment list, verify the written edges carry
         the correct {position, segment, token} fields that reconstruct
         the original segment list in order."""
-        # Simulate: DELETE returns nothing, MERGE returns all matched
+        # Simulate: column SET returns nothing, DELETE returns nothing, MERGE returns all matched
         mock_gc.query.side_effect = [
+            # column SET
+            [],
             # DELETE old edges
             [],
             # MERGE + RETURN
@@ -440,6 +443,7 @@ class TestSegmentEdgeRoundTrip:
         increasing positions matching ISN SEGMENT_ORDER."""
         # poloidal_electron_temperature → component(0), subject(2), physical_base(5)
         mock_gc.query.side_effect = [
+            [],  # column SET
             [],  # DELETE
             [  # MERGE results
                 {"token": "poloidal", "segment": "component", "matched": True},

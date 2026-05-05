@@ -80,7 +80,11 @@ class TestTypedEdgeCypherPresent:
         """HAS_PHYSICAL_BASE FOREACH clause must be present in the MERGE query."""
         from imas_codex.standard_names.graph_ops import _write_segment_edges
 
-        mock_gc.query.side_effect = [[], []]  # DELETE, then MERGE/RETURN
+        mock_gc.query.side_effect = [
+            [],
+            [],
+            [],
+        ]  # column SET, DELETE, then MERGE/RETURN
         _write_segment_edges(mock_gc, ["electron_temperature"])
 
         merge_calls = _find_merge_segment_calls(mock_gc)
@@ -92,7 +96,7 @@ class TestTypedEdgeCypherPresent:
         """HAS_SUBJECT FOREACH clause must be present in the MERGE query."""
         from imas_codex.standard_names.graph_ops import _write_segment_edges
 
-        mock_gc.query.side_effect = [[], []]
+        mock_gc.query.side_effect = [[], [], []]
         _write_segment_edges(mock_gc, ["electron_temperature"])
 
         merge_calls = _find_merge_segment_calls(mock_gc)
@@ -103,7 +107,7 @@ class TestTypedEdgeCypherPresent:
         """All 10 typed edge labels must appear in the MERGE query Cypher."""
         from imas_codex.standard_names.graph_ops import _write_segment_edges
 
-        mock_gc.query.side_effect = [[], []]
+        mock_gc.query.side_effect = [[], [], []]
         _write_segment_edges(mock_gc, ["electron_temperature"])
 
         merge_calls = _find_merge_segment_calls(mock_gc)
@@ -141,7 +145,7 @@ class TestTypedEdgeIdempotency:
         """The DELETE query must include all 10 typed edge labels plus HAS_SEGMENT."""
         from imas_codex.standard_names.graph_ops import _write_segment_edges
 
-        mock_gc.query.side_effect = [[], []]
+        mock_gc.query.side_effect = [[], [], []]
         _write_segment_edges(mock_gc, ["electron_temperature"])
 
         delete_calls = _find_delete_calls(mock_gc)
@@ -169,7 +173,7 @@ class TestTypedEdgeIdempotency:
         """DELETE must execute before the MERGE/FOREACH query."""
         from imas_codex.standard_names.graph_ops import _write_segment_edges
 
-        mock_gc.query.side_effect = [[], []]
+        mock_gc.query.side_effect = [[], [], []]
         _write_segment_edges(mock_gc, ["electron_temperature"])
 
         calls = mock_gc.query.call_args_list
@@ -200,7 +204,7 @@ class TestTypedEdgeSegmentGuards:
         """HAS_PHYSICAL_BASE FOREACH must guard on segment = 'physical_base'."""
         from imas_codex.standard_names.graph_ops import _write_segment_edges
 
-        mock_gc.query.side_effect = [[], []]
+        mock_gc.query.side_effect = [[], [], []]
         _write_segment_edges(mock_gc, ["electron_temperature"])
 
         merge_calls = _find_merge_segment_calls(mock_gc)
@@ -213,7 +217,7 @@ class TestTypedEdgeSegmentGuards:
         """HAS_TRANSFORMATION FOREACH must guard on segment = 'transformation'."""
         from imas_codex.standard_names.graph_ops import _write_segment_edges
 
-        mock_gc.query.side_effect = [[], []]
+        mock_gc.query.side_effect = [[], [], []]
         _write_segment_edges(mock_gc, ["electron_temperature"])
 
         merge_calls = _find_merge_segment_calls(mock_gc)
@@ -228,7 +232,7 @@ class TestTypedEdgeSegmentGuards:
         (ISN grammar classifies 'poloidal' as coordinate for this name)."""
         from imas_codex.standard_names.graph_ops import _write_segment_edges
 
-        mock_gc.query.side_effect = [[], []]
+        mock_gc.query.side_effect = [[], [], []]
         _write_segment_edges(mock_gc, ["poloidal_electron_temperature"])
 
         merge_calls = _find_merge_segment_calls(mock_gc)
@@ -252,6 +256,7 @@ class TestTypedEdgeSegmentGuards:
 
         # Simulate token-miss: MERGE returns matched=False for all tokens
         mock_gc.query.side_effect = [
+            [],  # column SET
             [],  # DELETE
             [
                 {"token": "electron", "segment": "subject", "matched": False},
