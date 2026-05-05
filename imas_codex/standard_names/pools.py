@@ -55,12 +55,18 @@ logger = logging.getLogger(__name__)
 
 # Default per-pool weights for soft-fairness admission control.
 # Sum to 1.0.  Six pools per Phase 8.1 refine pipeline.
+#
+# Rationale (2026-05-05): Review is the throughput bottleneck — each
+# review costs ~$0.09 (2× blind LLM calls + optional escalator) vs
+# ~$0.02 for generation.  Equal generate/review weights caused a >100-
+# name review backlog after $15 spend.  Weights now favour review pools
+# so names and docs flow through the pipeline at roughly equal rates.
 POOL_WEIGHTS: dict[str, float] = {
-    "generate_name": 0.25,
-    "review_name": 0.15,
-    "refine_name": 0.15,
-    "generate_docs": 0.20,
-    "review_docs": 0.15,
+    "generate_name": 0.15,
+    "review_name": 0.25,
+    "refine_name": 0.10,
+    "generate_docs": 0.15,
+    "review_docs": 0.25,
     "refine_docs": 0.10,
 }
 

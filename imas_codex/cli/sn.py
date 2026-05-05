@@ -3699,7 +3699,7 @@ def sn_sync_grammar(dry_run: bool, verbose: bool) -> None:
     "--dry-run", is_flag=True, help="Run Layer 1 audits, show batch plan, no LLM calls"
 )
 @click.option("--skip-audit", is_flag=True, help="Skip Layer 1 audits (debug only)")
-@click.option("--concurrency", type=int, default=2, help="Parallel review batches")
+@click.option("--concurrency", type=int, default=8, help="Parallel review batches")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option(
     "--target",

@@ -221,7 +221,7 @@ async def run_sn_loop(
     turn_number: int = 1,
     min_score: float | None = None,
     per_domain_limit: int | None = None,
-    concurrency: int = 2,
+    concurrency: int = 8,
     dry_run: bool = False,
     only_domain: str | None = None,
     skip_generate: bool = False,

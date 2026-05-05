@@ -142,7 +142,7 @@ class TurnConfig:
     domain: str
     cost_limit: float = 5.0
     limit: int | None = None
-    concurrency: int = 2
+    concurrency: int = 8
     dry_run: bool = False
     fail_fast: bool = False
     skip_generate: bool = False

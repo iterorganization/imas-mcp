@@ -44,7 +44,7 @@ class StandardNameReviewState(DiscoveryStateBase):
     review_model: str | None = None
     batch_size: int = 15
     neighborhood_k: int = 10
-    concurrency: int = 2
+    concurrency: int = 8
     dry_run: bool = False
 
     # Reviewer list (N >= 1). review_models[0] is canonical.
