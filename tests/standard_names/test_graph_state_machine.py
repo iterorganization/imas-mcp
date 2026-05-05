@@ -182,10 +182,10 @@ class TestPersistGeneratedNameBatch:
     @patch("imas_codex.standard_names.graph_ops._finalize_generated_name_stage")
     @patch("imas_codex.standard_names.graph_ops.write_standard_names")
     @patch("imas_codex.embeddings.description.embed_descriptions_batch")
-    def test_quarantines_on_embedding_failure(
+    def test_embed_failure_marks_retry_not_quarantine(
         self, mock_embed, mock_write, mock_finalize, sample_candidates
     ):
-        """Candidates with failed embeddings get quarantined."""
+        """Candidates with failed embeddings get embed_failed_at, not quarantined."""
         from imas_codex.standard_names.graph_ops import persist_generated_name_batch
 
         # Simulate partial failure — first succeeds, second fails
@@ -204,10 +204,11 @@ class TestPersistGeneratedNameBatch:
         # First candidate: embedded successfully
         assert written[0]["embedding"] == [0.1, 0.2]
         assert written[0]["validation_status"] != "quarantined"
-        # Second candidate: quarantined
+        assert "embedded_at" in written[0]
+        # Second candidate: NOT quarantined, marked for retry
         assert written[1]["embedding"] is None
-        assert written[1]["validation_status"] == "quarantined"
-        assert "embedding_failed" in written[1]["validation_issues"]
+        assert written[1].get("validation_status") != "quarantined"
+        assert "embed_failed_at" in written[1]
 
     @patch("imas_codex.standard_names.graph_ops._finalize_generated_name_stage")
     @patch("imas_codex.standard_names.graph_ops.write_standard_names")
