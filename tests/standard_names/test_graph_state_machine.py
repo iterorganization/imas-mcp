@@ -216,10 +216,10 @@ class TestPersistGeneratedNameBatch:
         "imas_codex.embeddings.description.embed_descriptions_batch",
         side_effect=ConnectionError("embed server down"),
     )
-    def test_quarantines_all_on_total_embed_failure(
+    def test_records_embed_failure_timestamp_on_total_embed_failure(
         self, mock_embed, mock_write, mock_finalize, sample_candidates
     ):
-        """When embed server is down, all candidates are quarantined."""
+        """When embed server is down, candidates get embed_failed_at timestamp."""
         from imas_codex.standard_names.graph_ops import persist_generated_name_batch
 
         mock_write.return_value = 2
@@ -227,8 +227,8 @@ class TestPersistGeneratedNameBatch:
 
         written = mock_write.call_args[0][0]
         for entry in written:
-            assert entry["validation_status"] == "quarantined"
-            assert "embedding_failed" in entry["validation_issues"]
+            # F1 change: embed failure no longer quarantines — sets timestamp
+            assert entry.get("embed_failed_at") is not None
             assert entry.get("embedding") is None
 
     @patch("imas_codex.standard_names.graph_ops._finalize_generated_name_stage")
