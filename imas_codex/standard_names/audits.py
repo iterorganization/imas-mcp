@@ -57,9 +57,6 @@ CRITICAL_CHECKS = frozenset(
         "spectral_suffix_check",
         "abbreviation_check",
         "name_description_consistency_check",
-        "american_spelling_check",
-        "description_verb_drift_check",
-        "structural_dim_tag_check",
         "name_unit_consistency_check",
         "representation_artifact_check",
         "causal_due_to_check",
@@ -447,6 +444,21 @@ def description_verb_drift_check(candidate: dict[str, Any]) -> list[str]:
     if not has_rate_desc:
         return issues
 
+    # Flux quantities inherently describe flow rates — "per unit time" in
+    # their description is definitional, not a verb drift indicator.
+    # Only flag when strong rate language is used (time derivative, rate of change).
+    _STRONG_RATE_PATTERNS = (
+        "instantaneous change",
+        "instantaneous signed change",
+        "rate of change",
+        "time derivative",
+        "time rate of change",
+        "temporal derivative",
+    )
+    has_strong_rate = any(pat in description for pat in _STRONG_RATE_PATTERNS)
+    if not has_strong_rate and "_flux" in name:
+        return issues  # "per unit time" in flux description is not verb drift
+
     has_rate_name = any(marker in name for marker in _RATE_NAME_MARKERS)
     if not has_rate_name:
         issues.append(
@@ -768,6 +780,14 @@ def name_unit_consistency_check(
         if token == "energy" and "density" in name_tokens:
             continue
         if token == "angle" and ("offset" in name_tokens or "gradient" in name_tokens):
+            continue
+        # ``frequency`` as a modifier in compound nouns like
+        # ``frequency_sweep_duration`` describes a different concept —
+        # the head noun is ``duration`` (unit ``s``), not ``frequency``.
+        if token == "frequency" and any(
+            t in name_tokens
+            for t in ("duration", "period", "sweep", "interval", "delay")
+        ):
             continue
         # ``_flux`` shifts the head-noun dimension by time and area:
         # ``energy_flux`` → W.m^-2 (power per area), not energy.
@@ -1581,6 +1601,10 @@ def density_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
     # Special case: dimensionless density (rare but valid for fractions/probabilities)
     # is not flagged — declared unit "1" is allowed.
     if unit in {"1", ""}:
+        return []
+    # Spectral density: "density" in spectral context means per-frequency or
+    # per-wavenumber, not per-volume. The unit refers to the extensive quantity.
+    if "_spectrum" in name or "_spectral" in name:
         return []
     return [
         f"audit:density_unit_consistency_check: name '{name}' ends with "

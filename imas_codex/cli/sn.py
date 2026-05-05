@@ -218,8 +218,10 @@ def _run_sn_loop_cmd(
     use_rich = not quiet and not dry_run and use_rich_output()
 
     # Pre-suppress noisy SN loggers BEFORE any heavy imports/inits so
-    # rich-mode startup is silent. Repeated by run_discovery() after
-    # display attach (defense in depth).
+    # rich-mode startup is silent. Only raise console *handler* levels —
+    # logger levels stay at default so file handlers still receive all
+    # messages. Repeated by run_discovery() after display attach (defense
+    # in depth).
     if use_rich:
         import logging as _logging
 
@@ -238,7 +240,12 @@ def _run_sn_loop_cmd(
             "urllib3",
             "neo4j",
         ):
-            _logging.getLogger(mod).setLevel(_logging.ERROR)
+            lg = _logging.getLogger(mod)
+            for handler in lg.handlers:
+                if isinstance(handler, _logging.StreamHandler) and not isinstance(
+                    handler, _logging.FileHandler
+                ):
+                    handler.setLevel(_logging.ERROR)
 
     # Build Rich display or fall back to plain logging
     display = None

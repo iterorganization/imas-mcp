@@ -53,6 +53,32 @@ def normalize_spelling(name: str) -> str:
     return "_".join(_DOMAIN_UK_US.get(t, get_american_spelling(t)) for t in tokens)
 
 
+def normalize_prose_spelling(text: str) -> str:
+    """British→American spelling normalization for prose text.
+
+    Unlike ``normalize_spelling`` which operates on underscore-delimited
+    name tokens, this function handles natural English prose — splitting
+    on word boundaries and preserving punctuation, whitespace, and
+    markdown formatting.
+    """
+    if not text:
+        return text
+    from breame.spelling import get_american_spelling
+
+    def _replace(match: _re.Match) -> str:
+        word = match.group(0)
+        # Preserve case: if the word is capitalized, capitalize the replacement
+        us = _DOMAIN_UK_US.get(word.lower(), get_american_spelling(word.lower()))
+        if us == word.lower():
+            return word  # no change
+        if word[0].isupper():
+            return us[0].upper() + us[1:]
+        return us
+
+    # Match word-like sequences (letters only, preserving everything else)
+    return _re.sub(r"[A-Za-z]+", _replace, text)
+
+
 # Physics-domain UK→US supplements not in breame's dictionary.
 _DOMAIN_UK_US: dict[str, str] = {
     "linearised": "linearized",
@@ -3642,7 +3668,7 @@ async def compose_batch(
                 "id": name_id,
                 "source_types": [source_kind],
                 "source_id": c.source_id,
-                "description": c.description or "",
+                "description": normalize_prose_spelling(c.description or ""),
                 "kind": c.kind,
                 "source_paths": [
                     encode_source_path(source_kind, p) for p in (c.dd_paths or [])
@@ -4251,7 +4277,7 @@ async def process_refine_name_batch(
                     persist_refined_name,
                     old_name=sn_id,
                     new_name=result_obj.name,
-                    description=result_obj.description,
+                    description=normalize_prose_spelling(result_obj.description),
                     kind=result_obj.kind,
                     unit=item.get("unit"),
                     physics_domain=(
@@ -5281,8 +5307,8 @@ async def process_generate_docs_batch(
                 persist_generated_docs,
                 sn_id=sn_id,
                 claim_token=claim_token,
-                description=result_obj.description,
-                documentation=result_obj.documentation,
+                description=normalize_prose_spelling(result_obj.description),
+                documentation=normalize_prose_spelling(result_obj.documentation),
                 model=model,
                 run_id=mgr.run_id,
             )
@@ -5751,8 +5777,8 @@ async def process_refine_docs_batch(
                 persist_refined_docs,
                 sn_id=sn_id,
                 claim_token=claim_token,
-                description=result_obj.description,
-                documentation=result_obj.documentation,
+                description=normalize_prose_spelling(result_obj.description),
+                documentation=normalize_prose_spelling(result_obj.documentation),
                 model=model,
                 current_description=item.get("description") or "",
                 current_documentation=item.get("documentation") or "",

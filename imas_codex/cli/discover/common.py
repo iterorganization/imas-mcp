@@ -255,12 +255,18 @@ def run_discovery(
         model_section=config.model_section,
     )
 
-    # Suppress noisy loggers during rich display: gag at ERROR so chatty
-    # WARNING-level messages (e.g. ISN vocab Token-miss) don't leak past the
-    # rich-display canvas. They still reach the file log via the root logger's
-    # file handler attached by configure_cli_logging().
+    # Suppress noisy loggers during rich display: raise console handler
+    # levels to ERROR so chatty WARNING-level messages don't leak past the
+    # rich-display canvas.  Logger levels are left unchanged so that file
+    # handlers (attached by configure_cli_logging()) continue to receive
+    # all messages.
     for mod in config.suppress_loggers:
-        logging.getLogger(mod).setLevel(logging.ERROR)
+        lg = logging.getLogger(mod)
+        for handler in lg.handlers:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(
+                handler, logging.FileHandler
+            ):
+                handler.setLevel(logging.ERROR)
 
     # Detach any console StreamHandler attached to the root or imas_codex
     # logger so that nothing prints to stderr while the rich display is live.
