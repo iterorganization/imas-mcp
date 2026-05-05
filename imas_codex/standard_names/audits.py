@@ -847,6 +847,12 @@ def name_unit_consistency_check(
             )
         ):
             continue
+        # Sensor/instrument qualifier names: ``temperature_sensor_signal_*``
+        # describes a signal from a temperature sensor — the word
+        # ``temperature`` classifies the sensor type, not the unit.
+        # Rise/fall time, amplitude, etc. have time or voltage units.
+        if f"{token}_sensor" in name or f"{token}_probe" in name:
+            continue
 
         if dimensionless:
             issues.append(
@@ -965,6 +971,37 @@ def multi_subject_check(candidate: dict[str, Any]) -> list[str]:
         )
         if any(cpb in name for cpb in _COMPOUND_PB_TOKENS):
             matched_subjects = [s for s in matched_subjects if s != "particle"]
+
+        # Exempt orbit-classification and energy-classification subject
+        # modifiers that form compound subjects with a following species.
+        # E.g. ``trapped_electron`` is ONE compound subject, not two
+        # separate subjects ``trapped`` + ``electron``.
+        # ``co_passing_ion`` = co-passing ion (single compound subject).
+        # ``fast_particles`` = fast particles (single compound subject).
+        # ``total_thermal`` = total thermal (aggregator, not two subjects).
+        _MODIFIER_SUBJECTS = frozenset(
+            {
+                "trapped",
+                "co_passing",
+                "counter_passing",
+                "fast",
+                "thermal",
+                "total",
+            }
+        )
+        modifier_count = sum(1 for s in matched_subjects if s in _MODIFIER_SUBJECTS)
+        if modifier_count > 0 and len(matched_subjects) - modifier_count >= 1:
+            # Keep only the non-modifier subjects (the species they qualify)
+            matched_subjects = [
+                s for s in matched_subjects if s not in _MODIFIER_SUBJECTS
+            ]
+
+        # Exempt ``_to_{subject}_particles`` target descriptors in
+        # collisional power transfer names. The ``_to_`` connector
+        # separates source species from target population — only
+        # the source subject counts.
+        if "_to_" in name and "particles" in matched_subjects:
+            matched_subjects = [s for s in matched_subjects if s != "particles"]
 
         if len(matched_subjects) >= 2:
             issues.append(
