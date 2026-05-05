@@ -430,7 +430,6 @@ def _graph_node_to_entry_dict(node: dict[str, Any]) -> dict[str, Any]:
         "links": list(node.get("links") or []),
         "constraints": list(node.get("constraints") or []),
         "validity_domain": node.get("validity_domain") or "",
-        "cocos_transformation_type": node.get("cocos_transformation_type"),
     }
 
     # Optional lifecycle fields
@@ -504,15 +503,15 @@ def _derive_arguments_for_entry(
     gc: Any,
     name: str,
 ) -> list[dict[str, Any]] | None:
-    """Query graph for outgoing HAS_ARGUMENT edges and return argument list.
+    """Query graph for outgoing COMPONENT_OF edges and return argument list.
 
-    Returns ``None`` if no HAS_ARGUMENT edges exist for this node.
+    Returns ``None`` if no COMPONENT_OF edges exist for this node.
     """
     rows = gc.query(
         """
-        MATCH (s:StandardName {name: $name})-[e:HAS_ARGUMENT]->(t:StandardName)
-        RETURN t.name AS name, properties(e) AS props
-        ORDER BY t.name
+        MATCH (s:StandardName {id: $name})-[e:COMPONENT_OF]->(t:StandardName)
+        RETURN t.id AS name, properties(e) AS props
+        ORDER BY t.id
         """,
         name=name,
     )
@@ -543,8 +542,8 @@ def _derive_error_variants_for_entry(
     """
     rows = gc.query(
         """
-        MATCH (s:StandardName {name: $name})-[e:HAS_ERROR]->(t:StandardName)
-        RETURN t.name AS name, properties(e) AS props
+        MATCH (s:StandardName {id: $name})-[e:HAS_ERROR]->(t:StandardName)
+        RETURN t.id AS name, properties(e) AS props
         """,
         name=name,
     )
@@ -613,7 +612,7 @@ def _fetch_ordering_edges_for_domain(
     domain: str,
     entry_names: set[str],
 ) -> tuple[list[tuple[str, str, str]], set[str]]:
-    """Fetch HAS_ARGUMENT + HAS_ERROR edges for ordering within a domain.
+    """Fetch COMPONENT_OF + HAS_ERROR edges for ordering within a domain.
 
     Returns
     -------
@@ -624,10 +623,10 @@ def _fetch_ordering_edges_for_domain(
         Set of entry names in *entry_names* that have an ordering-parent
         outside the domain (cross-domain orphans).
     """
-    # Fetch in-domain edges: HAS_ARGUMENT where both nodes in domain
+    # Fetch in-domain edges: COMPONENT_OF where both nodes in domain
     arg_rows = gc.query(
         """
-        MATCH (s:StandardName)-[e:HAS_ARGUMENT]->(t:StandardName)
+        MATCH (s:StandardName)-[e:COMPONENT_OF]->(t:StandardName)
         WHERE $domain IN s.physics_domain AND $domain IN t.physics_domain
         RETURN s.name AS src, t.name AS tgt
         """,
@@ -646,16 +645,16 @@ def _fetch_ordering_edges_for_domain(
     edges: list[tuple[str, str, str]] = []
     for row in arg_rows or []:
         if row["src"] in entry_names and row["tgt"] in entry_names:
-            edges.append((row["src"], row["tgt"], "HAS_ARGUMENT"))
+            edges.append((row["src"], row["tgt"], "COMPONENT_OF"))
     for row in err_rows or []:
         if row["src"] in entry_names and row["tgt"] in entry_names:
             edges.append((row["src"], row["tgt"], "HAS_ERROR"))
 
     # Find cross-domain ordering-parents:
-    # Nodes whose HAS_ARGUMENT target is outside the domain
+    # Nodes whose COMPONENT_OF target is outside the domain
     cross_arg_rows = gc.query(
         """
-        MATCH (s:StandardName)-[:HAS_ARGUMENT]->(t:StandardName)
+        MATCH (s:StandardName)-[:COMPONENT_OF]->(t:StandardName)
         WHERE $domain IN s.physics_domain AND NOT ($domain IN t.physics_domain)
         RETURN DISTINCT s.name AS name
         """,
@@ -708,7 +707,7 @@ def _write_domain_yaml(
         f"# Catalog sha: {codex_sha or 'unknown'}",
         f"# Entries: {len(entries)}",
         "# Ordering: structural traversal",
-        "#   (HAS_ARGUMENT-incoming + HAS_ERROR-outgoing, Kahn topo sort,",
+        "#   (COMPONENT_OF-incoming + HAS_ERROR-outgoing, Kahn topo sort,",
         "#    alphabetic tie-break)",
     ]
     header = "\n".join(header_lines) + "\n"

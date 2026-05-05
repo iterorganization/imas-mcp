@@ -60,4 +60,3 @@ class TestSnHelpNewVerbs:
         result = runner.invoke(sn, ["import", "--help"])
         assert result.exit_code == 0
         assert "--accept-unit-override" in result.output
-        assert "--accept-cocos-override" in result.output

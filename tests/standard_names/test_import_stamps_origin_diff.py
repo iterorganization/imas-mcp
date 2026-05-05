@@ -36,12 +36,11 @@ _ENTRY_BASE = {
 
 
 def _make_isnc(tmp_path: Path, entries: list[dict], domain: str = "kinetics") -> Path:
-    """Create a minimal ISNC checkout with standard_names/<domain>/<name>.yml."""
+    """Create a minimal ISNC checkout with standard_names/<domain>.yml."""
     root = tmp_path / "isnc"
-    sn_dir = root / "standard_names" / domain
+    sn_dir = root / "standard_names"
     sn_dir.mkdir(parents=True)
-    for entry in entries:
-        (sn_dir / f"{entry['name']}.yml").write_text(yaml.safe_dump(entry))
+    (sn_dir / f"{domain}.yml").write_text(yaml.safe_dump(entries))
     return root
 
 

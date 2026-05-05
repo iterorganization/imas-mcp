@@ -696,10 +696,22 @@ class TestDryRunIntegration:
                 assert node["claimed"] is None  # Claims released
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(120)
     async def test_dry_run_no_llm_cost(self, clean_test_nodes) -> None:
-        """Dry-run incurs zero LLM cost."""
+        """Dry-run incurs zero LLM cost.
+
+        This test runs the full async engine pipeline, which requires
+        the embedding server to be running.  Skip when unavailable.
+        """
         from imas_codex.standard_names.enrich_pipeline import run_sn_enrich_engine
         from imas_codex.standard_names.enrich_state import StandardNameEnrichState
+
+        try:
+            from imas_codex.embeddings.description import embed_query_texts
+
+            embed_query_texts(["test"])
+        except Exception:
+            pytest.skip("Embedding server not available")
 
         names = [f"{TEST_PREFIX}drycost_1"]
         _create_test_nodes(names)

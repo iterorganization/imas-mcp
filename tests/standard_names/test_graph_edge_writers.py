@@ -6,7 +6,7 @@ Cypher queries with the expected batch parameters for every structural
 edge type.
 
 Edge types covered:
-  HAS_ARGUMENT   — derived from ISN parser (G1, G2, G4, G5)
+  COMPONENT_OF   — derived from ISN parser (G1, G2, G4, G5)
   HAS_ERROR      — uncertainty siblings, inverted direction (G3)
   HAS_PREDECESSOR — from ``deprecates`` field (G7)
   HAS_SUCCESSOR   — from ``superseded_by`` field (G8)
@@ -81,14 +81,14 @@ def _batch_for(mock_gc: MagicMock, keyword: str) -> list[dict] | None:
 
 
 # ---------------------------------------------------------------------------
-# G1 — HAS_ARGUMENT: two names in one batch
+# G1 — COMPONENT_OF: two names in one batch
 # ---------------------------------------------------------------------------
 
 
 class TestG1:
     """G1: Write temperature and maximum_of_temperature in one batch.
 
-    ``(maximum_of_temperature)-[:HAS_ARGUMENT {operator:'maximum'}]->(temperature)``
+    ``(maximum_of_temperature)-[:COMPONENT_OF {operator:'maximum'}]->(temperature)``
     """
 
     def test_has_argument_edge_emitted(self) -> None:
@@ -100,8 +100,8 @@ class TestG1:
         _call_write(names, mock_gc)
 
         cyphers = _cyphers(mock_gc)
-        assert any("HAS_ARGUMENT" in c for c in cyphers), (
-            "No HAS_ARGUMENT Cypher found in queries"
+        assert any("COMPONENT_OF" in c for c in cyphers), (
+            "No COMPONENT_OF Cypher found in queries"
         )
 
     def test_has_argument_batch_contains_correct_edge(self) -> None:
@@ -112,8 +112,8 @@ class TestG1:
         mock_gc = _make_mock_gc()
         _call_write(names, mock_gc)
 
-        batch = _batch_for(mock_gc, "HAS_ARGUMENT")
-        assert batch is not None, "No HAS_ARGUMENT batch found"
+        batch = _batch_for(mock_gc, "COMPONENT_OF")
+        assert batch is not None, "No COMPONENT_OF batch found"
         edge = next(
             (
                 b
@@ -129,7 +129,7 @@ class TestG1:
 
 
 # ---------------------------------------------------------------------------
-# G2 — HAS_ARGUMENT: forward reference (target written later)
+# G2 — COMPONENT_OF: forward reference (target written later)
 # ---------------------------------------------------------------------------
 
 
@@ -150,29 +150,29 @@ class TestG2:
         gc2 = _make_mock_gc()
         _call_write(second_batch, gc2)
 
-        # First batch: HAS_ARGUMENT should reference temperature as placeholder
-        batch1 = _batch_for(gc1, "HAS_ARGUMENT")
+        # First batch: COMPONENT_OF should reference temperature as placeholder
+        batch1 = _batch_for(gc1, "COMPONENT_OF")
         assert batch1 is not None
         assert any(b["to_name"] == "temperature" for b in batch1)
 
-        # Second batch: temperature is a leaf, no HAS_ARGUMENT emitted
+        # Second batch: temperature is a leaf, no COMPONENT_OF emitted
         cyphers2 = _cyphers(gc2)
-        # No HAS_ARGUMENT from temperature (it's a leaf)
+        # No COMPONENT_OF from temperature (it's a leaf)
         ha_batches2 = [
-            _batch_for(gc2, "HAS_ARGUMENT") for c in cyphers2 if "HAS_ARGUMENT" in c
+            _batch_for(gc2, "COMPONENT_OF") for c in cyphers2 if "COMPONENT_OF" in c
         ]
-        # If HAS_ARGUMENT present, it must not have temperature as from_name
+        # If COMPONENT_OF present, it must not have temperature as from_name
         if ha_batches2 and ha_batches2[0]:
             assert not any(b["from_name"] == "temperature" for b in ha_batches2[0])
 
     def test_target_merged_via_merge_clause(self) -> None:
-        """The HAS_ARGUMENT Cypher must MERGE the target node (forward ref)."""
+        """The COMPONENT_OF Cypher must MERGE the target node (forward ref)."""
         names = [{"id": "maximum_of_temperature", "unit": "eV"}]
         mock_gc = _make_mock_gc()
         _call_write(names, mock_gc)
 
         for c in _cyphers(mock_gc):
-            if "HAS_ARGUMENT" in c:
+            if "COMPONENT_OF" in c:
                 assert "MERGE" in c, "Target must be MERGEd for forward-ref support"
                 break
 
@@ -217,14 +217,14 @@ class TestG3:
 
 
 # ---------------------------------------------------------------------------
-# G4 — HAS_ARGUMENT: binary operator, two edges with role a/b
+# G4 — COMPONENT_OF: binary operator, two edges with role a/b
 # ---------------------------------------------------------------------------
 
 
 class TestG4:
     """G4: Write ratio_of_temperature_to_pressure.
 
-    Two HAS_ARGUMENT edges: → temperature (role=a) and → pressure (role=b).
+    Two COMPONENT_OF edges: → temperature (role=a) and → pressure (role=b).
     """
 
     def test_two_has_argument_edges(self) -> None:
@@ -232,7 +232,7 @@ class TestG4:
         mock_gc = _make_mock_gc()
         _call_write(names, mock_gc)
 
-        batch = _batch_for(mock_gc, "HAS_ARGUMENT")
+        batch = _batch_for(mock_gc, "COMPONENT_OF")
         assert batch is not None
 
         edges = [
@@ -248,7 +248,7 @@ class TestG4:
         mock_gc = _make_mock_gc()
         _call_write(names, mock_gc)
 
-        batch = _batch_for(mock_gc, "HAS_ARGUMENT")
+        batch = _batch_for(mock_gc, "COMPONENT_OF")
         assert batch is not None
 
         edges = {
@@ -278,9 +278,9 @@ class TestG5:
             _call_write(names, mock_gc)
 
             for c in _cyphers(mock_gc):
-                if "HAS_ARGUMENT" in c:
+                if "COMPONENT_OF" in c:
                     assert "MERGE" in c, (
-                        "HAS_ARGUMENT Cypher must use MERGE for idempotency"
+                        "COMPONENT_OF Cypher must use MERGE for idempotency"
                     )
                     break
 
@@ -303,7 +303,7 @@ class TestG5:
 class TestG6:
     """G6: Catalog import of a file containing the same names as G1.
 
-    Same HAS_ARGUMENT edge as G1 — import path has pipeline parity.
+    Same COMPONENT_OF edge as G1 — import path has pipeline parity.
     """
 
     def test_catalog_import_emits_has_argument(self) -> None:
@@ -323,8 +323,8 @@ class TestG6:
         _call_import_entries(entries, mock_gc)
 
         cyphers = _cyphers(mock_gc)
-        assert any("HAS_ARGUMENT" in c for c in cyphers), (
-            "Catalog import must emit HAS_ARGUMENT edges (pipeline parity)"
+        assert any("COMPONENT_OF" in c for c in cyphers), (
+            "Catalog import must emit COMPONENT_OF edges (pipeline parity)"
         )
 
     def test_catalog_import_has_argument_batch(self) -> None:
@@ -335,7 +335,7 @@ class TestG6:
         mock_gc = _make_mock_gc()
         _call_import_entries(entries, mock_gc)
 
-        batch = _batch_for(mock_gc, "HAS_ARGUMENT")
+        batch = _batch_for(mock_gc, "COMPONENT_OF")
         assert batch is not None
         edge = next(
             (

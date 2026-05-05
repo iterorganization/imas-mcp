@@ -2759,17 +2759,11 @@ def sn_release(
     help="Accept unit mismatches against DD values",
 )
 @click.option(
-    "--accept-cocos-override",
-    is_flag=True,
-    help="Accept COCOS transformation type mismatches against graph",
-)
-@click.option(
     "--dry-run", is_flag=True, help="Parse and validate without writing to graph"
 )
 def sn_import(
     isnc: str | None,
     accept_unit_override: bool,
-    accept_cocos_override: bool,
     dry_run: bool,
 ) -> None:
     """Import reviewed catalog entries from ISNC into the graph.
@@ -2808,8 +2802,6 @@ def sn_import(
     console.print(f"  ISNC: {isnc_path}")
     if accept_unit_override:
         console.print("  Unit override: [yellow]accepted[/yellow]")
-    if accept_cocos_override:
-        console.print("  COCOS override: [yellow]accepted[/yellow]")
     if dry_run:
         console.print("  Mode: [yellow]dry run[/yellow]")
     console.print("")
@@ -2819,7 +2811,6 @@ def sn_import(
             catalog_dir=isnc_path,
             dry_run=dry_run,
             accept_unit_override=accept_unit_override,
-            accept_cocos_override=accept_cocos_override,
         )
     except Exception as exc:
         console.print(f"[red]Import error:[/red] {exc}")

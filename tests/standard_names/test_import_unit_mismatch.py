@@ -30,9 +30,9 @@ _ENTRY = {
 
 def _make_isnc(tmp_path: Path, entry: dict, domain: str = "kinetics") -> Path:
     root = tmp_path / "isnc"
-    sn_dir = root / "standard_names" / domain
+    sn_dir = root / "standard_names"
     sn_dir.mkdir(parents=True)
-    (sn_dir / f"{entry['name']}.yml").write_text(yaml.safe_dump(entry))
+    (sn_dir / f"{domain}.yml").write_text(yaml.safe_dump([entry]))
     return root
 
 

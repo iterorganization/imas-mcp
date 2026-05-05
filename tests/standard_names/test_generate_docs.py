@@ -592,22 +592,25 @@ def test_release_generate_docs_claims_empty_ids():
 
 
 def test_generate_docs_prompt_includes_metadata_requirements():
-    """generate_docs_system prompt contains all three structural metadata requirements."""
+    """generate_docs prompts contain all three structural metadata requirements."""
     from imas_codex.llm.prompt_loader import render_prompt
 
-    rendered = render_prompt("sn/generate_docs_system", {})
+    system = render_prompt("sn/generate_docs_system", {})
 
-    # 1. DD Path citation requirement
-    assert "DD Path citation" in rendered or "imas dd path" in rendered.lower(), (
+    # 1. DD Path citation requirement (system prompt)
+    assert "DD Path citation" in system or "imas dd path" in system.lower(), (
         "System prompt must instruct LLM to cite an IMAS DD path"
     )
 
-    # 2. DD alias mention requirement
-    assert "alias" in rendered.lower(), (
-        "System prompt must instruct LLM to mention DD aliases (e.g. gm1-gm9)"
+    # 2. DD alias mention requirement (user prompt template — aliases are per-item)
+    from imas_codex.llm.prompt_loader import PROMPTS_DIR
+
+    user_template_text = (PROMPTS_DIR / "sn" / "generate_docs_user.md").read_text()
+    assert "alias" in user_template_text.lower(), (
+        "User prompt template must include DD alias injection block"
     )
 
-    # 3. Cross-reference inline-link form requirement
-    assert "name:" in rendered.lower(), (
+    # 3. Cross-reference inline-link form requirement (system prompt)
+    assert "name:" in system.lower(), (
         "System prompt must instruct LLM to use name: inline link form for cross-refs"
     )

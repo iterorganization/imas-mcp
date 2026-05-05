@@ -3,7 +3,7 @@
 Pure logic module — no graph access, no I/O.  Given a single
 StandardName id string, ``derive_edges`` peels the outermost ISN
 grammar operator/projection and returns the corresponding
-``HAS_ARGUMENT`` or ``HAS_ERROR`` edge descriptor.
+``COMPONENT_OF`` or ``HAS_ERROR`` edge descriptor.
 
 Recursion is structural: when the inner StandardName is itself written
 to the graph, *its* derivation runs and emits *its* own edge.  We never
@@ -31,7 +31,7 @@ _UNCERTAINTY_OPS: dict[str, str] = {
 class DerivedEdge:
     """A single derived structural edge between two StandardName ids."""
 
-    edge_type: str  # "HAS_ARGUMENT" or "HAS_ERROR"
+    edge_type: str  # "COMPONENT_OF" or "HAS_ERROR"
     from_name: str  # source StandardName id
     to_name: str  # target StandardName id
     props: dict  # edge properties (operator, operator_kind, …)
@@ -84,7 +84,7 @@ def derive_edges(name: str) -> list[DerivedEdge]:
         op = ir.operators[0]
 
         if op.kind == isn_ir.OperatorKind.BINARY:
-            # Binary: two HAS_ARGUMENT edges, one per argument
+            # Binary: two COMPONENT_OF edges, one per argument
             try:
                 a = parser.compose(op.args[0])
                 b = parser.compose(op.args[1])
@@ -93,7 +93,7 @@ def derive_edges(name: str) -> list[DerivedEdge]:
                 return []
             return [
                 DerivedEdge(
-                    "HAS_ARGUMENT",
+                    "COMPONENT_OF",
                     name,
                     a,
                     {
@@ -104,7 +104,7 @@ def derive_edges(name: str) -> list[DerivedEdge]:
                     },
                 ),
                 DerivedEdge(
-                    "HAS_ARGUMENT",
+                    "COMPONENT_OF",
                     name,
                     b,
                     {
@@ -137,7 +137,7 @@ def derive_edges(name: str) -> list[DerivedEdge]:
 
         return [
             DerivedEdge(
-                "HAS_ARGUMENT",
+                "COMPONENT_OF",
                 name,
                 inner,
                 {
@@ -157,7 +157,7 @@ def derive_edges(name: str) -> list[DerivedEdge]:
             return []
         return [
             DerivedEdge(
-                "HAS_ARGUMENT",
+                "COMPONENT_OF",
                 name,
                 inner,
                 {
@@ -178,8 +178,8 @@ def _regex_fallback(name: str) -> list[DerivedEdge]:
 
     Handles two patterns:
 
-    1. ``{axis}_component_of_{inner}`` → HAS_ARGUMENT (projection)
-    2. ``{operator}_of_{inner}`` → HAS_ARGUMENT (unary operator)
+    1. ``{axis}_component_of_{inner}`` → COMPONENT_OF (projection)
+    2. ``{operator}_of_{inner}`` → COMPONENT_OF (unary operator)
 
     Returns ``[]`` if no pattern matches (leaf treatment).
     """
@@ -199,7 +199,7 @@ def _regex_fallback(name: str) -> list[DerivedEdge]:
         axis, inner = m.group(1), m.group(2)
         return [
             DerivedEdge(
-                "HAS_ARGUMENT",
+                "COMPONENT_OF",
                 name,
                 inner,
                 {
@@ -238,7 +238,7 @@ def _regex_fallback(name: str) -> list[DerivedEdge]:
             if inner:  # don't match empty inner
                 return [
                     DerivedEdge(
-                        "HAS_ARGUMENT",
+                        "COMPONENT_OF",
                         name,
                         inner,
                         {

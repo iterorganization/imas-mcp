@@ -950,7 +950,7 @@ def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
 
     Handles the following edge types:
 
-    - ``HAS_ARGUMENT``: derived from the ISN grammar parser (one layer
+    - ``COMPONENT_OF``: derived from the ISN grammar parser (one layer
       per call: unary prefix/postfix, binary, or projection).
     - ``HAS_ERROR``: uncertainty siblings — direction inverted relative to
       the derivation (inner → uncertainty form).
@@ -970,7 +970,7 @@ def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
     """
     from imas_codex.standard_names.derivation import derive_edges
 
-    ha_batch: list[dict[str, Any]] = []  # HAS_ARGUMENT
+    co_batch: list[dict[str, Any]] = []  # COMPONENT_OF
     he_batch: list[dict[str, Any]] = []  # HAS_ERROR
 
     for n in names:
@@ -978,8 +978,8 @@ def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
         if not name_id:
             continue
         for edge in derive_edges(name_id):
-            if edge.edge_type == "HAS_ARGUMENT":
-                ha_batch.append(
+            if edge.edge_type == "COMPONENT_OF":
+                co_batch.append(
                     {
                         "from_name": edge.from_name,
                         "to_name": edge.to_name,
@@ -1000,13 +1000,13 @@ def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
                     }
                 )
 
-    if ha_batch:
+    if co_batch:
         gc.query(
             """
             UNWIND $batch AS b
             MERGE (src:StandardName {id: b.from_name})
             MERGE (tgt:StandardName {id: b.to_name})
-            MERGE (src)-[r:HAS_ARGUMENT]->(tgt)
+            MERGE (src)-[r:COMPONENT_OF]->(tgt)
             SET r.operator      = b.operator,
                 r.operator_kind = b.operator_kind,
                 r.role          = b.role,
@@ -1014,7 +1014,7 @@ def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
                 r.axis          = b.axis,
                 r.shape         = b.shape
             """,
-            batch=ha_batch,
+            batch=co_batch,
         )
 
     if he_batch:
@@ -1474,7 +1474,7 @@ def write_standard_names(
         # Create grammar decomposition: typed edges + per-segment columns
         token_miss_gaps = _write_grammar_decomposition(gc, [n["id"] for n in names])
 
-        # Emit structural edges: HAS_ARGUMENT, HAS_ERROR, HAS_PREDECESSOR,
+        # Emit structural edges: COMPONENT_OF, HAS_ERROR, HAS_PREDECESSOR,
         # HAS_SUCCESSOR, IN_CLUSTER, HAS_PHYSICS_DOMAIN.
         # Tail pass — all nodes in this batch exist before edges are written.
         _write_standard_name_edges(gc, names)
@@ -1516,7 +1516,7 @@ def write_standard_names(
             write_vocab_gaps(signal_gap_dicts, source_type="signals")
 
     # Sweep skeleton placeholders created by relationship-side MERGE on
-    # uncomposed targets (HAS_ARGUMENT, HAS_ERROR, HAS_PREDECESSOR,
+    # uncomposed targets (COMPONENT_OF, HAS_ERROR, HAS_PREDECESSOR,
     # HAS_SUCCESSOR, IN_CLUSTER, HAS_PHYSICS_DOMAIN). A real StandardName
     # always has at least a created_at OR generated_at timestamp; pure
     # skeletons (id-only) are detached and deleted.

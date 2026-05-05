@@ -55,7 +55,8 @@ def derive_kind(name: str) -> str:
 
     Pattern rules (evaluated in order — first match wins):
 
-    1. ``_component_of_`` → ``vector``
+    1. ``_component_of_`` → ``scalar`` (a component is a scalar projection
+       of the parent vector, not the vector itself)
     2. ``_tensor`` token (e.g. ``metric_tensor``, ``stress_tensor``) →
        ``tensor``
     3. ``_eigenfunction`` → ``eigenfunction``
@@ -66,10 +67,10 @@ def derive_kind(name: str) -> str:
     valid = _load_valid_kinds()
     name_lower = name.lower()
 
-    # 1. Vector component
+    # 1. Component of a vector — the component itself is a scalar projection
     if "_component_of_" in name_lower:
-        if "vector" in valid:
-            return "vector"
+        if "scalar" in valid:
+            return "scalar"
 
     # 2. Tensor
     # Match tokens like _tensor_, _tensor (end of name), but NOT

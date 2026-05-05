@@ -646,6 +646,7 @@ class TestValidateWorkerClaimLoop:
         from imas_codex.standard_names.workers import validate_worker
 
         state = _make_mock_state()
+        state.stop_requested = True  # Exit immediately on empty claim
 
         with patch(
             "imas_codex.standard_names.graph_ops.claim_names_for_validation"
@@ -686,6 +687,8 @@ class TestValidateWorkerClaimLoop:
             call_count += 1
             if call_count == 1:
                 return ("token-1", claimed_items)
+            # Signal stop after first batch so the worker exits promptly
+            state.stop_requested = True
             return ("token-2", [])
 
         with (
@@ -731,6 +734,7 @@ class TestValidateWorkerClaimLoop:
             call_count += 1
             if call_count == 1:
                 return ("token-err", [{"id": "bad_name"}])
+            state.stop_requested = True
             return ("token-2", [])
 
         with (
@@ -781,6 +785,7 @@ class TestPersistWorkerClaimLoop:
         from imas_codex.standard_names.workers import persist_worker
 
         state = _make_mock_state()
+        state.stop_requested = True  # Exit immediately on empty claim
 
         with patch(
             "imas_codex.standard_names.graph_ops.claim_names_for_embedding"
@@ -804,6 +809,7 @@ class TestPersistWorkerClaimLoop:
             call_count += 1
             if call_count == 1:
                 return ("emb-token", [{"id": "te", "description": "Te"}])
+            state.stop_requested = True
             return ("emb-2", [])
 
         with (

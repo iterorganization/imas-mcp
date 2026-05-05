@@ -30,9 +30,9 @@ _ENTRY = {
 
 def _make_isnc(tmp_path: Path) -> Path:
     root = tmp_path / "isnc"
-    sn_dir = root / "standard_names" / "kinetics"
+    sn_dir = root / "standard_names"
     sn_dir.mkdir(parents=True)
-    (sn_dir / "electron_temperature.yml").write_text(yaml.safe_dump(_ENTRY))
+    (sn_dir / "kinetics.yml").write_text(yaml.safe_dump([_ENTRY]))
     return root
 
 

@@ -217,11 +217,6 @@ def _entry_to_graph_dict(
         "status": str(entry.status) if entry.status else "draft",
         "deprecates": str(entry.deprecates) if entry.deprecates else None,
         "superseded_by": str(entry.superseded_by) if entry.superseded_by else None,
-        "cocos_transformation_type": (
-            str(entry.cocos_transformation_type)
-            if entry.cocos_transformation_type
-            else None
-        ),
     }
 
     # Merge grammar fields
@@ -318,44 +313,6 @@ def _validate_unit_against_graph(
     return errors
 
 
-def _validate_cocos_against_graph(
-    gc: Any,
-    entries: list[dict[str, Any]],
-) -> list[str]:
-    """Check for COCOS transformation type mismatches."""
-    cocos_batch = [
-        {"id": e["id"], "cocos": e["cocos_transformation_type"]}
-        for e in entries
-        if e.get("cocos_transformation_type")
-    ]
-    if not cocos_batch:
-        return []
-
-    rows = gc.query(
-        """
-        UNWIND $batch AS b
-        MATCH (sn:StandardName {id: b.id})
-        WHERE sn.cocos_transformation_type IS NOT NULL
-          AND b.cocos IS NOT NULL
-          AND sn.cocos_transformation_type <> b.cocos
-        RETURN sn.id AS name,
-               sn.cocos_transformation_type AS existing,
-               b.cocos AS incoming
-        """,
-        batch=cocos_batch,
-    )
-
-    errors = []
-    for row in rows or []:
-        errors.append(
-            f"COCOS mismatch for {row['name']}: "
-            f"graph has '{row['existing']}', "
-            f"catalog has '{row['incoming']}'. "
-            f"Use --accept-cocos-override to force."
-        )
-    return errors
-
-
 # ---------------------------------------------------------------------------
 # Graph write: import entries
 # ---------------------------------------------------------------------------
@@ -403,7 +360,6 @@ def _write_import_entries(
             sn.status = b.status,
             sn.deprecates = b.deprecates,
             sn.superseded_by = b.superseded_by,
-            sn.cocos_transformation_type = coalesce(b.cocos_transformation_type, sn.cocos_transformation_type),
             sn.pipeline_status = 'accepted',
             sn.origin = b._origin,
             sn.imported_at = datetime(),
@@ -456,7 +412,7 @@ def _write_import_entries(
             batch=units_batch,
         )
 
-    # Emit structural edges: HAS_ARGUMENT, HAS_ERROR, HAS_PREDECESSOR,
+    # Emit structural edges: COMPONENT_OF, HAS_ERROR, HAS_PREDECESSOR,
     # HAS_SUCCESSOR, IN_CLUSTER, HAS_PHYSICS_DOMAIN.
     # Tail pass — all nodes in the batch exist before edges are written.
     # 'deprecates' → HAS_PREDECESSOR, 'superseded_by' → HAS_SUCCESSOR.
@@ -482,7 +438,6 @@ def run_import(
     catalog_dir: Path,
     dry_run: bool = False,
     accept_unit_override: bool = False,
-    accept_cocos_override: bool = False,
 ) -> ImportReport:
     """Import YAML catalog entries into graph as accepted StandardName nodes.
 
@@ -492,7 +447,7 @@ def run_import(
     - Grammar decomposition via graph_ops helper
     - Diff-based origin tracking
     - Lock and watermark concurrency control
-    - Unit and COCOS validation
+    - Unit validation
 
     Parameters
     ----------
@@ -640,6 +595,7 @@ def run_import(
                     entry, physics_domain=physics_domain_list
                 )
                 graph_dict.update(grammar)
+
                 prepared.append(graph_dict)
                 report.entries.append(graph_dict)
 
@@ -716,12 +672,6 @@ def run_import(
                 if unit_errors:
                     report.errors.extend(unit_errors)
 
-            # 4g: COCOS validation
-            if not accept_cocos_override:
-                cocos_errors = _validate_cocos_against_graph(gc, to_write)
-                if cocos_errors:
-                    report.errors.extend(cocos_errors)
-
             # Write entries
             written = _write_import_entries(
                 gc,
@@ -761,7 +711,12 @@ _CHECK_FIELDS = (
 
 # Fields that are graph-only extensions (not in the ISN catalog model)
 # but may appear in YAML files. Strip before model validation.
-_GRAPH_ONLY_FIELDS = {"dd_paths", "physics_domain", "cocos_transformation_type"}
+_GRAPH_ONLY_FIELDS = {
+    "dd_paths",
+    "physics_domain",
+    "cocos_transformation_type",
+    "cocos",
+}
 
 
 def check_catalog(
@@ -823,13 +778,13 @@ def check_catalog(
                 for cf in COMPUTED_FIELDS:
                     if cf in entry_data:
                         warnings.append(
-                            f"{cf} is computed from HAS_ARGUMENT / HAS_ERROR "
+                            f"{cf} is computed from COMPONENT_OF / HAS_ERROR "
                             f"graph edges and will be overwritten on next "
                             f"export — edit has no effect.  See plan 40 / "
                             f"COMPUTED_FIELDS."
                         )
                         logger.warning(
-                            "%s is computed from HAS_ARGUMENT / HAS_ERROR "
+                            "%s is computed from COMPONENT_OF / HAS_ERROR "
                             "graph edges and will be overwritten on next "
                             "export — edit has no effect.  See plan 40 / "
                             "COMPUTED_FIELDS.",

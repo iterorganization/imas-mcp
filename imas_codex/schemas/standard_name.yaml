@@ -1034,17 +1034,19 @@ classes:
         annotations:
           relationship_type: REFERENCES
       # --- Derivation relationship slots ---
-      arguments:
+      components:
         description: >-
-          StandardName nodes this name is derived from. Emitted by derive_edges()
+          StandardName nodes this name is structurally derived from (component,
+          projection, or transformation target). Emitted by derive_edges()
           for every derivation layer (unary prefix, unary postfix, projection,
           binary). Populated in the tail pass after all nodes in a batch are
           written. Forward-referenced targets are MERGE'd as bare stubs.
+          Exported as ``arguments`` in the ISN catalog format.
         multivalued: true
         range: StandardName
         inlined: false
         annotations:
-          relationship_type: HAS_ARGUMENT
+          relationship_type: COMPONENT_OF
       error_siblings:
         description: >-
           StandardName nodes that are uncertainty variants of this name

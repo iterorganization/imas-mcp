@@ -1,0 +1,649 @@
+version: "1.0"
+description: >-
+  Naming-consistency (NC) rules extracted from the standard-name compose system
+  prompt (generate_name_system.md). Each rule corresponds to one NC-N guideline
+  applied during name generation and automated auditing. severity "hard" marks
+  HARD PROHIBITION / QUARANTINE / CRITICAL rules; "soft" marks advisory rules.
+
+composition_rules:
+  - id: "NC-1"
+    title: "No synonymous names"
+    category: "consistency"
+    severity: "soft"
+    rule: |
+      When a controlled vocabulary term exists (e.g., `magnetic_flux`), always
+      use it. Never create alternative wordings for the same physical quantity.
+    examples_good:
+      - "poloidal_magnetic_flux"
+      - "flux_surface_area"
+    examples_bad:
+      - "poloidal_flux"
+      - "cross_sectional_area_of_flux_surface"
+    affects:
+      - "name"
+
+  - id: "NC-2"
+    title: "Consistent boundary naming"
+    category: "consistency"
+    severity: "soft"
+    rule: |
+      Use a consistent `_of_plasma_boundary` suffix for boundary-specific
+      quantities. When a flux surface quantity has a boundary variant, derive it
+      as `{flux_surface_quantity}_of_plasma_boundary` (e.g.,
+      `elongation_of_plasma_boundary`).
+    examples_good:
+      - "elongation_of_plasma_boundary"
+      - "triangularity_of_plasma_boundary"
+    examples_bad: []
+    affects:
+      - "name"
+
+  - id: "NC-3"
+    title: "Scalar vs vector position names"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      Both atomic component names (`major_radius_of_x_point`,
+      `vertical_coordinate_of_x_point`) and vector names (`position_of_x_point`)
+      are valid. Components use `major_radius_of_` or `vertical_coordinate_of_`
+      prefixes; the vector form uses `position_of_`. Define both when the DD
+      provides both.
+    examples_good:
+      - "major_radius_of_x_point"
+      - "vertical_coordinate_of_x_point"
+      - "position_of_x_point"
+    examples_bad: []
+    affects:
+      - "name"
+
+  - id: "NC-4"
+    title: "Batch consistency"
+    category: "consistency"
+    severity: "soft"
+    rule: |
+      Within a batch, use identical vocabulary for related entries. If one entry
+      uses `poloidal_magnetic_flux`, all related entries must use `magnetic_flux`
+      (not just `flux`).
+    examples_good:
+      - "poloidal_magnetic_flux"
+    examples_bad:
+      - "flux"
+    affects:
+      - "name"
+
+  - id: "NC-5"
+    title: "No abbreviations"
+    category: "spelling"
+    severity: "soft"
+    rule: |
+      Spell words in full. Acronyms (GGD, FOCS, EFIT, COCOS) and inline math
+      shorthand (`dr_dz`, `d_psi`) are forbidden in names — spell the concept out.
+    examples_good:
+      - "normalized_poloidal_magnetic_flux"
+      - "separatrix_distance"
+    examples_bad:
+      - "norm_poloidal_flux"
+      - "sep_dist"
+    affects:
+      - "name"
+
+  - id: "NC-6"
+    title: "No redundant category suffixes"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      Do not append generic type words that repeat information already carried
+      by the root noun. Forbidden suffixes include: `_parameter`, `_value`,
+      `_quantity`, `_data`, `_variable`.
+    examples_good:
+      - "stokes_s0"
+      - "flux"
+      - "temperature"
+    examples_bad:
+      - "stokes_s0_parameter"
+      - "flux_value"
+      - "temperature_quantity"
+    affects:
+      - "name"
+
+  - id: "NC-7"
+    title: "No dimension suffixes"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      Do not encode the data's rank in the name. The IDS path already carries
+      this information; standard names describe the physical concept, not storage
+      shape.
+    examples_good:
+      - "geometry"
+      - "field"
+      - "profile"
+    examples_bad:
+      - "geometry_2d"
+      - "field_3d"
+      - "profile_1d"
+    affects:
+      - "name"
+
+  - id: "NC-8"
+    title: "Name must be self-describing"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      A standard name must convey its meaning without source-path context.
+      Never emit a bare generic noun as the entire name. If the DD path's leaf
+      is a generic container, use the parent structure or coordinate system as
+      the physical qualifier.
+    examples_good:
+      - "grid_object_geometry"
+      - "signal_data"
+    examples_bad:
+      - "geometry"
+      - "data"
+      - "value"
+    affects:
+      - "name"
+
+  - id: "NC-9"
+    title: "No tautological preposition chains"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      Do not repeat the same head noun across `_of_`. The qualifier after `_of_`
+      must introduce a new physical entity, not restate the head noun.
+    examples_good:
+      - "radial_position_of_gap_reference_point"
+      - "normal_component_of_field"
+    examples_bad:
+      - "radial_position_of_reference_position"
+      - "normal_component_of_field_component"
+    affects:
+      - "name"
+
+  - id: "NC-10"
+    title: "No spectral-decomposition suffixes"
+    category: "spectral"
+    severity: "soft"
+    rule: |
+      Do not append `_fourier_coefficients`, `_fourier_modes`, or `_harmonics`
+      as a generic suffix to a quantity name. Spectral decompositions are
+      expressed either as `mode_<n>_of_<quantity>` for a specific mode, or as a
+      named amplitude/phase quantity (`fourier_amplitude_of_<quantity>`).
+    examples_good:
+      - "mode_amplitude_of_normal_field"
+    examples_bad:
+      - "normal_field_fourier_coefficients"
+    affects:
+      - "name"
+
+  - id: "NC-11"
+    title: "R and Z coordinates describe the same entity"
+    category: "consistency"
+    severity: "soft"
+    rule: |
+      When both `major_radius_of_X` and `vertical_coordinate_of_X` appear,
+      their descriptions MUST agree on which entity X refers to. Do not describe
+      the R-coordinate as on the plasma boundary and the Z-coordinate as on the
+      secondary separatrix. The two names form an (R,Z) pair parameterising one
+      curve — both components share the same boundary context.
+    examples_good:
+      - "major_radius_of_plasma_boundary (description: R along the boundary contour)"
+      - "vertical_coordinate_of_plasma_boundary (description: Z along the same boundary contour)"
+    examples_bad:
+      - "major_radius_of_plasma_boundary described as on primary separatrix while vertical_coordinate_of_plasma_boundary described as on secondary separatrix"
+    affects:
+      - "name"
+      - "description"
+
+  - id: "NC-12"
+    title: "Batch-canonical spelling — never emit an abbreviated variant alongside its full form"
+    category: "spelling"
+    severity: "soft"
+    rule: |
+      Within a single batch, and relative to the PREFERRED VOCABULARY for the
+      domain, use one canonical spelling per concept. Spell concept words out in
+      full: `normalized`, `perpendicular`, `parallel`, `temperature`, `position`,
+      `maximum`, `minimum`, `separatrix`. The truncated forms `norm_`, `perp_`,
+      `par_`, `temp_`, `pos_`, `max_`, `min_`, `sep_` are forbidden.
+    examples_good:
+      - "normalized_poloidal_flux"
+      - "perpendicular_velocity_component"
+    examples_bad:
+      - "norm_poloidal_magnetic_flux"
+      - "perp_velocity"
+    affects:
+      - "name"
+
+  - id: "NC-13"
+    title: "Never use `outline` as a physical quantity"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      An outline is a set of 2D points (a contour), not a scalar or vector
+      field. For the Z-coordinate along the boundary contour use
+      `vertical_coordinate_of_plasma_boundary`; the 2D contour itself is
+      expressed as the pair of (major_radius, vertical_coordinate) standard
+      names, not a single `outline` name.
+    examples_good:
+      - "vertical_coordinate_of_plasma_boundary"
+      - "major_radius_of_plasma_boundary"
+    examples_bad:
+      - "vertical_outline_of_plasma_boundary"
+      - "horizontal_outline_of_plasma_boundary"
+    affects:
+      - "name"
+
+  - id: "NC-14"
+    title: "Distance-between-entities uses `distance_between_X_and_Y` form"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      When naming a separation between two named features, place the two feature
+      names in a symmetric tail: `distance_between_<feature_A>_and_<feature_B>`.
+      Do not front-load one feature as the quantity head.
+    examples_good:
+      - "distance_between_inner_and_outer_separatrices"
+      - "distance_between_magnetic_axis_and_geometric_axis"
+    examples_bad:
+      - "separatrix_distance_between_inner_and_outer"
+      - "magnetic_axis_distance_to_geometric_axis"
+    affects:
+      - "name"
+
+  - id: "NC-15"
+    title: "Description must match the name's concept"
+    category: "documentation"
+    severity: "soft"
+    rule: |
+      If the name is the underlying quantity (e.g. `normal_component_of_magnetic_field`),
+      the description must describe that quantity — not a Fourier/spectral
+      decomposition of it. If the source data is a Fourier coefficient or
+      spectral mode, the name must mark the decomposition explicitly
+      (`mode_amplitude_of_normal_field`, `fourier_coefficient_of_*`). Never
+      describe a decomposition under a name that denotes the underlying field.
+    examples_good:
+      - "name: normal_component_of_magnetic_field → description: the component of B normal to the surface"
+      - "name: mode_amplitude_of_normal_field → description: Fourier amplitude of the normal field component"
+    examples_bad:
+      - "name: normal_component_of_magnetic_field → description: Fourier coefficient of the normal field"
+    affects:
+      - "description"
+
+  - id: "NC-16"
+    title: "Prefer `_of_<entity>` over `_at_<entity>` for properties of a named entity"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      When the quantity is a property computed on/along a named entity (the
+      plasma boundary, the separatrix, the magnetic axis), use
+      `<quantity>_of_<entity>`. Reserve `_at_<location>` for values sampled at
+      a specific point/location that is not itself a physical entity of the
+      configuration. Do not emit both forms for the same quantity within a
+      batch — pick one. Trivial cases (e.g. normalized flux = 1 on the
+      boundary by construction) should simply be skipped, not named.
+    examples_good:
+      - "poloidal_magnetic_flux_of_plasma_boundary"
+    examples_bad:
+      - "poloidal_magnetic_flux_of_plasma_boundary and poloidal_magnetic_flux_at_plasma_boundary (both in same batch)"
+    affects:
+      - "name"
+
+  - id: "NC-17"
+    title: "American (US) spelling"
+    category: "spelling"
+    severity: "hard"
+    rule: |
+      The ISN catalog uses American spelling throughout. Use US forms in both
+      names and all documentation fields (description, documentation,
+      validity_domain, constraints). This is a hard constraint — UK spellings
+      in descriptions create inconsistency with names derived from the same
+      vocabulary and must be avoided.
+      Canonical pairs (US prefer, UK never):
+        normalized ← normalised; polarized ← polarised; magnetized ← magnetised;
+        ionized ← ionised; analyze/analyzed ← analyse/analysed;
+        organize/organized ← organise/organised; behavior ← behaviour;
+        color ← colour; meter ← metre (SI symbols unaffected);
+        center ← centre; fiber ← fibre; flavor ← flavour;
+        modeled ← modelled; labeled ← labelled; traveled ← travelled;
+        fueling ← fuelling; channeling ← channelling; signaling ← signalling.
+    examples_good:
+      - "normalized"
+      - "behavior"
+      - "center"
+    examples_bad:
+      - "normalised"
+      - "behaviour"
+      - "centre"
+    affects:
+      - "name"
+      - "description"
+      - "documentation"
+
+  - id: "NC-18"
+    title: "Never echo DD data-type dimensionality tags in descriptions"
+    category: "naming"
+    severity: "hard"
+    rule: |
+      Tokens like `1D`, `2D`, `3D` describe storage shape (from DD types such as
+      `FLT_1D`), not physics. Describe what the quantity IS (e.g. "radial profile
+      of ...", "flux-surface-averaged ...", "evaluated on a radial grid") rather
+      than how it is stored. Never write "1D radial profile", "1D radial grid",
+      "2D grid", "3D spatial grid", "as a 1D profile", "on a 3D mesh". Drop the
+      `1D` / `2D` / `3D` prefix entirely; the coordinate specification already
+      conveys dimensionality. Any name whose description contains a bare `1D` /
+      `2D` / `3D` token is quarantined.
+    examples_good:
+      - "radial profile of electron temperature"
+      - "evaluated on a radial grid"
+    examples_bad:
+      - "1D radial profile of electron temperature"
+      - "on a 2D grid"
+      - "3D spatial distribution"
+    affects:
+      - "description"
+      - "documentation"
+
+  - id: "NC-19"
+    title: "Rate / time-derivative naming"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      When the source quantity is a time derivative (path typically contains
+      `d_dt`, `ddt`, or the DD unit includes `.s^-1` as a differentiator rather
+      than a rate-of-reaction), name it with `tendency_of_<quantity>` (preferred)
+      or `change_in_<quantity>` or `rate_of_change_of_<quantity>`. Never use
+      `instant_change_of_...` — "instant" / "instantaneous" are not
+      standard-name tokens. The description must match: if you describe a "rate
+      of change" or "time derivative", the name must carry a rate marker.
+    examples_good:
+      - "tendency_of_electron_temperature"
+      - "rate_of_change_of_plasma_current"
+    examples_bad:
+      - "instant_change_of_electron_temperature"
+    affects:
+      - "name"
+
+  - id: "NC-20"
+    title: "`_real_part` / `_imaginary_part` / `_amplitude` / `_phase` are SUFFIXES, never prefixes"
+    category: "syntax"
+    severity: "hard"
+    rule: |
+      HARD PROHIBITION. For complex-valued, oscillatory, or Fourier-decomposed
+      quantities, the canonical ISN form places `_real_part`, `_imaginary_part`,
+      `_amplitude`, `_phase`, `_magnitude`, or `_modulus` at the END of the
+      name, after the full component-axis + subject chain. Prefix forms
+      `real_part_of_<X>`, `imaginary_part_of_<X>`, `amplitude_of_<X>`,
+      `phase_of_<X>` break the grammar whenever `<X>` contains a nested `_of_`
+      or `_component_of_` chain. Applies to every complex-valued perturbation
+      quantity in MHD / linear-stability / RF / wave-tool outputs. Within a
+      single batch, pick one canonical form and use it consistently for every
+      amplitude/phase pair of a family. The `amplitude_of_prefix_check` audit
+      quarantines every violation.
+    examples_good:
+      - "perturbed_electrostatic_potential_real_part"
+      - "perturbed_mass_density_imaginary_part"
+      - "radial_component_of_perturbed_magnetic_field_real_part"
+      - "poloidal_component_of_perturbed_plasma_velocity_imaginary_part"
+      - "reynolds_stress_tensor_real_part"
+      - "maxwell_stress_tensor_perturbation_imaginary_part"
+      - "parallel_component_of_wave_electric_field_amplitude"
+      - "right_hand_circularly_polarized_electric_field_phase"
+    examples_bad:
+      - "real_part_of_perturbed_electrostatic_potential"
+      - "imaginary_part_of_radial_component_of_perturbed_magnetic_field"
+      - "real_part_of_reynolds_stress_tensor"
+      - "amplitude_of_parallel_component_of_wave_electric_field"
+    affects:
+      - "name"
+
+  - id: "NC-21"
+    title: "Spectral qualifier is `_per_toroidal_mode` — never `_per_toroidal_mode_number`"
+    category: "spectral"
+    severity: "soft"
+    rule: |
+      When a quantity is resolved per toroidal (or poloidal) Fourier mode, the
+      canonical suffix is `_per_toroidal_mode` or `_per_poloidal_mode`. Do not
+      add the word `_number` — the mode index is implicit. Within a batch, use
+      exactly one spelling.
+    examples_good:
+      - "wave_absorbed_power_per_toroidal_mode"
+    examples_bad:
+      - "wave_absorbed_power_per_toroidal_mode_number"
+    affects:
+      - "name"
+
+  - id: "NC-22"
+    title: "Do not stack `_density` with `_per_<mode>` on an unintegrated quantity"
+    category: "physics"
+    severity: "soft"
+    rule: |
+      The `_density` suffix means "per unit volume / area / length" and must be
+      matched by an inverse-length factor in the unit (m^-1, m^-2, m^-3).
+      Appending `_per_toroidal_mode` to a raw power in Watts does not make it a
+      density. If the source is a spectral density whose unit already carries
+      m^-n, use `_density_per_toroidal_mode`; if the source is a plain per-mode
+      power in W, drop `_density` and use `<...>_power_per_toroidal_mode`.
+    examples_good:
+      - "electron_wave_heating_power_per_toroidal_mode"
+    examples_bad:
+      - "electron_wave_heating_power_spectral_density_per_toroidal_mode (when unit is W, not W·m^-n)"
+    affects:
+      - "name"
+
+  - id: "NC-23"
+    title: "Translate DD `_inside` to `_inside_flux_surface`, never to `cumulative_`"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      When the source-path description indicates the quantity is integrated
+      inside the enclosing flux surface (DD leaf names ending in `_inside`,
+      `power_inside_...`, `current_tor_inside`, etc.), the standard name MUST
+      use the suffix `_inside_flux_surface` placed directly after the quantity
+      it integrates. Do not prefix the name with `cumulative_`, `integrated_`,
+      `running_`, or `accumulated_` — these lose the geometric meaning and are
+      not in the ISN grammar. Keep the word order
+      `<subject>_<quantity>_inside_flux_surface[_per_<spectral>]`.
+    examples_good:
+      - "electron_wave_heating_power_inside_flux_surface_per_toroidal_mode"
+    examples_bad:
+      - "electron_cumulative_wave_heating_power_per_toroidal_mode"
+    affects:
+      - "name"
+
+  - id: "NC-24"
+    title: "Use one consistent power-transfer verb across a species/total group"
+    category: "consistency"
+    severity: "soft"
+    rule: |
+      If the total (un-speciated) quantity uses `<wave>_absorbed_power`, then
+      species variants MUST be `<species>_<wave>_absorbed_power`, not
+      `<species>_<wave>_heating_power`. Pick the verb from the DD description
+      and keep it constant within the group. The terms `absorbed_power` and
+      `heating_power` are not synonyms and MUST NOT alternate across species
+      within the same source family.
+    examples_good:
+      - "electron_cyclotron_absorbed_power"
+      - "ion_cyclotron_absorbed_power"
+    examples_bad:
+      - "electron_cyclotron_absorbed_power alongside ion_cyclotron_heating_power (alternating verbs)"
+    affects:
+      - "name"
+
+  - id: "NC-25"
+    title: "Prefer `<quantity>_of_<named_entity>` over attribute-stacking for named devices and parts"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      When the subject is a named device (antenna, launcher, injector, mirror,
+      coil), use the preposition `_of_` to attach the quantity to the device,
+      not a left-stacked attribute chain. Short attribute stacks (one or two
+      tokens, e.g. `ion_atomic_mass`) remain acceptable; the rule applies when
+      the subject is a named entity with three or more tokens.
+    examples_good:
+      - "tangency_radius_of_neutral_beam_injector_beam"
+      - "rotation_angle_of_electron_cyclotron_launcher_mirror"
+    examples_bad:
+      - "neutral_beam_injector_beam_tangency_radius"
+      - "ec_launcher_mirror_rotation_angle"
+    affects:
+      - "name"
+
+  - id: "NC-26"
+    title: "Never abbreviate heating-system or device names"
+    category: "spelling"
+    severity: "soft"
+    rule: |
+      Spell out heating systems and devices in full, matching the ISN vocabulary:
+      `electron_cyclotron` (not `ec`), `ion_cyclotron` (not `ic`),
+      `neutral_beam_injector` (not `nbi`), `lower_hybrid` (not `lh`).
+      Abbreviations are not in the ISN grammar and fragment the corpus across
+      synonymous aliases.
+    examples_good:
+      - "rotation_angle_of_electron_cyclotron_launcher_mirror"
+    examples_bad:
+      - "ec_launcher_mirror_rotation_angle"
+    affects:
+      - "name"
+
+  - id: "NC-27"
+    title: "Compound-subject tokens are single tokens — never decompose"
+    category: "grammar"
+    severity: "soft"
+    rule: |
+      The tokens `deuterium_tritium`, `deuterium_deuterium`, and
+      `tritium_tritium` are single entries in ISN `subjects.yml`. They describe
+      compound fusion-reaction species pairs (D-T, D-D, T-T). Never decompose
+      them into two separate subjects.
+    examples_good:
+      - "deuterium_tritium_fusion_power (compound subject treated as single token)"
+    examples_bad:
+      - "deuterium and tritium treated as two separate subjects"
+    affects:
+      - "name"
+      - "grammar_fields"
+
+  - id: "NC-28"
+    title: "The suffix `_reference_waveform` denotes a controller setpoint, not a physics quantity"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      The SN extractor excludes DD paths matching `pulse_schedule/*/reference`
+      and `pulse_schedule/*/reference_waveform` because they are controller
+      setpoints/waveforms with sentinel units (`unit=1`). Do not propose names
+      matching this pattern. If a `_reference_waveform` path reaches the compose
+      stage, skip it and record as `vocab_gap`.
+    examples_good: []
+    examples_bad:
+      - "plasma_current_reference_waveform"
+    affects:
+      - "name"
+
+  - id: "NC-29"
+    title: "`diamagnetic` is a drift, NEVER a projection axis"
+    category: "physics"
+    severity: "hard"
+    rule: |
+      HARD PROHIBITION. Unlike `toroidal`, `poloidal`, `radial`, `parallel`, or
+      `perpendicular`, `diamagnetic` does NOT label a spatial projection axis.
+      The diamagnetic drift velocity `v_dia = B × ∇p / (qnB²)` is itself a
+      specific drift, not a component of another field along a "diamagnetic
+      axis." `diamagnetic_component_of_<X>` is physically wrong and always
+      rejected by the `diamagnetic_component_check` audit. When a DD path
+      contains a subfield literally named `diamagnetic`, DO NOT translate the
+      label directly. Use `_due_to_diamagnetic_drift` for currents/fluxes/heat
+      flows driven by the drift, or pick the correct drift-velocity name for
+      velocity-valued quantities. Reserve `toroidal`, `poloidal`, `parallel`,
+      `perpendicular`, `radial` for projection axes. Never use `diamagnetic` in
+      a `_component_of_` or `<axis>_component` slot.
+    examples_good:
+      - "diamagnetic_drift_velocity"
+      - "ion_diamagnetic_drift_velocity"
+      - "electron_diamagnetic_drift_velocity"
+      - "heat_flux_due_to_diamagnetic_drift"
+    examples_bad:
+      - "diamagnetic_component_of_electric_field"
+      - "diamagnetic_component_of_ion_velocity"
+      - "diamagnetic_component_of_current_density_due_to_x"
+    affects:
+      - "name"
+
+  - id: "NC-30"
+    title: "Diagnostic instruments DO NOT own physical observables"
+    category: "physics"
+    severity: "hard"
+    rule: |
+      HARD PROHIBITION on `<observable>_of_<instrument>` patterns. Radiance,
+      emissivity, temperature, brightness, photon flux, spectral intensity, and
+      similar physical quantities are properties of the emitting plasma or
+      observed surface, NOT of the detector that records them. A "radiance of an
+      infrared camera" is physically meaningless — the camera has responsivity,
+      gain, noise, field of view, pixel count, optical filters, and integration
+      time, but it does not have radiance or emissivity. When the DD couples an
+      observable to a diagnostic, rephrase so the observable attaches to its
+      physical source. Characterize the diagnostic using instrument-property
+      nouns (`responsivity`, `throughput`, `sensitivity`, `filter_bandwidth`,
+      `field_of_view`, `integration_time`) or an `_observed_by_` /
+      `_measured_along_` qualifier. Applies to spectrometers, bolometers,
+      interferometers, reflectometers, Langmuir probes, Mirnov coils, and any
+      other diagnostic node.
+    examples_good:
+      - "infrared_camera_filter_central_wavelength"
+      - "infrared_camera_integration_time"
+      - "surface_temperature_observed_by_infrared_camera"
+      - "visible_light_radiance_along_camera_line_of_sight"
+    examples_bad:
+      - "emissivity_of_infrared_camera"
+      - "radiance_of_visible_camera"
+      - "temperature_of_thomson_scattering"
+    affects:
+      - "name"
+
+  - id: "NC-32"
+    title: "Diagnostic-IDS channel paths — name the OBSERVABLE, not the device"
+    category: "naming"
+    severity: "soft"
+    rule: |
+      When the source path matches `*/channel/*` or `*/channels/*/*` (common in
+      polarimeter, interferometer, thomson_scattering, reflectometer,
+      refractometer, bolometer, spectrometer IDSs), the standard name MUST
+      describe the physical observable measured through that channel — NOT the
+      channel identity or the instrument type. The channel is an indexing
+      container; the name captures what is being measured. The channel index is
+      handled by the DD path attachment, not by the standard name. If multiple
+      channels measure different observables, each gets its own standard name
+      based on the observable.
+    examples_good:
+      - "faraday_rotation_angle"
+      - "line_integrated_electron_density"
+      - "electron_temperature"
+      - "phase_shift"
+    examples_bad:
+      - "polarimeter_channel_angle"
+      - "interferometer_channel_density"
+      - "thomson_scattering_channel_temperature"
+    affects:
+      - "name"
+
+  - id: "NC-31"
+    title: "Drop the `_profile` suffix — it is implicit for all spatial fields"
+    category: "naming"
+    severity: "hard"
+    rule: |
+      HARD PROHIBITION. Every standard name denotes the scalar value at one
+      coordinate; a "profile" is just the same quantity sampled on a coordinate
+      axis. The suffix is redundant, adds no semantic content, and doubles the
+      vocabulary for no benefit. Remove `_profile` from every candidate name.
+      The one exception is when the DD quantity is genuinely a profile-shape
+      descriptor (peakedness, width, aspect ratio) — those carry a specific
+      shape-token like `peak_width`, `half_width`, `peakedness`, `aspect_ratio`
+      that replaces `_profile`, not appends to it.
+    examples_good:
+      - "hard_xray_emissivity"
+      - "electron_temperature"
+      - "safety_factor"
+    examples_bad:
+      - "hard_xray_emissivity_profile"
+      - "electron_temperature_profile"
+      - "safety_factor_profile"
+    affects:
+      - "name"

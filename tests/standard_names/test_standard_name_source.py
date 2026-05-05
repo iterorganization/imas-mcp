@@ -27,6 +27,7 @@ class TestStandardNameSourceSchema:
             "failed",
             "stale",
             "skipped",
+            "not_physical_quantity",
         }
 
     def test_source_type_enum_distinct(self):

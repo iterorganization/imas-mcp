@@ -129,8 +129,9 @@ class TestWriteCypherInvariants:
 
     def test_physics_domain_uses_coalesce(self, cypher_statements: list[str]) -> None:
         """physics_domain SET must use coalesce to avoid overwriting with NULL."""
-        merge = self._merge_cypher(cypher_statements)
-        assert "coalesce(" in merge and "physics_domain" in merge
+        # physics_domain may be SET in the main MERGE or a dedicated follow-up query
+        all_cypher = "\n".join(cypher_statements)
+        assert "coalesce(" in all_cypher and "physics_domain" in all_cypher
 
     def test_cocos_transformation_type_uses_coalesce(
         self, cypher_statements: list[str]

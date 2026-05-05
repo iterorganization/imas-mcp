@@ -298,10 +298,12 @@ class TestUnitSanity:
 class TestKindDerivation:
     """derive_kind deterministically assigns kind from name tokens."""
 
-    def test_component_of_returns_vector(self):
+    def test_component_of_returns_scalar(self):
         from imas_codex.standard_names.kind_derivation import derive_kind
 
-        assert derive_kind("binormal_component_of_wave_electric_field") == "vector"
+        # A component extracts one axis — it is a scalar projection of the
+        # parent vector, not a vector itself.
+        assert derive_kind("binormal_component_of_wave_electric_field") == "scalar"
 
     def test_tensor_returns_tensor(self):
         from imas_codex.standard_names.kind_derivation import derive_kind
@@ -352,7 +354,7 @@ class TestKindDerivation:
 
     @pytest.mark.asyncio
     async def test_kind_overridden_in_worker(self):
-        """Full worker test: kind is overridden from scalar → vector."""
+        """Full worker test: kind stays scalar for a component name."""
         from imas_codex.standard_names.enrich_workers import enrich_validate_worker
 
         item = _make_item(
@@ -370,7 +372,7 @@ class TestKindDerivation:
         ):
             await enrich_validate_worker(state)
 
-        assert item["kind"] == "vector"
+        assert item["kind"] == "scalar"
 
     @pytest.mark.asyncio
     async def test_kind_spectrum_set_in_worker(self):

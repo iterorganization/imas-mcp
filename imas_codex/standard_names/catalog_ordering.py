@@ -1,7 +1,7 @@
 """Deterministic topological ordering for per-domain catalog entries.
 
 Implements Kahn's topological sort over the ordering-parent relation
-derived from ``HAS_ARGUMENT`` and ``HAS_ERROR`` graph edges, with
+derived from ``COMPONENT_OF`` and ``HAS_ERROR`` graph edges, with
 alphabetic tie-break and clean-root / orphan queue separation.
 
 Pure function of ``(entry-ids, in-domain-edges, cross-domain-edge
@@ -37,7 +37,7 @@ def order_entries_by_hierarchy(
         (or ``"id"``).
     edges:
         List of ``(src_id, tgt_id, edge_type)`` tuples where
-        *edge_type* ∈ ``{"HAS_ARGUMENT", "HAS_ERROR"}``.
+        *edge_type* ∈ ``{"COMPONENT_OF", "HAS_ERROR"}``.
         All edges are **in-domain** (both endpoints present in
         *entries*).
     cross_domain_parent_ids:
@@ -69,7 +69,7 @@ def order_entries_by_hierarchy(
 
     # ── Build ordering-parent → child adjacency ────────────────────
     # Unified ordering-parent relation:
-    #   HAS_ARGUMENT: src -[:HAS_ARGUMENT]-> tgt  ⇒  tgt is parent of src
+    #   COMPONENT_OF: src -[:COMPONENT_OF]-> tgt  ⇒  tgt is parent of src
     #   HAS_ERROR:    src -[:HAS_ERROR]-> tgt     ⇒  src is parent of tgt
     children: dict[str, list[str]] = defaultdict(list)
     in_degree: dict[str, int] = dict.fromkeys(all_names, 0)
@@ -77,7 +77,7 @@ def order_entries_by_hierarchy(
     for src, tgt, edge_type in edges:
         if src not in all_names or tgt not in all_names:
             continue  # skip edges with endpoints outside this domain
-        if edge_type == "HAS_ARGUMENT":
+        if edge_type == "COMPONENT_OF":
             # tgt is ordering-parent of src
             children[tgt].append(src)
             in_degree[src] += 1

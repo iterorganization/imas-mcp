@@ -45,10 +45,10 @@ class TestOrderingUnaryPrefix:
             {"name": "maximum_of_temperature"},
             {"name": "temperature"},
         ]
-        # HAS_ARGUMENT: wrapper -> base (base is ordering-parent)
+        # COMPONENT_OF: wrapper -> base (base is ordering-parent)
         edges = [
-            ("maximum_of_temperature", "temperature", "HAS_ARGUMENT"),
-            ("minimum_of_temperature", "temperature", "HAS_ARGUMENT"),
+            ("maximum_of_temperature", "temperature", "COMPONENT_OF"),
+            ("minimum_of_temperature", "temperature", "COMPONENT_OF"),
         ]
 
         result = order_entries_by_hierarchy(entries, edges)
@@ -80,9 +80,9 @@ class TestOrderingProjection:
             {"name": "y_component_of_magnetic_field"},
         ]
         edges = [
-            ("x_component_of_magnetic_field", "magnetic_field", "HAS_ARGUMENT"),
-            ("y_component_of_magnetic_field", "magnetic_field", "HAS_ARGUMENT"),
-            ("z_component_of_magnetic_field", "magnetic_field", "HAS_ARGUMENT"),
+            ("x_component_of_magnetic_field", "magnetic_field", "COMPONENT_OF"),
+            ("y_component_of_magnetic_field", "magnetic_field", "COMPONENT_OF"),
+            ("z_component_of_magnetic_field", "magnetic_field", "COMPONENT_OF"),
         ]
 
         result = order_entries_by_hierarchy(entries, edges)
@@ -113,10 +113,10 @@ class TestOrderingBinary:
             {"name": "pressure"},
             {"name": "density"},
         ]
-        # Binary has two HAS_ARGUMENT edges
+        # Binary has two COMPONENT_OF edges
         edges = [
-            ("ratio_of_pressure_to_density", "pressure", "HAS_ARGUMENT"),
-            ("ratio_of_pressure_to_density", "density", "HAS_ARGUMENT"),
+            ("ratio_of_pressure_to_density", "pressure", "COMPONENT_OF"),
+            ("ratio_of_pressure_to_density", "density", "COMPONENT_OF"),
         ]
 
         result = order_entries_by_hierarchy(entries, edges)
@@ -186,8 +186,8 @@ class TestOrderingMixed:
         ]
         edges = [
             ("temperature", "upper_uncertainty_of_temperature", "HAS_ERROR"),
-            ("x_component_of_temperature", "temperature", "HAS_ARGUMENT"),
-            ("maximum_of_temperature", "temperature", "HAS_ARGUMENT"),
+            ("x_component_of_temperature", "temperature", "COMPONENT_OF"),
+            ("maximum_of_temperature", "temperature", "COMPONENT_OF"),
         ]
 
         result = order_entries_by_hierarchy(entries, edges)
@@ -257,7 +257,7 @@ class TestStabilityClusterReassignment:
             {"name": "maximum_of_temperature", "primary_cluster_id": "cluster_B"},
         ]
         edges = [
-            ("maximum_of_temperature", "temperature", "HAS_ARGUMENT"),
+            ("maximum_of_temperature", "temperature", "COMPONENT_OF"),
         ]
 
         result_v1 = [e["name"] for e in order_entries_by_hierarchy(entries_v1, edges)]
@@ -289,7 +289,7 @@ class TestStabilityPropertyPermutation:
             {"unit": "eV", "kind": "scalar", "name": "maximum_of_temperature"},
         ]
         edges = [
-            ("maximum_of_temperature", "temperature", "HAS_ARGUMENT"),
+            ("maximum_of_temperature", "temperature", "COMPONENT_OF"),
         ]
 
         result_v1 = [e["name"] for e in order_entries_by_hierarchy(entries_v1, edges)]
@@ -710,8 +710,8 @@ class TestOrderingCycleDetection:
         ]
         # Mutual dependency → cycle
         edges = [
-            ("a", "b", "HAS_ARGUMENT"),
-            ("b", "a", "HAS_ARGUMENT"),
+            ("a", "b", "COMPONENT_OF"),
+            ("b", "a", "COMPONENT_OF"),
         ]
 
         with pytest.raises(OrderingError, match="unemitted"):

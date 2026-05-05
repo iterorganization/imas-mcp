@@ -27,9 +27,16 @@ _VALID_ENTRY = {
 
 def _make_isnc(tmp_path: Path, entry: dict, domain: str = "kinetics") -> Path:
     root = tmp_path / "isnc"
-    sn_dir = root / "standard_names" / domain
+    sn_dir = root / "standard_names"
     sn_dir.mkdir(parents=True)
-    (sn_dir / f"{entry['name']}.yml").write_text(yaml.safe_dump(entry))
+    domain_file = sn_dir / f"{domain}.yml"
+    # Append to existing list if file exists
+    if domain_file.exists():
+        existing = yaml.safe_load(domain_file.read_text()) or []
+        existing.append(entry)
+        domain_file.write_text(yaml.safe_dump(existing))
+    else:
+        domain_file.write_text(yaml.safe_dump([entry]))
     return root
 
 

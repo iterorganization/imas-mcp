@@ -518,19 +518,25 @@ def _write_catalog_yaml(
     domain: str = "core_plasma_physics",
     filename: str | None = None,
 ) -> Path:
-    """Write a catalog YAML entry in the proper directory structure.
+    """Write a catalog YAML entry in per-domain list layout.
 
-    Creates ``<root>/standard_names/<domain>/<filename>`` and returns ``root``
-    (which is what ``run_import()`` expect).
+    Creates ``<root>/standard_names/<domain>.yml`` containing a YAML list
+    and returns ``root`` (which is what ``run_import()`` expects).
 
     ``physics_domain`` is stripped from the entry dict if present — it's
     derived from the path, not from YAML content.
     """
     clean = {k: v for k, v in entry.items() if k != "physics_domain"}
-    fname = filename or f"{clean.get('name', 'entry')}.yaml"
-    dest = root / "standard_names" / domain
+    dest = root / "standard_names"
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / fname).write_text(yaml.safe_dump(clean))
+    domain_file = dest / f"{domain}.yml"
+    # Append to existing list if file exists
+    if domain_file.exists():
+        existing = yaml.safe_load(domain_file.read_text()) or []
+        existing.append(clean)
+        domain_file.write_text(yaml.safe_dump(existing))
+    else:
+        domain_file.write_text(yaml.safe_dump([clean]))
     return root
 
 

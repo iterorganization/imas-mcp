@@ -175,6 +175,17 @@ def _set_claim(gc, sn_id: str, token: str) -> None:
     )
 
 
+def _set_refining(gc, sn_id: str) -> None:
+    """Simulate the refine-claim transition (name_stage → 'refining')."""
+    gc.query(
+        """
+        MATCH (sn:StandardName {id: $id})
+        SET sn.name_stage = 'refining'
+        """,
+        id=sn_id,
+    )
+
+
 def _fetch_sn(gc, sn_id: str) -> dict:
     rows = gc.query(
         """
@@ -349,7 +360,8 @@ def test_rotation_to_acceptance(_gc, _clean):
     )
     assert r1 == "reviewed"
 
-    # Step 2: refine SN_v1 → SN_v2 (new node, edge migration)
+    # Step 2: transition to refining (simulates refine claim) and refine
+    _set_refining(_gc, sn_v1)
     persist_refined_name(
         old_name=sn_v1,
         new_name=sn_v2,
@@ -435,6 +447,7 @@ def test_exhaustion_path(_gc, _clean):
             rotation_cap=3,
         )
         assert r == "reviewed", f"Expected 'reviewed' for {old_sn!r}, got {r!r}"
+        _set_refining(_gc, old_sn)
         persist_refined_name(
             old_name=old_sn,
             new_name=new_sn,
@@ -602,6 +615,7 @@ def test_edge_migration_idempotent(_gc, _clean):
         min_score=0.75,
         rotation_cap=3,
     )
+    _set_refining(_gc, sn_v1)
     persist_refined_name(
         old_name=sn_v1,
         new_name=sn_v2,
@@ -627,6 +641,7 @@ def test_edge_migration_idempotent(_gc, _clean):
         min_score=0.75,
         rotation_cap=3,
     )
+    _set_refining(_gc, sn_v2)
     persist_refined_name(
         old_name=sn_v2,
         new_name=sn_v3,
@@ -703,6 +718,7 @@ def test_refined_name_inherits_unit_and_cluster_edges(_gc, _clean):
         min_score=0.75,
         rotation_cap=3,
     )
+    _set_refining(_gc, sn_v1)
     persist_refined_name(
         old_name=sn_v1,
         new_name=sn_v2,
@@ -754,6 +770,7 @@ def test_chain_history_walks_full_chain(_gc, _clean):
 
     # Build chain: v3 → v2 → v1
     _create_sn(_gc, sn_v1, name_stage="drafted", chain_length=0)
+    _set_refining(_gc, sn_v1)
     persist_refined_name(
         old_name=sn_v1,
         new_name=sn_v2,
@@ -763,6 +780,7 @@ def test_chain_history_walks_full_chain(_gc, _clean):
         old_chain_length=0,
         model="m",
     )
+    _set_refining(_gc, sn_v2)
     persist_refined_name(
         old_name=sn_v2,
         new_name=sn_v3,

@@ -88,18 +88,6 @@ class TestImportSuccess:
         assert kwargs["accept_unit_override"] is True
 
     @patch(MOCK_TARGET)
-    def test_accept_cocos_override_forwarded(self, mock_import):
-        mock_import.return_value = _success_report()
-        runner = CliRunner()
-        with runner.isolated_filesystem():
-            import os
-
-            os.makedirs("isnc")
-            runner.invoke(sn, ["import", "--isnc", "isnc", "--accept-cocos-override"])
-        _, kwargs = mock_import.call_args
-        assert kwargs["accept_cocos_override"] is True
-
-    @patch(MOCK_TARGET)
     def test_override_defaults_false(self, mock_import):
         mock_import.return_value = _success_report()
         runner = CliRunner()
@@ -110,7 +98,6 @@ class TestImportSuccess:
             runner.invoke(sn, ["import", "--isnc", "isnc"])
         _, kwargs = mock_import.call_args
         assert kwargs["accept_unit_override"] is False
-        assert kwargs["accept_cocos_override"] is False
 
     @patch(MOCK_TARGET)
     def test_dry_run_forwarded(self, mock_import):

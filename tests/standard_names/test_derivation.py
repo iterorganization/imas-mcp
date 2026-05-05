@@ -30,11 +30,11 @@ def test_d1_leaf_temperature():
 
 
 def test_d2_maximum_of_temperature():
-    """maximum_of_temperature → HAS_ARGUMENT to temperature."""
+    """maximum_of_temperature → COMPONENT_OF to temperature."""
     edges = derive_edges("maximum_of_temperature")
     assert len(edges) == 1
     e = edges[0]
-    assert e.edge_type == "HAS_ARGUMENT"
+    assert e.edge_type == "COMPONENT_OF"
     assert e.from_name == "maximum_of_temperature"
     assert e.to_name == "temperature"
     assert e.props["operator"] == "maximum"
@@ -47,11 +47,11 @@ def test_d2_maximum_of_temperature():
 
 
 def test_d3_time_derivative_of_temperature():
-    """time_derivative_of_temperature → HAS_ARGUMENT to temperature."""
+    """time_derivative_of_temperature → COMPONENT_OF to temperature."""
     edges = derive_edges("time_derivative_of_temperature")
     assert len(edges) == 1
     e = edges[0]
-    assert e.edge_type == "HAS_ARGUMENT"
+    assert e.edge_type == "COMPONENT_OF"
     assert e.from_name == "time_derivative_of_temperature"
     assert e.to_name == "temperature"
     assert e.props["operator"] == "time_derivative"
@@ -64,11 +64,11 @@ def test_d3_time_derivative_of_temperature():
 
 
 def test_d4_time_average_of_maximum_of_temperature():
-    """time_average_of_maximum_of_temperature → HAS_ARGUMENT to maximum_of_temperature."""
+    """time_average_of_maximum_of_temperature → COMPONENT_OF to maximum_of_temperature."""
     edges = derive_edges("time_average_of_maximum_of_temperature")
     assert len(edges) == 1
     e = edges[0]
-    assert e.edge_type == "HAS_ARGUMENT"
+    assert e.edge_type == "COMPONENT_OF"
     assert e.from_name == "time_average_of_maximum_of_temperature"
     assert e.to_name == "maximum_of_temperature"
     assert e.props["operator"] == "time_average"
@@ -81,11 +81,11 @@ def test_d4_time_average_of_maximum_of_temperature():
 
 
 def test_d5_temperature_magnitude():
-    """temperature_magnitude → HAS_ARGUMENT to temperature."""
+    """temperature_magnitude → COMPONENT_OF to temperature."""
     edges = derive_edges("temperature_magnitude")
     assert len(edges) == 1
     e = edges[0]
-    assert e.edge_type == "HAS_ARGUMENT"
+    assert e.edge_type == "COMPONENT_OF"
     assert e.from_name == "temperature_magnitude"
     assert e.to_name == "temperature"
     assert e.props["operator"] == "magnitude"
@@ -98,11 +98,11 @@ def test_d5_temperature_magnitude():
 
 
 def test_d6_temperature_moment():
-    """temperature_moment → HAS_ARGUMENT to temperature."""
+    """temperature_moment → COMPONENT_OF to temperature."""
     edges = derive_edges("temperature_moment")
     assert len(edges) == 1
     e = edges[0]
-    assert e.edge_type == "HAS_ARGUMENT"
+    assert e.edge_type == "COMPONENT_OF"
     assert e.from_name == "temperature_moment"
     assert e.to_name == "temperature"
     assert e.props["operator"] == "moment"
@@ -115,11 +115,11 @@ def test_d6_temperature_moment():
 
 
 def test_d7_temperature_reference_waveform():
-    """temperature_reference_waveform → HAS_ARGUMENT to temperature."""
+    """temperature_reference_waveform → COMPONENT_OF to temperature."""
     edges = derive_edges("temperature_reference_waveform")
     assert len(edges) == 1
     e = edges[0]
-    assert e.edge_type == "HAS_ARGUMENT"
+    assert e.edge_type == "COMPONENT_OF"
     assert e.from_name == "temperature_reference_waveform"
     assert e.to_name == "temperature"
     assert e.props["operator"] == "reference_waveform"
@@ -132,11 +132,11 @@ def test_d7_temperature_reference_waveform():
 
 
 def test_d8_temperature_bessel_0():
-    """temperature_bessel_0 → HAS_ARGUMENT to temperature."""
+    """temperature_bessel_0 → COMPONENT_OF to temperature."""
     edges = derive_edges("temperature_bessel_0")
     assert len(edges) == 1
     e = edges[0]
-    assert e.edge_type == "HAS_ARGUMENT"
+    assert e.edge_type == "COMPONENT_OF"
     assert e.from_name == "temperature_bessel_0"
     assert e.to_name == "temperature"
     assert e.props["operator"] == "bessel_0"
@@ -149,7 +149,7 @@ def test_d8_temperature_bessel_0():
 
 
 def test_d9_ratio_of_temperature_to_pressure():
-    """ratio_of_temperature_to_pressure → two HAS_ARGUMENT edges."""
+    """ratio_of_temperature_to_pressure → two COMPONENT_OF edges."""
     edges = derive_edges("ratio_of_temperature_to_pressure")
     assert len(edges) == 2
 
@@ -157,7 +157,7 @@ def test_d9_ratio_of_temperature_to_pressure():
     assert set(edge_by_role) == {"a", "b"}
 
     ea = edge_by_role["a"]
-    assert ea.edge_type == "HAS_ARGUMENT"
+    assert ea.edge_type == "COMPONENT_OF"
     assert ea.from_name == "ratio_of_temperature_to_pressure"
     assert ea.to_name == "temperature"
     assert ea.props["operator"] == "ratio"
@@ -165,7 +165,7 @@ def test_d9_ratio_of_temperature_to_pressure():
     assert ea.props["separator"] == "to"
 
     eb = edge_by_role["b"]
-    assert eb.edge_type == "HAS_ARGUMENT"
+    assert eb.edge_type == "COMPONENT_OF"
     assert eb.from_name == "ratio_of_temperature_to_pressure"
     assert eb.to_name == "pressure"
     assert eb.props["operator"] == "ratio"
@@ -188,8 +188,8 @@ def test_d10_upper_uncertainty_of_temperature():
     assert e.from_name == "temperature"
     assert e.to_name == "upper_uncertainty_of_temperature"
     assert e.props["error_type"] == "upper"
-    # No HAS_ARGUMENT
-    ha = [x for x in edges if x.edge_type == "HAS_ARGUMENT"]
+    # No COMPONENT_OF
+    ha = [x for x in edges if x.edge_type == "COMPONENT_OF"]
     assert ha == []
 
 
@@ -235,7 +235,7 @@ def test_d13_maximum_of_temperature_at_plasma_boundary():
     edges = derive_edges("maximum_of_temperature_at_plasma_boundary")
     assert len(edges) == 1
     e = edges[0]
-    assert e.edge_type == "HAS_ARGUMENT"
+    assert e.edge_type == "COMPONENT_OF"
     assert e.from_name == "maximum_of_temperature_at_plasma_boundary"
     assert e.to_name == "temperature_at_plasma_boundary"
     assert e.props["operator"] == "maximum"
@@ -270,7 +270,7 @@ def test_d15_garbage_string():
 
 
 def test_d16_projection_monkeypatched():
-    """Projection IR shape → HAS_ARGUMENT with operator_kind='projection'."""
+    """Projection IR shape → COMPONENT_OF with operator_kind='projection'."""
     # Build a stub IR representing current_density_parallel_component
     base = isn_ir.QuantityOrCarrier(
         token="current_density", kind=isn_ir.BaseKind.QUANTITY
@@ -301,7 +301,7 @@ def test_d16_projection_monkeypatched():
 
     assert len(edges) == 1
     e = edges[0]
-    assert e.edge_type == "HAS_ARGUMENT"
+    assert e.edge_type == "COMPONENT_OF"
     assert e.from_name == name
     assert e.to_name == "current_density"
     assert e.props["operator"] == "component"
