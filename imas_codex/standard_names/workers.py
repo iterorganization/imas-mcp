@@ -1704,6 +1704,18 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
         )
     context["compose_scored_examples"] = compose_scored_examples
 
+    # --- NC rules injection ---
+    # Load naming-consistency rules from YAML so the system prompt
+    # {% include "_nc_rules.md" %} block renders the full rule set.
+    from imas_codex.llm.prompt_loader import load_prompt_config
+
+    try:
+        _rules_cfg = load_prompt_config("sn_composition_rules")
+        context["composition_rules"] = _rules_cfg.get("composition_rules", [])
+    except Exception:
+        wlog.debug("NC rules YAML not found — skipping injection")
+        context["composition_rules"] = []
+
     from imas_codex.settings import get_compose_lean
 
     compose_lean = get_compose_lean()

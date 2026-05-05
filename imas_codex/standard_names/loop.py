@@ -762,7 +762,6 @@ def _build_pool_specs(
             release=_make_release_adapter(
                 release_generate_name_claims, ids_kwarg="source_ids"
             ),
-            weight=0.25,
         ),
         PoolSpec(
             name="review_name",
@@ -774,7 +773,7 @@ def _build_pool_specs(
             release=_make_release_adapter(
                 release_review_names_claims, ids_kwarg="sn_ids"
             ),
-            weight=0.15,
+            replicas=4,
         ),
         PoolSpec(
             name="refine_name",
@@ -788,7 +787,6 @@ def _build_pool_specs(
             release=_make_release_adapter(
                 release_refine_name_claims, ids_kwarg="sn_ids"
             ),
-            weight=0.15,
         ),
         PoolSpec(
             name="generate_docs",
@@ -800,7 +798,6 @@ def _build_pool_specs(
             release=_make_release_adapter(
                 release_generate_docs_claims, ids_kwarg="sn_ids"
             ),
-            weight=0.20,
         ),
         PoolSpec(
             name="review_docs",
@@ -812,7 +809,7 @@ def _build_pool_specs(
             release=_make_release_adapter(
                 release_review_docs_claims, ids_kwarg="sn_ids"
             ),
-            weight=0.15,
+            replicas=4,
         ),
         PoolSpec(
             name="refine_docs",
@@ -826,7 +823,6 @@ def _build_pool_specs(
             release=_make_release_adapter(
                 release_refine_docs_claims, ids_kwarg="sn_ids"
             ),
-            weight=0.10,
         ),
     ]
 

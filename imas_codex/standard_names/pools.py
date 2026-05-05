@@ -183,6 +183,20 @@ class PoolSpec:
     The orchestrator only needs these two callables plus the pool name
     to drive the loop — all pipeline-specific logic stays inside the
     callables themselves.
+
+    ``replicas`` controls the number of concurrent ``pool_loop`` tasks
+    spawned for this pool.  Claim queries are atomic (UUID claim_token
+    + ORDER BY rand()), so multiple replicas safely claim disjoint
+    batches.  Health counters are shared across replicas — safe in
+    asyncio's cooperative model since no two coroutines execute between
+    await points.  Each replica gets its own ``_PoolBackoff`` instance
+    so the exponential ramp is per-replica rather than shared (see
+    ``_replica_backoffs``).
+
+    Set ``replicas > 1`` for pools whose batch processors are
+    sequential per-item (e.g. review_name, review_docs) to increase
+    throughput.  Pools with internal concurrency (e.g. generate_name
+    uses a 96-worker asyncio.Queue) should stay at 1.
     """
 
     name: str
@@ -190,13 +204,16 @@ class PoolSpec:
     process: ProcessFn
     weight: float = 0.0
     release: ReleaseFn | None = None
+    replicas: int = 1
     health: PoolHealth = field(init=False)
     backoff: _PoolBackoff = field(default_factory=_PoolBackoff)
+    _replica_backoffs: list[_PoolBackoff] = field(init=False)
 
     def __post_init__(self) -> None:
         if self.weight == 0.0:
             self.weight = POOL_WEIGHTS.get(self.name, 0.0)
         self.health = PoolHealth(pool=self.name)
+        self._replica_backoffs = [_PoolBackoff() for _ in range(self.replicas)]
 
 
 async def pool_loop(
@@ -207,6 +224,7 @@ async def pool_loop(
     active_pools_fn: Callable[[], set[str]],
     weights: dict[str, float] = POOL_WEIGHTS,
     admission_poll: float = 0.5,
+    replica_idx: int = 0,
 ) -> None:
     """Cooperative pool worker.
 
@@ -223,8 +241,21 @@ async def pool_loop(
     * Errors are logged and counted but do not crash the pool — the
       next iteration will retry (the claim infrastructure handles
       orphan recovery via ``claimed_at`` timeout).
+
+    When ``spec.replicas > 1``, multiple ``pool_loop`` tasks share
+    the same ``PoolSpec`` (and therefore the same ``PoolHealth``
+    counters).  This is safe in asyncio's cooperative model — no two
+    coroutines execute between await points.  Each replica uses its
+    own ``_PoolBackoff`` (via ``spec._replica_backoffs[replica_idx]``)
+    so the exponential ramp is per-replica.
     """
-    logger.info("pool[%s] starting", spec.name)
+    tag = (
+        f"pool[{spec.name}#{replica_idx}]"
+        if spec.replicas > 1
+        else f"pool[{spec.name}]"
+    )
+    backoff = spec._replica_backoffs[replica_idx]
+    logger.info("%s starting", tag)
     while not stop_event.is_set():
         # ── Admission gate ────────────────────────────────────────
         if not mgr.pool_admit(spec.name, weights, active_pools_fn()):
@@ -240,18 +271,16 @@ async def pool_loop(
         except Exception as exc:  # noqa: BLE001 — log and continue
             spec.health.error_count += 1
             spec.health.last_error = f"claim: {exc!r}"
-            logger.exception("pool[%s] claim failed: %s", spec.name, exc)
+            logger.exception("%s claim failed: %s", tag, exc)
             try:
-                await asyncio.wait_for(
-                    stop_event.wait(), timeout=spec.backoff.next_sleep()
-                )
+                await asyncio.wait_for(stop_event.wait(), timeout=backoff.next_sleep())
                 break
             except TimeoutError:
                 continue
 
         if batch is None:
             spec.health.consecutive_empty_claims += 1
-            sleep_for = spec.backoff.next_sleep()
+            sleep_for = backoff.next_sleep()
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=sleep_for)
                 break
@@ -259,7 +288,7 @@ async def pool_loop(
                 continue
 
         # Reset backoff and empty-claim counter after a successful claim.
-        spec.backoff.reset()
+        backoff.reset()
         spec.health.consecutive_empty_claims = 0
         spec.health.in_flight += 1
 
@@ -268,26 +297,26 @@ async def pool_loop(
             count = await spec.process(batch)
             spec.health.total_processed += count
             spec.health.mark_progress()
-            logger.debug("pool[%s] processed %d items", spec.name, count)
+            logger.debug("%s processed %d items", tag, count)
         except asyncio.CancelledError:
-            logger.info("pool[%s] cancelled mid-batch", spec.name)
+            logger.info("%s cancelled mid-batch", tag)
             raise
         except Exception as exc:  # noqa: BLE001
             spec.health.error_count += 1
             spec.health.last_error = f"process: {exc!r}"
-            logger.exception("pool[%s] process failed: %s", spec.name, exc)
+            logger.exception("%s process failed: %s", tag, exc)
             if spec.release is not None:
                 try:
                     await spec.release(batch)
                 except Exception as rel_exc:  # noqa: BLE001
                     logger.exception(
-                        "pool[%s] release failed (continuing): %s",
-                        spec.name,
+                        "%s release failed (continuing): %s",
+                        tag,
                         rel_exc,
                     )
         finally:
             spec.health.in_flight = max(0, spec.health.in_flight - 1)
-    logger.info("pool[%s] exiting cleanly", spec.name)
+    logger.info("%s exiting cleanly", tag)
 
 
 # Consecutive reserve-failure threshold across all pools before declaring
@@ -563,26 +592,29 @@ async def run_pools(
                 )
                 p.health.consecutive_empty_claims = 0
             p.health._last_pending_count = current
-            if (
-                current > 0
-                and p.health.consecutive_empty_claims < _EMPTY_CLAIM_EXCLUDE_THRESHOLD
-            ):
+            # Scale threshold by replicas: with N replicas, empty claims
+            # accumulate N× faster so the threshold must scale accordingly.
+            threshold = _EMPTY_CLAIM_EXCLUDE_THRESHOLD * p.replicas
+            if current > 0 and p.health.consecutive_empty_claims < threshold:
                 result.add(p.name)
         return result
 
-    tasks = [
-        asyncio.create_task(
-            pool_loop(
-                p,
-                mgr,
-                stop_event,
-                active_pools_fn=active_pools_fn,
-                weights=weights,
-            ),
-            name=f"pool[{p.name}]",
-        )
-        for p in pools
-    ]
+    tasks = []
+    for p in pools:
+        for replica_idx in range(p.replicas):
+            tasks.append(
+                asyncio.create_task(
+                    pool_loop(
+                        p,
+                        mgr,
+                        stop_event,
+                        active_pools_fn=active_pools_fn,
+                        weights=weights,
+                        replica_idx=replica_idx,
+                    ),
+                    name=f"pool[{p.name}#{replica_idx}]",
+                )
+            )
 
     watchdog_task = asyncio.create_task(
         _budget_watchdog(
