@@ -93,10 +93,10 @@ class TestAllPhaseCountersViaLoop:
         """All six counter types are accumulated from a single fake turn."""
         phases = _make_phases(
             generate=3,
-            enrich=2,
+            generate_docs=2,
             review_names=5,
             review_docs=4,
-            regen=1,
+            refine_name=1,
             reconcile=6,
             link=8,
         )
@@ -126,8 +126,8 @@ class TestAllPhaseCountersViaLoop:
             summary = await run_sn_loop(cost_limit=100.0)
 
         assert summary.names_composed == 3, "generate → names_composed"
-        assert summary.names_enriched == 2, "enrich → names_enriched"
+        assert summary.names_enriched == 2, "generate_docs → names_enriched"
         assert summary.names_reviewed == 9, "review_names+review_docs → names_reviewed"
-        assert summary.names_regenerated == 1, "regen → names_regenerated"
+        assert summary.names_regenerated == 1, "refine_name → names_regenerated"
         assert summary.sources_reconciled == 6, "reconcile → sources_reconciled"
         assert summary.links_resolved == 8, "link → links_resolved"

@@ -1072,6 +1072,13 @@ class TestRunSnPoolsFinalizePopulatesCounters:
             "refine_name": health_regen,
         }
 
+        # Mock GraphClient so the post-create SNRun verify query succeeds
+        _mock_gc_ctx = MagicMock()
+        _mock_gc_inst = MagicMock()
+        _mock_gc_inst.query.return_value = [{"cnt": 1}]
+        _mock_gc_ctx.__enter__ = MagicMock(return_value=_mock_gc_inst)
+        _mock_gc_ctx.__exit__ = MagicMock(return_value=False)
+
         with (
             patch(f"{_GO}.reconcile_standard_name_sources", return_value={}),
             patch(
@@ -1087,6 +1094,10 @@ class TestRunSnPoolsFinalizePopulatesCounters:
             patch(f"{_BM}.get_total_spent", new_callable=AsyncMock, return_value=0.0),
             patch(f"{_BM}.exhausted", return_value=True),
             patch(f"{_BM}.phase_spent", new_callable=lambda: property(lambda self: {})),
+            patch(
+                "imas_codex.graph.client.GraphClient",
+                return_value=_mock_gc_ctx,
+            ),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 

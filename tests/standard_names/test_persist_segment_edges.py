@@ -478,7 +478,8 @@ class TestSegmentEdgeRoundTrip:
         """Every edge dict passed to Cypher must have exactly
         {position, segment, token} — no extra, no missing keys."""
         mock_gc.query.side_effect = [
-            [],  # DELETE
+            [],  # column SET
+            [],  # DELETE existing edges
             [
                 {"token": "electron", "segment": "subject", "matched": True},
                 {"token": "temperature", "segment": "physical_base", "matched": True},

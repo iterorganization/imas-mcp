@@ -282,6 +282,10 @@ class TestCoalesceSafety:
         # The grammar_* fields now written are grammar_parse_version (version
         # string) and validation_diagnostics_json, both computed by
         # _parse_grammar_vnext.
+        # physics_domain is NOT in the main MERGE batch — it's handled
+        # separately in the promote-on-higher-rank block that reads existing
+        # values, computes promotion in Python, and writes back via a
+        # dedicated follow-up query.
         required_keys = {
             "id",
             "source_types",
@@ -293,7 +297,6 @@ class TestCoalesceSafety:
             "validity_domain",
             "constraints",
             "unit",
-            "physics_domain",
             "cocos_transformation_type",
             "cocos",
             "dd_version",
@@ -786,9 +789,7 @@ class TestLlmCostPersistence:
             assert field in cypher, f"MERGE missing SET clause for {field}"
 
     def test_cost_fields_coalesced_not_overwritten(self) -> None:
-        """Cost fields must use coalesce so a None incoming value never
-        erases a previous LLM call's cost attribution.
-        """
+        """Cost fields must accumulate (not overwrite) to preserve previous LLM costs."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
         names = [
@@ -802,4 +803,7 @@ class TestLlmCostPersistence:
         ]
         _call_write(names, mock_gc)
         cypher = _merge_cypher(mock_gc)
-        assert "sn.llm_cost = coalesce(b.llm_cost, sn.llm_cost)" in cypher
+        # llm_cost uses an accumulator pattern: adds incoming cost to existing
+        # cost when non-null, otherwise preserves existing value.
+        assert "sn.llm_cost" in cypher
+        assert "coalesce(sn.llm_cost, 0.0) + b.llm_cost" in cypher
