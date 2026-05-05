@@ -20,9 +20,17 @@ from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
 
 def _load_compose_system_raw() -> str:
-    """Read the raw (un-rendered) generate_name_system.md template."""
-    path = PROMPTS_DIR / "sn" / "generate_name_system.md"
-    return path.read_text(encoding="utf-8")
+    """Return the fully rendered generate_name_system.md content.
+
+    Uses ``render_prompt`` with the compose context so that ``{% include %}``
+    directives are resolved and Jinja2 template variables (e.g.
+    ``composition_rules`` for NC rules) are substituted.  This gives the
+    same content that reaches the LLM at runtime.
+    """
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.standard_names.context import build_compose_context
+
+    return render_prompt("sn/generate_name_system", build_compose_context())
 
 
 # =====================================================================
@@ -160,7 +168,11 @@ class TestHardChecksPlacement:
         # HARD CHECKS must appear after the prelude includes (vocabulary,
         # exemplars). The scored-examples include moved to the user prompt;
         # the system prompt's last prelude include is _exemplars_name_only.md.
-        prelude_end = self.raw.index('{% include "sn/_exemplars_name_only.md" %}')
+        # Since _load_compose_system_raw returns rendered content (includes
+        # already resolved), we anchor on a distinctive phrase from the end
+        # of the _exemplars_name_only.md content.
+        prelude_anchor = "Does the name describe a physical quantity"
+        prelude_end = self.raw.index(prelude_anchor) + len(prelude_anchor)
         hard_pos = self.raw.index("HARD PRE-EMIT CHECKS")
         assert hard_pos > prelude_end
 

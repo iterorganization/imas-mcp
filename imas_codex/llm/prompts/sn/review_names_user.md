@@ -95,6 +95,8 @@ These names already exist in the catalog. Flag candidates that duplicate them:
 
 {% endfor %}
 
+{% include "sn/_review_scored_examples.md" %}
+
 ## Output Format
 
 Return a JSON object with a `reviews` array. Each review MUST include:

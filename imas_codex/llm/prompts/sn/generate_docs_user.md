@@ -70,10 +70,7 @@ Use these definitions to anchor descriptions; do NOT copy them verbatim.
 {% endfor %}{% endif %}
 
 {% if item.dd_aliases %}
-## DD Aliases
-
-These abbreviated forms appear in the DD for this quantity.
-Mention the alias at least once (e.g. "In the IMAS DD this is aliased as `{{ item.dd_aliases[0] }}`.")
+## DD Aliases (context only — do NOT cite in documentation)
 
 {{ item.dd_aliases | join(', ') }}
 {% endif %}
@@ -128,6 +125,6 @@ Return a JSON object with exactly these two fields:
 - ≥ 3 sentences
 - Cover: physical meaning, governing equations (LaTeX), typical values, measurement methods
 - Cross-references to related standard names use `[label](name:bare_id)` inline links only
-- Sign convention sentence starting "Positive when …" if COCOS-dependent; omit if sign-invariant
+- Sign convention (if COCOS-dependent): use exactly `Sign convention: Positive when …` as a standalone paragraph (blank line before and after, plain text — no markdown headings, no bold); omit if sign-invariant
 - American spelling throughout
 - Minimum 20 characters

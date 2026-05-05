@@ -92,8 +92,11 @@ Rules:
   typical value ranges, physical intuition, measurement context.
   Do **not** regress on dimensions that already scored well.
   **American English** throughout.
-- `links`: list of related standard names in `name:xxx` or `dd:path/here`
-  format.  Only include genuine conceptual relationships.
+- `links`: list of related standard names in `name:xxx` format.
+  Only include genuine conceptual relationships.
+- Sign conventions (if COCOS-dependent): use exactly
+  `Sign convention: Positive when <condition>.` as a standalone paragraph
+  (blank line before/after, plain text — no headings, no bold).
 - The `name` field must equal `{{ sn_name }}` exactly — do not alter it.
 
 Return a JSON object matching the output schema with fields:

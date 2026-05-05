@@ -195,14 +195,16 @@ exemplars use American spelling (NC-17) in every prose field.
 2. Are all LaTeX symbols defined on first use, with units?
 3. American spelling throughout every prose field?
 4. For COCOS-dependent quantities: does the documentation contain a
-   concrete `Positive when ...` sentence (no `[...]` placeholders)?
+   `Sign convention: Positive when ...` statement as a standalone paragraph
+   (no markdown headings, no bold, blank lines before/after)?
 5. For spectrum quantities: is the closure integral / Parseval relation
    spelled out with the correct integration variable?
 6. For constraint weights / measurement times: is the generic inverse-problem
    role referenced in one line rather than re-derived?
-7. Are `links` **bare SN ids** of existing names that genuinely enrich
-   understanding (typically 2–6)?
-8. Is the `description` ≤ 180 characters and the `documentation`
+7. Are `links` using the `name:` prefix (e.g. `name:electron_temperature`)
+   and pointing to existing names that genuinely enrich understanding
+   (typically 2–6)?
+8. Is the `description` ≤ 2 concise sentences and the `documentation`
    ≥ 3 sentences?
 9. Does the documentation avoid any mention of DD paths, IDS names, or
     structural database prefixes?

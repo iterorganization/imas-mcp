@@ -183,7 +183,14 @@ def _infer_stage(
         (m.get("content", "") for m in messages if m.get("role") == "system"), ""
     )
     s = sys_content.lower()
-    if "review" in s:
+    # Check "refine" before "review" with specific phrase matching,
+    # because review prompts mention "refinement" and refine prompts
+    # mention "reviewer feedback" — single-keyword matching is ambiguous.
+    if "you are refining" in s:
+        if "documentation" in s or "description" in s or "docs" in s:
+            return "refine_docs"
+        return "refine_name"
+    if "review" in s or "critic" in s:
         # Disambiguate review_name vs review_docs.  The name-axis review
         # prompt says "name-only mode" / "name-axis review"; the docs-axis
         # prompt says "evaluating…documentation" / "documentation text quality".
@@ -201,10 +208,6 @@ def _infer_stage(
         if "documentation quality" in s:
             return "review_docs"
         return "review_name"
-    if "refine" in s or "regenerate" in s:
-        if "documentation" in s or "description" in s:
-            return "refine_docs"
-        return "refine_name"
     if "documentation" in s or "enrich" in s:
         return "generate_docs"
     if "compose" in s or "standard name" in s:

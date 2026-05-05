@@ -114,6 +114,18 @@ def build_compose_context() -> dict[str, Any]:
 
     ctx["physics_domains"] = [e.value for e in PhysicsDomain]
 
+    # NC composition rules (for _nc_rules.md include in system prompt)
+    from imas_codex.llm.prompt_loader import load_prompt_config
+
+    try:
+        _rules_cfg = load_prompt_config("sn_composition_rules")
+        ctx["composition_rules"] = _rules_cfg.get("composition_rules", [])
+    except Exception:
+        logger.warning(
+            "Failed to load sn_composition_rules.yaml; NC rules will be empty"
+        )
+        ctx["composition_rules"] = []
+
     # Bare enum lists (backward compat for user prompt)
     ctx.update(_build_enum_lists())
 

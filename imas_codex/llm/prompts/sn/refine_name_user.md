@@ -85,6 +85,8 @@ _(no prior refinement history — this is the first refine attempt)_
 
 ---
 
+{% include "sn/_compose_scored_examples.md" %}
+
 ## Your task
 
 Propose a new name that materially addresses the **lowest-scoring dimensions**

@@ -88,32 +88,30 @@ _BRACKET_PLACEHOLDER_RE = re.compile(r"\[[a-z][a-z_ ]*\]")
 
 
 def _sanitize_documentation(doc: str | None) -> str | None:
-    """Strip malformed sign-convention sentences from documentation.
+    """Clean bracketed placeholders from sign-convention statements.
 
-    ISN's validator rejects any documentation that mentions "sign convention"
-    unless it contains the exact phrase ``Sign convention: Positive when ...``
-    or ``Sign convention: Positive <quantity> ...`` (no bracketed placeholders).
-    LLMs frequently emit placeholder variants like ``Sign convention: Positive
-    when [condition].`` or lowercase/bold variants. Rather than quarantine the
-    entire entry, we strip any sentence mentioning "sign convention" that does
-    not match the valid form — ISN then accepts the docs without a sign-
-    convention statement (which is acceptable for non-COCOS paths and graceful
-    for COCOS paths where the LLM failed to produce one).
+    Replaces ``[condition]``-style placeholders in sign convention lines
+    with a marker that ISN validation will catch. Does NOT strip sign
+    convention text or collapse paragraph structure — the prompts instruct
+    the correct format and ISN validation gates the export.
     """
     if not isinstance(doc, str) or not doc:
         return doc
     if not _SIGN_CONV_MENTION_RE.search(doc):
         return doc
-    sentences = re.split(r"(?<=[.!?])\s+", doc)
+
+    # Only strip bracketed placeholders from sign convention lines,
+    # preserving all paragraph structure (\n\n boundaries)
+    lines = doc.split("\n")
     cleaned: list[str] = []
-    for s in sentences:
-        if _SIGN_CONV_MENTION_RE.search(s):
-            if not _SIGN_CONV_VALID_RE.search(s):
+    for line in lines:
+        if _SIGN_CONV_MENTION_RE.search(line) and _BRACKET_PLACEHOLDER_RE.search(line):
+            # Remove the bracketed placeholder but keep the line structure
+            line = _BRACKET_PLACEHOLDER_RE.sub("", line).strip()
+            if not line:
                 continue
-            if _BRACKET_PLACEHOLDER_RE.search(s):
-                continue
-        cleaned.append(s)
-    return " ".join(cleaned).strip() or doc
+        cleaned.append(line)
+    return "\n".join(cleaned)
 
 
 def _is_echoed_name(returned: str | None, expected: str) -> bool:

@@ -2559,6 +2559,11 @@ def sn_preview(
     help="Skip auto-export (use existing staging content). For custom filtering, run 'sn export' first.",
 )
 @click.option(
+    "--skip-gate",
+    is_flag=True,
+    help="Skip export quality gates (ISN validation). Use during development.",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Validate and report without making changes",
@@ -2572,6 +2577,7 @@ def sn_release(
     isnc: str | None,
     staging: str | None,
     skip_export: bool,
+    skip_gate: bool,
     dry_run: bool,
 ) -> None:
     """Release standard names to the ISNC catalog.
@@ -2688,6 +2694,10 @@ def sn_release(
     from imas_codex.standard_names.catalog_release import run_release
 
     try:
+        export_kwargs = {}
+        if skip_gate:
+            export_kwargs["skip_gate"] = True
+
         report = run_release(
             isnc_path=isnc_path,
             message=message,
@@ -2697,6 +2707,7 @@ def sn_release(
             remote=remote,
             dry_run=dry_run,
             skip_export=skip_export,
+            export_kwargs=export_kwargs or None,
         )
     except Exception as exc:
         console.print(f"[red]Release error:[/red] {exc}")

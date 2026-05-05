@@ -469,7 +469,7 @@ def test_docs_escalation_at_final_attempt(_gc, _clean, mock_llm):
     )
 
     mock_llm.add_response(
-        "unknown",
+        "refine_docs",
         response=RefinedDocs(
             description="Escalation-refined description for test quantity",
             documentation="## Escalation-refined docs\n\nFinal attempt.",
@@ -497,7 +497,11 @@ def test_docs_escalation_at_final_attempt(_gc, _clean, mock_llm):
 
     with patch(
         "imas_codex.llm.prompt_loader.render_prompt",
-        return_value="Refine these docs.",
+        side_effect=lambda name, *a, **k: (
+            "You are refining documentation based on reviewer feedback."
+            if "system" in name
+            else "Refine these docs."
+        ),
     ):
         processed = asyncio.run(
             process_refine_docs_batch([item], _mock_budget_manager(), stop_event)

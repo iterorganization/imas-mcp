@@ -33,7 +33,36 @@ For each name, the documentation field should cover (where applicable):
 2. **Governing physics** — key equations or relations (use LaTeX). Define all variables with units on first use.
 3. **Measurement methods** — how the quantity is typically measured or computed (diagnostics, reconstruction codes).
 4. **Typical values** — representative ranges for fusion-relevant plasmas, with units. Distinguish between plasma regimes where relevant.
-5. **Sign conventions** — for COCOS-dependent quantities, the documentation MUST contain a concrete sign-convention sentence starting literally with `Positive when ...` or `Positive <quantity> ...` (e.g. `Positive when $B_\phi$ points in the direction of increasing toroidal angle $\phi$.`). The sentence MUST be expressed in pure physical / geometric terms relative to the right-handed cylindrical $(R, \phi, Z)$ basis. **NEVER cite a COCOS number** (e.g. "COCOS-11", "COCOS 17", "the COCOS-N convention") — see the Coordinate Conventions section for the prohibition. Never leave bracketed placeholders like `[condition]` or `[quantity]` — write the actual physical condition. Omit the sentence entirely if the quantity is sign-invariant.
+5. **Sign conventions** — for COCOS-dependent quantities, the documentation MUST contain a sign-convention statement using this exact format:
+
+   ```
+   Sign convention: Positive when <physical condition>.
+   ```
+
+   **Format rules (strictly enforced by automated validation):**
+   - Start with `Sign convention:` (title case, plain text — **no** markdown headings like `### Sign Convention`, **no** bold like `**Sign convention:**`)
+   - Follow with `Positive when <condition>.`, `Positive for <subject>.`, or `Positive <quantity-noun-phrase>.`
+   - Must be a **standalone paragraph** — blank line before AND after
+   - Must NOT be at the start of the documentation (main content comes first)
+   - The condition MUST be expressed in pure physical / geometric terms relative to the right-handed cylindrical $(R, \phi, Z)$ basis
+   - **NEVER cite a COCOS number** (e.g. "COCOS-11", "COCOS 17") — see the Coordinate Conventions section
+   - Never leave bracketed placeholders like `[condition]` — write the actual physical condition
+   - Omit the sign convention entirely if the quantity is sign-invariant
+
+   ✅ Correct example:
+   ```
+   ...main documentation content here...
+
+   Sign convention: Positive when $B_\phi$ points in the direction of increasing toroidal angle $\phi$.
+
+   ...optional further content...
+   ```
+
+   ❌ Wrong examples:
+   - `### Sign Convention` (markdown heading — rejected)
+   - `**Sign convention:** Positive when...` (bold — rejected)
+   - `Positive when...` (missing `Sign convention:` prefix — rejected)
+   - `sign convention: Positive when...` (lowercase — rejected)
 6. **Cross-references** — weave related standard names into the prose using inline `[label](name:bare_id)` links. Do NOT append a `See also:` / `See related:` block at the end of the documentation — see PR-3 below.
 
 ## What You MUST NOT Change
@@ -43,23 +72,6 @@ For each name, the documentation field should cover (where applicable):
 - Kind (scalar / vector / metadata).
 - Unit (authoritative from the Data Dictionary).
 
-## Required structural metadata
-
-Your documentation must reference the supplied DD context structurally, not just rhetorically:
-
-1. **IMAS DD Path citation** — Cite at least one of the supplied `source_paths`
-   verbatim in the documentation prose. Example phrasing:
-   "This quantity corresponds to the IMAS DD path `equilibrium/time_slice/profiles_1d/q`."
-
-2. **DD alias mention** — If the supplied DD context lists abbreviated forms
-   (e.g., `gm1`–`gm9` in equilibrium GGD geometry, `Te`/`ne` in core_profiles),
-   mention the alias once. Example: "In the IMAS DD this is aliased as `gm3`."
-
-3. **Cross-references to related standard names** — When discussing related
-   physics quantities, use the inline link form `[label](name:bare_id)`
-   wherever it flows naturally. Aim for 1-3 inline links if there are
-   genuinely related SNs in the supplied context.
-
 ## Output Schema
 
 Return a JSON object with an `items` array. Each item conforms to:
@@ -67,7 +79,7 @@ Return a JSON object with an `items` array. Each item conforms to:
 ```json
 {
   "standard_name": "exact_input_name",
-  "description": "≤180 chars, ≤2 sentences, physics-meaningful",
+  "description": "≤2 concise sentences, physics-meaningful, American spelling",
   "documentation": "≥3 sentence rich documentation with $LaTeX$, typical values, cross-refs",
   "links": ["name:related_standard_name_1", "name:related_standard_name_2"],
   "validity_domain": "physical region or regime (e.g. core plasma, SOL)",
@@ -80,7 +92,7 @@ Return a JSON object with an `items` array. Each item conforms to:
 ### Field constraints
 
 - `standard_name` — MUST exactly match the input name (hard requirement for result matching).
-- `description` — **≤180 characters**, ≤2 sentences. Must add information beyond what the name tokens encode. Use American spelling (e.g., "ionization", "behavior").
+- `description` — **≤2 concise sentences**. Must add information beyond what the name tokens encode. Use American spelling (e.g., "ionization", "behavior").
 - `documentation` — ≥3 sentences. Must cover physical meaning, measurement context, and related quantities. American spelling throughout.
 - `links` — MUST use the `name:foo_bar` prefix (e.g., `name:electron_temperature`). Each link must name an existing standard name (will be validated; non-existent links cause rejection). URLs (https://…) are permitted for external references.
 - `validity_domain` — optional but encouraged. Physical region or regime where the quantity is meaningful.

@@ -441,15 +441,15 @@ def _do_review_name(
     chain_length: int = 0,
 ) -> str:
     """Claim + run review_name worker. Returns new name_stage."""
-    mock_llm.add_response(
-        "review_name",
-        response=StandardNameQualityReviewNameOnly(
-            source_id=sn_id,
-            standard_name=sn_id,
-            scores=scores,
-            reasoning="E2E test reviewer reasoning",
-        ),
+    review_resp = StandardNameQualityReviewNameOnly(
+        source_id=sn_id,
+        standard_name=sn_id,
+        scores=scores,
+        reasoning="E2E test reviewer reasoning",
     )
+    # RD-quorum needs 2 cycles (primary + secondary)
+    mock_llm.add_response("review_name", response=review_resp)
+    mock_llm.add_response("review_name", response=review_resp)
     token = str(uuid.uuid4())
     _set_claim(gc, sn_id, token)
     item = _make_review_name_item(sn_id, claim_token=token, chain_length=chain_length)
@@ -471,7 +471,7 @@ def _do_refine_name(
 ) -> None:
     """Set refining state + run refine_name worker (old_id → new_id)."""
     mock_llm.add_response(
-        "unknown",
+        "refine_name",
         response=RefinedName(
             name=new_id,
             description=f"E2E refined quantity chain-{chain_length + 1}",
@@ -482,9 +482,15 @@ def _do_refine_name(
     _set_claim_and_stage(gc, old_id, token, "name_stage", "refining")
     item = _make_refine_name_item(old_id, claim_token=token, chain_length=chain_length)
     stop_event = asyncio.Event()
+
+    def _mock_render(template_name, *_args, **_kwargs):
+        if "system" in template_name:
+            return "You are refining a previously generated name."
+        return f"Refine this standard name (chain={chain_length})."
+
     with patch(
         "imas_codex.llm.prompt_loader.render_prompt",
-        return_value=f"Refine this standard name (chain={chain_length}).",
+        side_effect=_mock_render,
     ):
         n = asyncio.run(
             process_refine_name_batch([item], _mock_budget_manager(), stop_event)
@@ -495,7 +501,7 @@ def _do_refine_name(
 def _do_generate_docs(gc, mock_llm, sn_id: str) -> None:
     """Claim + run generate_docs worker."""
     mock_llm.add_response(
-        "unknown",
+        "generate_docs",
         response=GeneratedDocs(
             description=f"E2E generated description for {sn_id}",
             documentation=f"## {sn_id}\n\nE2E generated documentation body for testing purposes.",
@@ -505,9 +511,19 @@ def _do_generate_docs(gc, mock_llm, sn_id: str) -> None:
     _set_claim(gc, sn_id, token)
     item = _make_generate_docs_item(sn_id, claim_token=token)
     stop_event = asyncio.Event()
-    n = asyncio.run(
-        process_generate_docs_batch([item], _mock_budget_manager(), stop_event)
-    )
+
+    def _mock_render(template_name, *_args, **_kwargs):
+        if "system" in template_name:
+            return "You are an expert documentation writer for IMAS standard names."
+        return f"Generate documentation for {sn_id}."
+
+    with patch(
+        "imas_codex.llm.prompt_loader.render_prompt",
+        side_effect=_mock_render,
+    ):
+        n = asyncio.run(
+            process_generate_docs_batch([item], _mock_budget_manager(), stop_event)
+        )
     assert n == 1, f"generate_docs processed {n}/1 for {sn_id!r}"
 
 
@@ -520,15 +536,15 @@ def _do_review_docs(
     docs_chain_length: int = 0,
 ) -> str:
     """Claim + run review_docs worker. Returns new docs_stage."""
-    mock_llm.add_response(
-        "review_docs",
-        response=StandardNameQualityReviewDocs(
-            source_id=sn_id,
-            standard_name=sn_id,
-            scores=scores,
-            reasoning="E2E docs reviewer reasoning",
-        ),
+    review_resp = StandardNameQualityReviewDocs(
+        source_id=sn_id,
+        standard_name=sn_id,
+        scores=scores,
+        reasoning="E2E docs reviewer reasoning",
     )
+    # RD-quorum needs 2 cycles (primary + secondary)
+    mock_llm.add_response("review_docs", response=review_resp)
+    mock_llm.add_response("review_docs", response=review_resp)
     token = str(uuid.uuid4())
     _set_claim(gc, sn_id, token)
     # Fetch current description/documentation (written by generate_docs/refine_docs)
@@ -558,7 +574,7 @@ def _do_refine_docs(
 ) -> None:
     """Set docs refining state + run refine_docs worker."""
     mock_llm.add_response(
-        "unknown",
+        "refine_docs",
         response=RefinedDocs(
             description=f"E2E refined docs description iter-{iteration}",
             documentation=f"## Refined\n\nE2E refined documentation iteration {iteration}.",
@@ -583,9 +599,19 @@ def _do_refine_docs(
         reviewer_comments=reviewer_comments,
     )
     stop_event = asyncio.Event()
-    n = asyncio.run(
-        process_refine_docs_batch([item], _mock_budget_manager(), stop_event)
-    )
+
+    def _mock_render(template_name, *_args, **_kwargs):
+        if "system" in template_name:
+            return "You are refining documentation based on reviewer feedback."
+        return f"Refine docs for {sn_id} (chain={docs_chain_length})."
+
+    with patch(
+        "imas_codex.llm.prompt_loader.render_prompt",
+        side_effect=_mock_render,
+    ):
+        n = asyncio.run(
+            process_refine_docs_batch([item], _mock_budget_manager(), stop_event)
+        )
     assert n == 1, f"refine_docs processed {n}/1 for {sn_id!r}"
 
 
@@ -973,7 +999,7 @@ def test_e2e_name_rotates_then_docs_rotates(_gc, _clean, mock_llm):
     refine_name_calls = [
         c
         for c in mock_llm.calls
-        if c["stage"] == "unknown" and c["response_model"] == "RefinedName"
+        if c["stage"] == "refine_name" and c["response_model"] == "RefinedName"
     ]
     assert len(refine_name_calls) == 2, (
         f"Expected 2 refine_name LLM calls, got {len(refine_name_calls)}"
@@ -987,7 +1013,7 @@ def test_e2e_name_rotates_then_docs_rotates(_gc, _clean, mock_llm):
     refine_docs_calls = [
         c
         for c in mock_llm.calls
-        if c["stage"] == "unknown" and c["response_model"] == "RefinedDocs"
+        if c["stage"] == "refine_docs" and c["response_model"] == "RefinedDocs"
     ]
     assert len(refine_docs_calls) == 2, (
         f"Expected 2 refine_docs LLM calls, got {len(refine_docs_calls)}"

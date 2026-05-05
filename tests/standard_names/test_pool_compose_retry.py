@@ -84,6 +84,7 @@ class _FakeBudgetManager:
 
     def __init__(self):
         self.reserved = 0.0
+        self.run_id = "test-run-id"
 
     def reserve(self, amount, phase=""):
         self.reserved += amount
@@ -125,7 +126,14 @@ def _patch_compose_deps():
         patch("imas_codex.settings.get_compose_lean", return_value=False),
         patch("imas_codex.settings.get_model", return_value="test-model"),
         # Prompt rendering
-        patch("imas_codex.llm.prompt_loader.render_prompt", return_value="prompt"),
+        patch(
+            "imas_codex.llm.prompt_loader.render_prompt",
+            side_effect=lambda name, *a, **k: (
+                "You are an expert standard name composer."
+                if "system" in name
+                else "Compose standard names for this batch."
+            ),
+        ),
         # Enrichment
         patch(
             "imas_codex.standard_names.workers._enrich_batch_items",

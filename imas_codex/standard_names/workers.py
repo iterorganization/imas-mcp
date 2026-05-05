@@ -3966,12 +3966,37 @@ async def process_refine_name_batch(
 
             # ── Build prompt context ──────────────────────────────────
             path = item.get("source_paths", [""])[0] if item.get("source_paths") else ""
+
+            # ── Load scored compose examples for refinement context ────
+            from imas_codex.standard_names.example_loader import load_compose_examples
+
+            try:
+                _item_domain = item.get("physics_domain") or ""
+
+                def _load_compose_examples(domain: str = _item_domain) -> list:
+                    with GraphClient() as _gc:
+                        return load_compose_examples(
+                            _gc, physics_domains=[domain], axis="name"
+                        )
+
+                compose_scored_examples = await _asyncio.to_thread(
+                    _load_compose_examples
+                )
+            except Exception:
+                logger.debug(
+                    "refine_name: scored-example load failed for %s",
+                    sn_id,
+                    exc_info=True,
+                )
+                compose_scored_examples = []
+
             prompt_context: dict[str, Any] = {
                 "item": item,
                 "chain_history": chain_history,
                 "chain_length": chain_length,
                 "hybrid_neighbours": [],
                 "fanout_evidence": "",
+                "compose_scored_examples": compose_scored_examples,
             }
 
             # Attempt hybrid neighbour search (best-effort).  Uses the
@@ -4067,13 +4092,37 @@ async def process_refine_name_batch(
                     fanout_evidence = ""
             prompt_context["fanout_evidence"] = fanout_evidence
 
+            # Load composition rules for system prompt
+            from imas_codex.llm.prompt_loader import load_prompt_config as _lpc
+
+            try:
+                _rules_cfg = _lpc("sn_composition_rules")
+                prompt_context["composition_rules"] = _rules_cfg.get(
+                    "composition_rules", []
+                )
+            except Exception:
+                prompt_context["composition_rules"] = []
+
             user_prompt = render_prompt("sn/refine_name_user", prompt_context)
+            try:
+                system_prompt = render_prompt("sn/refine_name_system", prompt_context)
+            except Exception:
+                logger.debug("refine_name: system prompt render failed for %s", sn_id)
+                system_prompt = None
 
             # ── LLM call ──────────────────────────────────────────────
             try:
+                _messages = (
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ]
+                    if system_prompt
+                    else [{"role": "user", "content": user_prompt}]
+                )
                 llm_out = await acall_llm_structured(
                     model=model,
-                    messages=[{"role": "user", "content": user_prompt}],
+                    messages=_messages,
                     response_model=RefinedName,
                     service="standard-names",
                 )
@@ -4708,10 +4757,31 @@ async def process_review_name_batch(
                 "same_path_neighbours": [],
             }
 
+        # ── Load scored examples for reviewer calibration ──────────────
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.standard_names.example_loader import load_review_examples
+
+        try:
+            _item_domain = item.get("physics_domain") or ""
+
+            def _load_review_examples(domain: str = _item_domain) -> list:
+                with GraphClient() as _gc:
+                    return load_review_examples(
+                        _gc, physics_domains=[domain], axis="name"
+                    )
+
+            review_scored_examples = await _asyncio.to_thread(_load_review_examples)
+        except Exception:
+            logger.debug(
+                "review_name: scored-example load failed for %s", sn_id, exc_info=True
+            )
+            review_scored_examples = []
+
         prompt_context: dict[str, Any] = {
             "items": [item],
             **neighbours,
             **_build_enum_lists(),
+            "review_scored_examples": review_scored_examples,
         }
         try:
             user_prompt = render_prompt("sn/review_names_user", prompt_context)
@@ -5121,6 +5191,12 @@ async def process_generate_docs_batch(
                 f"Unit: {item.get('unit', '')}"
             )
 
+        try:
+            system_prompt = render_prompt("sn/generate_docs_system", prompt_context)
+        except Exception:
+            logger.debug("generate_docs: system prompt render failed for %s", sn_id)
+            system_prompt = None
+
         # ── Budget reservation ─────────────────────────────────────────
         estimated = 0.20
         lease = mgr.reserve(estimated, phase="generate_docs")
@@ -5129,9 +5205,17 @@ async def process_generate_docs_batch(
 
         # ── LLM call ──────────────────────────────────────────────────
         try:
+            _messages = (
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+                if system_prompt
+                else [{"role": "user", "content": user_prompt}]
+            )
             llm_out = await acall_llm_structured(
                 model=model,
-                messages=[{"role": "user", "content": user_prompt}],
+                messages=_messages,
                 response_model=GeneratedDocs,
                 service="standard-names",
             )
@@ -5294,13 +5378,34 @@ async def process_review_docs_batch(
                 "same_path_neighbours": [],
             }
 
+        # ── Load scored examples for reviewer calibration ──────────────
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.standard_names.example_loader import load_review_examples
+
+        try:
+            _item_domain = item.get("physics_domain") or ""
+
+            def _load_review_examples(domain: str = _item_domain) -> list:
+                with GraphClient() as _gc:
+                    return load_review_examples(
+                        _gc, physics_domains=[domain], axis="docs"
+                    )
+
+            review_scored_examples = await _asyncio.to_thread(_load_review_examples)
+        except Exception:
+            logger.debug(
+                "review_docs: scored-example load failed for %s", sn_id, exc_info=True
+            )
+            review_scored_examples = []
+
         prompt_context: dict[str, Any] = {
             "item": item,
             **neighbours,
+            "review_scored_examples": review_scored_examples,
         }
         try:
             user_prompt = render_prompt("sn/review_docs_user", prompt_context)
-            system_prompt = render_prompt("sn/review_docs_user_system", prompt_context)
+            system_prompt = render_prompt("sn/review_docs_system", prompt_context)
         except Exception:
             logger.debug("review_docs: prompt render failed for %s", sn_id)
             user_prompt = (
@@ -5556,6 +5661,12 @@ async def process_refine_docs_batch(
                 f"Reviewer feedback: {item.get('reviewer_comments_docs', '')}"
             )
 
+        try:
+            system_prompt = render_prompt("sn/refine_docs_system", prompt_context)
+        except Exception:
+            logger.debug("refine_docs: system prompt render failed for %s", sn_id)
+            system_prompt = None
+
         # ── Budget reservation ─────────────────────────────────────
         estimated = 0.20
         lease = mgr.reserve(estimated, phase="refine_docs")
@@ -5564,9 +5675,17 @@ async def process_refine_docs_batch(
 
         # ── LLM call ──────────────────────────────────────────────
         try:
+            _messages = (
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+                if system_prompt
+                else [{"role": "user", "content": user_prompt}]
+            )
             llm_out = await acall_llm_structured(
                 model=model,
-                messages=[{"role": "user", "content": user_prompt}],
+                messages=_messages,
                 response_model=RefinedDocs,
                 service="standard-names",
             )

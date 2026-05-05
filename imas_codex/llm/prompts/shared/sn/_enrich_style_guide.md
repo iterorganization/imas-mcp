@@ -51,13 +51,15 @@ SI unit symbols (`m`, `kg`, `eV`) are unaffected — only prose spelling matters
   3. **Relationship to other quantities** — reference related standard names
      by their IDs in `links`.
 - Include typical value ranges for fusion-relevant plasmas where applicable.
-- For COCOS-dependent quantities, note the sign convention.
+- For COCOS-dependent quantities, include a sign convention statement:
+  `Sign convention: Positive when <condition>.` as a standalone paragraph
+  (blank line before and after, plain text — no headings, no bold).
 - Use LaTeX for equations; define variables on first use.
 
 ### Links
 
-- Each entry is a **bare standard-name ID**: e.g., `electron_temperature`.
-- **No** `dd:` prefixes, **no** URLs, **no** `name:` prefixes.
+- Each entry uses the `name:` prefix: e.g., `name:electron_temperature`.
+- URLs (`https://…`) are permitted for external references.
 - Each link must name an existing standard name that genuinely enriches
   the reader's understanding of the current entry.
 - Typical link count: 2–6 per entry.
@@ -75,6 +77,7 @@ SI unit symbols (`m`, `kg`, `eV`) are unaffected — only prose spelling matters
   already encode. Do not mechanically expand underscores into spaces.
 - **DD-leak**: do NOT mention Data Dictionary path names, IDS names, or DD
   structural prefixes (e.g., `core_profiles/profiles_1d/...`) in the description
-  or documentation. Standard names are IDS-agnostic physics identifiers.
+  or documentation. Standard names are IDS-agnostic physics identifiers. DD
+  provenance is tracked in graph metadata, not in catalog prose.
 - **Over-generic documentation**: avoid filler phrases like "This is an important
   quantity in fusion research." Every sentence must carry specific physics content.

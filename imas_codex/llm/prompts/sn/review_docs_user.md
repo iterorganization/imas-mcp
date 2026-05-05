@@ -57,5 +57,7 @@ They are NOT to be re-reviewed. Compare the candidate's documentation
 *No accepted siblings found — score on physics correctness alone.*
 {% endif %}
 
+{% include "sn/_review_scored_examples.md" %}
+
 Return JSON matching the schema defined in the system prompt; set
 `source_id` and `standard_name` to `{{ item.id }}`.

@@ -104,6 +104,7 @@ class ExportReport:
     gate_failures: int = 0
     all_gates_passed: bool = True
     exported_names: list[str] = field(default_factory=list)
+    validation_failures: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,6 +117,7 @@ class ExportReport:
                 "excluded_unreviewed": self.excluded_unreviewed,
                 "excluded_by_domain": self.excluded_by_domain,
                 "gate_failures": self.gate_failures,
+                "validation_failures": self.validation_failures,
             },
             "all_gates_passed": self.all_gates_passed,
         }
@@ -447,7 +449,9 @@ def _graph_node_to_entry_dict(node: dict[str, Any]) -> dict[str, Any]:
 def _validate_entry(entry_dict: dict[str, Any]) -> dict[str, Any] | None:
     """Validate an entry dict against the ISN StandardNameEntry model.
 
-    Returns the validated model_dump dict, or None if validation fails.
+    Returns the validated model_dump dict on success, or None if validation
+    fails. Callers must handle None returns — invalid entries are excluded
+    from the export.
     """
     from imas_standard_names.models import (
         StandardNameComplexEntry,
@@ -471,12 +475,11 @@ def _validate_entry(entry_dict: dict[str, Any]) -> dict[str, Any] | None:
         return entry.model_dump(mode="json")
     except Exception as exc:
         logger.warning(
-            "ISN validation failed for '%s': %s",
+            "ISN validation rejected '%s': %s",
             entry_dict.get("name", "?"),
             exc,
         )
-        # Fall back to returning the dict as-is (allow export to proceed)
-        return entry_dict
+        return None
 
 
 # =============================================================================
@@ -956,6 +959,7 @@ def run_export(
 
     domain_entries: dict[str, list[dict[str, Any]]] = defaultdict(list)
     exported_names: list[str] = []
+    validation_failures = 0
 
     with GraphClient() as gc:
         for cand in candidates:
@@ -977,16 +981,16 @@ def run_export(
                 else "unscoped"
             )
 
-            # Validate against ISN model (best-effort) — strip
-            # graph-only fields that ISN doesn't recognise first.
+            # Validate against ISN model — invalid entries are excluded.
             validated = _validate_entry(entry_dict)
-            if validated is not None:
-                entry_dict = validated
+            if validated is None:
+                validation_failures += 1
+                continue
+            entry_dict = validated
 
-            # Write physics_domain AFTER ISN validation (graph-only field)
-            entry_dict["physics_domain"] = (
-                sorted(physics_domain_list) if physics_domain_list else []
-            )
+            # Write physics_domain AFTER ISN validation (graph-only field).
+            # ISN CatalogRenderer expects a scalar string, not a list.
+            entry_dict["physics_domain"] = primary if primary != "unscoped" else ""
 
             # Derive computed fields from graph edges
             entry_name = entry_dict.get("name") or cand["id"]
@@ -1023,6 +1027,7 @@ def run_export(
 
     report.exported_count = len(exported_names)
     report.exported_names = exported_names
+    report.validation_failures = validation_failures
 
     # ── 6. Write manifest ───────────────────────────────────────
     all_domains = sorted(domain_entries.keys())
@@ -1050,4 +1055,9 @@ def run_export(
         report.exported_count,
         staging_path,
     )
+    if validation_failures:
+        logger.warning(
+            "%d name(s) excluded by ISN validation — check logs for details",
+            validation_failures,
+        )
     return report
