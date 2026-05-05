@@ -1,11 +1,7 @@
 """Tests for remote SSH command construction in service CLI modules.
 
-Regression gates for ITER XDR security flag: ``echo <b64> | base64 -d | bash``
-pattern must be eliminated from all SSH command construction.
-
-Contract tests (should PASS):   verify the plumbing works as expected today.
-Anti-base64 tests (XFAIL):      document the insecure pattern; will flip to
-                                  PASS once the base64 elimination is complete.
+Regression gates for ITER XDR security fix: SSH commands must never use
+``echo <b64> | base64 -d | bash`` or any base64 encoding pattern.
 """
 
 from __future__ import annotations
@@ -14,16 +10,6 @@ import subprocess
 from unittest.mock import MagicMock, call, patch
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_XFAIL_B64 = pytest.mark.xfail(
-    reason="base64 elimination pending - security fix",
-    strict=False,
-)
-
 
 # ===========================================================================
 # TestRunOnNode
@@ -47,7 +33,6 @@ class TestRunOnNode:
             assert "gpu-0001" in cmd
             assert "ssh" in cmd.lower() or "StrictHostKeyChecking" in cmd
 
-    @_XFAIL_B64
     def test_no_base64_in_command(self):
         """The SSH command must not contain the word 'base64'."""
         with patch("imas_codex.cli.services._run_remote") as mock_run:
@@ -59,7 +44,6 @@ class TestRunOnNode:
             cmd = mock_run.call_args[0][0]
             assert "base64" not in cmd
 
-    @_XFAIL_B64
     def test_no_echo_base64_pipe(self):
         """The 'echo ... | base64 -d' pattern must not appear in the SSH command."""
         with patch("imas_codex.cli.services._run_remote") as mock_run:
@@ -135,7 +119,6 @@ class TestSubmitServiceJob:
             submit_cmd = mock_run.call_args_list[1][0][0]
             assert "sbatch" in submit_cmd
 
-    @_XFAIL_B64
     def test_no_base64_in_submit(self):
         """The sbatch submission command must not contain 'base64'."""
         patches = self._patched_submit()
@@ -205,7 +188,6 @@ class TestSubmitServiceJob:
 class TestLlmCliBase64:
     """Anti-base64 gates for llm_cli.py remote command construction."""
 
-    @_XFAIL_B64
     def test_launcher_no_base64(self):
         """Launcher script delivery must not use 'echo ... | base64 -d'."""
         commands_sent: list[str] = []
@@ -237,7 +219,6 @@ class TestLlmCliBase64:
                 f"base64 found in launcher write command: {cmd!r}"
             )
 
-    @_XFAIL_B64
     def test_systemd_install_no_base64(self):
         """Systemd unit installation must not use 'echo ... | base64 -d'."""
         commands_sent: list[str] = []
@@ -266,7 +247,6 @@ class TestLlmCliBase64:
                 f"base64 found in systemd install command: {cmd!r}"
             )
 
-    @_XFAIL_B64
     def test_stale_cleanup_no_base64(self):
         """Stale instance cleanup must not use 'echo ... | base64 -d | bash'."""
         commands_sent: list[str] = []
@@ -297,7 +277,6 @@ class TestLlmCliBase64:
 class TestLlmDbBase64:
     """Anti-base64 gates for llm_db.py remote command construction."""
 
-    @_XFAIL_B64
     def test_ensure_pg_bin_no_base64(self):
         """pg_bin discovery command must not use 'echo ... | base64 -d'."""
         commands_sent: list[str] = []

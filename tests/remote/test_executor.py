@@ -3,16 +3,12 @@ Contract tests for imas_codex/remote/executor.py.
 
 These tests cover the key behavioural contracts for run_python_script(),
 async_run_python_script(), and run_script_via_stdin() that MUST survive
-the base64-elimination refactor.
-
-Anti-base64 regression gates are marked xfail (strict=False) so they:
-- FAIL (xfail) while the base64 encoding is still in place
-- PASS once the refactor removes base64 from the SSH command path
+any refactor of the remote execution layer.
 
 ITER XDR context: SSH commands using ``echo <b64> | base64 -d | bash``
 are flagged by Extended Detection & Response as potential malware
-obfuscation.  The refactor replaces base64 delivery with stdin piping
-(the same pattern already used by run_script_via_stdin()).
+obfuscation.  Anti-base64 regression gates ensure this pattern never
+returns.
 """
 
 import asyncio
@@ -366,7 +362,6 @@ class TestRunPythonScript:
 
     # ------------------------------------------------------------------ anti-base64 regression gates
 
-    @pytest.mark.xfail(reason="base64 elimination pending - security fix", strict=False)
     @patch("imas_codex.remote.executor._ensure_ssh_healthy_once")
     @patch("imas_codex.remote.executor.is_local_host", return_value=False)
     @patch("subprocess.run")
@@ -390,7 +385,6 @@ class TestRunPythonScript:
             f"SSH command must not contain 'base64', got: {remote_cmd[:200]!r}"
         )
 
-    @pytest.mark.xfail(reason="base64 elimination pending - security fix", strict=False)
     @patch("imas_codex.remote.executor._ensure_ssh_healthy_once")
     @patch("imas_codex.remote.executor.is_local_host", return_value=False)
     @patch("subprocess.run")
@@ -736,7 +730,6 @@ class TestAsyncRunPythonScript:
 
     # ------------------------------------------------------------------ anti-base64 regression gates
 
-    @pytest.mark.xfail(reason="base64 elimination pending - security fix", strict=False)
     @patch("imas_codex.remote.executor._ensure_ssh_healthy_once")
     @patch("imas_codex.remote.executor.is_local_host", return_value=False)
     @patch("asyncio.create_subprocess_exec")
@@ -760,7 +753,6 @@ class TestAsyncRunPythonScript:
             f"Async SSH command must not contain 'base64', got: {remote_cmd[:200]!r}"
         )
 
-    @pytest.mark.xfail(reason="base64 elimination pending - security fix", strict=False)
     @patch("imas_codex.remote.executor._ensure_ssh_healthy_once")
     @patch("imas_codex.remote.executor.is_local_host", return_value=False)
     @patch("asyncio.create_subprocess_exec")

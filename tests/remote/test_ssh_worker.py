@@ -147,7 +147,6 @@ class TestSSHWorkerStartup:
             assert "python3" in full_cmd
             assert "PATH" in full_cmd
 
-    @pytest.mark.xfail(reason="base64 elimination pending - security fix", strict=False)
     async def test_no_base64_in_startup_command(self):
         """Startup command must not contain 'base64' (XDR malware trigger)."""
         with patch("asyncio.create_subprocess_exec") as mock_exec:
@@ -266,7 +265,6 @@ class TestSSHWorkerExecute:
         with pytest.raises(RuntimeError, match="NameError"):
             await worker.execute("print(x)")
 
-    @pytest.mark.xfail(reason="base64 elimination pending - security fix", strict=False)
     async def test_no_base64_in_exec_request(self):
         """exec request payload must not contain base64-encoded script."""
         worker = self._make_alive_worker()
