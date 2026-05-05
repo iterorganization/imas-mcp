@@ -1732,6 +1732,7 @@ def write_standard_names(
               AND sn.validation_status IS NULL
               AND sn.unit IS NULL
               AND sn.kind IS NULL
+              AND sn.needs_composition IS NULL
             DETACH DELETE sn
             RETURN count(sn) AS swept
             """
