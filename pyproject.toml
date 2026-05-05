@@ -70,6 +70,7 @@ dependencies = [
     "filelock>=3.0.0",
     # Security: CVE fix requires lxml>=6.1.0 (indirect via python-pptx/python-docx)
     "lxml>=6.1.0",
+    "breame>=0.1.2",
 ]
 
 [project.optional-dependencies]

@@ -39,6 +39,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def normalize_spelling(name: str) -> str:
+    """Deterministic British→American spelling normalization.
+
+    Splits the underscore-delimited name into tokens and converts each
+    via ``breame.spelling.get_american_spelling``.  A small domain-specific
+    supplement catches physics terms missing from breame's dictionary.
+    """
+    from breame.spelling import get_american_spelling
+
+    tokens = name.split("_")
+    return "_".join(_DOMAIN_UK_US.get(t, get_american_spelling(t)) for t in tokens)
+
+
+# Physics-domain UK→US supplements not in breame's dictionary.
+_DOMAIN_UK_US: dict[str, str] = {
+    "linearised": "linearized",
+    "linearise": "linearize",
+    "discretised": "discretized",
+    "discretise": "discretize",
+    "symmetrised": "symmetrized",
+    "symmetrise": "symmetrize",
+    "parameterised": "parameterized",
+    "parameterise": "parameterize",
+}
+
 _GRAMMAR_FIELDS = (
     "physical_base",
     "subject",
@@ -2060,7 +2086,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
 
             # Normalize name via grammar round-trip BEFORE persist
             # to avoid duplicate nodes if validate would rename
-            name_id = c.standard_name
+            name_id = normalize_spelling(c.standard_name)
 
             # W4b: Pre-validation gate — reject malformed LLM output
             # before it reaches MERGE.
@@ -3515,7 +3541,7 @@ async def compose_batch(
             # B1/W4b: Pre-validation gate — reject malformed LLM output
             # before MERGE.  Mark the source as 'failed' so it is not
             # re-claimed forever.
-            name_id = c.standard_name
+            name_id = normalize_spelling(c.standard_name)
             _well_formed, _reject_reason = is_well_formed_candidate(name_id)
             if not _well_formed:
                 wlog.warning(

@@ -324,6 +324,12 @@ wheels = [
 ]
 
 [[package]]
+name = "breame"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/17/03c6514338f12fcf7299280c0e165e1655405e3cbca0e1c6ab17ee73b4bd/breame-0.1.2.tar.gz", hash = "sha256:b6a2cbb390743ab0d7551a4a2ad1bcb7f3126b2d0f5bfa14ae0b4ddb990d8fa6", size = 141701, upload-time = "2021-10-04T10:03:34.577Z" }
+
+[[package]]
 name = "build"
 version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1039,6 +1045,7 @@ name = "imas-codex"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
+    { name = "breame" },
     { name = "cachetools" },
     { name = "click" },
     { name = "fastmcp" },
@@ -1147,6 +1154,7 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'gpu'", specifier = ">=1.0.0" },
     { name = "anyio", specifier = ">=4.0.0,<5.0.0" },
     { name = "asv", marker = "extra == 'bench'", specifier = ">=0.6.0,<1.0.0" },
+    { name = "breame", specifier = ">=0.1.2" },
     { name = "cachetools", specifier = ">=5.3.0,<6.0.0" },
     { name = "click", specifier = ">=8.0.0,<9.0.0" },
     { name = "coverage", marker = "extra == 'test'", specifier = ">=7.0.0" },

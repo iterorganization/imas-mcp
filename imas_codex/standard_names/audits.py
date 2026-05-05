@@ -1231,39 +1231,31 @@ _SPECTRAL_NAME_MARKERS = (
 )
 
 
-_UK_TO_US_SPELLING = {
-    "normalised": "normalized",
-    "polarised": "polarized",
-    "magnetised": "magnetized",
-    "ionised": "ionized",
-    "analyse": "analyze",
-    "analysed": "analyzed",
-    "analysing": "analyzing",
-    "organise": "organize",
-    "organised": "organized",
-    "organising": "organizing",
-    "behaviour": "behavior",
-    "colour": "color",
-    "flavour": "flavor",
-    "centre": "center",
-    "fibre": "fiber",
-    "metre": "meter",
-    "metres": "meters",
-    "modelled": "modeled",
-    "modelling": "modeling",
-    "labelled": "labeled",
-    "labelling": "labeling",
-    "travelled": "traveled",
-    "travelling": "traveling",
-    "fuelled": "fueled",
-    "fuelling": "fueling",
-    "channelled": "channeled",
-    "channelling": "channeling",
-    "signalled": "signaled",
-    "signalling": "signaling",
-    "catalogue": "catalog",
-    "programme": "program",
-}
+def _build_uk_to_us_mapping() -> dict[str, str]:
+    """Build UK→US spelling map from breame's dictionary.
+
+    Falls back to a minimal hardcoded set if breame is unavailable.
+    """
+    try:
+        from breame.spelling import BRITISH_ENGLISH_SPELLINGS
+
+        return {uk.lower(): us.lower() for uk, us in BRITISH_ENGLISH_SPELLINGS.items()}
+    except (ImportError, AttributeError):
+        return {
+            "normalised": "normalized",
+            "polarised": "polarized",
+            "ionised": "ionized",
+            "centre": "center",
+            "fibre": "fiber",
+            "metre": "meter",
+            "colour": "color",
+            "behaviour": "behavior",
+            "modelled": "modeled",
+            "catalogue": "catalog",
+        }
+
+
+_UK_TO_US_SPELLING = _build_uk_to_us_mapping()
 
 _UK_WORD_RE = re.compile(
     r"\b(" + "|".join(re.escape(w) for w in _UK_TO_US_SPELLING) + r")\b",
