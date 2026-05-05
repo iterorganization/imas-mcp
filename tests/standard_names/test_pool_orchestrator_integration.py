@@ -64,6 +64,12 @@ class TestReconcileRunsBeforePools:
 
             return _claim
 
+        _mock_gc_ctx = MagicMock()
+        _mock_gc_inst = MagicMock()
+        _mock_gc_inst.query.return_value = [{"cnt": 1}]
+        _mock_gc_ctx.__enter__ = MagicMock(return_value=_mock_gc_inst)
+        _mock_gc_ctx.__exit__ = MagicMock(return_value=False)
+
         with (
             patch(
                 f"{_GO}.reconcile_standard_name_sources",
@@ -96,6 +102,10 @@ class TestReconcileRunsBeforePools:
             patch(f"{_BM}.start", new_callable=AsyncMock),
             patch(f"{_BM}.drain_pending", new_callable=AsyncMock, return_value=True),
             patch(f"{_BM}.get_total_spent", new_callable=AsyncMock, return_value=0.0),
+            patch(
+                "imas_codex.graph.client.GraphClient",
+                return_value=_mock_gc_ctx,
+            ),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 
@@ -269,6 +279,12 @@ class TestRestartClearsStaleClaims:
             reconcile_called["flag"] = True
             return {"relinked": 0, "stale_marked": 0, "revived": 3}
 
+        _mock_gc_ctx = MagicMock()
+        _mock_gc_inst = MagicMock()
+        _mock_gc_inst.query.return_value = [{"cnt": 1}]
+        _mock_gc_ctx.__enter__ = MagicMock(return_value=_mock_gc_inst)
+        _mock_gc_ctx.__exit__ = MagicMock(return_value=False)
+
         with (
             patch(f"{_GO}.reconcile_standard_name_sources", side_effect=_reconcile),
             patch(f"{_GO}.create_sn_run_open"),
@@ -283,6 +299,10 @@ class TestRestartClearsStaleClaims:
             patch(_CLAIM_PATCHES["review_docs"], return_value=[]),
             patch(_CLAIM_PATCHES["refine_name"], return_value=[]),
             patch(_CLAIM_PATCHES["refine_docs"], return_value=[]),
+            patch(
+                "imas_codex.graph.client.GraphClient",
+                return_value=_mock_gc_ctx,
+            ),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 
@@ -316,6 +336,12 @@ class TestFinalizeWithCorrectStatus:
         def _finalize(run_id, **kwargs):
             finalize_calls.append({"run_id": run_id, **kwargs})
 
+        _mock_gc_ctx = MagicMock()
+        _mock_gc_inst = MagicMock()
+        _mock_gc_inst.query.return_value = [{"cnt": 1}]
+        _mock_gc_ctx.__enter__ = MagicMock(return_value=_mock_gc_inst)
+        _mock_gc_ctx.__exit__ = MagicMock(return_value=False)
+
         with (
             patch(
                 f"{_GO}.reconcile_standard_name_sources",
@@ -332,6 +358,10 @@ class TestFinalizeWithCorrectStatus:
             patch(_CLAIM_PATCHES["review_docs"], return_value=[]),
             patch(_CLAIM_PATCHES["refine_name"], return_value=[]),
             patch(_CLAIM_PATCHES["refine_docs"], return_value=[]),
+            patch(
+                "imas_codex.graph.client.GraphClient",
+                return_value=_mock_gc_ctx,
+            ),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 
@@ -360,6 +390,12 @@ class TestFinalizeWithCorrectStatus:
         def _finalize(run_id, **kwargs):
             finalize_calls.append({"run_id": run_id, **kwargs})
 
+        _mock_gc_ctx = MagicMock()
+        _mock_gc_inst = MagicMock()
+        _mock_gc_inst.query.return_value = [{"cnt": 1}]
+        _mock_gc_ctx.__enter__ = MagicMock(return_value=_mock_gc_inst)
+        _mock_gc_ctx.__exit__ = MagicMock(return_value=False)
+
         with (
             patch(
                 f"{_GO}.reconcile_standard_name_sources",
@@ -376,6 +412,10 @@ class TestFinalizeWithCorrectStatus:
             patch(_CLAIM_PATCHES["review_docs"], return_value=[]),
             patch(_CLAIM_PATCHES["refine_name"], return_value=[]),
             patch(_CLAIM_PATCHES["refine_docs"], return_value=[]),
+            patch(
+                "imas_codex.graph.client.GraphClient",
+                return_value=_mock_gc_ctx,
+            ),
         ):
             from imas_codex.standard_names.loop import run_sn_pools
 

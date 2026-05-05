@@ -112,6 +112,7 @@ class TestClearSnSubsystemLabels:
         "StandardName",
         "StandardNameReview",
         "StandardNameSource",
+        "DocsRevision",
         "VocabGap",
         "SNRun",
         "LLMCost",
