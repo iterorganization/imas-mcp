@@ -51,6 +51,41 @@ to understand what the name represents and how reviewers refined it.
 {{ item.description }}
 {% endif %}
 
+{% if item.cocos_label %}
+## COCOS Sign Convention
+
+This quantity has COCOS transformation type **{{ item.cocos_label }}**.
+{% if item.cocos_guidance %}
+
+{{ item.cocos_guidance }}
+{% endif %}
+
+You **MUST** include a sign convention paragraph in the documentation using exactly
+this format: `Sign convention: Positive when …` as a standalone paragraph (blank line
+before and after, plain text — no markdown headings, no bold).
+{% endif %}
+
+{% if item.parent_sn %}
+## Parent Standard Name
+
+This is a component of `{{ item.parent_sn.name }}`.
+{% if item.parent_sn.description %}- Parent description: {{ item.parent_sn.description }}{% endif %}
+{% if item.parent_sn.documentation %}- Parent documentation excerpt: {{ item.parent_sn.documentation[:300] }}{% endif %}
+
+Focus on what distinguishes this {{ item.component_axis or "component" }} specifically.
+Cross-reference the parent: `[{{ item.parent_sn.name }}](name:{{ item.parent_sn.name }})`.
+{% endif %}
+
+{% if item.child_components %}
+## Component Standard Names
+
+This quantity has the following directional/projection components:
+{% for c in item.child_components %}- `{{ c.name }}`{% if c.axis %} ({{ c.axis }}){% endif %}{% if c.description %}: {{ c.description }}{% endif %}
+{% endfor %}
+
+Write primary documentation here. Components reference this name for shared physics context.
+{% endif %}
+
 {% if item.source_paths %}
 ## IMAS DD Paths
 
@@ -125,6 +160,6 @@ Return a JSON object with exactly these two fields:
 - ≥ 3 sentences
 - Cover: physical meaning, governing equations (LaTeX), typical values, measurement methods
 - Cross-references to related standard names use `[label](name:bare_id)` inline links only
-- Sign convention (if COCOS-dependent): use exactly `Sign convention: Positive when …` as a standalone paragraph (blank line before and after, plain text — no markdown headings, no bold); omit if sign-invariant
+- {% if item.cocos_label %}Sign convention is REQUIRED for this quantity (see COCOS section above): use exactly `Sign convention: Positive when …` as a standalone paragraph (blank line before and after, plain text — no markdown headings, no bold){% else %}Sign convention (if COCOS-dependent): use exactly `Sign convention: Positive when …` as a standalone paragraph (blank line before and after, plain text — no markdown headings, no bold); omit if sign-invariant{% endif %}
 - American spelling throughout
 - Minimum 20 characters

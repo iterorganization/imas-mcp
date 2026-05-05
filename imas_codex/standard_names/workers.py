@@ -5019,6 +5019,7 @@ _DOCS_GEN_ENRICH_QUERY = """
 MATCH (sn:StandardName {id: $sn_id})
 OPTIONAL MATCH (sn)<-[:HAS_STANDARD_NAME]-(imas:IMASNode)
 RETURN sn.source_paths AS source_paths,
+       sn.cocos_transformation_type AS cocos_label,
        collect(DISTINCT {
            id: imas.id,
            documentation: coalesce(imas.documentation, ''),
@@ -5042,7 +5043,9 @@ LIMIT 20
 """
 
 
-def _enrich_for_docs_gen(gc: Any, items: list[dict]) -> None:
+def _enrich_for_docs_gen(
+    gc: Any, items: list[dict], cocos_params: dict | None = None
+) -> None:
     """Enrich generate_docs items with DD source context.
 
     Populates per-item keys (all guarded by ``if`` in the prompt template):
@@ -5056,6 +5059,8 @@ def _enrich_for_docs_gen(gc: Any, items: list[dict]) -> None:
     - ``nearest_peers``: vector-similar :class:`StandardName` neighbours from
       :func:`_search_nearby_names` formatted as ``{tag, unit, physics_domain,
       doc_short, cocos_label}``.
+    - ``cocos_label``: COCOS transformation type from the SN node.
+    - ``cocos_guidance``: rendered sign convention guidance for the LLM.
 
     Modifies *items* in-place.  Never raises — individual item failures are
     debug-logged and the item is left without the missing key.
@@ -5105,6 +5110,26 @@ def _enrich_for_docs_gen(gc: Any, items: list[dict]) -> None:
             if aliases:
                 item["dd_aliases"] = aliases
 
+        # ── 1b. COCOS sign convention context ─────────────────────────
+        cocos_label = row.get("cocos_label")
+        if cocos_label:
+            item["cocos_label"] = cocos_label
+            if cocos_params:
+                try:
+                    from imas_codex.standard_names.context import (
+                        render_cocos_guidance,
+                    )
+
+                    item["cocos_guidance"] = render_cocos_guidance(
+                        cocos_label, cocos_params
+                    )
+                except Exception:
+                    logger.debug(
+                        "_enrich_for_docs_gen: cocos guidance render failed for %s",
+                        sn_id,
+                        exc_info=True,
+                    )
+
         # ── 2. Graph-relationship neighbours from first DD source path ─
         if source_paths:
             try:
@@ -5138,6 +5163,60 @@ def _enrich_for_docs_gen(gc: Any, items: list[dict]) -> None:
         except Exception:
             logger.debug(
                 "_enrich_for_docs_gen: nearest_peers failed for %s",
+                sn_id,
+                exc_info=True,
+            )
+
+        # ── 4. Parent/child component context ─────────────────────────
+        try:
+            # Check if this SN is a component of a parent
+            parent_rows = list(
+                gc.query(
+                    """
+                    MATCH (sn:StandardName {id: $sn_id})-[r:COMPONENT_OF]->(parent:StandardName)
+                    RETURN parent.id AS name,
+                           parent.description AS description,
+                           parent.documentation AS documentation,
+                           r.axis AS axis
+                    LIMIT 1
+                    """,
+                    sn_id=sn_id,
+                )
+            )
+            if parent_rows:
+                p = parent_rows[0]
+                item["parent_sn"] = {
+                    "name": p["name"],
+                    "description": p.get("description") or "",
+                    "documentation": p.get("documentation") or "",
+                }
+                item["component_axis"] = p.get("axis") or ""
+
+            # Check if this SN has children (is a parent)
+            child_rows = list(
+                gc.query(
+                    """
+                    MATCH (child:StandardName)-[r:COMPONENT_OF]->(sn:StandardName {id: $sn_id})
+                    RETURN child.id AS name,
+                           child.description AS description,
+                           r.axis AS axis
+                    ORDER BY child.id
+                    """,
+                    sn_id=sn_id,
+                )
+            )
+            if child_rows:
+                item["child_components"] = [
+                    {
+                        "name": c["name"],
+                        "description": c.get("description") or "",
+                        "axis": c.get("axis") or "",
+                    }
+                    for c in child_rows
+                ]
+        except Exception:
+            logger.debug(
+                "_enrich_for_docs_gen: component context failed for %s",
                 sn_id,
                 exc_info=True,
             )
@@ -5238,7 +5317,29 @@ async def process_generate_docs_batch(
 
         def _do_enrich() -> list[dict]:
             with GraphClient() as gc:
-                _enrich_for_docs_gen(gc, batch)
+                # Load COCOS singleton params for sign guidance rendering
+                cocos_params = None
+                try:
+                    from imas_codex.settings import get_dd_version
+
+                    dd_version = get_dd_version()
+                    cocos_rows = list(
+                        gc.query(
+                            """
+                            MATCH (dv:DDVersion {id: $ver})-[:COCOS]->(c:COCOS)
+                            RETURN properties(c) AS cocos_params
+                            """,
+                            ver=dd_version,
+                        )
+                    )
+                    if cocos_rows:
+                        cocos_params = cocos_rows[0]["cocos_params"]
+                except Exception:
+                    logger.debug(
+                        "process_generate_docs_batch: COCOS params load failed",
+                        exc_info=True,
+                    )
+                _enrich_for_docs_gen(gc, batch, cocos_params=cocos_params)
                 return _nearby_names_for_docs_gen(gc, batch)
 
         nearby_existing_names = await _asyncio.to_thread(_do_enrich)

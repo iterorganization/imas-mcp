@@ -1175,6 +1175,13 @@ async def run_sn_pools(
             seeded = await _seed_all_domains(source=source, max_sources=max_sources)
             logger.info("Auto-seeded %d sources from all eligible domains", seeded)
 
+        # ── B3b: Seed parent component sources ────────────────────
+        from imas_codex.standard_names.graph_ops import seed_parent_sources
+
+        parent_count = await asyncio.to_thread(seed_parent_sources)
+        if parent_count:
+            logger.info("Seeded %d parent component sources", parent_count)
+
         # ── Build pool specs ──────────────────────────────────────
         _only_domain_for_pools = _domains[0] if len(_domains) == 1 else None
         specs = _build_pool_specs(

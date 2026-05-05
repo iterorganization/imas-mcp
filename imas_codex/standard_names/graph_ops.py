@@ -1091,6 +1091,9 @@ def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
                 r.separator     = b.separator,
                 r.axis          = b.axis,
                 r.shape         = b.shape
+            WITH tgt
+            WHERE tgt.name_stage IS NULL
+            SET tgt.needs_composition = true
             """,
             batch=co_batch,
         )
@@ -1206,6 +1209,108 @@ def rederive_structural_edges() -> dict[str, int]:
         _write_standard_name_edges(gc, names)
     logger.info("rederive_structural_edges: processed %d names", len(names))
     return {"processed": len(names)}
+
+
+def seed_parent_sources(gc: Any | None = None) -> int:
+    """Create StandardNameSource nodes for parent SNs needing composition.
+
+    Finds all StandardName nodes with ``needs_composition = true``
+    (bare placeholders created by ``_write_standard_name_edges`` when a
+    COMPONENT_OF target has no ``name_stage``). For each parent:
+
+    1. Aggregates the children's DD source paths via COMPONENT_OF → child
+       → PRODUCED_NAME ← StandardNameSource → FROM_DD_PATH → IMASNode.
+    2. Derives a parent DD path from the common IDS prefix of children's
+       paths (structural node, not a leaf).
+    3. Creates a ``StandardNameSource`` with ``status = 'extracted'`` and
+       links it to the parent SN via ``PRODUCED_NAME``.
+    4. Clears ``needs_composition`` on the parent.
+
+    Returns the number of parent sources seeded.
+    """
+    from imas_codex.standard_names.source_paths import encode_source_path
+
+    _own_gc = gc is None
+    if _own_gc:
+        gc = GraphClient().__enter__()
+    try:
+        parents = list(
+            gc.query(
+                """
+                MATCH (parent:StandardName {needs_composition: true})
+                OPTIONAL MATCH (child)-[:COMPONENT_OF]->(parent)
+                OPTIONAL MATCH (sns:StandardNameSource)-[:PRODUCED_NAME]->(child)
+                OPTIONAL MATCH (sns)-[:FROM_DD_PATH]->(imas:IMASNode)
+                WITH parent,
+                     collect(DISTINCT child.id) AS child_ids,
+                     collect(DISTINCT imas.id) AS dd_paths
+                RETURN parent.id AS parent_id,
+                       child_ids,
+                       dd_paths
+                """
+            )
+        )
+
+        if not parents:
+            return 0
+
+        seeded = 0
+        for row in parents:
+            parent_id = row["parent_id"]
+            dd_paths = [p for p in (row.get("dd_paths") or []) if p]
+
+            # Derive parent DD path from common prefix of children's paths
+            parent_dd_path = None
+            if dd_paths:
+                parts = [p.split("/") for p in dd_paths]
+                common = []
+                for segments in zip(*parts, strict=False):
+                    if len(set(segments)) == 1:
+                        common.append(segments[0])
+                    else:
+                        break
+                if common:
+                    parent_dd_path = "/".join(common)
+
+            source_id = (
+                encode_source_path("dd", parent_dd_path)
+                if parent_dd_path
+                else f"sn:{parent_id}"
+            )
+
+            gc.query(
+                """
+                MATCH (parent:StandardName {id: $parent_id})
+                MERGE (sns:StandardNameSource {id: $source_id})
+                ON CREATE SET sns.status = 'extracted',
+                              sns.created_at = datetime(),
+                              sns.source_type = 'parent_component'
+                MERGE (sns)-[:PRODUCED_NAME]->(parent)
+                SET parent.needs_composition = null
+                """,
+                parent_id=parent_id,
+                source_id=source_id,
+            )
+
+            # Link to DD structural node if we found a common prefix
+            if parent_dd_path:
+                gc.query(
+                    """
+                    MATCH (sns:StandardNameSource {id: $source_id})
+                    MATCH (imas:IMASNode {id: $dd_path})
+                    MERGE (sns)-[:FROM_DD_PATH]->(imas)
+                    """,
+                    source_id=source_id,
+                    dd_path=parent_dd_path,
+                )
+
+            seeded += 1
+
+        logger.info("seed_parent_sources: seeded %d parent sources", seeded)
+        return seeded
+    finally:
+        if _own_gc:
+            gc.__exit__(None, None, None)
 
 
 def write_standard_names(
