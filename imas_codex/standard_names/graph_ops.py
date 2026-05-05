@@ -1733,6 +1733,8 @@ def write_standard_names(
               AND sn.unit IS NULL
               AND sn.kind IS NULL
               AND sn.needs_composition IS NULL
+              AND NOT EXISTS { ()-[:COMPONENT_OF]->(sn) }
+              AND NOT EXISTS { ()-[:HAS_ERROR]->(sn) }
             DETACH DELETE sn
             RETURN count(sn) AS swept
             """
