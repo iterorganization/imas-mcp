@@ -89,6 +89,21 @@ _DOMAIN_UK_US: dict[str, str] = {
     "symmetrise": "symmetrize",
     "parameterised": "parameterized",
     "parameterise": "parameterize",
+    "centreline": "centerline",
+    "centre": "center",
+    "grey": "gray",
+    "colour": "color",
+    "favour": "favor",
+    "favourite": "favorite",
+    "honour": "honor",
+    "labelled": "labeled",
+    "labelling": "labeling",
+    "travelled": "traveled",
+    "travelling": "traveling",
+    "catalogue": "catalog",
+    "programme": "program",
+    "analogue": "analog",
+    "dialogue": "dialog",
 }
 
 _GRAMMAR_FIELDS = (
