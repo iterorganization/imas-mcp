@@ -461,24 +461,34 @@ def description_verb_drift_check(candidate: dict[str, Any]) -> list[str]:
 # should not appear in human-readable descriptions.
 _STRUCTURAL_DIM_RE = re.compile(r"\b([0-3])[dD]\b")
 
+# Contexts where "2D"/"3D" is a valid physics descriptor, not a storage tag
+_PHYSICS_DIM_CONTEXT_RE = re.compile(
+    r"\b[0-3][dD]\s+"
+    r"(?:poloidal|toroidal|equilibrium|magnetic|plasma|field|geometry|space"
+    r"|grid|mesh|domain|cross[- ]section|plane|surface|volume|configuration)",
+    re.IGNORECASE,
+)
+
 
 def structural_dim_tag_check(candidate: dict[str, Any]) -> list[str]:
     """Flag descriptions that echo DD data-type dimensionality tags.
 
     Tokens like ``1D``, ``2D``, ``3D`` in a description are a leak from
     the DD data type (``FLT_1D`` etc.) rather than a physically meaningful
-    descriptor. This is advisory only — descriptions should describe what
-    the quantity *is*, not how it is stored.
+    descriptor. However, physics-geometry usage like "2D poloidal plane"
+    or "3D equilibrium" is valid and not flagged.
     """
     issues: list[str] = []
     description = str(candidate.get("description") or "")
     match = _STRUCTURAL_DIM_RE.search(description)
     if match:
-        issues.append(
-            f"audit:structural_dim_tag_check: description contains "
-            f"storage-shape tag '{match.group(0)}' (remove or rephrase "
-            "in terms of the physical quantity)"
-        )
+        # Check if the dimensionality tag appears in a valid physics context
+        if not _PHYSICS_DIM_CONTEXT_RE.search(description):
+            issues.append(
+                f"audit:structural_dim_tag_check: description contains "
+                f"storage-shape tag '{match.group(0)}' (remove or rephrase "
+                "in terms of the physical quantity)"
+            )
     return issues
 
 
