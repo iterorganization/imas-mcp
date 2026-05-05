@@ -935,6 +935,22 @@ def multi_subject_check(candidate: dict[str, Any]) -> list[str]:
         if any(tok in name for tok in _META_TOKENS):
             matched_subjects = []
 
+        # Exempt compound physical_base patterns where a subject token
+        # appears as part of a transport coefficient or diffusivity name.
+        # E.g. ``ion_particle_diffusivity`` has subject=ion and
+        # physical_base=particle_diffusivity — ``particle`` here is part
+        # of the base, not a second subject.
+        _COMPOUND_PB_TOKENS = (
+            "particle_diffusivity",
+            "particle_flux",
+            "particle_source",
+            "particle_sink",
+            "particle_confinement",
+            "particle_radial_diffusivity",
+        )
+        if any(cpb in name for cpb in _COMPOUND_PB_TOKENS):
+            matched_subjects = [s for s in matched_subjects if s != "particle"]
+
         if len(matched_subjects) >= 2:
             issues.append(
                 f"audit:multi_subject_check: name contains multiple subjects: "

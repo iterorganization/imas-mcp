@@ -85,9 +85,13 @@ Produce updated documentation for `{{ sn_name }}` that materially addresses
 the **lowest-scoring dimensions** identified in the revision history above.
 
 Rules:
+- `description`: 1–3 sentences, ≤ 500 chars, no LaTeX, **American English**
+  ("center", "meter", "ionization"), **no storage-shape tags** ("1D", "2D", "3D",
+  "profile", "array" — describe the physics, not data layout).
 - `documentation`: rich text with LaTeX math notation where appropriate,
   typical value ranges, physical intuition, measurement context.
   Do **not** regress on dimensions that already scored well.
+  **American English** throughout.
 - `links`: list of related standard names in `name:xxx` or `dd:path/here`
   format.  Only include genuine conceptual relationships.
 - The `name` field must equal `{{ sn_name }}` exactly — do not alter it.

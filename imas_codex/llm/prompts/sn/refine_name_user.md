@@ -97,6 +97,9 @@ Rules:
   qualified suffix), no abbreviations, no instrument prefixes for generic
   observables.
 - Provide a short `description` (≤ 120 chars, one sentence, no LaTeX).
+- **No storage-shape tags** — NEVER write "1D", "2D", "3D", "profile", "array"
+  in descriptions. Describe the *physics*, not data layout.
+- **American English only** — "center" not "centre", "meter" not "metre".
 - Provide `grammar_fields` decomposing the name into grammar segments.
 - Provide a brief `reason` explaining how this attempt addresses the reviewer's
   specific concerns from the history above.

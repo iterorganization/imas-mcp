@@ -118,9 +118,11 @@ Return a JSON object with exactly these two fields:
 ### description requirements
 - 1–3 sentences maximum, ≤ 500 characters
 - Physics-meaningful: add information beyond what the name tokens alone encode
-- American spelling (ionization, behavior, etc.)
+- American spelling (ionization, behavior, center, etc.)
 - No LaTeX; no inline units (unit is shown separately)
 - No trailing "See also:" blocks
+- **No storage-shape tags**: NEVER write "1D", "2D", "3D", "scalar", "array",
+  "profile", or "time-dependent" — describe the *physics*, not the data layout
 
 ### documentation requirements
 - ≥ 3 sentences

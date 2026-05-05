@@ -106,6 +106,14 @@ path measures the same quantity — do not invent a synonym.
 | `halo_region_parallel_energy_due_to_heat_flux` | `parallel_component_of_halo_energy` | **W38-A2** component/transformation tokens come BEFORE the base via `<modifier>_of_<base>` — never as suffixes |
 | `z_coordinate_of_sensor_direction_unit_vector` | `z_component_of_direction_unit_vector` | **W38-A3** drop stacked hardware tokens; a unit-vector field's Z is a projection, not a coordinate |
 
+## Description Quality Rules
+
+- **No storage-shape tags** — NEVER write "1D", "2D", "3D", "scalar", "array",
+  "profile", "time-dependent" in descriptions. The description defines the
+  *physics*, not the data layout.
+- **American English only** — use "center" not "centre", "meter" not "metre",
+  "ionized" not "ionised". ISN catalog follows American spelling exclusively.
+
 ## Batch Consistency Check
 
 Before finalizing, verify across your entire output:
@@ -113,6 +121,8 @@ Before finalizing, verify across your entire output:
 1. **No synonymous names** — same concept = same name
 2. **Consistent orientation suffixes** — all `_parallel`, not a mix of `_par`/`_parallel`
 3. **No DD leakage** — no name starts with an IDS or DD section prefix
+4. **No storage-shape tags** — no description mentions "1D", "2D", "3D", "profile", "array"
+5. **American spelling** — check for "centre", "metre", "behaviour" and correct to American
 
 ## Batch Context
 

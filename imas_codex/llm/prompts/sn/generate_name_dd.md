@@ -84,12 +84,26 @@ The `unit` field for each path is pre-populated from the IMAS Data Dictionary
 | `halo_region_parallel_energy_due_to_heat_flux` | `parallel_component_of_halo_energy` | **W38-A2 suffix-form for component** — component / transformation / reducer tokens come BEFORE the base via `<modifier>_of_<base>`. Compare ★0.95 `parallel_component_of_fast_electron_pressure` |
 | `z_coordinate_of_sensor_direction_unit_vector` | `z_component_of_direction_unit_vector` | **W38-A3 compound hardware identifiers** — when the DD path stacks ≥2 hardware tokens, drop intermediate ones and extract the underlying physical concept. A unit-vector field's Z is a vector projection, not a coordinate |
 
+## Description Quality Rules
+
+- **No storage-shape tags** — NEVER write "1D", "2D", "3D", "scalar", "array",
+  "profile", "time-dependent" in descriptions. The description defines the
+  *physics*, not the data layout. Say "radial distribution of electron temperature"
+  NOT "1D profile of electron temperature".
+- **American English only** — use "center" not "centre", "meter" not "metre",
+  "ionized" not "ionised", "behavior" not "behaviour", "polarization" not
+  "polarisation". ISN catalog follows American spelling exclusively.
+- **Physics-first framing** — describe what the quantity IS physically, not what
+  the DD path stores or how it is measured.
+
 ## Batch Consistency Check
 
 Before finalizing your output, verify:
 1. **No synonymous names** — if you used `magnetic_flux` in one entry, don't use just `flux` in another
 2. **Consistent suffixes** — all boundary quantities use `_of_plasma_boundary`, not a mix of patterns
 3. **No DD leakage** — none of your names start with an IDS or DD section name
+4. **No storage-shape tags** — none of your descriptions mention "1D", "2D", "3D", "profile", "array"
+5. **American spelling** — check for "centre", "metre", "behaviour" and correct to American
 
 ## IDS Context
 
