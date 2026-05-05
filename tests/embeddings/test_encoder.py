@@ -536,6 +536,7 @@ class TestTruncateDim:
         mock_model = MagicMock()
         mock_model.device = "cpu"
         mock_st_cls.return_value = mock_model
+        mock_torch = MagicMock()
 
         config = EncoderConfig(
             model_name="test-model",
@@ -551,6 +552,7 @@ class TestTruncateDim:
                 "imas_codex.embeddings.encoder.get_embedding_dimension",
                 return_value=256,
             ),
+            patch.dict("sys.modules", {"torch": mock_torch}),
         ):
             Encoder(config=config)
 
