@@ -1,26 +1,17 @@
 # Agent Guidelines
 
+> **Shared guardrails** (git safety, parallel-agent rules, model selection,
+> compute infrastructure, commit discipline) live in `~/.agents/AGENTS.md`.
+> This file covers **repo-specific** domain knowledge only.
+
 Use terminal for direct operations (`rg`, `fd`, `git`), MCP `repl()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits. **CRITICAL: Always commit and push when files have been modified — no confirmation, no asking, just do it. This is non-negotiable. Every response that modifies files MUST end with `git add`, `git commit`, and `git push`.** **Never use `vscode_askQuestions` or any interactive VS Code popup/dialog tools — present all questions inline in the chat response so the user can answer them in one message.**
 
-**Git sync discipline (fork-based workflow):** All development happens on the fork's `main` branch. Always **merge** on pull — never rebase. Never use feature branches (`develop`, `feature/*`) — they add merge overhead and break the release CLI which requires `main`.
+**Git sync discipline (fork-based workflow):** All development happens on the fork's `main` branch. Always **merge** on pull — never rebase. Never use feature branches — they break the release CLI which requires `main`. See `~/.agents/AGENTS.md` for clone setup, banned commands, and stash ban.
 1. **Session start:** `git pull origin main` before any work.
-2. **Before push:** `git pull origin main && git push origin main` — never push without pulling first. Push to `origin` (fork), **never directly to `upstream`**.
-3. **Always work on `main`** — the release CLI requires `main` branch. Never create or switch to feature branches without explicit user approval.
-4. **Dirty worktree:** Commit your own files before pulling. **`git stash` in ANY form is BANNED in agent sessions** — see "Parallel Agents" section. If your work is not ready to commit, stop and file a blocker.
-5. **Conflict resolution:** If merge conflicts, resolve and commit. Never force-push without user approval.
-6. **Repo-local config:** Each clone must run the setup commands below to override any global/system rebase defaults.
-
-### New Clone Setup
-
-Run these commands once after cloning on any machine. They are stored in `.git/config` (local scope) and override global/system settings that vary across installations:
-
-```bash
-git config --local pull.rebase false      # merge on pull, never rebase
-git config --local rebase.autoStash false  # don't silently stash — make dirty worktree visible
-git config --local merge.ff true           # allow fast-forward merges
-```
-
-**Why this matters:** Different machines (WSL, ITER, TCV) may have different global git configs. An ITER system policy might set `pull.rebase=true` globally, which silently converts `git pull` into a rebase. Rebase fails with dirty worktrees (auto-generated files from `uv sync`) and rewrites history that other agents depend on. Local config takes precedence over global/system, ensuring consistent behavior everywhere.
+2. **Before push:** `git pull origin main && git push origin main` — push to `origin` (fork), **never directly to `upstream`**.
+3. **Always work on `main`** — the release CLI requires `main` branch.
+4. **Dirty worktree:** Commit your own files before pulling.
+5. **Conflict resolution:** If merge conflicts, resolve and commit. Never force-push.
 
 ## Project Philosophy
 
@@ -346,9 +337,7 @@ Ingestion is interrupt-safe — rerun to continue. Already-ingested files are sk
 
 ## Compute Infrastructure
 
-**Never compile or run compute-intensive tasks on login nodes.** Login nodes are shared — CPU-intensive builds, test suites, and long-running processes cause severe performance degradation for all users.
-
-When on an HPC system with SLURM (check `which srun`), use debug/interactive partitions for builds and batch partitions for longer workloads. If `$SLURM_JOB_ID` is set, you're already on a compute node — run directly. Use `-march=x86-64-v3` instead of `-march=native` for portable binaries. Check `~/.agents/skills/` for site-specific partition names, modules, and resource templates.
+Compute-node discipline follows `~/.agents/AGENTS.md`. Repo-specific: check `~/.agents/skills/` for site-specific SLURM partition names, modules, and resource templates. Use `-march=x86-64-v3` for portable binaries.
 
 ## Command Execution
 
@@ -1437,28 +1426,16 @@ Install on any facility: `uv run imas-codex tools install <facility>`
 
 ## Commit Workflow
 
-**CRITICAL — pre-commit hooks are check-only and MUST NOT modify files.** The
-pre-commit framework's stash/restore cycle is dangerous in multi-agent
-environments: if a hook modifies a file while another agent has unstaged work on
-the same file, pre-commit stashes that unstaged work to `.cache/pre-commit/`,
-then rolls back all hook fixes on stash-restore conflict. During the stash
-window the other agent's edits are *off-disk* — any crash or abort risks silent
-data loss. All modifying hooks (`ruff --fix`, `ruff-format` write mode) have
-therefore been converted to check-only. Format and fix BEFORE staging:
+Pre-commit hooks are check-only (see `~/.agents/AGENTS.md`). Format and fix before staging:
 
 ```bash
 uv run ruff check --fix .           # Lint + autofix (explicit, pre-stage)
 uv run ruff format .                # Format (explicit, pre-stage)
 git add <file1> <file2> ...         # Stage specific files (never git add -A)
-uv run git commit -m "type: concise summary"  # Conventional format
-git pull --no-rebase origin main     # Merge fork changes first
-git push origin main                 # Push to fork (NEVER upstream)
+git commit -m "type: concise summary"  # Conventional format
+git pull --no-rebase origin main
+git push origin main
 ```
-
-If `ruff check` or `ruff format` fails in pre-commit, run the autofix command
-manually, `git add` the updated files, and re-commit. **Do not re-enable
-`--fix` or write-mode formatting in `.pre-commit-config.yaml`** — that
-reintroduces the multi-agent corruption risk.
 
 **Never stage:** auto-generated files (models.py, dd_models.py, schema_context_data.py), gitignored files, `*_private.yaml` files.
 
@@ -1473,10 +1450,6 @@ reintroduces the multi-agent corruption risk.
 
 Breaking changes use `BREAKING CHANGE:` footer, not `type!:` suffix.
 
-**No AI co-authorship trailers.** Never include `Co-authored-by: Copilot`, `Co-authored-by: Claude`, or any AI assistant co-authorship trailers in commit messages. The `includeCoAuthoredBy` setting is disabled in `~/.copilot/config.json`. All commits are authored solely by the human developer.
-
-**No phase labels or step numbers in commit titles.** Never prefix or embed phase identifiers (e.g., "Phase 1:", "Step 2:", "P3:", "(Phase 4)") in commit messages. Each commit should describe *what* changed, not *which step of a plan* it belongs to. Planning context belongs in session artifacts, not in the permanent git history.
-
 ### Worktrees
 
 Commits in worktrees are NOT on `main` until merged. Always merge immediately:
@@ -1489,19 +1462,11 @@ git push origin main```
 
 ### Sub-Agent Model Selection
 
-For sub-agent dispatches via the `task` tool, choose the model to match the cognitive load of the work. **Default to `claude-opus-4.6` or `claude-opus-4.7` for any complex reasoning task** — multi-file architectural changes, root-cause investigations, design audits, solver/numerics analysis, EFIT++ / JT-60SA campaign work, rubber-duck reviews of non-trivial designs, and any task where a wrong answer is expensive to detect or revert.
+Model selection follows `~/.agents/AGENTS.md` (3-tier: Opus 4.6 top, Sonnet 4.6 floor, Haiku 4.6 menial-only). Repo-specific additions:
 
-| Task profile | Model | When |
-|---|---|---|
-| Complex reasoning, design, deep investigation, numerics/physics analysis | `claude-opus-4.7` (preferred) or `claude-opus-4.6` | EFIT++ campaigns, solver behaviour, schema redesigns, cross-cutting refactors, rubber-duck on non-trivial plans |
-| Standard implementation with clear scope | `claude-sonnet-4.6` (default agent default) | Bug fixes, well-specified features, test additions |
-| Bulk mechanical work, simple lookups | `claude-haiku-4.5` | File enumeration, log scraping, single-file reads |
-
-**Rules:**
-- Pass `model: "claude-opus-4.7"` (or `claude-opus-4.6`) explicitly on the `task` tool call when the work is non-trivial. Do not rely on defaults for high-stakes investigations.
-- Rubber-duck reviews of complex designs MUST use opus — a weak critic produces weak critiques.
-- For the JT-60SA EFIT++ campaign and any solver/basin-selection work, **always use opus 4.6/4.7** regardless of dispatched agent type (engineer, architect, rubber-duck).
-- LLM-pipeline model choices (standard names, DD enrichment, etc.) are governed by `pyproject.toml` `[tool.imas-codex.*]` sections — that policy is independent of the sub-agent model policy here.
+- **EFIT++ campaigns, solver/numerics/physics analysis, schema redesigns, cross-cutting refactors** → always `claude-opus-4.6`.
+- **Rubber-duck reviews** of complex designs → `claude-opus-4.6` (weak critic produces weak critiques).
+- **LLM-pipeline model choices** (standard names, DD enrichment, etc.) are governed by `pyproject.toml` `[tool.imas-codex.*]` sections — independent of sub-agent model policy.
 
 ### Parallel Agents
 
@@ -1515,113 +1480,22 @@ Multiple agents may be working on this repository simultaneously on the same `ma
 
 #### Banned Destructive Commands
 
-**`git stash` in ANY form is BANNED in all agent sessions.** This is a hard rule, not a guideline. Forensic audit (2026-04-24) found 10 stashes accumulated during concurrent fleet work, several labelled `prior-agent-uncommitted` / `other-agent-WIP`. Stashes are opaque to the orchestrator, can't be reviewed via `git log`, rot against HEAD within hours, and silently wipe peer agents' edits when applied. **If you need a clean worktree, commit your own files immediately:**
-
-```bash
-git add <your-specific-files>   # never git add -A or git add .
-git commit -m "type: ..."
-git pull --no-rebase origin main
-git push origin main
-```
-
-If your work is not ready to commit, **stop and file a blocker todo** — do not park it in a stash.
-
-The following commands are **BANNED** against any file the current agent did not author in this session:
-
-| Command | Effect | Ban scope |
-|---------|--------|-----------|
-| `git restore <path>` | Wipes unstaged + staged changes | Files the agent didn't author in-session |
-| `git checkout -- <path>` | Same (legacy syntax) | Same |
-| `git checkout <ref> -- <path>` | Overwrites with version from another ref | Same |
-| `git checkout -- .` / `git restore .` | Wipes ALL unstaged changes | **Always banned** |
-| `git clean -f` / `git clean -fd` | Deletes untracked files | **Always banned** |
-| `git reset --hard` | Resets index + worktree | **Always banned** without user approval |
-| `git stash` (any form) | Hides work, rots against HEAD, silently wipes peer edits | **Always banned** — commit instead |
-| `git stash push -- <path>` | Same hazards as bare `git stash` | **Always banned** — commit instead |
-| `git stash pop` / `git stash apply` | Can conflict with peer edits not yet pushed | **Always banned** — surface stash to user, don't recover autonomously |
-| `git revert <sha>` | Reverts another agent's commit | **Never** revert without explicit user authorisation |
-| `git cherry-pick` | Rewrites topology, confuses parallel histories | **Banned** unless user-approved |
-| `git add -A` / `git add .` | Stages files the agent didn't modify | **Always banned** |
+See `~/.agents/AGENTS.md` for the full banned-command table and stash ban.
 
 **Note on auto-generated files:** `uv sync` regenerates model files (models.py, dd_models.py, schema_context_data.py) that are gitignored. Their presence makes the worktree look dirty — never stage them, and never `git restore` them. This is another reason merge (not rebase) is the correct pull policy.
 
-#### Verifying Pre-Existing Test Failures (no-stash protocol)
+#### Verifying Pre-Existing Test Failures
 
-A common temptation is to `git stash` your in-flight edits to confirm a failing test was already broken on `HEAD`. **Don't.** Use one of these stash-free alternatives instead:
+Use stash-free alternatives to verify whether a test failure pre-dates your session:
 
-1. **Read git history** — `git log --since="1 day ago" -- tests/path/test.py` and `git show HEAD:tests/path/test.py` reveal whether the failure was introduced in your session or pre-dates it.
-2. **Run the test on a peer commit** — `git show <sha>:tests/path/test.py | uv run python -` or check out a separate worktree (`git worktree add /tmp/verify HEAD~1`) for an isolated probe.
-3. **Trust the failure timestamp** — if a test was failing before you touched any code in that area, your changes did not cause it. Use `git diff --stat HEAD` to confirm your edits don't intersect the failing module.
-4. **File a blocker todo** — record the pre-existing failure, scope your work around it, and surface it in your final report. Do not autonomously triage out-of-scope failures.
+1. **Read git history** — `git log --since="1 day ago" -- tests/path/test.py` and `git show HEAD:tests/path/test.py`.
+2. **Run the test on a peer commit** — `git show <sha>:tests/path/test.py | uv run python -` or use a separate worktree.
+3. **Trust the failure timestamp** — if a test was failing before you touched any code in that area, your changes did not cause it.
+4. **File a blocker todo** — record the pre-existing failure, scope your work around it, and surface it in your final report.
 
-`git stash` (any form) remains banned regardless of how convenient it appears. The cost of one stash–pop cycle clobbering a peer agent's uncommitted work is irrecoverable; the cost of using a worktree or a `git show` probe is seconds.
+#### Sub-Agent Dispatch Preamble
 
-#### Pre-Edit Protocol for High-Risk Files
-
-For files commonly touched by multiple agents (AGENTS.md, pyproject.toml, shared schemas, core modules), always:
-
-```bash
-git fetch origin main && git log --since="1 hour ago" -- <path>
-git pull --no-rebase origin main
-# ... edit ...
-git add <path> && git commit -m "..." && git push origin main  # IMMEDIATELY
-```
-
-The window between edit and push is the only window where a parallel agent's `git restore` can destroy the work. **Close that window on every coherent change.** Never accumulate multiple cross-cutting edits uncommitted across turns.
-
-#### Fleet Dispatch File-Scoping Rule
-
-When dispatching multiple agents in parallel, the **orchestrating agent MUST**:
-- Allocate non-overlapping file sets per sub-agent
-- Refuse to dispatch two agents that would edit the same file
-
-Overlapping scopes produce lost work regardless of how careful each individual agent is.
-
-#### Anomaly Protocol
-
-If a file looks wrong (content missing, prior edit is gone, unexpected content):
-
-1. **Stop** — do not try to restore to a known-good state.
-2. Run `git status`, `git log --since="2 hours ago"`, `git reflog | head -20`.
-3. Run `git log --since="2 hours ago" -- <suspect-file>` to see recent commits on that file.
-4. **Surface the anomaly to the user** before any destructive action.
-5. Only proceed after user authorisation, with an explicit revert target SHA.
-
-#### Mandatory Sub-Agent Dispatch Preamble
-
-Every `task` dispatch prompt issued by an orchestrating agent **MUST** embed the following block verbatim at the top, before any task-specific instructions. This is non-negotiable and applies to every sub-agent regardless of model or task type:
-
-```
-PARALLEL-SAFETY RULES (binding — violating any is a hard failure):
-
-1. You are working on branch `main` alongside other concurrent agents.
-   Stay on `main`. Never checkout, create, or switch to another branch.
-2. `git stash` in ANY form is BANNED. No `git stash`, no `git stash push`,
-   no `git stash push -- <files>`, no `git stash pop`, no `git stash apply`.
-   If you need a clean worktree, COMMIT YOUR OWN FILES IMMEDIATELY:
-     git add <your-specific-files>   # never `git add -A` or `git add .`
-     git commit -m "type: ..."
-     git pull --no-rebase origin main
-     git push origin main
-   If your work is not ready to commit, STOP and report a blocker.
-3. `git restore`, `git checkout -- <path>`, `git checkout <ref> -- <path>`,
-   `git clean -f`, `git reset --hard` are BANNED against any file you did
-   not author or modify in THIS session. If a file looks wrong, run
-   `git log --since="2 hours ago" -- <path>` and surface the anomaly to
-   the orchestrator — do not attempt recovery.
-4. `git add -A` / `git add .` / `git add *` are BANNED. Always stage only
-   the specific files you modified for your task.
-5. If another agent has uncommitted edits in the worktree when you arrive,
-   leave those files alone. Your file set and theirs must be disjoint.
-6. Close the edit→push window on every coherent change. Do not accumulate
-   multiple cross-cutting edits uncommitted across turns.
-7. Never revert another agent's commits. If you encounter out-of-scope
-   changes, flag them to the orchestrator — do not revert, amend, or undo them.
-8. If in doubt, stop and ask the orchestrator. Never invent a "clever
-   workaround" that bypasses these rules.
-```
-
-The orchestrator must refuse to dispatch any task without this preamble in place, and must audit sub-agent results for compliance before accepting.
+Use the dispatch preamble from `~/.agents/AGENTS.md` with `{BRANCH}=main`.
 
 #### Session Hygiene
 
