@@ -66,6 +66,24 @@ def mock_graph_client():
     return client
 
 
+@pytest.fixture()
+def graph_client():
+    """Real GraphClient; skips if Neo4j is unavailable.
+
+    Used by graph-marked integration tests (e.g. test_physics_domain_multi).
+    """
+    from imas_codex.graph.client import GraphClient
+
+    try:
+        client = GraphClient()
+        client.get_stats()
+    except Exception as e:
+        pytest.skip(f"Neo4j not available: {e}")
+
+    yield client
+    client.close()
+
+
 # ---------------------------------------------------------------------------
 # MockLLM — scripted LLM response fixture
 # ---------------------------------------------------------------------------

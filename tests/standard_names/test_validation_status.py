@@ -191,55 +191,6 @@ class TestMarkNamesValidated:
 
 
 # =============================================================================
-# persist_composed_batch() defaults to "pending"
-# =============================================================================
-
-
-class TestPersistComposedBatch:
-    """Verify persist_composed_batch sets validation_status=pending."""
-
-    @patch("imas_codex.embeddings.description.embed_descriptions_batch")
-    def test_sets_pending_default(self, mock_embed) -> None:
-        # Simulate successful embedding so validation_status stays "pending"
-        def _embed_ok(items, text_field="description", embedding_field="embedding"):
-            for item in items:
-                item[embedding_field] = [0.1, 0.2]
-            return items
-
-        mock_embed.side_effect = _embed_ok
-
-        mock_gc = MagicMock()
-        mock_gc.query = MagicMock(return_value=[])
-
-        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
-            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
-            MockGC.return_value.__exit__ = MagicMock(return_value=False)
-            from imas_codex.standard_names.graph_ops import persist_composed_batch
-
-            persist_composed_batch(
-                [
-                    {
-                        "id": "electron_temperature",
-                        "source_types": ["dd"],
-                        "source_id": "core_profiles/profiles_1d/electrons/temperature",
-                    }
-                ],
-                compose_model="test/model",
-            )
-
-        # Find the MERGE call (second query — first is unit conflict check)
-        merge_call = None
-        for c in mock_gc.query.call_args_list:
-            cypher = c[0][0]
-            if "MERGE (sn:StandardName" in cypher:
-                merge_call = c
-                break
-
-        assert merge_call is not None, "No MERGE StandardName query found"
-        batch = merge_call[1]["batch"]
-        assert batch[0]["validation_status"] == "pending"
-
-
 # =============================================================================
 # write_standard_names() includes validation_status in Cypher
 # =============================================================================

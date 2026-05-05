@@ -507,8 +507,8 @@ class TestMinScoreThreshold:
         assert result == "reviewed"
 
     def test_score_below_min_at_rotation_cap(self):
-        """score < min_score at chain_length=rotation_cap-1 → 'exhausted'."""
-        gc = _mock_gc_query(return_values=[[{"chain_length": 2}], []])
+        """score < min_score at chain_length=rotation_cap → 'exhausted'."""
+        gc = _mock_gc_query(return_values=[[{"chain_length": 3}], [], []])
         with _patch_gc(gc):
             from imas_codex.standard_names.graph_ops import persist_reviewed_name
 

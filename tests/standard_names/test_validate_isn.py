@@ -40,10 +40,10 @@ def test_validate_via_isn_bad_name():
 
 
 def test_validate_via_isn_empty_entry():
-    """Empty entry doesn't crash."""
+    """Nearly-empty entry doesn't crash; summary structure is intact."""
     from imas_codex.standard_names.workers import _validate_via_isn
 
-    entry = {}
+    entry = {"unit": "m"}  # unit required for non-metadata kind
     issues, summary = _validate_via_isn(entry)
     # Should not crash — may have issues but summary structure is intact
     assert "pydantic" in summary

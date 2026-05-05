@@ -425,6 +425,7 @@ class TestPersistDoesNotChangeNameFields:
             return_values=[
                 [{"docs_chain_length": 0}],
                 [],
+                [],
             ]
         )
 
@@ -443,8 +444,10 @@ class TestPersistDoesNotChangeNameFields:
         set_call = gc.query.call_args_list[1]
         cypher = set_call[0][0]
 
-        # Docs review must NOT touch name_stage or reviewer_*_name fields
-        assert "name_stage" not in cypher
+        # Docs review must NOT set name-axis fields.
+        # name_stage may appear in the WHERE clause as a filter — only check the SET block.
+        set_part = cypher.split("SET", 1)[1] if "SET" in cypher else cypher
+        assert "name_stage" not in set_part
         assert "reviewer_score_name" not in cypher
         assert "reviewer_comments_name" not in cypher
         assert "reviewed_name_at" not in cypher
@@ -535,7 +538,7 @@ class TestWorkerStreamsPerItemDocs:
             ),
             patch(
                 "imas_codex.llm.prompt_loader.render_prompt",
-                return_value="Review.",
+                return_value="documentation quality review.",
             ),
         ):
             from imas_codex.standard_names.workers import process_review_docs_batch

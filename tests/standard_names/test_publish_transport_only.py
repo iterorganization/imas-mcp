@@ -21,11 +21,28 @@ from imas_codex.standard_names.publish import (
 
 @pytest.fixture()
 def staging_dir(tmp_path: Path) -> Path:
-    """Create a valid staging directory."""
+    """Create a valid staging directory matching current export format."""
     staging = tmp_path / "staging"
     staging.mkdir()
 
-    # Write manifest
+    # Write per-domain YAML (flat file, not subdirectory)
+    sn_dir = staging / "standard_names"
+    sn_dir.mkdir(parents=True)
+    entries = [
+        {
+            "name": "electron_temperature",
+            "description": "Te",
+            "documentation": "Docs",
+            "kind": "scalar",
+            "unit": "eV",
+            "links": [],
+            "constraints": [],
+            "status": "draft",
+        }
+    ]
+    (sn_dir / "equilibrium.yml").write_text(yaml.safe_dump(entries), encoding="utf-8")
+
+    # Write manifest with required fields
     manifest = {
         "catalog_name": "imas-standard-names-catalog",
         "cocos_convention": 17,
@@ -34,29 +51,14 @@ def staging_dir(tmp_path: Path) -> Path:
         "dd_version_lineage": ["4.0.0"],
         "generated_by": "test",
         "generated_at": "2024-01-01T00:00:00Z",
-        "candidate_count": 2,
-        "published_count": 2,
+        "candidate_count": 1,
+        "published_count": 1,
         "excluded_below_score_count": 0,
         "excluded_unreviewed_count": 0,
+        "edge_model_version": "plan_39_v1",
+        "domains_included": ["equilibrium"],
     }
     (staging / "catalog.yml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
-
-    # Write entry files
-    sn_dir = staging / "standard_names" / "equilibrium"
-    sn_dir.mkdir(parents=True)
-    entry = {
-        "name": "electron_temperature",
-        "description": "Te",
-        "documentation": "Docs",
-        "kind": "scalar",
-        "unit": "eV",
-        "links": [],
-        "constraints": [],
-        "status": "draft",
-    }
-    (sn_dir / "electron_temperature.yml").write_text(
-        yaml.safe_dump(entry), encoding="utf-8"
-    )
 
     return staging
 
@@ -124,26 +126,41 @@ class TestValidateStagingDir:
 class TestRunPublish:
     """run_publish transport operation."""
 
-    def test_dry_run_no_changes(self, staging_dir: Path, isnc_repo: Path) -> None:
+    @patch(
+        "imas_codex.standard_names.publish._fetch_expected_domains", return_value=None
+    )
+    def test_dry_run_no_changes(
+        self, _mock_domains, staging_dir: Path, isnc_repo: Path
+    ) -> None:
         report = run_publish(staging_dir, isnc_repo, dry_run=True)
         assert report.dry_run is True
         assert report.files_copied > 0
         assert report.commit_sha is None
         assert not report.errors
 
-    def test_publish_creates_commit(self, staging_dir: Path, isnc_repo: Path) -> None:
+    @patch(
+        "imas_codex.standard_names.publish._fetch_expected_domains", return_value=None
+    )
+    def test_publish_creates_commit(
+        self, _mock_domains, staging_dir: Path, isnc_repo: Path
+    ) -> None:
         report = run_publish(staging_dir, isnc_repo)
         assert not report.errors, f"Errors: {report.errors}"
         assert report.commit_sha is not None
         assert report.files_copied > 0
 
-        # Verify files exist in ISNC
+        # Verify files exist in ISNC (flat per-domain YAML)
         assert (isnc_repo / "catalog.yml").is_file()
-        sn_dir = isnc_repo / "standard_names" / "equilibrium"
+        sn_dir = isnc_repo / "standard_names"
         assert sn_dir.is_dir()
-        assert (sn_dir / "electron_temperature.yml").is_file()
+        assert (sn_dir / "equilibrium.yml").is_file()
 
-    def test_publish_commit_message(self, staging_dir: Path, isnc_repo: Path) -> None:
+    @patch(
+        "imas_codex.standard_names.publish._fetch_expected_domains", return_value=None
+    )
+    def test_publish_commit_message(
+        self, _mock_domains, staging_dir: Path, isnc_repo: Path
+    ) -> None:
         run_publish(staging_dir, isnc_repo)
 
         result = subprocess.run(
@@ -153,14 +170,20 @@ class TestRunPublish:
             text=True,
         )
         msg = result.stdout.strip()
-        assert msg.startswith("chore(catalog): sync from imas-codex")
+        assert msg.startswith("sn: update")
 
-    def test_publish_clears_old_tree(self, staging_dir: Path, isnc_repo: Path) -> None:
+    @patch(
+        "imas_codex.standard_names.publish._fetch_expected_domains", return_value=None
+    )
+    def test_publish_clears_old_tree(
+        self, _mock_domains, staging_dir: Path, isnc_repo: Path
+    ) -> None:
         """Publishing should clear old standard_names/ before mirroring."""
-        # Create pre-existing file in ISNC
-        old_dir = isnc_repo / "standard_names" / "old_domain"
-        old_dir.mkdir(parents=True)
-        (old_dir / "old_name.yml").write_text("old content")
+        # Create pre-existing file in ISNC (flat per-domain YAML)
+        sn_dir = isnc_repo / "standard_names"
+        sn_dir.mkdir(parents=True, exist_ok=True)
+        old_file = sn_dir / "old_domain.yml"
+        old_file.write_text("- name: old_name\n")
         subprocess.run(
             ["git", "add", "."], cwd=isnc_repo, check=True, capture_output=True
         )
@@ -175,7 +198,7 @@ class TestRunPublish:
         run_publish(staging_dir, isnc_repo)
 
         # Old file should be gone
-        assert not old_dir.exists()
+        assert not old_file.exists()
 
     def test_publish_invalid_staging_fails(
         self, tmp_path: Path, isnc_repo: Path

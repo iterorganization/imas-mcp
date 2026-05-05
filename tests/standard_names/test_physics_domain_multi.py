@@ -1,10 +1,10 @@
-"""Tests for multi-valued physics_domain on StandardName.
+"""Tests for physics_domain promote-on-higher-rank semantics on StandardName.
 
 Verifies:
-- physics_domain is stored as a list
-- Append-only semantics (second write adds new domains)
-- Deduplication (re-writing an existing domain is a no-op)
-- HAS_PHYSICS_DOMAIN relationship count matches distinct domains
+- physics_domain is stored as a scalar string (the highest-priority domain)
+- source_domains accumulates all contributing domains (append-only)
+- Re-writing an existing domain does not duplicate it in source_domains
+- HAS_PHYSICS_DOMAIN relationship count matches distinct source domains
 """
 
 from __future__ import annotations
@@ -30,10 +30,10 @@ def clean_sn(graph_client):
 
 
 class TestPhysicsDomainMultiValued:
-    """Multi-valued physics_domain write semantics."""
+    """physics_domain promote-on-higher-rank write semantics."""
 
-    def test_write_single_domain_stores_list(self, graph_client, clean_sn):
-        """Writing a single domain stores it as a list."""
+    def test_write_single_domain_stores_scalar(self, graph_client, clean_sn):
+        """Writing a single domain stores it as a scalar string (not a list)."""
         from imas_codex.standard_names.graph_ops import write_standard_names
 
         count = write_standard_names(
@@ -53,14 +53,18 @@ class TestPhysicsDomainMultiValued:
             id=clean_sn,
         )
         pd = list(rows)[0]["pd"]
-        assert isinstance(pd, list)
-        assert pd == ["equilibrium"]
+        assert isinstance(pd, str)
+        assert pd == "equilibrium"
 
-    def test_append_new_domain(self, graph_client, clean_sn):
-        """Re-writing with a new domain appends it (order-insensitive)."""
+    def test_append_new_domain_tracks_in_source_domains(self, graph_client, clean_sn):
+        """Re-writing with a new domain records it in source_domains (order-insensitive).
+
+        physics_domain retains the highest-priority (lowest-rank) domain after promotion.
+        source_domains accumulates all contributing domains.
+        """
         from imas_codex.standard_names.graph_ops import write_standard_names
 
-        # First write
+        # First write — equilibrium (rank 0, highest priority)
         write_standard_names(
             [
                 {
@@ -71,7 +75,7 @@ class TestPhysicsDomainMultiValued:
                 }
             ]
         )
-        # Second write — different domain
+        # Second write — transport (rank 2, lower priority than equilibrium)
         write_standard_names(
             [
                 {
@@ -84,14 +88,18 @@ class TestPhysicsDomainMultiValued:
         )
 
         rows = graph_client.query(
-            "MATCH (sn:StandardName {id: $id}) RETURN sn.physics_domain AS pd",
+            """MATCH (sn:StandardName {id: $id})
+               RETURN sn.physics_domain AS pd, sn.source_domains AS sd""",
             id=clean_sn,
         )
-        pd = set(list(rows)[0]["pd"])
-        assert pd == {"equilibrium", "transport"}
+        row = list(rows)[0]
+        # physics_domain is the promoted scalar (equilibrium outranks transport)
+        assert row["pd"] == "equilibrium"
+        # source_domains tracks all contributing domains
+        assert set(row["sd"]) == {"equilibrium", "transport"}
 
     def test_no_duplicate_on_rewrite(self, graph_client, clean_sn):
-        """Re-writing an existing domain does not duplicate it."""
+        """Re-writing an existing domain does not duplicate it in source_domains."""
         from imas_codex.standard_names.graph_ops import write_standard_names
 
         write_standard_names(
@@ -114,7 +122,7 @@ class TestPhysicsDomainMultiValued:
                 }
             ]
         )
-        # Third write — duplicate domain
+        # Third write — duplicate domain (transport again)
         write_standard_names(
             [
                 {
@@ -127,12 +135,13 @@ class TestPhysicsDomainMultiValued:
         )
 
         rows = graph_client.query(
-            "MATCH (sn:StandardName {id: $id}) RETURN sn.physics_domain AS pd",
+            """MATCH (sn:StandardName {id: $id})
+               RETURN sn.source_domains AS sd""",
             id=clean_sn,
         )
-        pd = list(rows)[0]["pd"]
-        # Must be exactly 2, no duplicates
-        assert sorted(pd) == ["equilibrium", "transport"]
+        sd = list(rows)[0]["sd"]
+        # Must be exactly 2 distinct domains, no duplicates
+        assert sorted(sd) == ["equilibrium", "transport"]
 
     def test_has_physics_domain_edge_count(self, graph_client, clean_sn):
         """HAS_PHYSICS_DOMAIN relationship count matches distinct domains."""
@@ -168,8 +177,8 @@ class TestPhysicsDomainMultiValued:
         )
         assert list(rows)[0]["edge_count"] == 2
 
-    def test_scalar_input_wrapped_to_list(self, graph_client, clean_sn):
-        """Scalar physics_domain input is silently wrapped to a list."""
+    def test_scalar_input_stored_as_scalar(self, graph_client, clean_sn):
+        """Scalar physics_domain input is stored as a scalar string."""
         from imas_codex.standard_names.graph_ops import write_standard_names
 
         write_standard_names(
@@ -188,5 +197,5 @@ class TestPhysicsDomainMultiValued:
             id=clean_sn,
         )
         pd = list(rows)[0]["pd"]
-        assert isinstance(pd, list)
-        assert pd == ["magnetics"]
+        assert isinstance(pd, str)
+        assert pd == "magnetics"

@@ -44,10 +44,10 @@ class TestRunPreview:
 
         mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
-        assert "standard-names" in cmd
-        assert "catalog-site" in cmd
+        assert "mkdocs" in cmd
         assert "serve" in cmd
-        assert str(staging_dir) in cmd
+        assert "--dev-addr" in cmd
+        assert "127.0.0.1:8000" in cmd
 
     @patch("imas_codex.standard_names.preview.subprocess.Popen")
     def test_custom_port(self, mock_popen: MagicMock, staging_dir: Path) -> None:
@@ -56,16 +56,16 @@ class TestRunPreview:
         handle = run_preview(staging_dir, port=9090)
 
         cmd = mock_popen.call_args[0][0]
-        assert "--port" in cmd
-        assert "9090" in cmd
-        assert handle.url == "http://localhost:9090"
+        assert "--dev-addr" in cmd
+        assert "127.0.0.1:9090" in cmd
+        assert handle.url == "http://127.0.0.1:9090"
 
     @patch("imas_codex.standard_names.preview.subprocess.Popen")
     def test_default_port_url(self, mock_popen: MagicMock, staging_dir: Path) -> None:
         mock_popen.return_value = MagicMock()
 
         handle = run_preview(staging_dir)
-        assert handle.url == "http://localhost:8000"
+        assert handle.url == "http://127.0.0.1:8000"
 
     @patch("imas_codex.standard_names.preview.subprocess.Popen")
     def test_returns_handle(self, mock_popen: MagicMock, staging_dir: Path) -> None:
@@ -105,6 +105,5 @@ class TestRunPreview:
     def test_missing_cli_returns_none_url(
         self, mock_popen: MagicMock, staging_dir: Path
     ) -> None:
-        handle = run_preview(staging_dir)
-        assert handle.process is None
-        assert handle.url is None
+        with pytest.raises(ImportError, match="mkdocs"):
+            run_preview(staging_dir)
