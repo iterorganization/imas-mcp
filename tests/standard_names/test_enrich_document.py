@@ -51,7 +51,6 @@ def _make_item(name: str, **overrides: Any) -> dict[str, Any]:
         "documentation": None,
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["equilibrium"],
         "links": None,
         "source_paths": [f"equilibrium/time_slice/profiles_1d/{name}"],
         "physical_base": "temperature",
@@ -79,7 +78,6 @@ def _make_item(name: str, **overrides: Any) -> dict[str, Any]:
         "current": {
             "description": None,
             "documentation": None,
-            "tags": None,
             "links": None,
         },
     }
@@ -113,7 +111,6 @@ def _make_enrich_result(*names: str) -> StandardNameEnrichBatch:
             standard_name=name,
             description=f"One-sentence description of {name}.",
             documentation=f"# {name}\n\nDetailed documentation for {name} with $T_e$ LaTeX.",
-            tags=["measured", "time-dependent"],
             links=["ion_temperature"],
             validity_domain="Tokamak core plasma",
             constraints=["Must be positive"],

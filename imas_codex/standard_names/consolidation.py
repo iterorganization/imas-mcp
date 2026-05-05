@@ -107,12 +107,6 @@ def _merge_duplicates(group: list[dict]) -> dict:
             all_paths.add(c["source_id"])
     merged["source_paths"] = sorted(all_paths)
 
-    # Union tags
-    all_tags: set[str] = set()
-    for c in group:
-        all_tags.update(c.get("tags") or [])
-    merged["tags"] = sorted(all_tags)
-
     # Union source_types
     all_source_types: set[str] = set()
     for c in group:

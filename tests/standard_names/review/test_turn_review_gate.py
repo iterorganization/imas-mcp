@@ -32,7 +32,6 @@ _FAKE_ENRICHED_NAME: dict = {
     "reviewer_score": None,
     "review_input_hash": None,
     "embedding": None,
-    "tags": ["core_profiles"],
     "links": [],
     "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "physical_base": "temperature",

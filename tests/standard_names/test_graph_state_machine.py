@@ -35,7 +35,6 @@ def sample_candidates() -> list[dict]:
             "documentation": "The electron temperature $T_e$.",
             "kind": "scalar",
             "unit": "eV",
-            "tags": ["core_profiles"],
             "fields": {
                 "physical_base": "temperature",
                 "subject": "electron",
@@ -47,7 +46,6 @@ def sample_candidates() -> list[dict]:
             "documentation": "Total ion density $n_i$.",
             "kind": "scalar",
             "unit": "m^-3",
-            "tags": ["core_profiles"],
             "fields": {"physical_base": "density", "subject": "ion"},
         },
     ]
@@ -294,7 +292,6 @@ class TestClaimNamesForValidation:
                     "documentation": None,
                     "kind": "scalar",
                     "unit": "eV",
-                    "tags": None,
                     "links": None,
                     "source_paths": None,
                     "physical_base": "temperature",
@@ -581,7 +578,6 @@ class TestGetValidatedNames:
                 "documentation": None,
                 "kind": "scalar",
                 "unit": "eV",
-                "tags": None,
                 "links": None,
                 "source_paths": None,
                 "source_ids": [],

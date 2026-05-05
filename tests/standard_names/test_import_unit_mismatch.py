@@ -21,7 +21,6 @@ _ENTRY = {
     "unit": "eV",
     "description": "Electron temperature",
     "documentation": "The electron temperature Te.",
-    "tags": [],
     "links": [],
     "constraints": [],
     "validity_domain": "",

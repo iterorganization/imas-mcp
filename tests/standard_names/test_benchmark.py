@@ -1173,7 +1173,6 @@ class TestReviewerTemplate:
                         "documentation": "A test doc",
                         "unit": "eV",
                         "kind": "scalar",
-                        "tags": ["core_profiles"],
                         "grammar_fields": {
                             "physical_base": "temperature",
                             "subject": "electron",

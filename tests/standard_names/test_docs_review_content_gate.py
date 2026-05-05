@@ -34,7 +34,6 @@ def _make_name(
         "documentation": documentation,
         "kind": "scalar",
         "unit": "m^-3",
-        "tags": [],
         "links": [],
         "source_paths": [],
         "physical_base": "",

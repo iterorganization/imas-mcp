@@ -90,8 +90,7 @@ Rules:
   Do **not** regress on dimensions that already scored well.
 - `links`: list of related standard names in `name:xxx` or `dd:path/here`
   format.  Only include genuine conceptual relationships.
-- `tags`: relevant physics domain / IDS tags (lowercase, snake_case).
 - The `name` field must equal `{{ sn_name }}` exactly — do not alter it.
 
 Return a JSON object matching the output schema with fields:
-``description``, ``documentation``, ``links``, ``tags``.
+``description``, ``documentation``, ``links``.

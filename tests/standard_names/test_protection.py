@@ -34,7 +34,6 @@ class TestFilterProtectedOverrideFalse:
                 description="new desc",
                 documentation="new doc",
                 kind="scalar",
-                tags=["core"],
                 pipeline_status="enriched",  # NOT protected
             )
         ]
@@ -49,7 +48,6 @@ class TestFilterProtectedOverrideFalse:
         assert "description" not in result
         assert "documentation" not in result
         assert "kind" not in result
-        assert "tags" not in result
         # Non-protected fields preserved
         assert result["id"] == "electron_temperature"
         assert result["pipeline_status"] == "enriched"
@@ -131,7 +129,6 @@ class TestFilterProtectedOverrideTrue:
                 description="new desc",
                 documentation="new doc",
                 kind="scalar",
-                tags=["core"],
                 status="published",
             )
         ]
@@ -145,7 +142,6 @@ class TestFilterProtectedOverrideTrue:
         assert result["description"] == "new desc"
         assert result["documentation"] == "new doc"
         assert result["kind"] == "scalar"
-        assert result["tags"] == ["core"]
         assert result["status"] == "published"
         assert skipped == []
 
@@ -203,7 +199,6 @@ class TestProtectedFieldsConstant:
             "description",
             "documentation",
             "kind",
-            "tags",
             "links",
             "status",
             "deprecates",

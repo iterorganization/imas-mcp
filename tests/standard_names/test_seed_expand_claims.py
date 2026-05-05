@@ -364,7 +364,6 @@ class TestRefineNameEligibility:
                         "chain_length": 0,
                         "name_stage": "refining",
                         "source_paths": None,
-                        "tags": None,
                     }
                 ],
             ]
@@ -454,7 +453,6 @@ class TestReviewAndRefineDisjoint:
                         "chain_length": 0,
                         "name_stage": "refining",
                         "source_paths": None,
-                        "tags": None,
                     }
                 ],
             ]
@@ -616,7 +614,6 @@ class TestClaimTokenTwoStep:
                         "chain_length": 0,
                         "name_stage": "refining",
                         "source_paths": None,
-                        "tags": None,
                     }
                 ],
             ],

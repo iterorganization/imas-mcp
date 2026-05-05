@@ -165,7 +165,6 @@ def test_names_mode_renders_reference_exemplars() -> None:
             "name": "electron_thermal_velocity",
             "description": "Electron thermal velocity",
             "unit": "m.s^-1",
-            "tags": ["core_plasma_physics", "kinetic"],
         }
     ]
     rendered = _render_names_prompt(reference_exemplars=exemplars)

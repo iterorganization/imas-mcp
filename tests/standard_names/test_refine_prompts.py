@@ -247,7 +247,6 @@ class TestRefineDocsPrompt:
     def test_output_fields_specified(self, rendered: str):
         assert "documentation" in rendered
         assert "links" in rendered
-        assert "tags" in rendered
 
     def test_empty_history_renders_gracefully(self):
         ctx = _make_docs_context(docs_chain_history=[], docs_chain_length=0)

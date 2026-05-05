@@ -518,7 +518,6 @@ class TestEnrichPerItemCost:
         mock_enriched.description = "Electron temperature."
         mock_enriched.documentation = "The electron temperature."
         mock_enriched.links = []
-        mock_enriched.tags = []
         mock_enriched.validity_domain = None
         mock_enriched.constraints = None
 
@@ -527,7 +526,6 @@ class TestEnrichPerItemCost:
         mock_enriched2.description = "Ion temperature."
         mock_enriched2.documentation = "The ion temperature."
         mock_enriched2.links = []
-        mock_enriched2.tags = []
         mock_enriched2.validity_domain = None
         mock_enriched2.constraints = None
 

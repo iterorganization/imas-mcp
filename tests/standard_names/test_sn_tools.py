@@ -508,7 +508,6 @@ class TestMCPToolRegistration:
         assert "k" in params
         assert "gc" in params
         # The legacy ``tags`` filter has been dropped (Plan MCP+units Track A)
-        assert "tags" not in params
         assert "tag" not in params
 
     def test_fetch_signature(self):
@@ -536,7 +535,6 @@ class TestMCPToolRegistration:
         assert "gc" in params
         # The legacy ``tag`` filter has been dropped
         assert "tag" not in params
-        assert "tags" not in params
 
     def test_mcp_wrapper_no_tags_tag(self):
         """MCP wrappers must not declare tag/tags parameters."""

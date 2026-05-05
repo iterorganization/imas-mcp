@@ -27,7 +27,7 @@ class TestFilterProtectedOverrideNames:
     def test_override_names_bypasses_protection_for_listed(self):
         """Names in override_names pass through even if catalog-edited."""
         items = [
-            {"id": "bar", "description": "new bar desc", "tags": ["x"]},
+            {"id": "bar", "description": "new bar desc"},
         ]
         filtered, skipped = filter_protected(
             items,
@@ -38,14 +38,13 @@ class TestFilterProtectedOverrideNames:
         assert len(filtered) == 1
         # bar should keep its protected fields
         assert "description" in filtered[0]
-        assert "tags" in filtered[0]
         assert skipped == []
 
     def test_override_names_does_not_affect_others(self):
         """Names NOT in override_names remain protected."""
         items = [
-            {"id": "bar", "description": "bar desc", "tags": ["x"]},
-            {"id": "baz", "description": "baz desc", "tags": ["y"]},
+            {"id": "bar", "description": "bar desc"},
+            {"id": "baz", "description": "baz desc"},
         ]
         filtered, skipped = filter_protected(
             items,
@@ -59,11 +58,9 @@ class TestFilterProtectedOverrideNames:
 
         # bar: overridden, all fields pass
         assert "description" in bar_item
-        assert "tags" in bar_item
 
         # baz: still protected, fields stripped
         assert "description" not in baz_item
-        assert "tags" not in baz_item
         assert "baz" in skipped
 
     def test_override_names_with_no_protected(self):

@@ -262,7 +262,6 @@ class TestAtomicClaimReturnsExpandedPayload:
                         "chain_length": 1,
                         "name_stage": "reviewed",
                         "source_paths": [],
-                        "tags": [],
                         "chain_history": [],
                         "reviewed_name_at": "2024-01-01",
                         "regen_count": 1,
@@ -287,7 +286,6 @@ class TestAtomicClaimReturnsExpandedPayload:
             "chain_length",
             "name_stage",
             "source_paths",
-            "tags",
             "chain_history",
         ]:
             assert key in items[0], f"missing key: {key}"

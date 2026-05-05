@@ -110,7 +110,6 @@ def _make_enrich_item(
         "unit": unit,
         "kind": kind,
         "physics_domain": physics_domain,
-        "tags": ["core_profiles"],
         "links": ["ion_temperature"],
         "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     }

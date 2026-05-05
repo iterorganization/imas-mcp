@@ -261,7 +261,6 @@ def _make_refine_item(
         "chain_length": chain_length,
         "name_stage": "refining",
         "source_paths": ["core_profiles/profiles_1d/test_quantity"],
-        "tags": ["test"],
         "claim_token": claim_token,
         "chain_history": [],
     }

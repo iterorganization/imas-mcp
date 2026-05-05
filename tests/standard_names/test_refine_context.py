@@ -113,7 +113,6 @@ def _b_item_row() -> dict[str, Any]:
         "chain_length": 1,
         "name_stage": "refining",
         "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
-        "tags": ["electron"],
     }
 
 
@@ -141,7 +140,6 @@ def _make_prompt_context(
         "chain_length": 1,
         "name_stage": "refining",
         "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
-        "tags": ["electron"],
         "ids_name": "core_profiles",
         "parent_path": None,
         "parent_description": None,

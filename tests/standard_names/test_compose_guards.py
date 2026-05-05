@@ -158,9 +158,9 @@ class TestHardChecksPlacement:
 
     def test_hard_checks_after_includes(self) -> None:
         # HARD CHECKS must appear after the prelude includes (vocabulary,
-        # exemplars, scored examples). A trailing include such as
-        # _coordinate_conventions.md may legitimately appear later in the file.
-        prelude_end = self.raw.index('{% include "sn/_compose_scored_examples.md" %}')
+        # exemplars). The scored-examples include moved to the user prompt;
+        # the system prompt's last prelude include is _exemplars_name_only.md.
+        prelude_end = self.raw.index('{% include "sn/_exemplars_name_only.md" %}')
         hard_pos = self.raw.index("HARD PRE-EMIT CHECKS")
         assert hard_pos > prelude_end
 

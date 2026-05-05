@@ -26,6 +26,7 @@ def _example(
     score: float = 0.82,
     verdict: str = "good",
     domain: str = "transport",
+    target_score: float = 0.80,
     scores: dict | None = None,
     comments: dict | None = None,
 ) -> dict:
@@ -37,6 +38,7 @@ def _example(
         "unit": "eV",
         "reviewer_score": score,
         "reviewer_verdict": verdict,
+        "target_score": target_score,
         "scores": scores or {"dim_a": 18, "dim_b": 16},
         "dimension_comments": comments or {"dim_a": "Good", "dim_b": "OK"},
         "reviewer_comments": "Overall good quality",
@@ -67,15 +69,16 @@ class TestComposeWithEntries:
         assert "good" in result
 
     def test_two_entries(self) -> None:
-        ex1 = _example(name_id="electron_temperature", score=0.95)
-        ex2 = _example(name_id="plasma_current", score=0.42)
+        ex1 = _example(name_id="electron_temperature", score=0.95, target_score=0.90)
+        ex2 = _example(name_id="plasma_current", score=0.42, target_score=0.40)
         result = _render_compose([ex1, ex2])
         assert "electron_temperature" in result
         assert "plasma_current" in result
         assert "0.95" in result
         assert "0.42" in result
-        assert "outstanding" in result
-        assert "poor" in result
+        # High target_score → ✅ EMULATE; low target_score → ⚠️ AVOID
+        assert "EMULATE" in result
+        assert "AVOID" in result
 
 
 class TestComposeDynamicDims:

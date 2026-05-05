@@ -11,13 +11,12 @@ schema_needs: []
 
 This standard name has passed name review and is now accepted. Your task is to write
 clear, complete `description` and `documentation` fields. You must NOT change the name,
-kind, unit, tags, or any other identity field.
+kind, unit, or any other identity field.
 
 **Standard name:** `{{ item.name }}`
 **Unit:** {{ item.unit or "—" }}
 **Kind:** {{ item.kind or "scalar" }}
 **Physics domain:** {{ item.physics_domain or "—" }}
-{% if item.tags %}**Tags:** {{ item.tags | join(", ") }}{% endif %}
 
 ## Why this name was accepted (reviewer feedback)
 

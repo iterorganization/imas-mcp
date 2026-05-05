@@ -24,7 +24,6 @@ def _candidate(
     unit: str | None = "eV",
     kind: str = "scalar",
     source_types: list[str] | None = None,
-    tags: list[str] | None = None,
     source_paths: list[str] | None = None,
     documentation: str = "",
     description: str = "",
@@ -37,7 +36,6 @@ def _candidate(
         "source_types": source_types or ["dd"],
         "unit": unit,
         "kind": kind,
-        "tags": tags or [],
         "source_paths": source_paths or [],
         "documentation": documentation,
         "description": description,
@@ -284,19 +282,12 @@ class TestDuplicateMerging:
 
     def test_tags_unioned(self):
         candidates = [
-            _candidate("electron_temperature", "core/te", tags=["core_profiles"]),
-            _candidate(
-                "electron_temperature", "core/te2", tags=["edge_profiles", "kinetics"]
-            ),
+            _candidate("electron_temperature", "core/te"),
+            _candidate("electron_temperature", "core/te2"),
         ]
         result = consolidate_candidates(candidates)
 
         assert len(result.approved) == 1
-        assert sorted(result.approved[0]["tags"]) == [
-            "core_profiles",
-            "edge_profiles",
-            "kinetics",
-        ]
 
     def test_highest_confidence_kept(self):
         # Prior confidence-based tiebreaker replaced by documentation-length ordering.
@@ -553,17 +544,6 @@ class TestMergeDuplicates:
         assert "core/te2" in merged["source_paths"]
         assert "p1" in merged["source_paths"]
         assert "p2" in merged["source_paths"]
-
-    def test_empty_tags_handled(self):
-        group = [
-            _candidate("te", "core/te", tags=None),
-            _candidate("te", "core/te2", tags=["kinetics"]),
-        ]
-        # tags=None becomes [] via factory, but test None tolerance
-        group[0]["tags"] = None
-        merged = _merge_duplicates(group)
-
-        assert "kinetics" in merged["tags"]
 
     def test_empty_imas_paths_handled(self):
         group = [

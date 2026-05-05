@@ -145,7 +145,6 @@ def _vector_search_standard_names(
         RETURN sn.id AS id,
                sn.description AS description,
                sn.physics_domain AS physics_domain,
-               sn.tags AS tags,
                score
         ORDER BY score DESC
         """,

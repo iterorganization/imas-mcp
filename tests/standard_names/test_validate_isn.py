@@ -15,7 +15,6 @@ def test_validate_via_isn_well_formed():
         "description": "Electron temperature",
         "documentation": "The temperature of electrons in the plasma.",
         "unit": "eV",
-        "tags": [],
         "links": [],
         "physics_domain": "transport",
         "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],

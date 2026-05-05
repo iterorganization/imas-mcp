@@ -160,12 +160,13 @@ class TestExportSuccess:
         assert kwargs["override_edits"] is None
 
     @patch(MOCK_TARGET)
-    def test_staging_passed_as_path(self, mock_export):
+    def test_staging_passed_as_path(self, mock_export, tmp_path):
         mock_export.return_value = _success_report()
+        staging = tmp_path / "staging"
         runner = CliRunner()
-        runner.invoke(sn, ["export", "--staging", "/my/staging"])
+        runner.invoke(sn, ["export", "--staging", str(staging)])
         _, kwargs = mock_export.call_args
-        assert kwargs["staging_dir"] == Path("/my/staging")
+        assert kwargs["staging_dir"] == staging
 
 
 class TestExportGateFailure:

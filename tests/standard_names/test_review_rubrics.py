@@ -253,7 +253,6 @@ def test_docs_prompt_scores_docs_dimensions_only() -> None:
                     "source_id": "x",
                     "unit": "eV",
                     "kind": "scalar",
-                    "tags": [],
                     "description": "Temperature of the electron population.",
                     "documentation": "T_e measured by Thomson scattering.",
                 }

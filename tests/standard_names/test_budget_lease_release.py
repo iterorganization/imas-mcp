@@ -52,7 +52,6 @@ def _stub_item() -> dict[str, Any]:
         "documentation": "Electron temperature documentation",
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["electron"],
         "physics_domain": ["core_profiles"],
         "chain_length": 0,
         "chain_history": [],

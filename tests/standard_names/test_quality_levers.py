@@ -98,7 +98,6 @@ class TestReferenceSNRetrieval:
                 "description": "Te",
                 "documentation": "Doc",
                 "unit": "eV",
-                "tags": [],
                 "score": 0.9,
             },
             {
@@ -106,7 +105,6 @@ class TestReferenceSNRetrieval:
                 "description": "Ti",
                 "documentation": "Doc2",
                 "unit": "eV",
-                "tags": [],
                 "score": 0.8,
             },
         ]
@@ -151,7 +149,6 @@ class TestReferenceSNRetrieval:
                 "description": "Safety factor q",
                 "documentation": "The safety factor $q$ quantifies...",
                 "unit": "1",
-                "tags": ["mhd"],
                 "score": 0.95,
             },
         ]
@@ -180,7 +177,6 @@ class TestReferenceSNRetrieval:
         assert len(results) == 1
         assert "documentation" in results[0]
         assert results[0]["documentation"].startswith("The safety factor")
-        assert results[0]["tags"] == ["mhd"]
 
 
 # =========================================================================

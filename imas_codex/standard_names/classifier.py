@@ -94,21 +94,6 @@ def classify_path(node: dict) -> Scope:
     if _is_placeholder(path):
         return "skip"
 
-    # ------------------------------------------------------------------
-    # S4: Instrument-geometry internals → skip.
-    #
-    # Paths describing hardware geometry of detectors, apertures, and
-    # optical elements are machine description, not physics quantities.
-    # Standard names describe physical/geometric quantities independent
-    # of any specific instrument — e.g. "electron_temperature" not
-    # "langmuir_probe_electron_temperature".
-    #
-    # Keep measurement paths (counts, efficiency, signal) — only skip
-    # geometry internals (outline vertices, dimensions, unit vectors).
-    # ------------------------------------------------------------------
-    if _is_instrument_geometry(path):
-        return "skip"
-
     return "quantity"
 
 
@@ -121,42 +106,3 @@ def _is_placeholder(path: str) -> bool:
     """Return True if the leaf segment is a generic container name."""
     leaf = path.rsplit("/", 1)[-1]
     return bool(_PLACEHOLDER_RE.match(leaf))
-
-
-#: Path segments identifying instrument-geometry subtrees.
-#: Matches paths like ``neutron_diagnostic/detector/geometry/outline/x1``
-#: but NOT ``neutron_diagnostic/detector/counts``.
-_INSTRUMENT_GEOMETRY_PATTERNS: tuple[str, ...] = (
-    "/detector/geometry/",
-    "/detector/aperture/",
-    "/aperture/outline/",
-    "/aperture/x1_",
-    "/aperture/x2_",
-    "/optical_element/geometry/",
-    "/fibre_bundle/geometry/",
-    "/ec_launcher/beam/spot/",
-    "/launching_position/spot/",
-    "/line_of_sight/first_point/",
-    "/line_of_sight/second_point/",
-)
-
-#: Leaf segments that are IMAS local-coordinate artifacts, not physics.
-_LOCAL_COORD_LEAVES: tuple[str, ...] = (
-    "x1_unit_vector",
-    "x2_unit_vector",
-    "x3_unit_vector",
-    "x1_width",
-    "x2_width",
-)
-
-
-def _is_instrument_geometry(path: str) -> bool:
-    """Return True if *path* describes instrument hardware geometry."""
-    # Check subtree patterns
-    if any(pattern in path for pattern in _INSTRUMENT_GEOMETRY_PATTERNS):
-        return True
-    # Check local-coordinate leaf segments
-    leaf = path.rsplit("/", 1)[-1]
-    if leaf in _LOCAL_COORD_LEAVES:
-        return True
-    return False

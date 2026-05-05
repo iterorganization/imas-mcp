@@ -60,6 +60,15 @@ class TestPublishMissingArgs:
 class TestPublishSuccess:
     """Successful publish invocation."""
 
+    @staticmethod
+    def _prepare_staging() -> None:
+        """Create staging dir with a minimal catalog.yml (CLI pre-validation)."""
+        import os
+        from pathlib import Path
+
+        os.makedirs("staging", exist_ok=True)
+        Path("staging/catalog.yml").write_text("entries: []\n")
+
     @patch(MOCK_TARGET)
     def test_exit_zero(self, mock_publish):
         mock_publish.return_value = _success_report()
@@ -67,7 +76,7 @@ class TestPublishSuccess:
         with runner.isolated_filesystem():
             import os
 
-            os.makedirs("staging")
+            self._prepare_staging()
             os.makedirs("isnc")
             result = runner.invoke(
                 sn, ["publish", "--staging", "staging", "--isnc", "isnc"]
@@ -82,7 +91,7 @@ class TestPublishSuccess:
         with runner.isolated_filesystem():
             import os
 
-            os.makedirs("staging")
+            self._prepare_staging()
             os.makedirs("isnc")
             runner.invoke(
                 sn, ["publish", "--staging", "staging", "--isnc", "isnc", "--push"]
@@ -97,7 +106,7 @@ class TestPublishSuccess:
         with runner.isolated_filesystem():
             import os
 
-            os.makedirs("staging")
+            self._prepare_staging()
             os.makedirs("isnc")
             runner.invoke(sn, ["publish", "--staging", "staging", "--isnc", "isnc"])
         _, kwargs = mock_publish.call_args
@@ -110,7 +119,7 @@ class TestPublishSuccess:
         with runner.isolated_filesystem():
             import os
 
-            os.makedirs("staging")
+            self._prepare_staging()
             os.makedirs("isnc")
             runner.invoke(
                 sn,
@@ -153,8 +162,10 @@ class TestPublishInternalError:
         runner = CliRunner()
         with runner.isolated_filesystem():
             import os
+            from pathlib import Path
 
             os.makedirs("staging")
+            Path("staging/catalog.yml").write_text("entries: []\n")
             os.makedirs("isnc")
             result = runner.invoke(
                 sn, ["publish", "--staging", "staging", "--isnc", "isnc"]
@@ -172,8 +183,10 @@ class TestPublishSummaryOutput:
         runner = CliRunner()
         with runner.isolated_filesystem():
             import os
+            from pathlib import Path
 
             os.makedirs("staging")
+            Path("staging/catalog.yml").write_text("entries: []\n")
             os.makedirs("isnc")
             result = runner.invoke(
                 sn, ["publish", "--staging", "staging", "--isnc", "isnc"]
@@ -186,8 +199,10 @@ class TestPublishSummaryOutput:
         runner = CliRunner()
         with runner.isolated_filesystem():
             import os
+            from pathlib import Path
 
             os.makedirs("staging")
+            Path("staging/catalog.yml").write_text("entries: []\n")
             os.makedirs("isnc")
             result = runner.invoke(
                 sn, ["publish", "--staging", "staging", "--isnc", "isnc"]

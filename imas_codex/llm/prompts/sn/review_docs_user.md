@@ -14,7 +14,6 @@ Apply the rubric (provided in the system prompt) to the candidate below.
 - **Standard name**: {{ item.id }}
 - **Unit**: {{ item.unit | default('N/A', true) }}
 - **Kind**: {{ item.kind | default('N/A', true) }}
-- **Tags**: {{ item.tags | default([], true) | join(', ') }}
 {% if item.source_paths %}- **DD source paths**: {{ item.source_paths | join(', ') }}
 {% endif %}
 {% if item.cocos_label %}- **COCOS label**: `{{ item.cocos_label }}`

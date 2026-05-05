@@ -29,7 +29,6 @@ def _make_mock_sn(name: str, **overrides: Any) -> dict[str, Any]:
         "documentation": None,
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["equilibrium"],
         "links": None,
         "source_paths": [f"equilibrium/time_slice/profiles_1d/{name}"],
         "physical_base": "temperature",

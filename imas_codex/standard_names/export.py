@@ -977,15 +977,16 @@ def run_export(
                 else "unscoped"
             )
 
-            # Write the full list into the YAML body
-            entry_dict["physics_domain"] = (
-                sorted(physics_domain_list) if physics_domain_list else []
-            )
-
-            # Validate against ISN model (best-effort)
+            # Validate against ISN model (best-effort) — strip
+            # graph-only fields that ISN doesn't recognise first.
             validated = _validate_entry(entry_dict)
             if validated is not None:
                 entry_dict = validated
+
+            # Write physics_domain AFTER ISN validation (graph-only field)
+            entry_dict["physics_domain"] = (
+                sorted(physics_domain_list) if physics_domain_list else []
+            )
 
             # Derive computed fields from graph edges
             entry_name = entry_dict.get("name") or cand["id"]

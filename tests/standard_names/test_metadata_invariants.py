@@ -353,33 +353,6 @@ class TestStandardNameKindEnum:
 # ---------------------------------------------------------------------------
 
 
-class TestTagNormalisation:
-    """Verify tag formatting conventions."""
-
-    def test_tags_must_be_lowercase_hyphenated(self) -> None:
-        """Tags in the schema/pipeline must follow kebab-case convention.
-
-        This is a structural test: the pipeline normalises tags to lowercase.
-        We verify via source inspection that the write path doesn't silently
-        accept upper-case or underscore-separated tags.
-        """
-        # Tags observed in the 2025-07 audit are all lowercase hyphenated.
-        # Verify the schema description documents this convention.
-        schema = _load_schema()
-        sn_attrs = schema["classes"]["StandardName"]["attributes"]
-        tags_attr = sn_attrs.get("tags", {})
-        assert tags_attr.get("multivalued") is True, "tags must be multivalued"
-
-    def test_write_cypher_preserves_tags(
-        self,
-        sample_standard_names: list[dict],
-    ) -> None:
-        """Tags from sample data must appear in the Cypher batch payload."""
-        stmts = _get_write_cypher(sample_standard_names)
-        merge = next(s for s in stmts if "MERGE (sn:StandardName" in s)
-        assert "sn.tags" in merge, "Tags must be SET in the MERGE statement"
-
-
 # ---------------------------------------------------------------------------
 # dd_version consistency invariants
 # ---------------------------------------------------------------------------

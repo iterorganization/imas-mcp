@@ -4174,9 +4174,6 @@ async def process_refine_name_batch(
                         if isinstance(item.get("source_domains"), list)
                         else None
                     ),
-                    tags=(
-                        item.get("tags") if isinstance(item.get("tags"), list) else None
-                    ),
                     old_chain_length=chain_length,
                     model=model,
                     grammar_fields=result_obj.grammar_fields,
@@ -5505,7 +5502,6 @@ async def process_refine_docs_batch(
             "documentation": item.get("documentation", ""),
             "kind": item.get("kind", "scalar"),
             "unit": item.get("unit", ""),
-            "tags": item.get("tags", []),
             "physics_domain": item.get("physics_domain", ""),
             "docs_chain_length": docs_chain_length,
             "docs_chain_history": docs_chain_history,

@@ -50,7 +50,6 @@ def staging_dir(tmp_path: Path) -> Path:
         "documentation": "Docs",
         "kind": "scalar",
         "unit": "eV",
-        "tags": [],
         "links": [],
         "constraints": [],
         "status": "draft",

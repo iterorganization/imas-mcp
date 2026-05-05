@@ -18,7 +18,7 @@ dimensions:
     description: "Follows naming conventions (no units in name, no path fragments)"
   completeness:
     max_score: 20
-    description: "All required fields filled, links populated, tags relevant"
+    description: "All required fields filled, links populated"
   compliance:
     max_score: 20
     description: "Follows compose prompt instructions exactly"

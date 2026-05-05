@@ -30,7 +30,6 @@ _FIXTURE_NODES: list[dict] = [
         "documentation": "The electron temperature Te measured by Thomson scattering.",
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["time-dependent"],
         "links": ["name:ion_temperature"],
         "constraints": ["T_e > 0"],
         "validity_domain": "core plasma",
@@ -50,7 +49,6 @@ _FIXTURE_NODES: list[dict] = [
         "documentation": "The ion temperature Ti from charge exchange.",
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["time-dependent"],
         "links": ["name:electron_temperature"],
         "constraints": ["T_i > 0"],
         "validity_domain": "core plasma",
@@ -70,7 +68,6 @@ _FIXTURE_NODES: list[dict] = [
         "documentation": "Line-averaged electron density from interferometry.",
         "kind": "scalar",
         "unit": "m^-3",
-        "tags": ["time-dependent"],
         "links": ["name:electron_temperature"],
         "constraints": ["n_e > 0"],
         "validity_domain": "core plasma",
@@ -90,7 +87,6 @@ _FIXTURE_NODES: list[dict] = [
         "documentation": "Toroidal plasma current measured by Rogowski coil.",
         "kind": "scalar",
         "unit": "A",
-        "tags": ["time-dependent"],
         "links": ["name:safety_factor"],
         "constraints": [],
         "validity_domain": "",
@@ -110,7 +106,6 @@ _FIXTURE_NODES: list[dict] = [
         "documentation": "The safety factor q from equilibrium reconstruction.",
         "kind": "scalar",
         "unit": "1",
-        "tags": ["time-dependent"],
         "links": ["name:plasma_current"],
         "constraints": [],
         "validity_domain": "",
@@ -130,7 +125,6 @@ _FIXTURE_NODES: list[dict] = [
         "documentation": "Toroidal field B0 at the geometric axis.",
         "kind": "scalar",
         "unit": "T",
-        "tags": ["time-dependent"],
         "links": [],
         "constraints": [],
         "validity_domain": "",
@@ -287,33 +281,52 @@ class TestFullRoundTrip:
             f"Expected 6 exports, got {report.exported_count}"
         )
 
-        # Verify YAML files were written
+        # Verify YAML files were written (one per domain, not per entry)
         yml_files = list(staging.rglob("standard_names/**/*.yml"))
-        assert len(yml_files) == 6
+        assert len(yml_files) == 3  # kinetics, magnetics, equilibrium
 
         # ── Step 2: Simulate manual YAML tweak ──────────────────
-        et_path = staging / "standard_names" / "kinetics" / "electron_temperature.yml"
+        et_path = staging / "standard_names" / "kinetics.yml"
         assert et_path.exists(), f"Missing {et_path}"
 
-        et_data = yaml.safe_load(et_path.read_text(encoding="utf-8"))
-        et_data["description"] = "Improved electron temperature description (PR edit)"
+        raw = et_path.read_text(encoding="utf-8")
+        # Strip header comments before parsing
+        body = "\n".join(line for line in raw.splitlines() if not line.startswith("#"))
+        et_entries = yaml.safe_load(body)
+        assert isinstance(et_entries, list), "Expected list of entries"
+        # Find and edit the electron_temperature entry
+        for entry in et_entries:
+            if entry.get("name") == "electron_temperature":
+                entry["description"] = (
+                    "Improved electron temperature description (PR edit)"
+                )
+                break
         et_path.write_text(
-            yaml.safe_dump(et_data, sort_keys=False, default_flow_style=False),
+            yaml.safe_dump(et_entries, sort_keys=False, default_flow_style=False),
             encoding="utf-8",
         )
 
         # ── Step 3: Publish staging → mock ISNC ─────────────────
         _init_git_repo(isnc)
-        pub_report = run_publish(staging, isnc)
+        with patch(
+            "imas_codex.standard_names.publish._fetch_expected_domains",
+            return_value=None,
+        ):
+            pub_report = run_publish(staging, isnc)
 
         assert pub_report.errors == [], f"Publish errors: {pub_report.errors}"
         assert pub_report.commit_sha is not None
-        assert pub_report.files_copied >= 7  # 6 yml + catalog.yml
+        assert pub_report.files_copied >= 4  # 3 domain yml + catalog.yml
 
         # Verify ISNC has the files
-        isnc_et = isnc / "standard_names" / "kinetics" / "electron_temperature.yml"
+        isnc_et = isnc / "standard_names" / "kinetics.yml"
         assert isnc_et.exists()
-        isnc_et_data = yaml.safe_load(isnc_et.read_text(encoding="utf-8"))
+        raw = isnc_et.read_text(encoding="utf-8")
+        body = "\n".join(line for line in raw.splitlines() if not line.startswith("#"))
+        isnc_et_entries = yaml.safe_load(body)
+        isnc_et_data = next(
+            e for e in isnc_et_entries if e.get("name") == "electron_temperature"
+        )
         assert "Improved" in isnc_et_data["description"]
 
         # ── Step 4: Import from ISNC back into (mocked) graph ───
@@ -324,7 +337,6 @@ class TestFullRoundTrip:
                 "description": node["description"],
                 "documentation": node["documentation"],
                 "kind": node["kind"],
-                "tags": node["tags"],
                 "links": node["links"],
                 "status": node["status"],
                 "deprecates": node.get("deprecates"),
@@ -546,7 +558,6 @@ class TestDivergenceInjection:
                 "description": "Description modified by direct Cypher SET",
                 "documentation": "Original docs",
                 "kind": "scalar",
-                "tags": ["kinetics"],
                 "links": [],
                 "status": "draft",
             },
@@ -557,7 +568,6 @@ class TestDivergenceInjection:
                 "description": "Pipeline generated",
                 "documentation": "Pipeline docs",
                 "kind": "scalar",
-                "tags": [],
                 "links": [],
                 "status": "draft",
             },
@@ -582,7 +592,6 @@ class TestDivergenceInjection:
                 "catalog_commit_sha": "abc123",
                 "description": "Modified by pipeline",
                 "kind": "scalar",
-                "tags": [],
                 "links": [],
             },
         ]

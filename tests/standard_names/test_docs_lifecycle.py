@@ -485,7 +485,6 @@ def test_docs_escalation_at_final_attempt(_gc, _clean, mock_llm):
         "documentation": "Existing documentation",
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["core_profiles"],
         "physics_domain": ["core_profiles"],
         "docs_stage": "refining",
         "docs_model": "test/model",

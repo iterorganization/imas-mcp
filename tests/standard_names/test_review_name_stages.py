@@ -67,7 +67,6 @@ def _make_reviewed_item(
         "validation_status": "valid",
         "name_stage": name_stage,
         "chain_length": chain_length,
-        "tags": ["electron", "temperature"],
         "claim_token": claim_token,
     }
     item.update(overrides)

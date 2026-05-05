@@ -24,27 +24,48 @@ def _make_handle(*, process=None, url="http://localhost:8000") -> PreviewHandle:
 
 
 class TestPreviewMissingArgs:
-    """Verify required flags."""
+    """Verify required staging content."""
 
     def test_staging_required(self):
+        """Without --no-export, preview auto-exports; with --no-export and
+        no catalog.yml in the staging dir, preview fails with exit 2."""
         runner = CliRunner()
-        result = runner.invoke(sn, ["preview"])
+        with runner.isolated_filesystem():
+            import os
+
+            os.makedirs("empty_staging")
+            result = runner.invoke(
+                sn, ["preview", "--staging", "empty_staging", "--no-export"]
+            )
         assert result.exit_code != 0
-        assert "staging" in result.output.lower() or "Missing" in result.output
+        assert (
+            "staging" in result.output.lower()
+            or "catalog" in result.output.lower()
+            or "Missing" in result.output
+        )
 
 
 class TestPreviewSuccess:
     """Successful preview invocation."""
+
+    @staticmethod
+    def _prepare_staging() -> None:
+        """Create staging dir with a minimal catalog.yml (CLI pre-validation)."""
+        import os
+        from pathlib import Path
+
+        os.makedirs("staging", exist_ok=True)
+        Path("staging/catalog.yml").write_text("entries: []\n")
 
     @patch(MOCK_TARGET)
     def test_exit_zero(self, mock_preview):
         mock_preview.return_value = _make_handle()
         runner = CliRunner()
         with runner.isolated_filesystem():
-            import os
-
-            os.makedirs("staging")
-            result = runner.invoke(sn, ["preview", "--staging", "staging"])
+            self._prepare_staging()
+            result = runner.invoke(
+                sn, ["preview", "--staging", "staging", "--no-export"]
+            )
         assert result.exit_code == 0, result.output
 
     @patch(MOCK_TARGET)
@@ -52,10 +73,18 @@ class TestPreviewSuccess:
         mock_preview.return_value = _make_handle()
         runner = CliRunner()
         with runner.isolated_filesystem():
-            import os
-
-            os.makedirs("staging")
-            runner.invoke(sn, ["preview", "--staging", "staging", "--port", "9090"])
+            self._prepare_staging()
+            runner.invoke(
+                sn,
+                [
+                    "preview",
+                    "--staging",
+                    "staging",
+                    "--no-export",
+                    "--port",
+                    "9090",
+                ],
+            )
         _, kwargs = mock_preview.call_args
         assert kwargs["port"] == 9090
 
@@ -64,10 +93,10 @@ class TestPreviewSuccess:
         mock_preview.return_value = _make_handle(url="http://localhost:9090")
         runner = CliRunner()
         with runner.isolated_filesystem():
-            import os
-
-            os.makedirs("staging")
-            result = runner.invoke(sn, ["preview", "--staging", "staging"])
+            self._prepare_staging()
+            result = runner.invoke(
+                sn, ["preview", "--staging", "staging", "--no-export"]
+            )
         assert "9090" in result.output
 
 
@@ -82,9 +111,13 @@ class TestPreviewNullProcess:
         runner = CliRunner()
         with runner.isolated_filesystem():
             import os
+            from pathlib import Path
 
             os.makedirs("staging")
-            result = runner.invoke(sn, ["preview", "--staging", "staging"])
+            Path("staging/catalog.yml").write_text("entries: []\n")
+            result = runner.invoke(
+                sn, ["preview", "--staging", "staging", "--no-export"]
+            )
         assert result.exit_code == 3
 
 
@@ -96,9 +129,13 @@ class TestPreviewErrors:
         runner = CliRunner()
         with runner.isolated_filesystem():
             import os
+            from pathlib import Path
 
             os.makedirs("staging")
-            result = runner.invoke(sn, ["preview", "--staging", "staging"])
+            Path("staging/catalog.yml").write_text("entries: []\n")
+            result = runner.invoke(
+                sn, ["preview", "--staging", "staging", "--no-export"]
+            )
         assert result.exit_code == 2
 
     @patch(MOCK_TARGET, side_effect=RuntimeError("unexpected"))
@@ -106,7 +143,11 @@ class TestPreviewErrors:
         runner = CliRunner()
         with runner.isolated_filesystem():
             import os
+            from pathlib import Path
 
             os.makedirs("staging")
-            result = runner.invoke(sn, ["preview", "--staging", "staging"])
+            Path("staging/catalog.yml").write_text("entries: []\n")
+            result = runner.invoke(
+                sn, ["preview", "--staging", "staging", "--no-export"]
+            )
         assert result.exit_code == 3

@@ -96,7 +96,6 @@ def _make_refine_docs_item(
             {"completeness": "Missing edge cases"}
         ),
         "reviewer_comments_docs": "Needs more detail on measurement methods.",
-        "tags": ["electron", "temperature"],
         "claim_token": "tok-docs-abc-123",
         "docs_chain_history": [],
     }
@@ -692,7 +691,6 @@ class TestProcessRefineDocsBatch:
             description="New description for testing",
             documentation="New docs for testing",
             links=[],
-            tags=[],
         )
         llm_out = (refined, 0.05, {"input_tokens": 100, "output_tokens": 50})
 

@@ -30,7 +30,6 @@ def sample_standard_names() -> list[dict]:
             "description": "Electron temperature profile",
             "documentation": "The electron temperature $T_e$ is measured by Thomson scattering.",
             "kind": "scalar",
-            "tags": ["core_profiles", "kinetics"],
             "links": ["ion_temperature", "electron_density"],
             "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
             "validity_domain": "core plasma",
@@ -48,7 +47,6 @@ def sample_standard_names() -> list[dict]:
             "description": "Plasma current",
             "unit": "A",
             "kind": "scalar",
-            "tags": ["magnetics"],
             "model": "test/model",
             "pipeline_status": "drafted",
             "generated_at": "2024-01-01T00:00:00Z",
@@ -185,9 +183,23 @@ def _infer_stage(
         (m.get("content", "") for m in messages if m.get("role") == "system"), ""
     )
     s = sys_content.lower()
-    if "review" in s and "documentation" in s:
-        return "review_docs"
     if "review" in s:
+        # Disambiguate review_name vs review_docs.  The name-axis review
+        # prompt says "name-only mode" / "name-axis review"; the docs-axis
+        # prompt says "evaluating…documentation" / "documentation text quality".
+        # A naïve "documentation" check false-matches on the name prompt
+        # because it mentions "documentation is filled in by a later pass".
+        if "name-only mode" in s or "name-axis" in s:
+            return "review_name"
+        if (
+            "documentation text quality" in s
+            or "evaluating" in s
+            and "documentation" in s
+        ):
+            return "review_docs"
+        # Fallback: presence of "documentation quality" signals docs axis
+        if "documentation quality" in s:
+            return "review_docs"
         return "review_name"
     if "refine" in s or "regenerate" in s:
         if "documentation" in s or "description" in s:

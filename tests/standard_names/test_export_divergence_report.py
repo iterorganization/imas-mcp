@@ -24,7 +24,6 @@ def _make_candidate(
         "description": "Some description",
         "documentation": "Some docs",
         "kind": "scalar",
-        "tags": ["test"],
         "links": [],
         **kwargs,
     }

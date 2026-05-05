@@ -563,10 +563,6 @@ class RefinedDocs(BaseModel):
         default_factory=list,
         description="Related standard names (name:xxx or dd:path format)",
     )
-    tags: list[str] = Field(
-        default_factory=list,
-        description="Physics domain / IDS tags (lowercase, snake_case)",
-    )
 
     model_config = {"extra": "ignore"}
 
@@ -576,7 +572,7 @@ class GeneratedDocs(BaseModel):
 
     The model is constrained to produce ONLY documentation content
     (description + documentation).  It must NOT change the name, kind,
-    unit, tags, or any other identity field — those are fixed by the
+    unit, or any other identity field — those are fixed by the
     accepted name_stage.
     """
 

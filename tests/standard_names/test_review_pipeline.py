@@ -431,7 +431,6 @@ def test_review_staleness_policy():
         "documentation": "The electron temperature $T_e$.",
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["core_profiles"],
         "links": ["ion_temperature"],
         "physical_base": "temperature",
         "subject": "electron",
@@ -453,15 +452,9 @@ def test_review_staleness_policy():
 
     # Changed tags → different hash
     modified2 = dict(name)
-    modified2["tags"] = ["core_profiles", "kinetics"]
+    modified2["links"] = ["ion_temperature", "plasma_current"]
     hash4 = compute_review_input_hash(modified2)
     assert hash4 != hash1
-
-    # Tag order must not matter (tags are sorted)
-    modified3 = dict(name)
-    modified3["tags"] = ["kinetics", "core_profiles"]
-    hash5 = compute_review_input_hash(modified3)
-    assert hash5 == hash4
 
 
 # =============================================================================
@@ -485,7 +478,6 @@ def test_review_cli_dry_run():
             "documentation": "Electron temperature.",
             "kind": "scalar",
             "unit": "eV",
-            "tags": None,
             "links": None,
             "source_paths": None,
             "physical_base": "temperature",

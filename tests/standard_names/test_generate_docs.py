@@ -74,7 +74,6 @@ def _make_gc_tx(seed_rows=None, readback_rows=None):
                 "cluster_id": None,
                 "claim_token": _TOKEN_A,
                 "description": "Electron temperature",
-                "tags": None,
                 "reviewer_score_name": 0.85,
                 "reviewer_comments_name": "Well formed name.",
                 "chain_length": 0,
@@ -135,7 +134,6 @@ def _make_docs_item(
         "description": "Electron kinetic temperature",
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["electron", "temperature"],
         "physics_domain": ["core_profiles"],
         "cluster_id": None,
         "validation_status": "valid",
@@ -291,7 +289,7 @@ def test_persist_writes_docs_fields():
 
 
 def test_persist_does_not_change_name_fields():
-    """persist_generated_docs Cypher must NOT SET name, kind, unit, name_stage, or tags."""
+    """persist_generated_docs Cypher must NOT SET name, kind, unit, or name_stage."""
     from imas_codex.standard_names.graph_ops import persist_generated_docs
 
     gc = _make_gc_query(return_value=[{"docs_stage": "drafted"}])
@@ -309,7 +307,7 @@ def test_persist_does_not_change_name_fields():
     set_start = cypher.find("SET")
     set_block = cypher[set_start:] if set_start >= 0 else cypher
 
-    for forbidden in ("sn.name", "sn.kind", "sn.unit", "sn.name_stage", "sn.tags"):
+    for forbidden in ("sn.name", "sn.kind", "sn.unit", "sn.name_stage"):
         assert forbidden not in set_block, (
             f"persist_generated_docs must not SET {forbidden}"
         )

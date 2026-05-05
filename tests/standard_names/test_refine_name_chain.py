@@ -91,7 +91,6 @@ def _make_refine_item(
         "chain_length": chain_length,
         "name_stage": "refining",
         "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
-        "tags": ["electron", "temperature"],
         "claim_token": "tok-abc-123",
         "chain_history": [],
     }
@@ -133,7 +132,6 @@ class TestClaimRefinesEligibleSN:
                         "chain_length": 0,
                         "name_stage": "refining",
                         "source_paths": [],
-                        "tags": [],
                     }
                 ],
             ]
@@ -195,7 +193,6 @@ class TestClaimRefinesEligibleSN:
                         "chain_length": 1,
                         "name_stage": "refining",
                         "source_paths": [],
-                        "tags": [],
                     }
                 ],
             ]

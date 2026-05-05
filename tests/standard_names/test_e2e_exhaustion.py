@@ -266,6 +266,14 @@ def _accept_name(gc, sn_id: str, *, rotation_cap: int = _CAP) -> str:
 
 
 def _refine_name(gc, old_sn: str, new_sn: str, old_chain: int) -> None:
+    # Production workers transition to 'refining' before calling persist_refined_name
+    gc.query(
+        """
+        MATCH (sn:StandardName {id: $id})
+        SET sn.name_stage = 'refining'
+        """,
+        id=old_sn,
+    )
     persist_refined_name(
         old_name=old_sn,
         new_name=new_sn,
@@ -631,17 +639,20 @@ def test_e2e_partial_pipeline_then_exhaustion(_gc, _clean):
          stage stays 'drafted' (sweep only touches 'refining', not 'drafted')
       5. Re-claim + review_name reject → reviewed
       6. refine_name → SN_v3 (chain=2, drafted)
-      7. review_name reject → exhausted
+      7. review_name reject at chain=2 → reviewed (escalator gate; cl < cap)
+      8. refine_name → SN_v4 (chain=3, drafted)
+      9. review_name reject at chain=3 → exhausted (cl >= cap)
 
     Final assertions:
-      - 3 SN nodes; SN_v3 exhausted, no claim
-      - SN_v3 has 2 REFINED_FROM hops back to SN_v1
+      - 4 SN nodes; SN_v4 exhausted, no claim
+      - SN_v4 has 3 REFINED_FROM hops back to SN_v1
     """
     local_prefix = _uid("mid_exh")
     src_id = f"{local_prefix}_src"
     sn_v1 = f"{local_prefix}_v1"
     sn_v2 = f"{local_prefix}_v2"
     sn_v3 = f"{local_prefix}_v3"
+    sn_v4 = f"{local_prefix}_v4"
 
     _create_source(_gc, src_id)
     _create_sn(_gc, sn_v1, name_stage="drafted", chain_length=0)
@@ -689,20 +700,31 @@ def test_e2e_partial_pipeline_then_exhaustion(_gc, _clean):
     row_v3 = _fetch_sn(_gc, sn_v3)
     assert row_v3["chain_length"] == 2
 
-    # Step 7: final reject → exhausted
+    # Step 7: reject at chain=2 → reviewed (escalator gate, cl < cap)
     r3 = _reject_name(_gc, sn_v3)
-    assert r3 == "exhausted", f"Expected 'exhausted', got {r3!r}"
-
-    # --- Final assertions ---
-    row_v3_final = _fetch_sn(_gc, sn_v3)
-    assert row_v3_final["name_stage"] == "exhausted"
-    assert row_v3_final["claim_token"] is None
-
-    # SN_v3 should have a 2-hop REFINED_FROM chain back to SN_v1
-    assert _has_refined_from_chain(_gc, sn_v3, hops=2), (
-        "SN_v3 must have a 2-hop REFINED_FROM chain back to SN_v1"
+    assert r3 == "reviewed", (
+        f"chain=2/cap=3 must remain 'reviewed' for Opus escalator; got {r3!r}"
     )
 
-    # All 3 SN nodes exist
+    # Step 8: refine → SN_v4 (chain=3)
+    _refine_name(_gc, sn_v3, sn_v4, old_chain=2)
+    row_v4 = _fetch_sn(_gc, sn_v4)
+    assert row_v4["chain_length"] == 3
+
+    # Step 9: final reject at chain=3 → exhausted (cl >= cap)
+    r4 = _reject_name(_gc, sn_v4)
+    assert r4 == "exhausted", f"Expected 'exhausted', got {r4!r}"
+
+    # --- Final assertions ---
+    row_v4_final = _fetch_sn(_gc, sn_v4)
+    assert row_v4_final["name_stage"] == "exhausted"
+    assert row_v4_final["claim_token"] is None
+
+    # SN_v4 should have a 3-hop REFINED_FROM chain back to SN_v1
+    assert _has_refined_from_chain(_gc, sn_v4, hops=3), (
+        "SN_v4 must have a 3-hop REFINED_FROM chain back to SN_v1"
+    )
+
+    # All 4 SN nodes exist
     node_count = _count_sn_nodes(_gc, local_prefix)
-    assert node_count == 3, f"Expected 3 SN nodes in chain, got {node_count}"
+    assert node_count == 4, f"Expected 4 SN nodes in chain, got {node_count}"

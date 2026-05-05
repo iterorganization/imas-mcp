@@ -119,7 +119,6 @@ class TestEmbeddingCoverage:
                 "documentation": "Te measured by Thomson scattering.",
                 "kind": "scalar",
                 "unit": "eV",
-                "tags": ["core_profiles"],
                 "links": None,
                 "validity_domain": "core plasma",
                 "constraints": ["T_e > 0"],
@@ -214,7 +213,6 @@ class TestCoalesceSafety:
         ("pipeline_status", "b.pipeline_status, sn.pipeline_status"),
         ("documentation", "b.documentation, sn.documentation"),
         ("kind", "b.kind, sn.kind"),
-        ("tags", "b.tags, sn.tags"),
         ("links", "b.links, sn.links"),
         ("source_paths", "b.source_paths, sn.source_paths"),
         ("validity_domain", "b.validity_domain, sn.validity_domain"),
@@ -290,7 +288,6 @@ class TestCoalesceSafety:
             "description",
             "documentation",
             "kind",
-            "tags",
             "links",
             "source_paths",
             "validity_domain",
@@ -390,7 +387,6 @@ class TestCoalesceSafety:
             "documentation": "Te measured by Thomson scattering.",
             "kind": "scalar",
             "unit": "eV",
-            "tags": ["core_profiles"],
             "links": None,
             "validity_domain": "core plasma",
             "constraints": ["T_e > 0"],
@@ -447,7 +443,6 @@ class TestCoalesceSafety:
             ("pipeline_status", "b.pipeline_status, sn.pipeline_status"),
             ("documentation", "b.documentation, sn.documentation"),
             ("kind", "b.kind, sn.kind"),
-            ("tags", "b.tags, sn.tags"),
             ("validity_domain", "b.validity_domain, sn.validity_domain"),
             ("constraints", "b.constraints, sn.constraints"),
         ]
@@ -492,7 +487,6 @@ SAMPLE_GRAPH_RECORD: dict[str, Any] = {
     "source_path": "core_profiles/profiles_1d/electrons/temperature",
     "unit": "eV",
     "kind": "scalar",
-    "tags": [],
     "links": [],
     "source_paths": ["dd:core_profiles/profiles_1d/electrons/temperature"],
     "constraints": ["T_e > 0"],
@@ -509,7 +503,6 @@ SAMPLE_CATALOG_ENTRY_RT: dict[str, Any] = {
     "documentation": "The electron temperature Te is measured by Thomson scattering.",
     "kind": "scalar",
     "unit": "eV",
-    "tags": [],
     "links": [],
     "validity_domain": "core plasma",
     "constraints": ["T_e > 0"],
@@ -572,7 +565,6 @@ class TestImportIdempotence:
             "documentation",
             "kind",
             "unit",
-            "tags",
             "links",
             "source_paths",
             "validity_domain",
@@ -606,7 +598,6 @@ _RICH_SN_RECORD = {
     ),
     "kind": "scalar",
     "unit": "eV",
-    "tags": ["spatial-profile"],
     "links": ["name:ion_temperature"],
     "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "validity_domain": "core plasma",
@@ -627,7 +618,6 @@ _GRAPH_QUERY_ROW = {
     ),
     "kind": "scalar",
     "unit": "eV",
-    "tags": ["spatial-profile"],
     "links": ["name:ion_temperature"],
     "source_paths": ["dd:core_profiles/profiles_1d/electrons/temperature"],
     "constraints": ["T_e > 0"],
@@ -687,7 +677,6 @@ class TestE2ERoundTrip:
         assert node["description"] == "Electron temperature in the core plasma"
         assert node["kind"] == "scalar"
         assert node["unit"] == "eV"
-        assert node["tags"] == ["spatial-profile"]
         assert node["constraints"] == ["T_e > 0"]
         assert node["validity_domain"] == "core plasma"
         assert node["pipeline_status"] == "drafted"
@@ -703,7 +692,6 @@ class TestE2ERoundTrip:
             "documentation": "Te documentation.",
             "kind": "scalar",
             "unit": "eV",
-            "tags": [],
             "links": [],
             "validity_domain": "",
             "constraints": [],

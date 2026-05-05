@@ -30,7 +30,6 @@ def _make_item(name: str, **overrides: Any) -> dict[str, Any]:
         "documentation": None,
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["time-dependent"],
         "links": None,
         "source_paths": [f"equilibrium/time_slice/profiles_1d/{name}"],
         "physical_base": "temperature",

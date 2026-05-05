@@ -184,8 +184,7 @@ def _create_sn(
             sn.documentation   = '',
             sn.kind            = 'scalar',
             sn.unit            = 'eV',
-            sn.physics_domain  = ['core_profiles'],
-            sn.tags            = ['test']
+            sn.physics_domain  = ['core_profiles']
         """,
         id=sn_id,
         name_stage=name_stage,
@@ -315,7 +314,6 @@ def _make_review_name_item(
         "validation_status": None,
         "claim_token": claim_token,
         "name": sn_id,
-        "tags": ["test"],
         "chain_length": chain_length,
         "name_stage": "drafted",
     }
@@ -342,7 +340,6 @@ def _make_refine_name_item(
         "chain_length": chain_length,
         "name_stage": "refining",
         "source_paths": ["core_profiles/profiles_1d/test_quantity"],
-        "tags": ["test"],
         "claim_token": claim_token,
         "chain_history": [],
     }
@@ -359,7 +356,6 @@ def _make_generate_docs_item(sn_id: str, *, claim_token: str) -> dict:
         "physics_domain": ["core_profiles"],
         "validation_status": None,
         "claim_token": claim_token,
-        "tags": ["test"],
         "reviewer_score_name": 0.85,
         "reviewer_comments_name": "Good name",
         "chain_length": 0,
@@ -388,7 +384,6 @@ def _make_review_docs_item(
         "validation_status": None,
         "claim_token": claim_token,
         "name": sn_id,
-        "tags": ["test"],
         "docs_chain_length": docs_chain_length,
         "docs_stage": "drafted",
     }
@@ -414,7 +409,6 @@ def _make_refine_docs_item(
         "physics_domain": ["core_profiles"],
         "validation_status": None,
         "claim_token": claim_token,
-        "tags": ["test"],
         "docs_stage": "refining",
         "docs_chain_length": docs_chain_length,
         "docs_model": "test/model",

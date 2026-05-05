@@ -38,7 +38,6 @@ def _make_sn(suffix: str | int, **overrides: Any) -> dict[str, Any]:
         "documentation": None,
         "kind": "scalar",
         "unit": "eV",
-        "tags": ["transport"],
         "links": None,
         "source_paths": [f"transport_solver_numerics/time_slice/profiles_1d/{name}"],
         "physical_base": "temperature",
@@ -90,7 +89,6 @@ def _build_mock_llm_response(items: list[dict[str, Any]]):
             standard_name=it["id"],
             description=f"The {it['id'].replace('_', ' ')} in plasma.",
             documentation=f"Detailed docs for {it['id']}.",
-            tags=["spatial-profile"],
             links=[],
         )
         for it in items
@@ -394,7 +392,6 @@ class TestFailureIsolation:
                 item["current"] = {
                     "description": None,
                     "documentation": None,
-                    "tags": item.get("tags"),
                     "links": None,
                 }
                 item["cocos"] = None
@@ -615,7 +612,6 @@ def _create_test_nodes(names: list[str]) -> None:
                     sn.physics_domain = $domain,
                     sn.grammar_physical_base = 'temperature',
                     sn.grammar_subject = 'electron',
-                    sn.tags = ['transport'],
                     sn.model = 'test-model',
                     sn.source_paths = [$path],
                     sn.enrich_claimed_at = null,

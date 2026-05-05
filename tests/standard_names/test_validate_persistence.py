@@ -46,7 +46,6 @@ def test_review_prompt_includes_validation_context():
                 "documentation": "Temperature of electrons.",
                 "unit": "eV",
                 "kind": "scalar",
-                "tags": [],
                 "grammar_fields": {},
                 "source_paths": [],
                 "validation_issues": ["[pydantic:name] test issue"],

@@ -322,7 +322,6 @@ class TestRoundTripByteStability:
                 "documentation": "A temperature measurement.",
                 "unit": "eV",
                 "physics_domain": "kinetics",
-                "tags": ["time-dependent"],
                 "links": [],
                 "constraints": [],
             },
@@ -384,7 +383,6 @@ class TestRoundTripIdempotence:
                 "documentation": "Te from Thomson scattering.",
                 "unit": "eV",
                 "physics_domain": "kinetics",
-                "tags": ["core_profiles"],
                 "links": ["name:ion_temperature"],
                 "constraints": ["T_e > 0"],
                 "validity_domain": "core plasma",
@@ -435,7 +433,6 @@ class TestComputedFieldIgnoredOnImport:
                 "kind": "scalar",
                 "unit": "eV",
                 "status": "active",
-                "tags": [],
                 "links": [],
                 "arguments": [{"name": "base", "operator": "identity"}],
                 "error_variants": {"upper": "upper_uncertainty_of_temperature"},
@@ -560,7 +557,6 @@ class TestCheckCatalogListRoot:
                 "kind": "scalar",
                 "unit": "eV",
                 "status": "active",
-                "tags": [],
                 "links": [],
             },
         ]
@@ -606,7 +602,6 @@ class TestLegacyPerFileRejection:
             "kind": "scalar",
             "unit": "eV",
             "status": "active",
-            "tags": [],
             "links": [],
         }
         (sn_dir / "kinetics.yml").write_text(yaml.safe_dump(legacy_entry))

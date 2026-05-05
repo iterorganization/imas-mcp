@@ -242,9 +242,9 @@ def test_default_targets_all_six_pools():
 
 
 def test_physics_domain_filter():
-    """--physics-domain is forwarded as only_domain to _run_sn_loop_cmd."""
-    _, kwargs = _invoke("--physics-domain", "equilibrium")
+    """--domain is forwarded as domains to _run_sn_loop_cmd."""
+    _, kwargs = _invoke("--domain", "equilibrium")
     assert kwargs is not None
-    assert kwargs.get("only_domain") == "equilibrium", (
-        f"Expected only_domain='equilibrium', got {kwargs.get('only_domain')!r}"
+    assert "equilibrium" in kwargs.get("domains", ()), (
+        f"Expected 'equilibrium' in domains, got {kwargs.get('domains')!r}"
     )

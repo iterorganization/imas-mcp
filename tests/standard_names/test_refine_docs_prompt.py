@@ -49,7 +49,6 @@ def _minimal_ctx(**overrides) -> dict:
         "documentation": "Some existing docs.",
         "kind": "scalar",
         "unit": "A/m^2",
-        "tags": ["mhd", "equilibrium"],
         "physics_domain": "equilibrium",
         "docs_chain_length": 0,
         "docs_chain_history": [],

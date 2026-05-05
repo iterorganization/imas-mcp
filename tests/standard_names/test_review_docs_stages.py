@@ -66,7 +66,6 @@ def _make_docs_item(
         "validation_status": "valid",
         "docs_stage": docs_stage,
         "docs_chain_length": docs_chain_length,
-        "tags": ["electron", "temperature"],
         "claim_token": claim_token,
     }
     item.update(overrides)

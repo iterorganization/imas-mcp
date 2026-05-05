@@ -315,7 +315,6 @@ class TestNoInfiniteLoopOnSupersede:
                         "unit": "eV",
                         "cluster_id": "cluster1",
                         "physics_domain": "core_profiles",
-                        "tags": [],
                         "reviewer_score_name": 0.9,
                         "reviewer_comments_name": "good",
                         "chain_length": 0,

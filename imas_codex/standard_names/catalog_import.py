@@ -605,8 +605,14 @@ def run_import(
                     )
                     continue
 
+                # Strip graph-only fields before ISN validation
+                # (physics_domain is used later but ISN rejects it)
+                isn_data = {
+                    k: v for k, v in entry_data.items() if k not in _GRAPH_ONLY_FIELDS
+                }
+
                 # Validate against ISN model
-                entry = ta.validate_python(entry_data)
+                entry = ta.validate_python(isn_data)
 
                 # Parse physics_domain — accept scalar (post-refactor) or
                 # list (legacy catalog form).  Normalise to list internally
