@@ -901,7 +901,9 @@ def extract_cocos_labels_for_version(version: str) -> dict[str, str]:
     return labels
 
 
-def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict]) -> int:
+def _backfill_cocos_labels(
+    client: "GraphClient", version_data: dict[str, dict]
+) -> tuple[int, set[str]]:
     """Backfill COCOS labels for DD versions where XML lacks them.
 
     DD versions 4.0.0–4.1.1 removed ``cocos_label_transformation`` from
@@ -922,7 +924,7 @@ def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict])
     or ``inferred_sign_flip``).
 
     Returns:
-        Count of labels backfilled.
+        Tuple of (count of labels backfilled, set of paths that received a label).
     """
     sorted_versions = sorted(version_data.keys())
     latest_version = sorted_versions[-1]
@@ -1044,7 +1046,7 @@ def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict])
         """
     )
 
-    return len(updates)
+    return len(updates), handled
 
 
 def extract_paths_for_version(version: str, ids_filter: set[str] | None = None) -> dict:
@@ -1871,7 +1873,12 @@ def phase_build(
                 )
             stats["cocos_labels_updated"] = len(cocos_updates)
 
-        # Clear stale labels on paths that lost COCOS sensitivity
+        # Backfill COCOS labels BEFORE cleanup (moved up)
+        backfill_count, backfilled_paths = _backfill_cocos_labels(client, version_data)
+        stats["cocos_labels_backfilled"] = backfill_count
+
+        # Clear stale labels — exclude BOTH XML-sourced AND backfilled paths
+        all_labeled = latest_labeled | backfilled_paths
         client.query(
             """
             MATCH (p:IMASNode)
@@ -1879,11 +1886,8 @@ def phase_build(
             AND NOT p.id IN $labeled_paths
             SET p.cocos_transformation_type = null
             """,
-            labeled_paths=list(latest_labeled),
+            labeled_paths=list(all_labeled),
         )
-
-        # Backfill COCOS labels for versions where XML lacks them (4.0.0–4.1.x)
-        stats["cocos_labels_backfilled"] = _backfill_cocos_labels(client, version_data)
 
     # Final-pass: field-level metadata from latest version
     if not dry_run and version_data:

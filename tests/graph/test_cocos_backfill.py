@@ -71,7 +71,7 @@ class TestBackfillNullLabelGuard:
         }
 
         with caplog.at_level(logging.DEBUG):
-            count = _backfill_cocos_labels(mock_client, version_data)
+            count, _ = _backfill_cocos_labels(mock_client, version_data)
 
         # Only psi (valid label) should be applied; phi (None label) is dropped
         assert count == 1
@@ -149,7 +149,7 @@ class TestBackfillNullLabelGuard:
             },
         }
 
-        count = _backfill_cocos_labels(mock_client, version_data)
+        count, _ = _backfill_cocos_labels(mock_client, version_data)
         assert count == 0
 
     def test_expression_inferred_labels_pass_through(self, mock_client):
@@ -173,7 +173,7 @@ class TestBackfillNullLabelGuard:
             },
         }
 
-        count = _backfill_cocos_labels(mock_client, version_data)
+        count, _ = _backfill_cocos_labels(mock_client, version_data)
         assert count == 1
 
         query_calls = [
@@ -215,7 +215,7 @@ class TestBackfillNullLabelGuard:
             },
         }
 
-        count = _backfill_cocos_labels(mock_client, version_data)
+        count, _ = _backfill_cocos_labels(mock_client, version_data)
         assert count == 2
 
     def test_xml_provenance_marker_always_runs(self, mock_client):
