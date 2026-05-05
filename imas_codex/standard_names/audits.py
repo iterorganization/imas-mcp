@@ -807,10 +807,13 @@ def name_unit_consistency_check(
             coef in name
             for coef in (
                 "_diffusivity",
+                "_diffusion_coefficient",
                 "_conductivity",
+                "_conduction_coefficient",
                 "_resistivity",
                 "_viscosity",
                 "_mobility",
+                "_convection_coefficient",
             )
         ):
             continue
@@ -952,8 +955,10 @@ def multi_subject_check(candidate: dict[str, Any]) -> list[str]:
         # of the base, not a second subject.
         _COMPOUND_PB_TOKENS = (
             "particle_diffusivity",
+            "particle_diffusion_coefficient",
             "particle_flux",
             "particle_source",
+            "particle_source_rate",
             "particle_sink",
             "particle_confinement",
             "particle_radial_diffusivity",
