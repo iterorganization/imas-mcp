@@ -46,7 +46,6 @@ Lifecycle:
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import time
@@ -75,7 +74,7 @@ _atexit_registered = False
 # - Must exit cleanly on stdin EOF
 
 _WORKER_SCRIPT = r"""
-import sys, json, base64, traceback, io, os, subprocess
+import sys, json, traceback, io, os, subprocess
 
 # Signal readiness — pool will send warmup commands after startup
 sys.stdout.write(json.dumps({"ready": True, "pid": os.getpid()}) + "\n")
@@ -99,7 +98,7 @@ while True:
             continue
 
         if action == "exec":
-            script = base64.b64decode(request["script"]).decode()
+            script = request["script"]
             stdin_data = request.get("stdin", "")
 
             # Execute in isolated namespace
@@ -183,17 +182,14 @@ class SSHWorker:
 
     async def start(self, timeout: float = 30.0) -> None:
         """Start the SSH worker process and wait for ready signal."""
+        import shlex
+
         from imas_codex.remote.executor import _get_host_nice_level
 
-        # Base64-encode worker script to avoid quoting issues
-        encoded = base64.b64encode(_WORKER_SCRIPT.encode()).decode()
-
-        # Use system Python (/usr/bin/python3) for the persistent worker loop.
-        # This avoids 60-100s NFS startup penalty from the venv Python binary.
-        # The worker script is stdlib-only and 3.9-compatible.
-        # PATH includes /tmp/imas-codex-tools first (tools copied there during
-        # warmup) then the standard venv/bin paths for fallback.
-        python_cmd = f"/usr/bin/python3 -c \"import base64;exec(base64.b64decode('{encoded}').decode())\""
+        # Use shlex.quote to safely embed the worker script without base64.
+        # shlex.quote wraps the script in single-quotes with proper escaping,
+        # which is the standard POSIX approach and avoids XDR malware triggers.
+        python_cmd = f"/usr/bin/python3 -c {shlex.quote(_WORKER_SCRIPT)}"
 
         # Apply nice level if configured
         nice_level = _get_host_nice_level(self.ssh_host)
@@ -290,7 +286,7 @@ class SSHWorker:
         request = json.dumps(
             {
                 "action": "exec",
-                "script": base64.b64encode(script.encode()).decode(),
+                "script": script,
                 "stdin": stdin_data,
             }
         )

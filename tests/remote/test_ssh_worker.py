@@ -9,7 +9,6 @@ Phase 0: Write tests BEFORE refactoring base64 out of SSH commands.
 
 from __future__ import annotations
 
-import base64
 import json
 import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -54,9 +53,8 @@ class TestWorkerScript:
 
     def test_exec_runs_script_and_returns_stdout(self):
         """A script that prints should produce ok=True with the printed output."""
-        script_b64 = base64.b64encode(b"print('hello')").decode()
         responses = _run_worker_with_requests(
-            [{"action": "exec", "script": script_b64, "stdin": "{}"}]
+            [{"action": "exec", "script": "print('hello')", "stdin": "{}"}]
         )
         # responses[0] is {"ready": True, "pid": N}
         assert responses[0].get("ready") is True
@@ -66,9 +64,8 @@ class TestWorkerScript:
 
     def test_exec_error_returns_traceback(self):
         """A script that raises should produce ok=False with error and tb fields."""
-        script_b64 = base64.b64encode(b"raise ValueError('oops')").decode()
         responses = _run_worker_with_requests(
-            [{"action": "exec", "script": script_b64, "stdin": "{}"}]
+            [{"action": "exec", "script": "raise ValueError('oops')", "stdin": "{}"}]
         )
         resp = responses[1]
         assert resp["ok"] is False

@@ -18,7 +18,6 @@ Usage::
     imas-codex llm db uri       # Print connection URI
 """
 
-import base64
 import logging
 import os
 import secrets
@@ -87,10 +86,19 @@ def _ensure_pg_bin() -> str:
 
     # Install pgserver and locate binaries
     click.echo("  Installing PostgreSQL binaries (pgserver)...")
-    b64 = base64.b64encode(_FIND_PG_BIN.encode()).decode()
-    result = _run(
-        f"echo {b64} | base64 -d | uv run --python 3.12 --with pgserver python3 -",
+    from imas_codex.cli.services import _llm_ssh
+    from imas_codex.remote.executor import run_script_via_stdin
+
+    wrapper = (
+        "uv run --python 3.12 --with pgserver python3 - << 'PYEOF'\n"
+        f"{_FIND_PG_BIN}\n"
+        "PYEOF\n"
+    )
+    result = run_script_via_stdin(
+        wrapper,
+        ssh_host=_llm_ssh(),
         timeout=300,
+        lang="bash",
     )
     # Last non-empty line has the path (uv may print progress before it)
     pg_bin = ""

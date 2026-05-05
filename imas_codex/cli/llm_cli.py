@@ -815,8 +815,6 @@ def _deploy_login_llm_direct() -> None:
     # setsid + nohup to fully detach from the SSH session.
     # We bypass run_command() because its `timeout` wrapper prevents
     # the SSH session from closing when backgrounding long-lived processes.
-    import base64
-
     launcher = (
         f"#!/bin/bash\n"
         f"cd {_PROJECT}\n"
@@ -844,16 +842,17 @@ def _deploy_login_llm_direct() -> None:
         f"  --host 0.0.0.0 --port {port} "
         f"  >> {_SERVICES_DIR}/llm.log 2>&1\n"
     )
-    launcher_b64 = base64.b64encode(launcher.encode()).decode()
     launcher_path = f"{_SERVICES_DIR}/llm-launcher.sh"
 
     click.echo(f"  Launching LLM proxy directly (port {port})...")
 
-    # Step 1: write launcher script (uses run_command — single command, fine)
+    # Step 1: write launcher script via safe printf pipe (no base64)
+    import shlex
+
     _run_llm_remote(
-        f"bash -c 'mkdir -p {_SERVICES_DIR} && "
-        f"echo {launcher_b64} | base64 -d > {launcher_path} && "
-        f"chmod +x {launcher_path}'",
+        f"mkdir -p {_SERVICES_DIR} && "
+        f"printf '%s' {shlex.quote(launcher)} > {launcher_path} && "
+        f"chmod +x {launcher_path}",
         timeout=15,
     )
 
@@ -965,7 +964,7 @@ def _install_llm_service_remote() -> None:
     designated node — prevents NFS-shared service files from spawning
     redundant proxies on every login node.
     """
-    import base64
+    import shlex
 
     port = _llm_port()
     # Capture the static hostname (what systemd uses for ConditionHost=)
@@ -998,13 +997,12 @@ RestartSec=10
 [Install]
 WantedBy=default.target
 """
-    content_b64 = base64.b64encode(service_content.encode()).decode()
     _run_llm_remote(
-        'bash -c \'mkdir -p "$HOME/.config/systemd/user" && '
-        f'echo "{content_b64}" | base64 -d > '
+        'mkdir -p "$HOME/.config/systemd/user" && '
+        f"printf '%s' {shlex.quote(service_content)} > "
         '"$HOME/.config/systemd/user/imas-codex-llm.service" && '
         "systemctl --user daemon-reload && "
-        "systemctl --user enable imas-codex-llm'",
+        "systemctl --user enable imas-codex-llm",
         timeout=15,
         check=True,
     )
@@ -1027,10 +1025,10 @@ def _stop_stale_llm_instances() -> None:
     """
     port = _llm_port()
     try:
-        # Use base64-encoded script to avoid nested quoting hell.
+        # Pipe the inner script via stdin to avoid nested quoting issues.
         # The script discovers sibling login nodes via /etc/hosts and
         # stops both systemd services and direct processes on each.
-        import base64
+        from imas_codex.remote.executor import run_script_via_stdin
 
         inner = (
             "this=$(hostname -s)\n"
@@ -1048,9 +1046,11 @@ def _stop_stale_llm_instances() -> None:
             '  [ "$result" = "stopped" ] && echo "  Stopped stale proxy on $short"\n'
             "done\n"
         )
-        inner_b64 = base64.b64encode(inner.encode()).decode()
-        script = f"echo {inner_b64} | base64 -d | bash"
-        output = _run_llm_remote(script, timeout=60)
+        output = run_script_via_stdin(
+            inner,
+            ssh_host=_llm_ssh(),
+            timeout=60,
+        )
         if output.strip():
             click.echo(output.strip())
     except Exception:

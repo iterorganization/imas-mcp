@@ -330,15 +330,11 @@ def _run_llm_remote(cmd: str, timeout: int = 30, check: bool = False) -> str:
 
 
 def _run_on_node(node: str, cmd: str, timeout: int = 30) -> str:
-    """Run a command on a compute node (via SSH from login node).
+    """Run a command on a compute node (via SSH from login node)."""
+    import shlex
 
-    Uses base64 encoding to avoid nested shell quoting issues.
-    """
-    import base64
-
-    cmd_b64 = base64.b64encode(cmd.encode()).decode()
     return _run_remote(
-        f'ssh -o StrictHostKeyChecking=no {node} "echo {cmd_b64} | base64 -d | bash"',
+        f"ssh -o StrictHostKeyChecking=no {node} {shlex.quote(cmd)}",
         timeout=timeout,
     )
 
@@ -435,7 +431,7 @@ def _submit_service_job(
     draining/drained, raises a clear error instead of submitting
     a job that will never start.
     """
-    import base64
+    import shlex
 
     if gpus > 0:
         partition = _gpu_partition()
@@ -488,10 +484,10 @@ def _submit_service_job(
     # Stop conflicting login-node services (systemd, apptainer)
     _stop_login_services(job_name)
 
-    script_b64 = base64.b64encode(script.encode()).decode()
+    script_quoted = shlex.quote(script)
     submit_cmd = (
         f"mkdir -p {services_dir_abs} && "
-        f'echo "{script_b64}" | base64 -d > /tmp/{job_name}.sh && '
+        f"printf '%s' {script_quoted} > /tmp/{job_name}.sh && "
         f"sbatch /tmp/{job_name}.sh && "
         f"rm -f /tmp/{job_name}.sh"
     )
