@@ -1267,19 +1267,20 @@ def seed_parent_sources(gc: Any | None = None) -> int:
             gc.query(
                 """
                 MATCH (parent:StandardName {needs_composition: true})
-                MATCH (child)-[:COMPONENT_OF]->(parent)
+                MATCH (child)-[comp:COMPONENT_OF]->(parent)
                 WITH parent,
                      collect(child) AS children,
+                     collect(comp.operator_kind) AS edge_kinds,
                      count(child) AS total_children,
                      count(CASE WHEN child.name_stage IS NOT NULL
                            THEN 1 END) AS composed_children
                 WHERE total_children = composed_children
                   AND total_children > 0
                 UNWIND children AS child
-                WITH parent, child
+                WITH parent, edge_kinds, child
                 OPTIONAL MATCH (sns:StandardNameSource)-[:PRODUCED_NAME]->(child)
                 OPTIONAL MATCH (sns)-[:FROM_DD_PATH]->(imas:IMASNode)
-                WITH parent,
+                WITH parent, edge_kinds,
                      collect(DISTINCT {
                          id: child.id,
                          unit: child.unit,
@@ -1290,7 +1291,8 @@ def seed_parent_sources(gc: Any | None = None) -> int:
                      collect(DISTINCT imas.id) AS dd_paths
                 RETURN parent.id AS parent_id,
                        child_data,
-                       dd_paths
+                       dd_paths,
+                       edge_kinds
                 """
             )
         )
@@ -1304,9 +1306,17 @@ def seed_parent_sources(gc: Any | None = None) -> int:
             child_data = row.get("child_data") or []
             dd_paths = [p for p in (row.get("dd_paths") or []) if p]
 
+            # Determine if this is a geometric coordinate parent
+            edge_kinds = row.get("edge_kinds") or []
+            is_geometric = any(k == "coordinate" for k in edge_kinds)
+
             # Extract and validate unit uniformity
             child_units = {c["unit"] for c in child_data if c.get("unit")}
-            if len(child_units) > 1:
+            if is_geometric:
+                # Geometric parents (e.g. "position") have heterogeneous
+                # units (m for r/z, rad for phi) — skip unit uniformity
+                unit = None
+            elif len(child_units) > 1:
                 logger.warning(
                     "Parent %s has children with heterogeneous units: %s — "
                     "skipping (needs manual review)",
@@ -1314,7 +1324,8 @@ def seed_parent_sources(gc: Any | None = None) -> int:
                     child_units,
                 )
                 continue
-            unit = next(iter(child_units)) if child_units else None
+            else:
+                unit = next(iter(child_units)) if child_units else None
 
             # Extract COCOS (should be uniform across components)
             child_cocos = {c["cocos"] for c in child_data if c.get("cocos")}
@@ -1333,9 +1344,14 @@ def seed_parent_sources(gc: Any | None = None) -> int:
 
             # Generate description from children
             child_ids = [c["id"] for c in child_data if c.get("id")]
-            description = (
-                f"Vector quantity with components: {', '.join(sorted(child_ids))}"
-            )
+            if is_geometric:
+                description = (
+                    f"Geometric coordinate with axes: {', '.join(sorted(child_ids))}"
+                )
+            else:
+                description = (
+                    f"Vector quantity with components: {', '.join(sorted(child_ids))}"
+                )
 
             # Attempt ISN parse for grammar fields
             grammar_fields = _parse_parent_grammar(parent_id)
@@ -1368,6 +1384,7 @@ def seed_parent_sources(gc: Any | None = None) -> int:
                 "physics_domain": physics_domain,
                 "kind": kind,
                 "description": description,
+                "is_geometric_coordinate": is_geometric,
             }
             props.update(grammar_fields)
 
@@ -1396,7 +1413,8 @@ def seed_parent_sources(gc: Any | None = None) -> int:
                                  parent.grammar_transformation),
                     parent.grammar_component =
                         coalesce($grammar_component,
-                                 parent.grammar_component)
+                                 parent.grammar_component),
+                    parent.is_geometric_coordinate = $is_geometric_coordinate
                 WITH parent
                 MERGE (sns:StandardNameSource {id: $source_id})
                 ON CREATE SET sns.status = 'composed',

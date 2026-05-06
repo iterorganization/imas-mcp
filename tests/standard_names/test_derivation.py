@@ -308,3 +308,54 @@ def test_d16_projection_monkeypatched():
     assert e.props["operator_kind"] == "projection"
     assert e.props["axis"] == "parallel"
     assert e.props["shape"] == "component"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Geometric coordinate edge derivation
+# ---------------------------------------------------------------------------
+
+
+class TestGeometricCoordinateDerivation:
+    """Phase 3: Geometric coordinate edge derivation."""
+
+    def test_geometric_coordinate_edge_derived(self):
+        """T8: radial_position produces COMPONENT_OF edge to position."""
+        edges = derive_edges("radial_position")
+        assert len(edges) == 1
+        assert edges[0].edge_type == "COMPONENT_OF"
+        assert edges[0].to_name == "position"
+        assert edges[0].props["operator_kind"] == "coordinate"
+        assert edges[0].props["axis"] == "radial"
+
+    def test_vertical_position_edge(self):
+        """Vertical position also derives coordinate edge."""
+        edges = derive_edges("vertical_position")
+        assert len(edges) == 1
+        assert edges[0].to_name == "position"
+        assert edges[0].props["axis"] == "vertical"
+
+    def test_toroidal_angle_edge(self):
+        """toroidal_angle (physical_base=angle) derives coordinate edge."""
+        edges = derive_edges("toroidal_angle")
+        assert len(edges) == 1
+        assert edges[0].to_name == "angle"
+        assert edges[0].props["operator_kind"] == "coordinate"
+
+    def test_physical_vector_still_projection(self):
+        """T11: Physical vector components still get projection edges."""
+        edges = derive_edges("radial_component_of_magnetic_field")
+        assert len(edges) == 1
+        assert edges[0].props["operator_kind"] == "projection"
+        assert edges[0].to_name == "magnetic_field"
+
+    def test_geometric_outline_edge(self):
+        """radial_outline derives coordinate edge to outline."""
+        edges = derive_edges("radial_outline")
+        assert len(edges) == 1
+        assert edges[0].to_name == "outline"
+        assert edges[0].props["operator_kind"] == "coordinate"
+
+    def test_no_geometric_edge_for_leaf(self):
+        """Plain 'temperature' (no coordinate) produces no edges."""
+        edges = derive_edges("temperature")
+        assert len(edges) == 0

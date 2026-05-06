@@ -169,8 +169,72 @@ def derive_edges(name: str) -> list[DerivedEdge]:
             )
         ]
 
-    # Leaf: no operator, no projection
-    return []
+    # Leaf: no operator, no projection — try geometric coordinate
+    return _geometric_coordinate_check(name)
+
+
+def _geometric_coordinate_check(name: str) -> list[DerivedEdge]:
+    """Detect geometric coordinate names via the model-level ISN parser.
+
+    ISN grammar distinguishes two axis forms:
+
+    * **Physical vector**: ``{axis}_component_of_{base}`` →
+      ``component`` slot populated, handled by the projection branch.
+    * **Geometric coordinate**: ``{axis}_{geometric_base}`` →
+      ``coordinate`` slot populated (e.g. ``radial_position``).
+
+    The IR parser often cannot parse geometric coordinates
+    (``radial_position`` raises ``ParseError``), but the model-level
+    ``parse_standard_name`` succeeds.  This function uses the model
+    parser as a last-resort check and emits a ``COMPONENT_OF`` edge
+    with ``operator_kind="coordinate"`` when a coordinate slot is found.
+
+    Returns ``[]`` when the name is not a geometric coordinate (true leaf).
+    """
+    try:
+        from imas_standard_names.grammar import parse_standard_name
+
+        parsed = parse_standard_name(name)
+    except Exception:
+        return []
+
+    if parsed is None or parsed.coordinate is None:
+        return []
+
+    # Determine the parent (inner) name
+    inner_name: str | None = None
+    if parsed.geometric_base is not None:
+        inner_name = (
+            str(parsed.geometric_base.value)
+            if hasattr(parsed.geometric_base, "value")
+            else str(parsed.geometric_base)
+        )
+    elif parsed.physical_base is not None:
+        # Edge case: toroidal_angle has physical_base='angle', no geometric_base
+        inner_name = str(parsed.physical_base)
+
+    if not inner_name:
+        return []
+
+    axis_value = (
+        str(parsed.coordinate.value)
+        if hasattr(parsed.coordinate, "value")
+        else str(parsed.coordinate)
+    )
+
+    return [
+        DerivedEdge(
+            "COMPONENT_OF",
+            name,
+            inner_name,
+            {
+                "operator": "coordinate",
+                "operator_kind": "coordinate",
+                "axis": axis_value,
+                "shape": "coordinate",
+            },
+        )
+    ]
 
 
 def _regex_fallback(name: str) -> list[DerivedEdge]:
@@ -248,4 +312,5 @@ def _regex_fallback(name: str) -> list[DerivedEdge]:
                     )
                 ]
 
-    return []  # no pattern matched → leaf
+    # No regex matched — try geometric coordinate as last resort
+    return _geometric_coordinate_check(name)

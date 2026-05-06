@@ -753,6 +753,15 @@ classes:
           Null means consolidation has not processed this name yet.
           Names with conflicts are not marked consolidated.
         range: datetime
+      is_geometric_coordinate:
+        description: >-
+          True when this StandardName represents a geometric coordinate
+          parent (e.g. position) whose children have heterogeneous units
+          (m for r/z, rad for phi). Distinguishes geometric parents from
+          physical vector parents which have uniform units. Set by
+          seed_parent_sources when COMPONENT_OF edges carry
+          operator_kind='coordinate'.
+        range: boolean
       grammar_tokens:
         description: >-
           GrammarToken nodes that make up this standard name, parsed
