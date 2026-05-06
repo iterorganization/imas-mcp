@@ -1121,8 +1121,10 @@ def run_python_script(
     # heuristics that flag base64-encoded SSH commands as obfuscation.
     script_hex = script_content.encode().hex()
 
-    # Single-line Python that decodes and runs the script; JSON arrives on stdin
-    runner = f"exec(bytes.fromhex('{script_hex}').decode())"
+    # Single-line Python that decodes and runs the script; JSON arrives on stdin.
+    # Use double quotes around the hex string so it nests safely inside the
+    # single-quoted shell argument: python3 -c '...fromhex("HEX")...'
+    runner = f'exec(bytes.fromhex("{script_hex}").decode())'
 
     # Remote runner: restore site-packages and PYTHONPATH since -S skips them.
     # On some facilities, venv Python 3.12 hangs during site initialization when
@@ -1136,7 +1138,7 @@ def run_python_script(
         f'sp=os.path.join(os.path.expanduser("~/.local/share/imas-codex/venv"),"lib",f"python{{vi[0]}}.{{vi[1]}}","site-packages");'
         f"sys.path.append(sp) if os.path.isdir(sp) else None;"
         f'[sys.path.insert(0,p) for p in reversed(os.environ.get("PYTHONPATH","").split(":")) if p];'
-        f"exec(bytes.fromhex('{script_hex}').decode())"
+        f'exec(bytes.fromhex("{script_hex}").decode())'
     )
 
     if is_local:
@@ -1266,8 +1268,9 @@ async def async_run_python_script(
     # issues and without triggering base64-obfuscation security heuristics.
     script_hex = script_content.encode().hex()
 
-    # Single-line Python that decodes and runs the script; JSON arrives on stdin
-    runner = f"exec(bytes.fromhex('{script_hex}').decode())"
+    # Single-line Python that decodes and runs the script; JSON arrives on stdin.
+    # Double quotes around hex for shell nesting (see run_python_script).
+    runner = f'exec(bytes.fromhex("{script_hex}").decode())'
 
     # Remote runner: same as sync version — restores site-packages + PYTHONPATH.
     # See run_python_script() for full explanation of the -S workaround.
@@ -1277,7 +1280,7 @@ async def async_run_python_script(
         f'sp=os.path.join(os.path.expanduser("~/.local/share/imas-codex/venv"),"lib",f"python{{vi[0]}}.{{vi[1]}}","site-packages");'
         f"sys.path.append(sp) if os.path.isdir(sp) else None;"
         f'[sys.path.insert(0,p) for p in reversed(os.environ.get("PYTHONPATH","").split(":")) if p];'
-        f"exec(bytes.fromhex('{script_hex}').decode())"
+        f'exec(bytes.fromhex("{script_hex}").decode())'
     )
 
     if is_local:
