@@ -124,6 +124,39 @@ class TestResolveUnitOverrides:
         )
         assert unit == "eV"
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "bolometer/camera/channel/aperture/x1_unit_vector/x",
+            "mse/channel/detector/x2_unit_vector/y",
+            "reflectometer_fluctuation/channel/antennas_orientation/antenna_detection/x1_unit_vector/z",
+            "spi/injector/shatter_cone/unit_vector_major/x",
+            "nbi/unit/source/x3_unit_vector/y",
+        ],
+    )
+    def test_unit_vector_m_overridden_to_dimensionless(self, path: str) -> None:
+        """Unit vector components are dimensionless direction cosines, not
+        spatial coordinates. The DD incorrectly tags them as meters."""
+        unit, meta = resolve_unit(path, "m")
+        assert unit == "1", f"unit_vector path {path} should override 'm' to '1'"
+        assert meta is not None
+        assert meta["rule"] == "override"
+        assert meta["original_unit"] == "m"
+
+    def test_unit_vector_non_m_unit_passes_through(self) -> None:
+        """Only override when dd_unit is 'm' — other units pass through."""
+        unit, meta = resolve_unit(
+            "bolometer/camera/channel/aperture/x1_unit_vector/x", "rad"
+        )
+        assert unit == "rad"
+        assert meta is None
+
+    def test_non_unit_vector_m_passes_through(self) -> None:
+        """Paths with unit='m' that aren't unit vectors pass through."""
+        unit, meta = resolve_unit("equilibrium/time_slice/boundary/outline/r", "m")
+        assert unit == "m"
+        assert meta is None
+
 
 class TestResolveUnitSkips:
     """Class 4–5: skip records (removed from composition pipeline)."""

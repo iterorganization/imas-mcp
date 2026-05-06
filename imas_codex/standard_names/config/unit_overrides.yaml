@@ -153,6 +153,19 @@ overrides:
     reason: "charge number is dimensionless"
 
   # -------------------------------------------------------------------------
+  # Class 3b — unit vector components tagged unit="m" (meters)
+  # Unit vectors are dimensionless direction cosines. The DD documents them
+  # as "X/Y/Z coordinate of xN unit vector" but they are NOT spatial
+  # coordinates — they are projections of a normalised orientation vector.
+  # Affects 1314 paths across ~20 diagnostic IDSs.
+  # -------------------------------------------------------------------------
+  - path_pattern: "**/*unit_vector*/*"
+    dd_unit: "m"
+    strategy: override
+    override_unit: "1"
+    reason: "unit vector components are dimensionless direction cosines, not spatial coordinates"
+
+  # -------------------------------------------------------------------------
   # Class 4 — unresolved Jinja placeholder m^dimension (GGD grid measures).
   # The true unit depends on the runtime "dimension" attribute (0..3) and
   # cannot be statically resolved.
