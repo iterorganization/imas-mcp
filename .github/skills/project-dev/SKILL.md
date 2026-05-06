@@ -12,7 +12,7 @@ All commands use `uv run` — never bare `python` or `pytest`.
 ### Testing
 
 ```bash
-uv run pytest                                        # Default (excludes slow/graph/corpus_health)
+uv run pytest                                        # Default (excludes slow/graph/sn_health)
 uv run pytest tests/standard_names/ -q               # SN tests (~3300, ~90s)
 uv run pytest tests/path/to/test.py::test_func -v    # Specific test
 uv run pytest --cov=imas_codex --cov-report=term     # With coverage
