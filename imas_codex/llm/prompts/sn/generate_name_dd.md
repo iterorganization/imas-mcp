@@ -276,6 +276,26 @@ These names already exist in the catalog. Reuse them if they match your source, 
 {% endfor %}
 - **Concept identity:** These {{ item.cluster_siblings|length + 1 }} cross-IDS paths represent the SAME physics concept. Generate ONE name that covers all of them.
 {% endif %}
+{% if item.family_type %}
+- **🔗 Family context ({{ item.family_type }}):**
+{% if item.family_type == "physical_vector" %}  - This path is the **{{ item.family_axis }}** component of a vector quantity.
+  - **Sibling components:** {% for sib in item.family_siblings %}`{{ sib }}`{% if not loop.last %}, {% endif %}{% endfor %}
+
+  - **ISN naming convention:** Each component should be named `{axis}_component_of_{parent}` where `{parent}` is the shared vector name (e.g., `toroidal_component_of_current_density`).
+  - All siblings MUST share the same `physical_base` — only the `component` segment differs.
+{% elif item.family_type == "geometric_coordinate" %}  - This path is the **{{ item.family_axis }}** coordinate of a geometric position.
+  - **Sibling coordinates:** {% for sib in item.family_siblings %}`{{ sib }}`{% if not loop.last %}, {% endif %}{% endfor %}
+
+{% if item.family_parent_name %}  - **Geometric base:** `{{ item.family_parent_name }}`{% endif %}
+
+  - **ISN naming convention:** Geometric coordinates use `{axis}_{geometric_base}` form (e.g., `radial_position`, `vertical_position`, `toroidal_angle`). Do NOT use `component_of` for coordinates.
+  - Note: these siblings may have DIFFERENT units (e.g., metres vs radians) — this is expected for geometric coordinates.
+{% elif item.family_type == "derivative" %}  - This path is a **derivative** quantity.
+  - **Sibling derivatives:** {% for sib in item.family_siblings %}`{{ sib }}`{% if not loop.last %}, {% endif %}{% endfor %}
+
+  - **ISN naming convention:** Derivatives use the form `derivative_of_{X}_with_respect_to_{Y}` where X is the numerator quantity and Y is the denominator coordinate.
+  - All siblings sharing the same denominator should use consistent naming for the denominator coordinate.
+{% endif %}{% endif %}
 
 {% endfor %}
 

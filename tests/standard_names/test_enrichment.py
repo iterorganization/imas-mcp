@@ -926,3 +926,144 @@ class TestMagneticsDomainReclassification:
         enriched = enrich_paths(rows)
         assert len(enriched) == 1
         assert enriched[0]["physics_domain"] == "magnetic_field_diagnostics"
+
+
+# =============================================================================
+# Family-aware batch generation
+# =============================================================================
+
+
+class TestFamilyAwareBatching:
+    """Tests for family-aware pre-grouping in group_by_concept_and_unit."""
+
+    def _enriched(self, **overrides) -> dict:
+        """Build an enriched path dict (post-enrich_paths)."""
+        base = {
+            "path": "equilibrium/time_slice/profiles_1d/j_tor",
+            "data_type": "FLT_1D",
+            "unit": "A.m^-2",
+            "ids_name": "equilibrium",
+            "description": "Toroidal current density",
+            "primary_cluster_id": "c_j",
+            "primary_cluster_label": "Current density",
+            "primary_cluster_description": "Current density components",
+            "grouping_cluster_id": "c_j",
+            "grouping_cluster_label": "Current density",
+            "parent_path": "equilibrium/time_slice/profiles_1d",
+            "cluster_siblings": [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_vector_family_same_batch(self):
+        """T5: Vector family members land in the same batch."""
+        items = [
+            self._enriched(
+                path="equilibrium/time_slice/profiles_1d/j_tor",
+                unit="A.m^-2",
+                grouping_cluster_id="c_j",
+            ),
+            self._enriched(
+                path="equilibrium/time_slice/profiles_1d/j_parallel",
+                unit="A.m^-2",
+                description="Parallel current density",
+                grouping_cluster_id="c_j",
+            ),
+        ]
+        batches = group_by_concept_and_unit(items)
+        # Family detection groups j_tor + j_parallel together
+        family_batches = [b for b in batches if "family:" in b.group_key]
+        assert len(family_batches) == 1
+        paths = {item["path"] for item in family_batches[0].items}
+        assert "equilibrium/time_slice/profiles_1d/j_tor" in paths
+        assert "equilibrium/time_slice/profiles_1d/j_parallel" in paths
+
+    def test_geometric_family_overrides_unit_split(self):
+        """T6: Geometric family batches together despite unit difference."""
+        items = [
+            self._enriched(
+                path="equilibrium/time_slice/boundary/outline/r",
+                unit="m",
+                description="Major radius of boundary outline",
+                grouping_cluster_id="c_boundary",
+                parent_path="equilibrium/time_slice/boundary/outline",
+            ),
+            self._enriched(
+                path="equilibrium/time_slice/boundary/outline/z",
+                unit="m",
+                description="Vertical position of boundary outline",
+                grouping_cluster_id="c_boundary",
+                parent_path="equilibrium/time_slice/boundary/outline",
+            ),
+            self._enriched(
+                path="equilibrium/time_slice/boundary/outline/phi",
+                unit="rad",
+                description="Toroidal angle of boundary outline",
+                grouping_cluster_id="c_boundary",
+                parent_path="equilibrium/time_slice/boundary/outline",
+            ),
+        ]
+        batches = group_by_concept_and_unit(items)
+        # Without family-aware grouping, phi(rad) would be in a separate
+        # batch from r(m) and z(m).  Family detection forces all three
+        # into one batch.
+        family_batches = [b for b in batches if "family:" in b.group_key]
+        assert len(family_batches) == 1
+        batch_units = {item["unit"] for item in family_batches[0].items}
+        assert batch_units == {"m", "rad"}
+        assert len(family_batches[0].items) == 3
+
+    def test_family_metadata_injected(self):
+        """T7: Family context metadata injected into items."""
+        items = [
+            self._enriched(
+                path="equilibrium/time_slice/profiles_1d/j_tor",
+                unit="A.m^-2",
+                grouping_cluster_id="c_j",
+            ),
+            self._enriched(
+                path="equilibrium/time_slice/profiles_1d/j_parallel",
+                unit="A.m^-2",
+                description="Parallel current density",
+                grouping_cluster_id="c_j",
+            ),
+        ]
+        batches = group_by_concept_and_unit(items)
+        family_batches = [b for b in batches if "family:" in b.group_key]
+        assert len(family_batches) == 1
+
+        for item in family_batches[0].items:
+            assert item["family_type"] == "physical_vector"
+            assert item["family_axis"] in ("toroidal", "parallel")
+            assert isinstance(item["family_siblings"], list)
+            assert len(item["family_siblings"]) == 1  # one sibling each
+
+    def test_family_items_not_duplicated_in_cluster_batch(self):
+        """Family items should not appear in both a family batch and a
+        cluster×unit batch."""
+        items = [
+            self._enriched(
+                path="equilibrium/time_slice/profiles_1d/j_tor",
+                unit="A.m^-2",
+                grouping_cluster_id="c_j",
+            ),
+            self._enriched(
+                path="equilibrium/time_slice/profiles_1d/j_parallel",
+                unit="A.m^-2",
+                grouping_cluster_id="c_j",
+            ),
+            # Non-family item in the same cluster
+            self._enriched(
+                path="equilibrium/time_slice/profiles_1d/pressure",
+                unit="Pa",
+                description="Pressure",
+                grouping_cluster_id="c_pressure",
+            ),
+        ]
+        batches = group_by_concept_and_unit(items)
+        all_paths = []
+        for b in batches:
+            for item in b.items:
+                all_paths.append(item["path"])
+        # No duplicates
+        assert len(all_paths) == len(set(all_paths))

@@ -19,6 +19,7 @@ import logging
 from collections import defaultdict
 
 from imas_codex.standard_names.classifier import classify_path
+from imas_codex.standard_names.families import VectorFamily, detect_families
 from imas_codex.standard_names.sources.base import ExtractionBatch
 
 logger = logging.getLogger(__name__)
@@ -362,6 +363,22 @@ def build_batch_context(
     return "\n".join(parts)
 
 
+def _detect_families_from_items(items: list[dict]) -> list[VectorFamily]:
+    """Run family detection on enriched items.
+
+    Converts enriched item dicts to the ``{path, unit}`` format expected
+    by :func:`detect_families` and returns detected families.
+    """
+    family_inputs = [
+        {"path": item["path"], "unit": item.get("unit") or ""}
+        for item in items
+        if item.get("path")
+    ]
+    if not family_inputs:
+        return []
+    return detect_families(family_inputs)
+
+
 def group_by_concept_and_unit(
     items: list[dict],
     max_batch_size: int = 25,
@@ -397,6 +414,35 @@ def group_by_concept_and_unit(
     if not items:
         return []
 
+    # --- Family-aware pre-grouping -----------------------------------------
+    # Detect vector, geometric, and derivative families BEFORE the normal
+    # cluster×unit grouping.  Family members are forced into a single batch
+    # even when they have different units (critical for geometric families
+    # where r(m) and phi(rad) must be named together).
+    family_items: dict[str, list[dict]] = {}  # family key → items
+    family_paths: set[str] = set()  # paths consumed by a family
+
+    families = _detect_families_from_items(items)
+    for family in families:
+        family_id = f"{family.parent_path}:{family.family_type}"
+        member_paths = {m.dd_path for m in family.members}
+        family_group: list[dict] = []
+        for item in items:
+            if item.get("path") in member_paths:
+                # Tag item with family metadata
+                member = next(m for m in family.members if m.dd_path == item["path"])
+                sibling_paths = sorted(
+                    m.dd_path for m in family.members if m.dd_path != item["path"]
+                )
+                item["family_type"] = family.family_type
+                item["family_axis"] = member.axis
+                item["family_siblings"] = sibling_paths
+                item["family_parent_name"] = family.parent_name
+                family_group.append(item)
+                family_paths.add(item["path"])
+        if family_group:
+            family_items[f"family:{family_id}"] = family_group
+
     # --- Build groups: (grouping_cluster_id / unit / species_context) -------
     # Uses grouping cluster (global/domain preferred) and cluster ID (not label)
     # to ensure cross-IDS paths sharing the same concept land in one batch.
@@ -405,7 +451,14 @@ def group_by_concept_and_unit(
     # into distinct batches and receive distinct standard names.
     groups: dict[str, list[dict]] = defaultdict(list)
 
+    # Pre-seed family groups
+    groups.update(family_items)
+
     for item in items:
+        # Skip items already consumed by a family
+        if item.get("path") in family_paths:
+            continue
+
         cluster_id = item.get("grouping_cluster_id")
         unit = item.get("unit") or "dimensionless"
         species_context = extract_species_context(item.get("path") or "")
