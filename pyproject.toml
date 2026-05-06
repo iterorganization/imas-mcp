@@ -567,13 +567,15 @@ allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-timeout = 120
+timeout = 30
+faulthandler_timeout = 60
 addopts = [
     "--strict-markers",
     "--strict-config",
-    "--verbose",
+    "--tb=short",
+    "--no-header",
+    "-q",
     "--durations=10",
-    "--cache-clear",
     "-m", "not slow and not corpus_health and not graph",
 ]
 asyncio_mode = "auto"

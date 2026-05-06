@@ -1584,10 +1584,59 @@ rg "ERROR|WARNING" ~/.local/share/imas-codex/logs/     # Find errors
 
 ```bash
 uv sync --extra test          # Required in worktrees
-uv run pytest                 # All tests
-uv run pytest --cov=imas_codex  # With coverage
+uv run pytest                 # Default markers: excludes slow, corpus_health, graph
+uv run pytest tests/standard_names/ -q  # SN tests (~3300 tests, ~90s)
 uv run pytest tests/path/to/test.py::test_function  # Specific test
+uv run pytest --cov=imas_codex  # With coverage
 ```
+
+### Test Tiers and Markers
+
+Tests are tiered by runtime cost. Default `addopts` excludes expensive markers:
+
+| Marker | Tests | Requires | Default |
+|--------|-------|----------|---------|
+| *(none)* | ~3300 | Nothing (mocks) | ✅ Included |
+| `@pytest.mark.graph` | ~435 | Live Neo4j | ❌ Excluded |
+| `@pytest.mark.slow` | ~31 | GPU/live endpoints | ❌ Excluded |
+| `@pytest.mark.corpus_health` | ~8 | Populated Neo4j | ❌ Excluded |
+
+```bash
+uv run pytest -m graph               # Run graph tests only
+uv run pytest -m "slow or graph"     # Run slow + graph tests
+```
+
+### Agent Best Practices for Test Execution
+
+**CRITICAL: Never pipe pytest output.** Piping (`|`), teeing (`tee`), or redirecting prevents auto-approval. The default `addopts` uses `-q --tb=short --no-header` which produces compact output (~200-300 lines for the full SN suite). Run directly:
+
+```bash
+# GOOD — compact output, auto-approval works
+uv run pytest tests/standard_names/ -q
+
+# GOOD — specific test with detail
+uv run pytest tests/standard_names/test_foo.py::test_bar -v
+
+# BAD — piping stalls agentic workflows
+uv run pytest tests/standard_names/ -q 2>&1 | tail -20
+
+# BAD — tee stalls agentic workflows
+uv run pytest tests/standard_names/ 2>&1 | tee /tmp/out.txt
+```
+
+If you need to capture test output for analysis, run to a file then read separately:
+
+```bash
+uv run pytest tests/standard_names/ -q > /tmp/sn_tests.txt 2>&1
+echo "EXIT=$?"
+tail -10 /tmp/sn_tests.txt
+```
+
+**Timeout:** Default test timeout is 30s. If a test legitimately needs more, use `@pytest.mark.timeout(60)` on the test function. `faulthandler_timeout = 60` will dump thread stacks on true hangs.
+
+### Exit Watchdog Caveat
+
+The `safe_asyncio_run()` function in `imas_codex/cli/shutdown.py` spawns a daemon thread that calls `os._exit(130)` after a 10-second grace period. This is correct production behavior (forces cleanup after Ctrl-C), but fatal in test environments. An autouse fixture in `tests/conftest.py` (`_disable_exit_watchdog`) patches this to a no-op. **Never remove this fixture** — without it, any test that invokes a CLI command via `CliRunner.invoke()` on a discovery command will kill the entire pytest process.
 
 ## Python REPL
 

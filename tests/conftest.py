@@ -209,6 +209,22 @@ def temporary_embedding_cache_dir(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _disable_exit_watchdog():
+    """Prevent CLI tests from spawning exit-watchdog daemon threads.
+
+    ``safe_asyncio_run()`` starts a daemon thread via ``_start_exit_watchdog``
+    that calls ``os._exit(130)`` after a grace period. Tests that invoke CLI
+    commands via ``CliRunner`` trigger this, and the watchdog kills the entire
+    pytest process ~10 s later.
+    """
+    with patch(
+        "imas_codex.cli.shutdown._start_exit_watchdog",
+        side_effect=lambda _grace: None,
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def disable_caching():
     """Automatically disable caching for all tests by making cache always miss."""
     # Patch the cache get method to always return None (cache miss)

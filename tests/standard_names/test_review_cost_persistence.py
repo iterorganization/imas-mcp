@@ -14,6 +14,7 @@ These tests verify:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import patch
 
@@ -109,9 +110,8 @@ def test_write_reviews_preserves_zero_cost() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_quarantine_skip_passes_zero_cost() -> None:
+async def test_quarantine_skip_passes_zero_cost() -> None:
     """The quarantine-skip codepath in review_name passes llm_cost=0.0."""
-    import asyncio
     from unittest.mock import MagicMock
 
     from imas_codex.standard_names.workers import process_review_name_batch
@@ -140,9 +140,7 @@ def test_quarantine_skip_passes_zero_cost() -> None:
         "imas_codex.standard_names.graph_ops.persist_reviewed_name",
         side_effect=_fake_persist,
     ):
-        result = asyncio.get_event_loop().run_until_complete(
-            process_review_name_batch(items, mock_mgr, stop_event)
-        )
+        result = await process_review_name_batch(items, mock_mgr, stop_event)
 
     assert result == 1, f"Expected 1 processed, got {result}"
     assert len(persist_calls) == 1
