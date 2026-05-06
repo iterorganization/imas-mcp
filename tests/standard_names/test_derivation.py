@@ -359,3 +359,31 @@ class TestGeometricCoordinateDerivation:
         """Plain 'temperature' (no coordinate) produces no edges."""
         edges = derive_edges("temperature")
         assert len(edges) == 0
+
+    def test_compound_coordinate_no_edge(self):
+        """Compound names with qualifiers must NOT create generic parents.
+
+        'vertical_coordinate_of_first_point_of_line_of_sight' has
+        geometric_base='coordinate' in ISN, losing the qualifier.
+        Round-trip validation catches this: 'vertical_coordinate' !=
+        the original name → no edge.
+        """
+        edges = derive_edges("vertical_coordinate_of_first_point_of_line_of_sight")
+        assert edges == []
+
+    def test_compound_coordinate_measurement_position_no_edge(self):
+        """vertical_coordinate_of_measurement_position → no edge.
+
+        Without the fix, this would create a COMPONENT_OF edge to
+        'coordinate', grouping unrelated positions together.
+        """
+        edges = derive_edges("vertical_coordinate_of_measurement_position")
+        assert edges == []
+
+    def test_toroidal_angle_of_qualified_no_edge(self):
+        """toroidal_angle_of_first_point_of_line_of_sight → no edge.
+
+        The qualifier is lost by ISN parse — round-trip catches it.
+        """
+        edges = derive_edges("toroidal_angle_of_first_point_of_line_of_sight")
+        assert edges == []

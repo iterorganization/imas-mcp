@@ -222,6 +222,16 @@ def _geometric_coordinate_check(name: str) -> list[DerivedEdge]:
         else str(parsed.coordinate)
     )
 
+    # Round-trip validation: only create edges for simple forms where the
+    # name is exactly "{axis}_{inner_name}".  For compound names like
+    # "vertical_coordinate_of_first_point_of_line_of_sight", ISN's
+    # geometric_base captures only the base token ("coordinate"), losing
+    # the qualifier.  Creating an edge to a generic parent would group
+    # unrelated coordinates together.
+    expected = f"{axis_value}_{inner_name}"
+    if name != expected:
+        return []
+
     return [
         DerivedEdge(
             "COMPONENT_OF",

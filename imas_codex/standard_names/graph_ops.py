@@ -1091,8 +1091,9 @@ def _write_standard_name_edges(gc: Any, names: list[dict[str, Any]]) -> None:
                 r.separator     = b.separator,
                 r.axis          = b.axis,
                 r.shape         = b.shape
-            WITH tgt
+            WITH tgt, b.operator_kind AS ok
             WHERE tgt.name_stage IS NULL
+              AND ok IN ['projection', 'coordinate']
             SET tgt.needs_composition = true
             """,
             batch=co_batch,
@@ -1275,7 +1276,7 @@ def seed_parent_sources(gc: Any | None = None) -> int:
                      count(CASE WHEN child.name_stage IS NOT NULL
                            THEN 1 END) AS composed_children
                 WHERE total_children = composed_children
-                  AND total_children > 0
+                  AND total_children >= 2
                 UNWIND children AS child
                 WITH parent, edge_kinds, child
                 OPTIONAL MATCH (sns:StandardNameSource)-[:PRODUCED_NAME]->(child)
@@ -1309,6 +1310,18 @@ def seed_parent_sources(gc: Any | None = None) -> int:
             # Determine if this is a geometric coordinate parent
             edge_kinds = row.get("edge_kinds") or []
             is_geometric = any(k == "coordinate" for k in edge_kinds)
+
+            # Only seed parents from projection/coordinate edges — unary
+            # prefix edges (time_derivative, gradient) link to an existing
+            # quantity, not a vector parent that needs seeding.
+            vector_edge_kinds = {"projection", "coordinate"}
+            if not any(k in vector_edge_kinds for k in edge_kinds):
+                logger.debug(
+                    "Parent %s has only non-vector edges (%s) — skipping",
+                    parent_id,
+                    edge_kinds,
+                )
+                continue
 
             # Extract and validate unit uniformity
             child_units = {c["unit"] for c in child_data if c.get("unit")}
