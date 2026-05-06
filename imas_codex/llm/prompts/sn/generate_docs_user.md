@@ -86,6 +86,29 @@ This quantity has the following directional/projection components:
 Write primary documentation here. Components reference this name for shared physics context.
 {% endif %}
 
+{% if item.base_quantity %}
+## Base Quantity
+
+This quantity is derived from `{{ item.base_quantity.name }}`.
+{% if item.base_quantity.documentation %}
+{{ item.base_quantity.documentation[:300] }}
+{% endif %}
+Describe how this derivative/transformation relates to the base quantity.
+{% endif %}
+
+{% if item.derivative_context %}
+## Derivative Context
+
+Numerator: {{ item.derivative_context.numerator }}
+Denominator: {{ item.derivative_context.denominator }}
+{% if item.derivative_context.siblings %}
+Related derivatives (same denominator):
+{% for sib in item.derivative_context.siblings %}
+- `{{ sib }}`
+{% endfor %}
+{% endif %}
+{% endif %}
+
 {% if item.source_paths %}
 ## IMAS DD Paths
 

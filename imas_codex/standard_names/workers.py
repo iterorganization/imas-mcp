@@ -5221,6 +5221,51 @@ def _enrich_for_docs_gen(
                 exc_info=True,
             )
 
+        # ── 5. Derivative / base-quantity context ─────────────────────────
+        try:
+            from imas_codex.standard_names.families import DD_DERIVATIVE_MAP
+
+            parent_sn_data = item.get("parent_sn")
+            if parent_sn_data:
+                parent_name = parent_sn_data["name"]
+                # Query parent unit and sibling derivatives sharing same parent
+                bq_rows = list(
+                    gc.query(
+                        """
+                        MATCH (parent:StandardName {id: $parent_name})
+                        OPTIONAL MATCH (sib:StandardName)-[:COMPONENT_OF]->(parent)
+                        WHERE sib.id <> $sn_id
+                        WITH parent, collect(sib.id) AS siblings
+                        RETURN parent.unit AS unit, siblings
+                        """,
+                        parent_name=parent_name,
+                        sn_id=sn_id,
+                    )
+                )
+                if bq_rows:
+                    bq_row = bq_rows[0]
+                    item["base_quantity"] = {
+                        "name": parent_name,
+                        "description": parent_sn_data.get("description") or "",
+                        "documentation": parent_sn_data.get("documentation") or "",
+                        "unit": bq_row.get("unit") or "",
+                    }
+                    if sn_id in DD_DERIVATIVE_MAP:
+                        numerator, denominator = DD_DERIVATIVE_MAP[sn_id]
+                        raw_siblings = bq_row.get("siblings") or []
+                        siblings = [s for s in raw_siblings if s]
+                        item["derivative_context"] = {
+                            "numerator": numerator,
+                            "denominator": denominator,
+                            "siblings": siblings,
+                        }
+        except Exception:
+            logger.debug(
+                "_enrich_for_docs_gen: derivative context failed for %s",
+                sn_id,
+                exc_info=True,
+            )
+
 
 def _nearby_names_for_docs_gen(gc: Any, items: list[dict]) -> list[dict]:
     """Return accepted StandardNames in the same physics domain(s) as *items*.
