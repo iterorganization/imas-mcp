@@ -1211,22 +1211,50 @@ def rederive_structural_edges() -> dict[str, int]:
     return {"processed": len(names)}
 
 
+def _parse_parent_grammar(name_id: str) -> dict[str, str | None]:
+    """Attempt ISN parse on a parent name to extract grammar fields.
+
+    Returns a dict with grammar_* keys. On parse failure, all values are None.
+    """
+    fields: dict[str, str | None] = {
+        "grammar_physical_base": None,
+        "grammar_subject": None,
+        "grammar_transformation": None,
+        "grammar_component": None,
+    }
+    try:
+        from imas_standard_names import parse_standard_name
+
+        parsed = parse_standard_name(name_id)
+        if parsed:
+            fields["grammar_physical_base"] = getattr(parsed, "physical_base", None)
+            fields["grammar_subject"] = getattr(parsed, "subject", None)
+            fields["grammar_transformation"] = getattr(parsed, "transformation", None)
+            fields["grammar_component"] = getattr(parsed, "component", None)
+    except Exception:  # noqa: BLE001
+        logger.debug("ISN parse failed for parent %s", name_id)
+    return fields
+
+
 def seed_parent_sources(gc: Any | None = None) -> int:
-    """Create StandardNameSource nodes for parent SNs needing composition.
+    """Fully populate parent StandardName nodes from their children.
 
     Finds all StandardName nodes with ``needs_composition = true``
     (bare placeholders created by ``_write_standard_name_edges`` when a
-    COMPONENT_OF target has no ``name_stage``). For each parent:
+    COMPONENT_OF target has no ``name_stage``).
 
-    1. Aggregates the children's DD source paths via COMPONENT_OF → child
-       → PRODUCED_NAME ← StandardNameSource → FROM_DD_PATH → IMASNode.
-    2. Derives a parent DD path from the common IDS prefix of children's
-       paths (structural node, not a leaf).
-    3. Creates a ``StandardNameSource`` with ``status = 'extracted'`` and
-       links it to the parent SN via ``PRODUCED_NAME``.
-    4. Clears ``needs_composition`` on the parent.
+    Parent names are DETERMINISTIC — derived from children by stripping
+    the component prefix. This function:
 
-    Returns the number of parent sources seeded.
+    1. Waits until ALL children of a parent are composed (have name_stage).
+    2. Copies unit and cocos from children (asserts uniformity).
+    3. Sets name_stage='accepted' (deterministic, no review needed).
+    4. Sets docs_stage='pending' so the parent enters generate_docs pool.
+    5. Creates a StandardNameSource with status='composed' for audit trail.
+    6. Runs ISN parse to populate grammar fields.
+    7. Clears ``needs_composition`` on the parent.
+
+    Returns the number of parents fully populated.
     """
     from imas_codex.standard_names.source_paths import encode_source_path
 
@@ -1234,18 +1262,34 @@ def seed_parent_sources(gc: Any | None = None) -> int:
     if _own_gc:
         gc = GraphClient().__enter__()
     try:
+        # Only seed parents where ALL children have been composed
         parents = list(
             gc.query(
                 """
                 MATCH (parent:StandardName {needs_composition: true})
-                OPTIONAL MATCH (child)-[:COMPONENT_OF]->(parent)
+                MATCH (child)-[:COMPONENT_OF]->(parent)
+                WITH parent,
+                     collect(child) AS children,
+                     count(child) AS total_children,
+                     count(CASE WHEN child.name_stage IS NOT NULL
+                           THEN 1 END) AS composed_children
+                WHERE total_children = composed_children
+                  AND total_children > 0
+                UNWIND children AS child
+                WITH parent, child
                 OPTIONAL MATCH (sns:StandardNameSource)-[:PRODUCED_NAME]->(child)
                 OPTIONAL MATCH (sns)-[:FROM_DD_PATH]->(imas:IMASNode)
                 WITH parent,
-                     collect(DISTINCT child.id) AS child_ids,
+                     collect(DISTINCT {
+                         id: child.id,
+                         unit: child.unit,
+                         cocos: child.cocos_transformation_type,
+                         physics_domain: child.physics_domain,
+                         kind: child.kind
+                     }) AS child_data,
                      collect(DISTINCT imas.id) AS dd_paths
                 RETURN parent.id AS parent_id,
-                       child_ids,
+                       child_data,
                        dd_paths
                 """
             )
@@ -1257,9 +1301,46 @@ def seed_parent_sources(gc: Any | None = None) -> int:
         seeded = 0
         for row in parents:
             parent_id = row["parent_id"]
+            child_data = row.get("child_data") or []
             dd_paths = [p for p in (row.get("dd_paths") or []) if p]
 
-            # Derive parent DD path from common prefix of children's paths
+            # Extract and validate unit uniformity
+            child_units = {c["unit"] for c in child_data if c.get("unit")}
+            if len(child_units) > 1:
+                logger.warning(
+                    "Parent %s has children with heterogeneous units: %s — "
+                    "skipping (needs manual review)",
+                    parent_id,
+                    child_units,
+                )
+                continue
+            unit = next(iter(child_units)) if child_units else None
+
+            # Extract COCOS (should be uniform across components)
+            child_cocos = {c["cocos"] for c in child_data if c.get("cocos")}
+            cocos = next(iter(child_cocos)) if len(child_cocos) == 1 else None
+
+            # Physics domain from children
+            child_domains = {
+                c["physics_domain"] for c in child_data if c.get("physics_domain")
+            }
+            physics_domain = (
+                next(iter(child_domains)) if len(child_domains) == 1 else None
+            )
+
+            # Kind is always 'vector' for parent components
+            kind = "vector"
+
+            # Generate description from children
+            child_ids = [c["id"] for c in child_data if c.get("id")]
+            description = (
+                f"Vector quantity with components: {', '.join(sorted(child_ids))}"
+            )
+
+            # Attempt ISN parse for grammar fields
+            grammar_fields = _parse_parent_grammar(parent_id)
+
+            # Derive parent DD path from common prefix
             parent_dd_path = None
             if dd_paths:
                 parts = [p.split("/") for p in dd_paths]
@@ -1278,21 +1359,56 @@ def seed_parent_sources(gc: Any | None = None) -> int:
                 else f"sn:{parent_id}"
             )
 
+            # Fully populate the parent SN and create audit source
+            props: dict[str, Any] = {
+                "parent_id": parent_id,
+                "source_id": source_id,
+                "unit": unit,
+                "cocos_transformation_type": cocos,
+                "physics_domain": physics_domain,
+                "kind": kind,
+                "description": description,
+            }
+            props.update(grammar_fields)
+
             gc.query(
                 """
                 MATCH (parent:StandardName {id: $parent_id})
+                SET parent.name_stage = 'accepted',
+                    parent.docs_stage = 'pending',
+                    parent.validation_status = 'valid',
+                    parent.kind = $kind,
+                    parent.unit = coalesce($unit, parent.unit),
+                    parent.cocos_transformation_type =
+                        coalesce($cocos_transformation_type,
+                                 parent.cocos_transformation_type),
+                    parent.physics_domain =
+                        coalesce($physics_domain, parent.physics_domain),
+                    parent.description = $description,
+                    parent.needs_composition = null,
+                    parent.grammar_physical_base =
+                        coalesce($grammar_physical_base,
+                                 parent.grammar_physical_base),
+                    parent.grammar_subject =
+                        coalesce($grammar_subject, parent.grammar_subject),
+                    parent.grammar_transformation =
+                        coalesce($grammar_transformation,
+                                 parent.grammar_transformation),
+                    parent.grammar_component =
+                        coalesce($grammar_component,
+                                 parent.grammar_component)
+                WITH parent
                 MERGE (sns:StandardNameSource {id: $source_id})
-                ON CREATE SET sns.status = 'extracted',
+                ON CREATE SET sns.status = 'composed',
                               sns.created_at = datetime(),
                               sns.source_type = 'parent_component'
+                ON MATCH SET sns.status = 'composed'
                 MERGE (sns)-[:PRODUCED_NAME]->(parent)
-                SET parent.needs_composition = null
                 """,
-                parent_id=parent_id,
-                source_id=source_id,
+                **props,
             )
 
-            # Link to DD structural node if we found a common prefix
+            # Link to DD structural node if found
             if parent_dd_path:
                 gc.query(
                     """
@@ -1304,9 +1420,21 @@ def seed_parent_sources(gc: Any | None = None) -> int:
                     dd_path=parent_dd_path,
                 )
 
+            # Link parent to Unit node
+            if unit:
+                gc.query(
+                    """
+                    MATCH (sn:StandardName {id: $parent_id})
+                    MERGE (u:Unit {id: $unit})
+                    MERGE (sn)-[:HAS_UNIT]->(u)
+                    """,
+                    parent_id=parent_id,
+                    unit=unit,
+                )
+
             seeded += 1
 
-        logger.info("seed_parent_sources: seeded %d parent sources", seeded)
+        logger.info("seed_parent_sources: populated %d parent SNs", seeded)
         return seeded
     finally:
         if _own_gc:

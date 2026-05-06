@@ -77,7 +77,7 @@ def test_derive_edges_projection():
 
 
 def test_seed_parent_sources_creates_source():
-    """seed_parent_sources creates a StandardNameSource for bare parents."""
+    """seed_parent_sources fully populates parents when all children are composed."""
     gc = MagicMock()
     call_log = []
 
@@ -87,9 +87,21 @@ def test_seed_parent_sources_creates_source():
             return [
                 {
                     "parent_id": "magnetic_field",
-                    "child_ids": [
-                        "magnetic_field_toroidal",
-                        "magnetic_field_poloidal",
+                    "child_data": [
+                        {
+                            "id": "toroidal_component_of_magnetic_field",
+                            "unit": "T",
+                            "cocos": "b0_like",
+                            "physics_domain": "magnetics",
+                            "kind": "scalar",
+                        },
+                        {
+                            "id": "poloidal_component_of_magnetic_field",
+                            "unit": "T",
+                            "cocos": "b0_like",
+                            "physics_domain": "magnetics",
+                            "kind": "scalar",
+                        },
                     ],
                     "dd_paths": [
                         "equilibrium/time_slice/profiles_1d/b_field_tor",
@@ -108,10 +120,11 @@ def test_seed_parent_sources_creates_source():
     count = seed_parent_sources(gc)
     assert count == 1
 
-    # Should have called query at least twice: find parents + create source
+    # Should have called query at least twice: find parents + populate parent
     assert len(call_log) >= 2
-    # The second query should MERGE a StandardNameSource
+    # The second query should SET name_stage='accepted' and MERGE StandardNameSource
     assert any("StandardNameSource" in q for q in call_log)
+    assert any("name_stage" in q for q in call_log)
 
 
 def test_seed_parent_sources_no_parents():
@@ -125,6 +138,67 @@ def test_seed_parent_sources_no_parents():
 
     count = seed_parent_sources(gc)
     assert count == 0
+
+
+def test_seed_parent_sources_skips_incomplete_children():
+    """seed_parent_sources does NOT seed when children are incomplete.
+
+    The race-condition guard ensures parents are only populated when
+    ALL children have name_stage set (i.e., fully composed).
+    """
+    gc = MagicMock()
+    # Query returns empty — the Cypher WHERE clause
+    # (total_children = composed_children) filters incomplete parents
+    gc.query = MagicMock(return_value=[])
+    gc.__enter__ = MagicMock(return_value=gc)
+    gc.__exit__ = MagicMock(return_value=False)
+
+    from imas_codex.standard_names.graph_ops import seed_parent_sources
+
+    count = seed_parent_sources(gc)
+    assert count == 0
+
+
+def test_seed_parent_sources_skips_heterogeneous_units():
+    """seed_parent_sources skips parents with non-uniform child units."""
+    gc = MagicMock()
+    call_log = []
+
+    def _query(cypher, **kwargs):
+        call_log.append(cypher)
+        if "needs_composition: true" in cypher:
+            return [
+                {
+                    "parent_id": "some_vector",
+                    "child_data": [
+                        {
+                            "id": "comp_a",
+                            "unit": "T",
+                            "cocos": None,
+                            "physics_domain": "magnetics",
+                            "kind": "scalar",
+                        },
+                        {
+                            "id": "comp_b",
+                            "unit": "m/s",
+                            "cocos": None,
+                            "physics_domain": "magnetics",
+                            "kind": "scalar",
+                        },
+                    ],
+                    "dd_paths": [],
+                }
+            ]
+        return []
+
+    gc.query = _query
+    gc.__enter__ = MagicMock(return_value=gc)
+    gc.__exit__ = MagicMock(return_value=False)
+
+    from imas_codex.standard_names.graph_ops import seed_parent_sources
+
+    count = seed_parent_sources(gc)
+    assert count == 0  # Skipped due to unit mismatch
 
 
 # ── Tests: docs enrichment with parent/child context ────────────────────

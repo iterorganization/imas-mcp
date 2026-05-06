@@ -52,7 +52,6 @@ def _register_graph_commands() -> None:
         graph_init,
         graph_list,
         graph_load,
-        graph_repair_group,
         graph_secure,
         graph_switch,
     )
@@ -87,7 +86,6 @@ def _register_graph_commands() -> None:
     graph.add_command(graph_list, "list")
     graph.add_command(graph_clear, "clear")
     graph.add_command(graph_facility_group, "facility")
-    graph.add_command(graph_repair_group, "repair")
 
     # Registry
     graph.add_command(graph_push, "push")
