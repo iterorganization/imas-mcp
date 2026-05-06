@@ -1634,9 +1634,9 @@ tail -10 /tmp/sn_tests.txt
 
 **Timeout:** Default test timeout is 30s. If a test legitimately needs more, use `@pytest.mark.timeout(60)` on the test function. `faulthandler_timeout = 60` will dump thread stacks on true hangs.
 
-### Exit Watchdog Caveat
+### Exit Watchdog
 
-The `safe_asyncio_run()` function in `imas_codex/cli/shutdown.py` spawns a daemon thread that calls `os._exit(130)` after a 10-second grace period. This is correct production behavior (forces cleanup after Ctrl-C), but fatal in test environments. An autouse fixture in `tests/conftest.py` (`_disable_exit_watchdog`) patches this to a no-op. **Never remove this fixture** — without it, any test that invokes a CLI command via `CliRunner.invoke()` on a discovery command will kill the entire pytest process.
+The `_start_exit_watchdog()` function in `imas_codex/cli/shutdown.py` spawns a daemon thread that calls `os._exit()` after a grace period. It is only used in the signal handler path (second Ctrl-C during interactive CLI use). It is **not** called during normal `safe_asyncio_run()` completion — the cleanup chain (`_cancel_remaining_tasks` → `shutdown_default_executor` → `_force_kill_ssh_pools`) handles thread cleanup without needing a kill timer. This design is safe for test environments where `CliRunner.invoke()` exercises CLI commands.
 
 ## Python REPL
 

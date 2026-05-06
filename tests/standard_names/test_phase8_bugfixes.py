@@ -426,9 +426,9 @@ class TestPoolLoopReleaseOnFailure:
             release=release,
         )
         spec.health.pending_count = 1
-        spec.backoff.base = 0.05
-        spec.backoff.cap = 0.1
-        spec.backoff.reset()
+        spec._replica_backoffs[0].base = 0.05
+        spec._replica_backoffs[0].cap = 0.1
+        spec._replica_backoffs[0].reset()
 
         task = asyncio.create_task(
             pool_loop(
@@ -476,9 +476,9 @@ class TestPoolLoopReleaseOnFailure:
             release=release,
         )
         spec.health.pending_count = 1
-        spec.backoff.base = 0.05
-        spec.backoff.cap = 0.1
-        spec.backoff.reset()
+        spec._replica_backoffs[0].base = 0.05
+        spec._replica_backoffs[0].cap = 0.1
+        spec._replica_backoffs[0].reset()
 
         # pool_loop must NOT propagate the release exception
         task = asyncio.create_task(
@@ -524,9 +524,9 @@ class TestPoolLoopReleaseOnFailure:
             release=release,
         )
         spec.health.pending_count = 1
-        spec.backoff.base = 0.05
-        spec.backoff.cap = 0.1
-        spec.backoff.reset()
+        spec._replica_backoffs[0].base = 0.05
+        spec._replica_backoffs[0].cap = 0.1
+        spec._replica_backoffs[0].reset()
 
         task = asyncio.create_task(
             pool_loop(
@@ -563,9 +563,9 @@ class TestPoolLoopReleaseOnFailure:
         assert spec.release is None
 
         spec.health.pending_count = 1
-        spec.backoff.base = 0.05
-        spec.backoff.cap = 0.1
-        spec.backoff.reset()
+        spec._replica_backoffs[0].base = 0.05
+        spec._replica_backoffs[0].cap = 0.1
+        spec._replica_backoffs[0].reset()
 
         task = asyncio.create_task(
             pool_loop(
@@ -749,9 +749,10 @@ class TestFairnessDeadlockBreaker:
 
         spec = PoolSpec(name="generate_name", claim=claim, process=process)
         spec.health.pending_count = 1
-        spec.backoff.base = 0.01
-        spec.backoff.cap = 0.02
-        spec.backoff.reset()
+        # Configure the REPLICA backoff (pool_loop uses _replica_backoffs[0])
+        spec._replica_backoffs[0].base = 0.01
+        spec._replica_backoffs[0].cap = 0.02
+        spec._replica_backoffs[0].reset()
 
         task = asyncio.create_task(
             pool_loop(
@@ -811,9 +812,9 @@ class TestFairnessDeadlockBreaker:
             process=AsyncMock(return_value=0),
         )
         enrich_spec.health.pending_count = 100  # display says lots of work
-        enrich_spec.backoff.base = 0.01
-        enrich_spec.backoff.cap = 0.02
-        enrich_spec.backoff.reset()
+        enrich_spec._replica_backoffs[0].base = 0.01
+        enrich_spec._replica_backoffs[0].cap = 0.02
+        enrich_spec._replica_backoffs[0].reset()
 
         pools.append(enrich_spec)
 

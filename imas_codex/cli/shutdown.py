@@ -59,10 +59,6 @@ logger = logging.getLogger(__name__)
 # event loop; a short timeout prevents the process from hanging.
 _EXECUTOR_SHUTDOWN_TIMEOUT = 5
 
-# Grace period after safe_asyncio_run returns before force-exiting.
-# This gives the CLI time to print summary output.
-_EXIT_WATCHDOG_GRACE = 10
-
 
 def safe_asyncio_run[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run an async coroutine, suppressing 'Event loop is closed' on cleanup.
@@ -80,11 +76,6 @@ def safe_asyncio_run[T](coro: Coroutine[Any, Any, T]) -> T:
     timeout so that leaked threads (from ``asyncio.to_thread()`` calls
     to SSH subprocesses or LLM HTTP calls) do not prevent the process
     from exiting.
-
-    A daemon watchdog thread is started that will force-exit the process
-    if it hasn't terminated within a grace period after the coroutine
-    completes. This prevents the process from hanging on Python's atexit
-    thread join when SSH subprocess threads are still alive.
     """
     old_hook = sys.unraisablehook
 
@@ -102,10 +93,6 @@ def safe_asyncio_run[T](coro: Coroutine[Any, Any, T]) -> T:
         try:
             result = loop.run_until_complete(coro)
         finally:
-            # Start the watchdog BEFORE cleanup — if task cancellation
-            # hangs (e.g. to_thread blocked on LLM/SSH I/O), the
-            # watchdog guarantees the process exits.
-            _start_exit_watchdog(_EXIT_WATCHDOG_GRACE)
             try:
                 # Cancel any straggling tasks (with timeout so we
                 # don't hang on threads blocked in to_thread)

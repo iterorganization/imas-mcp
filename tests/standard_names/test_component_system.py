@@ -107,6 +107,7 @@ def test_seed_parent_sources_creates_source():
                         "equilibrium/time_slice/profiles_1d/b_field_tor",
                         "equilibrium/time_slice/profiles_1d/b_field_pol",
                     ],
+                    "edge_kinds": ["projection", "projection"],
                 }
             ]
         return []
