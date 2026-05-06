@@ -5988,6 +5988,9 @@ def _claim_sn_atomic(
     stage_field: str | None = None,
     to_stage: str | None = None,
     domain: str | None = None,
+    seed_extra_where: str = "",
+    seed_with_extras: str = "",
+    seed_order_by: str = "rand()",
 ) -> list[dict[str, Any]]:
     """Single-transaction stage-aware claim for StandardName nodes.
 
@@ -6029,6 +6032,20 @@ def _claim_sn_atomic(
         considered eligible.  Used by ``sn run --physics-domain`` to
         prevent concurrent domain-specific runs from competing for
         each other's items.
+    seed_extra_where:
+        Optional additional Cypher WHERE conditions injected into the seed
+        step after *eligibility_where* and *domain_where*.  Must begin
+        with ``AND`` if non-empty.  Used to implement ordering-specific
+        eligibility filters (e.g. parent-first escape hatches).
+    seed_with_extras:
+        Optional extra WITH columns computed before the ORDER BY in the
+        seed step.  Must begin with a comma if non-empty, e.g.
+        ``", CASE WHEN ... END AS priority"``.  Used alongside
+        *seed_order_by* to express multi-column ordering.
+    seed_order_by:
+        ORDER BY expression for the seed step.  Defaults to ``rand()``
+        (uniform random selection).  Override to implement priority-based
+        claim ordering, e.g. ``"priority ASC, rand()"``.
 
     Returns
     -------
@@ -6066,7 +6083,9 @@ def _claim_sn_atomic(
                                OR sn.claimed_at < datetime()
                                     - duration($cutoff))
                           {domain_where}
-                        WITH sn ORDER BY rand() LIMIT 1
+                          {seed_extra_where}
+                        WITH sn{seed_with_extras}
+                        ORDER BY {seed_order_by} LIMIT 1
                         SET sn.claimed_at = datetime(),
                             sn.claim_token = $token
                             {stage_set}
@@ -7798,6 +7817,27 @@ def claim_generate_docs_batch(
         ),
         # stage_field=None → claim only, no stage transition
         domain=domain,
+        # Parent-first ordering: nodes that have incoming COMPONENT_OF edges
+        # (i.e. nodes which are parents) receive priority 0 so they are
+        # documented before their children.
+        #
+        # Escape hatch: do NOT block a child whose parent is still pending
+        # but has never been claimed (claimed_at IS NULL) — the parent may
+        # simply not have been seeded, and we should not wait indefinitely.
+        # We only block when the parent is *actively* in-progress
+        # (docs_stage='pending' AND claimed_at IS NOT NULL).
+        seed_extra_where=(
+            "AND NOT EXISTS {"
+            " MATCH (sn)-[:COMPONENT_OF]->(parent:StandardName)"
+            " WHERE parent.docs_stage = 'pending'"
+            " AND parent.claimed_at IS NOT NULL"
+            " }"
+        ),
+        seed_with_extras=(
+            ", CASE WHEN EXISTS { ()-[:COMPONENT_OF]->(sn) }"
+            " THEN 0 ELSE 1 END AS _docs_priority"
+        ),
+        seed_order_by="_docs_priority ASC, rand()",
     )
 
     # Enrich each claimed item with REFINED_FROM chain history.
