@@ -153,17 +153,44 @@ overrides:
     reason: "charge number is dimensionless"
 
   # -------------------------------------------------------------------------
-  # Class 3b — unit vector components tagged unit="m" (meters)
-  # Unit vectors are dimensionless direction cosines. The DD documents them
-  # as "X/Y/Z coordinate of xN unit vector" but they are NOT spatial
-  # coordinates — they are projections of a normalised orientation vector.
-  # Affects 1314 paths across ~20 diagnostic IDSs.
+  # Class 3b — unit vector and direction vector components tagged unit="m"
+  # Unit vectors and direction vectors are dimensionless direction cosines.
+  # The DD xyz0d_static/dynamic/constant templates hardcode units="m" but
+  # these elements are normalised orientation vectors, not spatial coordinates.
+  # Affects 1335 paths across ~20 diagnostic IDSs (1314 unit_vector + 21
+  # direction/up/injection_direction). Upstream fix submitted as
+  # iterorganization/IMAS-Data-Dictionary PR — remove these overrides once
+  # the DD release includes the dimensionless templates.
   # -------------------------------------------------------------------------
   - path_pattern: "**/*unit_vector*/*"
     dd_unit: "m"
     strategy: override
     override_unit: "1"
     reason: "unit vector components are dimensionless direction cosines, not spatial coordinates"
+
+  - path_pattern: "**/direction/*"
+    dd_unit: "m"
+    strategy: override
+    override_unit: "1"
+    reason: "direction vector components are dimensionless (unit vector or wavevector direction)"
+
+  - path_pattern: "**/direction_second/*"
+    dd_unit: "m"
+    strategy: override
+    override_unit: "1"
+    reason: "secondary direction vector components are dimensionless"
+
+  - path_pattern: "**/up/*"
+    dd_unit: "m"
+    strategy: override
+    override_unit: "1"
+    reason: "detector up-orientation vector components are dimensionless"
+
+  - path_pattern: "**/injection_direction/*"
+    dd_unit: "m"
+    strategy: override
+    override_unit: "1"
+    reason: "pellet injection direction vector components are dimensionless"
 
   # -------------------------------------------------------------------------
   # Class 4 — unresolved Jinja placeholder m^dimension (GGD grid measures).

@@ -151,9 +151,34 @@ class TestResolveUnitOverrides:
         assert unit == "rad"
         assert meta is None
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "camera_ir/channel/camera/direction/x",
+            "ec_launchers/mirror/movement/direction/y",
+            "operational_instrumentation/sensor/direction/z",
+            "spi/injector/shatter_cone/direction/x",
+            "operational_instrumentation/sensor/direction_second/y",
+            "camera_ir/channel/camera/up/z",
+            "spi/injector/shatter_cone/injection_direction/x",
+        ],
+    )
+    def test_direction_vector_m_overridden_to_dimensionless(self, path: str) -> None:
+        """Direction, up, and injection_direction vectors are dimensionless."""
+        unit, meta = resolve_unit(path, "m")
+        assert unit == "1", f"direction path {path} should override 'm' to '1'"
+        assert meta is not None
+        assert meta["rule"] == "override"
+
     def test_non_unit_vector_m_passes_through(self) -> None:
-        """Paths with unit='m' that aren't unit vectors pass through."""
+        """Paths with unit='m' that aren't unit/direction vectors pass through."""
         unit, meta = resolve_unit("equilibrium/time_slice/boundary/outline/r", "m")
+        assert unit == "m"
+        assert meta is None
+
+    def test_position_pinhole_m_passes_through(self) -> None:
+        """Genuine position elements (pinhole, target_surface_center) keep meters."""
+        unit, meta = resolve_unit("camera_ir/channel/camera/pinhole/x", "m")
         assert unit == "m"
         assert meta is None
 
