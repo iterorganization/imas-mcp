@@ -1,6 +1,6 @@
 ---
 name: project-dev
-description: How to develop, test, lint, and build the imas-codex project. Use when making code changes, running tests, or building the project.
+description: "How to run pytest, ruff linting, and LinkML schema builds for the imas-codex Python project. Use when writing code, running tests, formatting, checking CI, or rebuilding generated models."
 ---
 
 # imas-codex Development
@@ -51,9 +51,12 @@ uv sync --extra gpu      # Include GPU deps (for embedding)
 ## Git Workflow
 
 ```bash
-git add <file1> <file2>                          # Stage specific files only
-uv run git commit -m 'type: concise summary'     # Conventional commit
-git pull --no-rebase origin main                  # Always merge, never rebase
+uv run ruff check --fix .                        # 1. Lint + autofix
+uv run ruff format .                             # 2. Format
+uv run pytest tests/path/to/changed_test.py -q   # 3. Verify changes pass
+git add <file1> <file2>                          # 4. Stage specific files only
+uv run git commit -m 'type: concise summary'     # 5. Conventional commit
+git pull --no-rebase origin main                  # 6. Always merge, never rebase
 git push origin main
 ```
 
